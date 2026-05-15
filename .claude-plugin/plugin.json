@@ -1,0 +1,18 @@
+{
+  "name": "danny-skills",
+  "version": "0.1.0",
+  "description": "Personal skill pack: design-build, design-loop, parallel-build (a plan -> critique -> implement pipeline), plus starter-session-audit for end-of-session capture.",
+  "author": {
+    "name": "Danny Thai",
+    "email": "danny@thaicapital.com"
+  },
+  "homepage": "https://github.com/dtcmanage/danny-skills",
+  "repository": "https://github.com/dtcmanage/danny-skills",
+  "keywords": [
+    "planning",
+    "design-review",
+    "parallel-build",
+    "session-audit",
+    "personal"
+  ]
+}
