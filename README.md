@@ -1,13 +1,13 @@
 # danny-skills
 
-Three Claude Code skills that form a single pipeline: scope a project, stress-test the design, then build it in parallel.
+Claude Code skills authored for this workspace. Three of them form a single pipeline — scope a project, stress-test the design, then build it in parallel — and `starter-session-audit` is a standalone end-of-session skill.
 
 ```
 design-build  →  design-loop  →  parallel-build
    (plan)         (critique)        (implement)
 ```
 
-Each skill is self-contained and can be triggered on its own, but they're designed to compose. The output of one is the input of the next.
+The three pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `starter-session-audit` runs independently at the end of any session.
 
 ---
 
@@ -70,6 +70,23 @@ One foreman, two coding agents (Claude + Codex) each in their own git worktree, 
 - The merge agent has auto-action authority only for the conflict decision table; everything else escalates.
 
 **Skip it for:** single-file features, tightly-coupled work, anything under ~1 hour of agent time.
+
+---
+
+## starter-session-audit
+
+**Trigger:** `/starter-session-audit`, or "audit this session" / "session audit" / "what did we miss" / "end of session check"
+
+A lightweight end-of-session audit. Scans the conversation for corrections, preferences, decisions, and new context that were stated but never written down, then proposes where each belongs — file, section, exact wording — for approval before anything is saved.
+
+**What it does:**
+
+- Discovers the workspace root and reads the CLAUDE.md / MEMORY.md layers that were in play this session.
+- Scans the full conversation for four signal types: corrections, explicit preferences, decisions, and new context.
+- Filters each finding against what's already saved, so only genuinely new items surface.
+- Presents findings grouped into "Recommend" and "Your call", then writes only the approved changes.
+
+**Skip it for:** sessions where nothing was corrected, decided, or newly shared — it reports a clean session rather than manufacture findings.
 
 ---
 
