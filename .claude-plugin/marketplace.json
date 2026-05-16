@@ -4,14 +4,16 @@
     "name": "Danny Thai",
     "email": "danny@thaicapital.com"
   },
-  "description": "Single-plugin marketplace exposing Danny's personal skill pack to Cowork and Claude Code.",
-  "version": "0.1.1",
+  "metadata": {
+    "description": "Single-plugin marketplace exposing Danny's personal skill pack to Cowork and Claude Code.",
+    "version": "0.1.2"
+  },
   "plugins": [
     {
       "name": "danny-skills",
-      "source": ".",
+      "source": "./",
       "description": "Personal skill pack: design-build, design-loop, parallel-build (a plan -> critique -> implement pipeline), plus starter-session-audit for end-of-session capture.",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "keywords": [
         "planning",
         "design-review",
