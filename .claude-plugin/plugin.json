@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Personal skill pack: design-build, design-loop, parallel-build (a plan -> critique -> implement pipeline), plus starter-session-audit for end-of-session capture.",
   "author": {
     "name": "Danny Thai",
