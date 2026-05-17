@@ -67,15 +67,30 @@ Walk through each section in turn. In each section your job is:
 - **Open with a strawman AND a recommended answer, not a blank prompt.** Don't say "what are the inputs?" — say "I'd guess inputs are a folder path and a date format string, and I'd recommend the folder path be required while the date format defaults to ISO 8601. Sound right, or push back?" Every question carries your position, not just options. If you genuinely don't know enough to recommend, say so explicitly rather than asking a naked question.
 - **Push back where the thinking is thin.** If Danny says "it'll just retry on failure," ask what the retry budget is, what counts as transient vs. permanent, what happens when retries exhaust. Make the plan answer questions before Codex catches them in design-loop.
 - **Surface absences.** If a service has no observability story, name it. If an integration has no auth story, name it. If a migration has no rollback, name it.
-- **Cross-reference claims against the code.** When Danny states how something currently works, verify against the actual files when the project is in scope (`D:\Projects\`, the workspace, or anywhere readable). If you find a contradiction, surface it immediately: "Your code does X here, but you just said Y — which is right?" Don't accept claims about code without checking.
-- **Maintain a `CONTEXT.md` glossary as terminology resolves.** When Danny uses a term that's fuzzy or overloaded, propose a precise canonical version: "You're saying 'account' — do you mean the Customer record, the User login, or the IBKR brokerage account? Those are three different things." When a term gets pinned, write it to `CONTEXT.md` immediately — don't batch. Glossary location: alongside `plan-draft.md` for workspace projects, or at the repo root for `D:\Projects\` code projects. Only include terms meaningful to the domain — not implementation details. Glossary entry format:
+- **Cross-reference claims against the code.** When Danny states how something currently works, verify against the actual files when the project is in scope (the workspace, or anywhere readable). If you find a contradiction, surface it immediately: "Your code does X here, but you just said Y — which is right?" Don't accept claims about code without checking.
+- **Maintain a `CONTEXT.md` glossary as terminology resolves.** When Danny uses a term that's fuzzy or overloaded, propose a precise canonical version: "You're saying 'account' — do you mean the Customer record, the User login, or the IBKR brokerage account? Those are three different things." When a term gets pinned, write it to `CONTEXT.md` immediately — don't batch. Only include terms meaningful to the domain — not implementation details.
+
+  **Where the entry goes — placement test.** A term's baseline definition lives in exactly one place:
+  1. The term means the same thing domain-wide -> the workstation `glossary.md` (`D:\Claude\_Claude-Workspace\<workstation>\<Workstation> Resources\glossary.md`).
+  2. The term is specific to this project / code build -> this project's `CONTEXT.md`, at the project folder root: `D:\Claude\_Claude-Workspace\<workstation>\<project>\CONTEXT.md` — alongside `plan-draft.md`, one level above the `design\` folder. (`D:\Projects\` is retired; ignore any path that still references it.)
+  3. The same word carries two genuinely different meanings -> split (see the split-term rule below).
+
+  A project `CONTEXT.md` may *narrow* a workstation term for this project only. A narrowing entry is a pointer/delta, not a second definition: it opens with the line "Project-specific narrowing of workstation term `<Term>`" and states only the project-specific delta — it must not restate the baseline `Definition`. The baseline still lives in exactly one place.
+
+  **Split-term rule.** When the same word carries two genuinely different meanings, split it into two distinctly named terms using `<Term> (<qualifier>)`, where `<qualifier>` is a short domain-appropriate disambiguator. Add a cross-reference entry under the retired ambiguous label pointing to both new terms, so the old word still resolves. Split vs narrow: if both meanings can be simultaneously true in the same project without contradiction -> split into two terms; if one meaning is strictly a subset or constraint of the baseline that applies for this project only -> narrowing (a pointer/delta entry in `CONTEXT.md`).
+
+  **Conflict handling.** When a term is about to be defined in a way that contradicts an existing entry, do not silently overwrite. Two-stage filter: a **wording-only edit** (the meaning is unchanged, only the phrasing is sharper) is applied automatically — but it qualifies as wording-only only if it preserves all four of scope, exclusions (`Not to be confused with`), actor/entity mapping, and the semantic class of the example; if any of the four changes it is a meaning change. A **meaning-changing conflict** (the substance changes, or two tiers disagree) pauses and asks Danny via a structured `AskUserQuestion` with three options: (A) Keep the existing definition, (B) Replace it, (C) Split into two terms. The resolution writes to one place per the placement test — never to both files.
+
+  Glossary entry format — identical for `CONTEXT.md` and the workstation `glossary.md`:
 
   ```markdown
   ## <Term>
   **Definition:** <One-sentence canonical meaning.>
   **Not to be confused with:** <Sibling terms that get mixed up, and how they differ.>
-  **Example:** <Concrete instance from the project.>
+  **Example:** <Concrete instance — generic or anonymized, never a real LP name, account number, or counterparty identity.>
   ```
+
+  A glossary defines terms, not instances: the `Example` field is generic or anonymized. If a real identifier seems necessary to make an example clear, stop and ask Danny rather than writing it.
 
 - **Offer to capture decisions as ADRs only when three tests all pass:**
   1. **Hard to reverse** — the cost of changing your mind later is meaningful
@@ -106,7 +121,7 @@ Walk through each section in turn. In each section your job is:
 - **One question at a time within a section.** Stacking three questions in one message kills the conversational flow Cowork is built for.
 - **One section at a time, full stop.** Don't dump the whole plan in chat. After each section, give a one-paragraph "here's what's locked" summary and ask if Danny wants to move on.
 
-If TCM Tech Stack Reference territory is involved (code under `D:\Projects\`, the production VM, Azure/Supabase/Cloudflare infra, IBKR/STP integrations, or anything in TCM Dashboard / TCM Website / Valuation Calculation workstations), read `D:\Claude\_Claude-Workspace\TCM Tech Stack Reference.docx` before strawmanning architecture sections. Ground the plan in the existing wiring rather than inventing it.
+If TCM Tech Stack Reference territory is involved (code under `D:\Claude\_Claude-Workspace\`, the production VM, Azure/Supabase/Cloudflare infra, IBKR/STP integrations, or anything in the TCM Database / TCM Website / Valuation workstations), read `D:\Claude\_Claude-Workspace\TCM Tech Stack Reference.docx` before strawmanning architecture sections. Ground the plan in the existing wiring rather than inventing it.
 
 ## Step 4 — Save the plan
 

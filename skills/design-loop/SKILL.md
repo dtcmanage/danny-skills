@@ -386,10 +386,13 @@ Resume rules:
 
 2. **Reconcile the glossary.** The adversarial loop sharpens, renames, and redefines terminology across rounds. The `CONTEXT.md` glossary written at plan time by `design-build` can drift out of sync with `design-final.md` — a future reader, or `parallel-build`, would then be working from stale definitions. Bring it back in line:
 
-   **Locate `CONTEXT.md`.** It sits one level above the `design\` folder: `D:\Claude\_Claude-Workspace\<workstation>\<project>\CONTEXT.md`. If it is not there, also check alongside the original plan file path supplied in the trigger (Mode A).
+   **Locate `CONTEXT.md` — Location contract, in precedence order:**
+   1. The project folder root: `D:\Claude\_Claude-Workspace\<workstation>\<project>\CONTEXT.md` — alongside `plan-draft.md`, one level above the `design\` folder.
+   2. For Mode A (the trigger supplied an arbitrary plan file path): alongside that supplied plan file — but only if it passes a consistency check. It must share at least one term with the current artifact's vocabulary, or carry a matching project/workstation identifier. A syntactically valid but unrelated adjacent `CONTEXT.md` is rejected.
+   3. If neither resolves: hard-stop and ask Danny. Never guess a location, and never create the file in a guessed place.
 
    **If `CONTEXT.md` exists:** Read it end-to-end, then read `design-final.md`. For each glossary term, check how `design-final.md` actually uses it, and handle one of three cases:
-   - **Drifted** — the term's meaning, name, or boundaries changed during the loop. Rewrite the entry to match `design-final.md`.
+   - **Drifted** — the term's meaning, name, or boundaries changed during the loop. Rewrite the entry to match `design-final.md`. If the rewrite changes the substance — anything beyond sharper phrasing — apply conflict handling: a change qualifies as wording-only (apply automatically, record in the changelog) only if it preserves all four of scope, exclusions (`Not to be confused with`), actor/entity mapping, and the semantic class of the example. If any of the four changes, it is a meaning change — pause and ask Danny via a structured `AskUserQuestion` (mirroring the repeat-reject pause) with three options: (A) Keep the existing definition, (B) Replace it, (C) Split into two distinctly named terms.
    - **New load-bearing term** — `design-final.md` leans on a domain term that was pinned or coined during the dialogue (visible in the per-round files and Dialogue Log) but never made it into the glossary. Add an entry.
    - **Stable** — leave it untouched.
 
@@ -399,12 +402,27 @@ Resume rules:
    ## <Term>
    **Definition:** <One-sentence canonical meaning.>
    **Not to be confused with:** <Sibling terms that get mixed up, and how they differ.>
-   **Example:** <Concrete instance from the project.>
+   **Example:** <Concrete instance — generic or anonymized, never a real LP name, account number, or counterparty identity.>
    ```
+
+   The `Example` field is generic or anonymized — never a real LP name, account number, or counterparty identity. If a real identifier is found in an existing entry, redact and replace it in the same pass, note it in the changelog ("sensitive example replaced"), and correct any downstream artifact that copied it.
+
+   **Flag promotion candidates.** A `CONTEXT.md` term is a glossary-promotion candidate — a project term that should move up to the workstation `glossary.md` — only if it passes the **promotion gate**, all three true: (1) it appears in two or more durable artifacts or projects; (2) its definition is implementation-agnostic; (3) no project-specific qualifier is required. List every candidate that passes in `design-summary.md` (step 3). On Danny's approval, promotion completes within this same finalization pass: add the term to the workstation `glossary.md` (`D:\Claude\_Claude-Workspace\<workstation>\<Workstation> Resources\glossary.md`) and remove the `CONTEXT.md` entry — or rewrite it as a narrowing pointer ("Project-specific narrowing of workstation term `<Term>`") if a project-specific delta remains. Never leave both as full definitions.
 
    **If `CONTEXT.md` does not exist:** Do not silently skip. Scan `design-final.md` and the Dialogue Log for terms the loop materially defined or disambiguated. If there are any, tell Danny and ask whether to create `CONTEXT.md` for them. `design-loop` does not build a glossary from scratch unprompted — that is `design-build`'s conversational job.
 
-3. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `parallel-build` skill — point its build agents at `CONTEXT.md` so parallel chunks stay terminologically consistent — or implement directly), a one-line per round summary of what Codex pushed for and how Claude responded, and — if the glossary changed in step 2 — a short "Glossary changes" note listing which terms were added or rewritten and why.
+3. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `parallel-build` skill — point its build agents at `CONTEXT.md` so parallel chunks stay terminologically consistent — or implement directly), a one-line per round summary of what Codex pushed for and how Claude responded, and — if the glossary changed in step 2 — a "Glossary changes" changelog block plus any promotion candidates.
+
+   The "Glossary changes" note is a structured changelog: three lists — **Added**, **Changed**, **Removed** — one line of rationale per term. Below it, list any glossary-promotion candidates that passed the promotion gate, so Danny can approve or decline promotion in this same pass.
+
+   ```markdown
+   ## Glossary changes
+   **Added:** <term — one-line rationale> ...
+   **Changed:** <term — one-line rationale> ...
+   **Removed:** <term — one-line rationale> ...
+
+   **Promotion candidates:** <CONTEXT.md term — passes the promotion gate; recommend promoting to <workstation> glossary.md> ...
+   ```
 
 4. Bare-path output to Danny:
    ```
@@ -426,7 +444,7 @@ Resume rules:
 - The 30-min hang guard is ONLY for genuine hangs, not for thought cutoff. Codex on `gpt-5.4` doing a deep architectural critique can legitimately run 10-20 min. Trust it.
 - Status markers from Codex are best-effort. If Codex stops emitting them mid-round but is still producing output (visible in the stream log), it is working.
 - Plan structure is the author's call. Do NOT restructure draft-v1.md when accepting it from a file or trigger prompt. Engage with substance, not form.
-- **Glossary reconciliation is finalization-only.** Do NOT try to maintain `CONTEXT.md` per round — Codex runs headless and cannot read it, and a per-round sync bloats an already dense loop. The end-state design is what the glossary must match, so reconcile once, at Finalization, against `design-final.md`.
+- **Glossary reconciliation is finalization-only.** Do NOT try to maintain `CONTEXT.md` per round — Codex runs headless and cannot read it, and a per-round sync bloats an already dense loop. The end-state design is what the glossary must match, so reconcile once, at Finalization, against `design-final.md`. Locate `CONTEXT.md` by the Location contract precedence list — never guess a path, never create the file in a guessed place; hard-stop and ask Danny if it does not resolve. A meaning-changing glossary conflict pauses for Danny via the structured 3-option `AskUserQuestion`; only wording-only edits (all four of scope, exclusions, actor mapping, example class preserved) apply automatically.
 
 ## Dialogue Log
 

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Personal skill pack: design-build, design-loop, parallel-build (a plan -> critique -> implement pipeline), writing-draft and writing-edit (sourced drafting and editing for letters, papers, and copy), plus starter-session-audit for end-of-session capture.",
   "author": {
     "name": "Danny Thai",
