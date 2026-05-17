@@ -6,18 +6,20 @@
   },
   "metadata": {
     "description": "Single-plugin marketplace exposing Danny's personal skill pack to Cowork and Claude Code.",
-    "version": "0.1.3"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "danny-skills",
       "source": "./",
-      "description": "Personal skill pack: design-build, design-loop, parallel-build (a plan -> critique -> implement pipeline), plus starter-session-audit for end-of-session capture.",
-      "version": "0.1.3",
+      "description": "Personal skill pack: design-build, design-loop, parallel-build (a plan -> critique -> implement pipeline), writing-draft and writing-edit (sourced drafting and editing for letters, papers, and copy), plus starter-session-audit for end-of-session capture.",
+      "version": "0.2.0",
       "keywords": [
         "planning",
         "design-review",
         "parallel-build",
+        "writing",
+        "editing",
         "session-audit",
         "personal"
       ]
