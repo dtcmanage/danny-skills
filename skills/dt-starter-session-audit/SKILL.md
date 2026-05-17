@@ -1,5 +1,5 @@
 ---
-name: starter-session-audit
+name: dt-starter-session-audit
 description: "Simple end-of-session audit that scans for uncaptured corrections, preferences, and decisions, then proposes saving them to the right workspace file. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.' Works with any Cowork workspace that has a CLAUDE.md and MEMORY.md in the root folder."
 ---
 

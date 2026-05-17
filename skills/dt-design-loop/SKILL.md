@@ -1,6 +1,6 @@
 ---
-name: design-loop
-description: Adversarial Claude-vs-Codex design dialogue on a plan. Trigger on "/design-loop" or "design-loop X".
+name: dt-design-loop
+description: Adversarial Claude-vs-Codex design dialogue on a plan. Trigger on "/dt-design-loop" or "dt-design-loop X".
 ---
 
 # Design Loop — Claude x Codex Coworker Dialogue
@@ -43,7 +43,7 @@ Trigger when the work is one of:
 
 **Framework state:** `provisional`. The acceptance-test runbook has not yet been run, so the six dimensions and their boundaries are the working set — used, but treated as not-yet-final. The set becomes `frozen` only when the runbook passes and Danny declares it. Surface the current state (`provisional` / `frozen`) in this skill's round provenance / plan metadata.
 
-This block is the single canonical source. It is copied verbatim — byte-identical — into both `design-build` and `design-loop`, and it is everything the two skills must execute identically. The release checklist diffs this block between the two SKILL.md files; any mismatch blocks the release.
+This block is the single canonical source. It is copied verbatim — byte-identical — into both `dt-design-build` and `dt-design-loop`, and it is everything the two skills must execute identically. The release checklist diffs this block between the two SKILL.md files; any mismatch blocks the release.
 
 ### The six dimensions
 
@@ -154,7 +154,7 @@ Create the design folder: `D:\Claude\_Claude-Workspace\<workstation>\<project>\d
 Three input modes, in priority order:
 
 ### Mode A — Plan file path provided
-If Danny's trigger prompt names a markdown file (e.g., "run design-loop on `D:\foo\plan.md`" or "design-loop on the plan in TCM Dashboard\tcm-snap\plan-draft.md"):
+If Danny's trigger prompt names a markdown file (e.g., "run dt-design-loop on `D:\foo\plan.md`" or "dt-design-loop on the plan in TCM Dashboard\tcm-snap\plan-draft.md"):
 1. Read that file end-to-end via `Read` tool.
 2. Copy its content VERBATIM to `<project folder>/design/draft-v1.md`, with exactly one allowed post-processing operation: ensure a single Dialogue Log section exists at the end (see step 3). Do NOT restructure, do NOT reformat, do NOT inject any other section headers the plan doesn't already have. Plan structure is the author's call.
 3. Check whether the plan already has a Dialogue Log section. Match is case-insensitive on the heading text after stripping leading `#` characters and whitespace; matches inside fenced code blocks do NOT count. If no matching section exists, append `## Dialogue Log` with `- (empty — populated each round)`. This is the only allowed structural injection.
@@ -215,12 +215,13 @@ If you want to watch live: in PowerShell, run
 
 Path: `<absolute path to project folder>/design/prompts/codex-critique-prompt-v<N>.md`
 
-**Codex runs headless and cannot read files — embed the artifacts in the prompt.** `codex exec` declines any model-issued shell command that an execpolicy `allow` rule has not pre-approved. On Windows, Codex reads files through a `pwsh -Command "..."` wrapper, and the prefix-based execpolicy cannot narrowly allow it — the whole script is one opaque token, so the only rule that matches is a blanket `pwsh` allow, which is an unacceptable global safety regression (it would let Codex run any PowerShell unprompted in every session). Verified 2026-05-16 with `codex execpolicy check`: an un-allowlisted command resolves to no decision, so `codex exec` will not run it, and `--ignore-rules` does not change that. So the design-loop does NOT rely on Codex reading the design folder. The prompt is **self-contained**: it embeds the artifacts verbatim. Never tell Codex to read a `./design/...` file — it cannot.
+**Codex runs headless and cannot read files — embed the artifacts in the prompt.** `codex exec` declines any model-issued shell command that an execpolicy `allow` rule has not pre-approved. On Windows, Codex reads files through a `pwsh -Command "..."` wrapper, and the prefix-based execpolicy cannot narrowly allow it — the whole script is one opaque token, so the only rule that matches is a blanket `pwsh` allow, which is an unacceptable global safety regression (it would let Codex run any PowerShell unprompted in every session). Verified 2026-05-16 with `codex execpolicy check`: an un-allowlisted command resolves to no decision, so `codex exec` will not run it, and `--ignore-rules` does not change that. So the dt-design-loop does NOT rely on Codex reading the design folder. The prompt is **self-contained**: it embeds the artifacts verbatim. Never tell Codex to read a `./design/...` file — it cannot.
 
 Assemble the prompt file in this order:
 1. The procedure preamble (template below).
-2. If `claude-response-v<N-1>.md` exists: a line `=== BEGIN PRIOR-ROUND CLAUDE RESPONSE: claude-response-v<N-1>.md ===`, then that file's **verbatim** content, then a line `=== END PRIOR-ROUND CLAUDE RESPONSE ===`. (If that file is very large, a condensed version is acceptable — but keep every decision and its reasoning intact.)
-3. A line `=== BEGIN ARTIFACT UNDER CRITIQUE: draft-v<N>.md ===`, then the **verbatim full content** of `draft-v<N>.md`, then a line `=== END ARTIFACT UNDER CRITIQUE ===`.
+2. A line `=== BEGIN CANONICAL DIMENSION CONTRACT ===`, then the **verbatim full content** of this skill's "Canonical Dimension Contract" section (the six dimensions, tie-break rule, security minimum-checks, per-finding schema, overlays), then a line `=== END CANONICAL DIMENSION CONTRACT ===`. Codex is headless and cannot read this skill file — embedding the Contract here is the only way the six dimensions reach it.
+3. If `claude-response-v<N-1>.md` exists: a line `=== BEGIN PRIOR-ROUND CLAUDE RESPONSE: claude-response-v<N-1>.md ===`, then that file's **verbatim** content, then a line `=== END PRIOR-ROUND CLAUDE RESPONSE ===`. (If that file is very large, a condensed version is acceptable — but keep every decision and its reasoning intact.)
+4. A line `=== BEGIN ARTIFACT UNDER CRITIQUE: draft-v<N>.md ===`, then the **verbatim full content** of `draft-v<N>.md`, then a line `=== END ARTIFACT UNDER CRITIQUE ===`.
 
 Procedure preamble (substitute `<N>` and `<N-1>` literals throughout):
 
@@ -234,10 +235,12 @@ IMPORTANT — do not attempt to read any files. `codex exec` cannot run file-rea
 As you work, emit progress markers to stdout, one per line, as you naturally transition between focus areas:
 
 STATUS: Reading draft and prior dialogue
-STATUS: Analyzing edge cases
-STATUS: Reviewing security surface
-STATUS: Examining robustness and operator UX
-STATUS: Checking internal consistency
+STATUS: Checking Intent
+STATUS: Checking Completeness
+STATUS: Checking Coherence
+STATUS: Checking Resilience
+STATUS: Checking Economy
+STATUS: Checking Feasibility
 STATUS: Reviewing Claude's prior reasoning (if applicable)
 STATUS: Composing verdict
 
@@ -255,21 +258,31 @@ Output your final response as markdown with these sections in this order:
 One paragraph summarizing your overall take this round. What is the most important thing for Claude to engage with?
 SECTION_COMPLETE: Headline
 
-## Edge Cases
-For each item: state the issue in one sentence, explain the scenario in a paragraph, propose a concrete fix. If you have nothing material to add here, write "No new edge cases this round" and move on.
-SECTION_COMPLETE: Edge Cases
+Critique the design against the six dimensions of the Canonical Dimension Contract embedded above (Intent, Completeness, Coherence, Resilience, Economy, Feasibility). File every finding under **exactly one** dimension, chosen by root cause per the tie-break rule; if the root cause genuinely spans two, flag it `AMBIGUOUS_ROOT_CAUSE` and file it under one temporary primary as the Contract specifies — never dual-file. For each finding give: a one-sentence issue; a paragraph of scenario; a concrete remediation; a validation check; and a Severity (high / medium / low) per the rubric. If a dimension has nothing material, write "No <Dimension> findings this round" and move on.
 
-## Security
-Same structure. Auth, authz, secrets, injection, supply chain, data exposure.
-SECTION_COMPLETE: Security
+## Intent
+Findings filed under Intent — the design solves the wrong problem, or rests on a false / unstated assumption about it.
+SECTION_COMPLETE: Intent
 
-## Robustness & UX
-Failure modes, observability gaps, scalability ceilings, operator ergonomics, missed features that materially improve UX.
-SECTION_COMPLETE: Robustness & UX
+## Completeness
+Findings filed under Completeness — the problem is framed right but required cases, scope, or inputs are missing.
+SECTION_COMPLETE: Completeness
 
-## Consistency
-Contradictions or under-specified contracts.
-SECTION_COMPLETE: Consistency
+## Coherence
+Findings filed under Coherence — the design contradicts itself, or a contract / interface between its parts is under-specified.
+SECTION_COMPLETE: Coherence
+
+## Resilience
+Findings filed under Resilience — the design breaks under failure, load, or adversarial conditions. Work the security minimum-checks list: address each check, or mark it N/A to the three-part standard in the Contract.
+SECTION_COMPLETE: Resilience
+
+## Economy
+Findings filed under Economy — the design is over- or under-built relative to the value it delivers. Name specifically what is disproportionate and what should be cut or simplified.
+SECTION_COMPLETE: Economy
+
+## Feasibility
+Findings filed under Feasibility — the design cannot realistically be built, operated, or maintained with the available means.
+SECTION_COMPLETE: Feasibility
 
 ## Engagement with Claude's prior reasoning
 Only if a prior-round Claude response was embedded above. For each prior point where Claude rejected, deferred, OR countered your input, briefly state whether you accept Claude's reasoning or push back, and why. Counters are partial absorptions of your point — engage with whether the counter actually addresses your concern or sidesteps it.
@@ -380,9 +393,9 @@ Read `codex-feedback-v<N>.md` carefully. For EACH item Codex raised, decide hone
 As you work each point, print a headline to chat so Danny can follow live:
 
 ```
-[Round N reconcile] Codex Edge-1 (one-line topic): ACCEPT — incorporating chunked-write fallback to handle multi-GB inputs
-[Round N reconcile] Codex Security-2 (one-line topic): REJECT — disagree because <one-line reasoning>
-[Round N reconcile] Codex UX-3 (one-line topic): COUNTER — proposing <alternative> instead because <one-line reasoning>
+[Round N reconcile] Codex Intent-1 (one-line topic): ACCEPT — incorporating the reframed problem statement
+[Round N reconcile] Codex Resilience-2 (one-line topic): REJECT — disagree because <one-line reasoning>
+[Round N reconcile] Codex Economy-3 (one-line topic): COUNTER — proposing <alternative> instead because <one-line reasoning>
 ```
 
 After all points are reconciled, write `claude-response-v<N>.md`:
@@ -433,7 +446,7 @@ Append to the `## Dialogue Log` section:
 ### Round <N>
 - **Codex headline:** <one-line gist, ~25 words — distilled summary of Codex's headline this round>
 - **Claude headline:** <one-line gist, ~25 words — distilled summary of Claude's overall stance>
-- **Provenance:** ts=`<ISO timestamp>`, pwd=`<literal cwd>`, canonical=`<resolved cwd>`, prompt SHA-256=`<hex>`
+- **Provenance:** ts=`<ISO timestamp>`, pwd=`<literal cwd>`, canonical=`<resolved cwd>`, prompt SHA-256=`<hex>`, framework=`<provisional | frozen>`
 - **Verdict:** `<VERDICT token>` | **Confidence:** `<high|medium|low — reason>`
 - Full files: ./design/codex-feedback-v<N>.md, ./design/claude-response-v<N>.md
 - Counts: Accepted <X>, Rejected <Y>, Deferred <Z>, Countered <W>
@@ -463,7 +476,7 @@ Resume rules:
 
 1. Copy the final accepted draft to `design-final.md`.
 
-2. **Reconcile the glossary.** The adversarial loop sharpens, renames, and redefines terminology across rounds. The `CONTEXT.md` glossary written at plan time by `design-build` can drift out of sync with `design-final.md` — a future reader, or `parallel-build`, would then be working from stale definitions. Bring it back in line:
+2. **Reconcile the glossary.** The adversarial loop sharpens, renames, and redefines terminology across rounds. The `CONTEXT.md` glossary written at plan time by `dt-design-build` can drift out of sync with `design-final.md` — a future reader, or `dt-parallel-build`, would then be working from stale definitions. Bring it back in line:
 
    **Locate `CONTEXT.md` — Location contract, in precedence order:**
    1. The project folder root: `D:\Claude\_Claude-Workspace\<workstation>\<project>\CONTEXT.md` — alongside `plan-draft.md`, one level above the `design\` folder.
@@ -475,7 +488,7 @@ Resume rules:
    - **New load-bearing term** — `design-final.md` leans on a domain term that was pinned or coined during the dialogue (visible in the per-round files and Dialogue Log) but never made it into the glossary. Add an entry.
    - **Stable** — leave it untouched.
 
-   Only domain-meaningful terms belong in the glossary — not implementation details. Do not invent or pad. Use the exact entry format below (identical to `design-build`):
+   Only domain-meaningful terms belong in the glossary — not implementation details. Do not invent or pad. Use the exact entry format below (identical to `dt-design-build`):
 
    ```markdown
    ## <Term>
@@ -488,9 +501,9 @@ Resume rules:
 
    **Flag promotion candidates.** A `CONTEXT.md` term is a glossary-promotion candidate — a project term that should move up to the workstation `glossary.md` — only if it passes the **promotion gate**, all three true: (1) it appears in two or more durable artifacts or projects; (2) its definition is implementation-agnostic; (3) no project-specific qualifier is required. List every candidate that passes in `design-summary.md` (step 3). On Danny's approval, promotion completes within this same finalization pass: add the term to the workstation `glossary.md` (`D:\Claude\_Claude-Workspace\<workstation>\<Workstation> Resources\glossary.md`) and remove the `CONTEXT.md` entry — or rewrite it as a narrowing pointer ("Project-specific narrowing of workstation term `<Term>`") if a project-specific delta remains. Never leave both as full definitions.
 
-   **If `CONTEXT.md` does not exist:** Do not silently skip. Scan `design-final.md` and the Dialogue Log for terms the loop materially defined or disambiguated. If there are any, tell Danny and ask whether to create `CONTEXT.md` for them. `design-loop` does not build a glossary from scratch unprompted — that is `design-build`'s conversational job.
+   **If `CONTEXT.md` does not exist:** Do not silently skip. Scan `design-final.md` and the Dialogue Log for terms the loop materially defined or disambiguated. If there are any, tell Danny and ask whether to create `CONTEXT.md` for them. `dt-design-loop` does not build a glossary from scratch unprompted — that is `dt-design-build`'s conversational job.
 
-3. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `parallel-build` skill — point its build agents at `CONTEXT.md` so parallel chunks stay terminologically consistent — or implement directly), a one-line per round summary of what Codex pushed for and how Claude responded, and — if the glossary changed in step 2 — a "Glossary changes" changelog block plus any promotion candidates.
+3. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `dt-parallel-build` skill — point its build agents at `CONTEXT.md` so parallel chunks stay terminologically consistent — or implement directly), a one-line per round summary of what Codex pushed for and how Claude responded, and — if the glossary changed in step 2 — a "Glossary changes" changelog block plus any promotion candidates.
 
    The "Glossary changes" note is a structured changelog: three lists — **Added**, **Changed**, **Removed** — one line of rationale per term. Below it, list any glossary-promotion candidates that passed the promotion gate, so Danny can approve or decline promotion in this same pass.
 
@@ -524,6 +537,7 @@ Resume rules:
 - Status markers from Codex are best-effort. If Codex stops emitting them mid-round but is still producing output (visible in the stream log), it is working.
 - Plan structure is the author's call. Do NOT restructure draft-v1.md when accepting it from a file or trigger prompt. Engage with substance, not form.
 - **Glossary reconciliation is finalization-only.** Do NOT try to maintain `CONTEXT.md` per round — Codex runs headless and cannot read it, and a per-round sync bloats an already dense loop. The end-state design is what the glossary must match, so reconcile once, at Finalization, against `design-final.md`. Locate `CONTEXT.md` by the Location contract precedence list — never guess a path, never create the file in a guessed place; hard-stop and ask Danny if it does not resolve. A meaning-changing glossary conflict pauses for Danny via the structured 3-option `AskUserQuestion`; only wording-only edits (all four of scope, exclusions, actor mapping, example class preserved) apply automatically.
+- **Canonical Dimension Contract drift check.** The Canonical Dimension Contract block is the shared spine of `dt-design-build` and `dt-design-loop`. On any release touching either skill, diff the whole block (`<!-- BEGIN canonical-dimension-contract -->` to `<!-- END canonical-dimension-contract -->`) between the two SKILL.md files — any mismatch blocks the release. The block is edited in one place and copied verbatim; never hand-edit one copy alone.
 
 ## Dialogue Log
 

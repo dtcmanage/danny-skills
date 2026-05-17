@@ -1,11 +1,11 @@
 ---
-name: design-build
-description: Plan a project and produce a markdown plan file. Trigger on "/design-build" or "design-build X".
+name: dt-design-build
+description: Plan a project and produce a markdown plan file. Trigger on "/dt-design-build" or "dt-design-build X".
 ---
 
 # Design-Build — Cowork Project Planning
 
-You are not a notetaker. You are a planning partner. Drive the conversation, push back where the thinking is thin, and surface what Danny hasn't considered. The output is a plan good enough that design-loop can run an adversarial Codex round on it without first having to fix bad scaffolding.
+You are not a notetaker. You are a planning partner. Drive the conversation, push back where the thinking is thin, and surface what Danny hasn't considered. The output is a plan good enough that dt-design-loop can run an adversarial Codex round on it without first having to fix bad scaffolding.
 
 This skill runs in Cowork, where Danny thinks out loud. Pace matches conversation — one section at a time, not a wall of headers.
 
@@ -17,8 +17,8 @@ Trigger when the work is at the "scope this before building" stage:
 - Anything Danny wants to think through before committing to build steps
 
 **Do NOT fire** for:
-- Adversarial review of an existing plan (that's `design-loop`)
-- Implementation handoff from a finalized plan (that's `parallel-build`)
+- Adversarial review of an existing plan (that's `dt-design-loop`)
+- Implementation handoff from a finalized plan (that's `dt-parallel-build`)
 - Single-file changes, bug fixes, or exploratory hacks where planning overhead exceeds savings
 
 If unsure, ask: "Is this scoped enough to plan, or still fuzzy enough that we should just discuss first?"
@@ -49,7 +49,7 @@ If the trigger phrase already answers any of these, pre-populate them in the que
 
 **Framework state:** `provisional`. The acceptance-test runbook has not yet been run, so the six dimensions and their boundaries are the working set — used, but treated as not-yet-final. The set becomes `frozen` only when the runbook passes and Danny declares it. Surface the current state (`provisional` / `frozen`) in this skill's round provenance / plan metadata.
 
-This block is the single canonical source. It is copied verbatim — byte-identical — into both `design-build` and `design-loop`, and it is everything the two skills must execute identically. The release checklist diffs this block between the two SKILL.md files; any mismatch blocks the release.
+This block is the single canonical source. It is copied verbatim — byte-identical — into both `dt-design-build` and `dt-design-loop`, and it is everything the two skills must execute identically. The release checklist diffs this block between the two SKILL.md files; any mismatch blocks the release.
 
 ### The six dimensions
 
@@ -135,7 +135,9 @@ Based on the surface, propose a section structure in 3-4 sentences and ask Danny
 - **Refactor** — Current Pain, Target Shape, Touch Surface, Phasing, Risk & Reversibility, Validation
 - **Data pipeline** — Sources, Transformations, Storage, Schedule & Triggers, Idempotency & Backfill, Observability
 
-If the project doesn't fit any of these cleanly, propose a custom structure and briefly explain why. Close with: "Want me to drive through these sections, or rearrange first?"
+If the project doesn't fit any of these cleanly, propose a custom structure and briefly explain why.
+
+**Whatever structure you propose, the plan is drafted *against the six dimensions* of the Canonical Dimension Contract above** — Intent, Completeness, Coherence, Resilience, Economy, Feasibility. The section layout stays surface-shaped, but every dimension must have a home: Danny, and a later `dt-design-loop` run, must both be able to assess the plan on all six. In your proposal, name which sections carry which dimensions, and flag any dimension with no natural home — that gap is itself worth surfacing now rather than in adversarial review. Close with: "Want me to drive through these sections, or rearrange first?"
 
 Wait for the go-ahead before Step 3.
 
@@ -144,8 +146,8 @@ Wait for the go-ahead before Step 3.
 Walk through each section in turn. In each section your job is:
 
 - **Open with a strawman AND a recommended answer, not a blank prompt.** Don't say "what are the inputs?" — say "I'd guess inputs are a folder path and a date format string, and I'd recommend the folder path be required while the date format defaults to ISO 8601. Sound right, or push back?" Every question carries your position, not just options. If you genuinely don't know enough to recommend, say so explicitly rather than asking a naked question.
-- **Push back where the thinking is thin.** If Danny says "it'll just retry on failure," ask what the retry budget is, what counts as transient vs. permanent, what happens when retries exhaust. Make the plan answer questions before Codex catches them in design-loop.
-- **Surface absences.** If a service has no observability story, name it. If an integration has no auth story, name it. If a migration has no rollback, name it.
+- **Push back where the thinking is thin.** If Danny says "it'll just retry on failure," ask what the retry budget is, what counts as transient vs. permanent, what happens when retries exhaust. Make the plan answer questions before Codex catches them in dt-design-loop.
+- **Surface absences and excess — walk the six dimensions.** Take the plan through each dimension of the Canonical Dimension Contract and ask, per dimension, *what is missing* and *what should be cut*: **Intent** — is the problem itself right, or rests on an unstated assumption? **Completeness** — what required case, scope, or input is absent? (e.g. a service with no observability story, an integration with no auth story, a migration with no rollback). **Coherence** — what contradicts itself or is an under-specified contract? **Resilience** — what fails under load or attack, and does it clear the security minimum-checks? **Economy** — what is over-built, and what could be cut or simplified? **Feasibility** — what cannot realistically be built or operated with the means at hand? The Economy pass is the subtractive one — name what to remove, not only what to add.
 - **Cross-reference claims against the code.** When Danny states how something currently works, verify against the actual files when the project is in scope (the workspace, or anywhere readable). If you find a contradiction, surface it immediately: "Your code does X here, but you just said Y — which is right?" Don't accept claims about code without checking.
 - **Maintain a `CONTEXT.md` glossary as terminology resolves.** When Danny uses a term that's fuzzy or overloaded, propose a precise canonical version: "You're saying 'account' — do you mean the Customer record, the User login, or the IBKR brokerage account? Those are three different things." When a term gets pinned, write it to `CONTEXT.md` immediately — don't batch. Only include terms meaningful to the domain — not implementation details.
 
@@ -213,6 +215,7 @@ Plan structure:
 **Date:** <ISO date>
 **Surface:** <CLI utility | service | integration | migration | website | refactor | data pipeline | other>
 **Scope:** <light | complex>
+**Dimension framework:** <provisional | frozen>
 
 ## <Section 1 from the agreed structure>
 <Decisions from the conversation. Prose with bullets where they help. Not template language, not transcript.>
@@ -236,7 +239,7 @@ After saving, output exactly this, with the bare absolute path on its own line:
 ```
 Plan saved at <bare absolute path>.
 
-To run adversarial review with Codex when ready, open Claude Code in workspace root and trigger /design-loop pointing at this file.
+To run adversarial review with Codex when ready, open Claude Code in workspace root and trigger /dt-design-loop pointing at this file.
 ```
 
 No `computer://` link, no markdown wrapper around the path — Danny's client doesn't render those.
@@ -251,6 +254,7 @@ If a `CONTEXT.md` or ADR was also written, list them on their own lines below th
 - **"I don't know" is not a stopping point.** Park it in Open Questions and keep moving. Stalling on one section kills the session.
 - **The plan is the decisions, not the conversation.** Wandering paths and discarded ideas don't go in. If a section was discussed and rejected as out-of-scope, list it under Out of Scope, not as a stub section.
 - **If Danny pushes back on a section structure you proposed, take it seriously.** He sees the shape of the project; you see the shape of a planning template. He wins on shape.
-- **Don't call Codex.** That's design-loop's job. Design-build ends with the plan file written.
-- **Keep the plan honest.** If Danny hasn't thought through security, write the section as "Security — not yet thought through, see Open Questions" rather than fabricating one. Codex will see through fabrication in design-loop and waste a round on it.
-- **Don't push toward design-loop or parallel-build.** End with the handoff text and stop. Danny decides when to advance.
+- **Don't call Codex.** That's dt-design-loop's job. dt-design-build ends with the plan file written.
+- **Keep the plan honest.** If Danny hasn't thought through security, write the section as "Security — not yet thought through, see Open Questions" rather than fabricating one. Codex will see through fabrication in dt-design-loop and waste a round on it.
+- **Don't push toward dt-design-loop or dt-parallel-build.** End with the handoff text and stop. Danny decides when to advance.
+- **Canonical Dimension Contract drift check.** The Canonical Dimension Contract block is the shared spine of `dt-design-build` and `dt-design-loop`. On any release touching either skill, diff the whole block (`<!-- BEGIN canonical-dimension-contract -->` to `<!-- END canonical-dimension-contract -->`) between the two SKILL.md files — any mismatch blocks the release. The block is edited in one place and copied verbatim; never hand-edit one copy alone.

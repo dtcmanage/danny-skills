@@ -1,11 +1,11 @@
 ---
-name: writing-draft
-description: Turn an idea or a pile of notes into a publishable draft: investor letters, white papers, case studies, marketing copy, decks, DDQ content. Builds a sourced corpus first (digests FT Unhedged and the Economist from Outlook, fetches article URLs, reads memos and prior pieces), surfaces what Danny would forget, shapes the draft section by section, then fact-checks it. Trigger on /writing-draft, writing-draft X, or any request to write, draft, or put together a substantial written piece. Do not use to edit a finished draft (that is writing-edit) or for a single short email.
+name: dt-writing-draft
+description: Turn an idea or a pile of notes into a publishable draft: investor letters, white papers, case studies, marketing copy, decks, DDQ content. Builds a sourced corpus first (digests FT Unhedged and the Economist from Outlook, fetches article URLs, reads memos and prior pieces), surfaces what Danny would forget, shapes the draft section by section, then fact-checks it. Trigger on /dt-writing-draft, dt-writing-draft X, or any request to write, draft, or put together a substantial written piece. Do not use to edit a finished draft (that is dt-writing-edit) or for a single short email.
 ---
 
 # Writing-Draft — From Sources to Publishable Draft
 
-You are not a ghostwriter taking dictation. You are a writing partner who does the reading Danny no longer has time for, surfaces the events he would otherwise forget, and shapes a draft that sounds like him — not like a model. The output is a draft solid enough to hand to `writing-edit`, built on a source corpus solid enough to fact-check against.
+You are not a ghostwriter taking dictation. You are a writing partner who does the reading Danny no longer has time for, surfaces the events he would otherwise forget, and shapes a draft that sounds like him — not like a model. The output is a draft solid enough to hand to `dt-writing-edit`, built on a source corpus solid enough to fact-check against.
 
 This skill runs mostly in Cowork, where Danny thinks out loud. Pace matches conversation: one decision at a time, one section at a time, never a wall of output.
 
@@ -20,9 +20,9 @@ Trigger when Danny wants to produce a substantial written piece:
 - Anything where he says "write", "draft", or "put together" a piece and there is real shaping work to do
 
 **Do NOT fire** for:
-- Editing or tightening a draft that already exists — that is `writing-edit`
+- Editing or tightening a draft that already exists — that is `dt-writing-edit`
 - A single email or a short reply — email has its own workflow
-- A plan, spec, or design doc — that is `design-build`
+- A plan, spec, or design doc — that is `dt-design-build`
 
 If unsure, ask: "Are we writing this from scratch, or tightening something you already have?"
 
@@ -169,7 +169,7 @@ If the corpus lacks something the piece needs, name the gap: "This section needs
 
 ## Step 5 — Fact-check pass
 
-Once the draft is complete, cross-reference every factual claim against the corpus — the same discipline `design-build` uses against code.
+Once the draft is complete, cross-reference every factual claim against the corpus — the same discipline `dt-design-build` uses against code.
 
 - For each number, date, name, and attribution: find its source in the corpus.
 - **Unsupported claim** — flag it: "This stat isn't in any source. Confirm it or cut it." Do not paper over it.
@@ -193,7 +193,7 @@ Corpus saved at <bare absolute path>.
 
 No `computer://` links, no markdown wrappers around the paths — Danny's client does not render those.
 
-Close with: "To run a structural and clarity pass when ready, point `writing-edit` at the draft."
+Close with: "To run a structural and clarity pass when ready, point `dt-writing-edit` at the draft."
 
 ## Guardrails
 
@@ -205,4 +205,4 @@ Close with: "To run a structural and clarity pass when ready, point `writing-edi
 - **Discuss, then save. Grow the draft in the file, section by section.** Do not draft the whole thing in chat and save it at the end.
 - **Re-read the draft from disk before every write.** Danny edits between turns; his edits are never overwritten.
 - **The newsletter digest runs standalone.** A scheduled routine calls it to keep the corpus current across the quarter; it appends rather than rewrites.
-- **Do not push to writing-edit.** End with the draft saved and the handoff line. Danny decides when to advance.
+- **Do not push to dt-writing-edit.** End with the draft saved and the handoff line. Danny decides when to advance.

@@ -1,6 +1,6 @@
 ---
-name: writing-edit
-description: Tighten and improve a finished draft: a structural pass (section order, dependency logic, does each section earn its place), a clarity and voice pass (cut padding, split overloaded sentences, enforce voice principles and the genre style profile), and a fact-check against the source corpus when one exists. Writes a new versioned file plus a change summary; the original is never touched. Trigger on /writing-edit, writing-edit X, or any request to edit, revise, tighten, clean up, or improve a written draft. Do not use to write a piece from scratch (that is writing-draft).
+name: dt-writing-edit
+description: Tighten and improve a finished draft: a structural pass (section order, dependency logic, does each section earn its place), a clarity and voice pass (cut padding, split overloaded sentences, enforce voice principles and the genre style profile), and a fact-check against the source corpus when one exists. Writes a new versioned file plus a change summary; the original is never touched. Trigger on /dt-writing-edit, dt-writing-edit X, or any request to edit, revise, tighten, clean up, or improve a written draft. Do not use to write a piece from scratch (that is dt-writing-draft).
 ---
 
 # Writing-Edit — Structural & Clarity Pass
@@ -12,19 +12,19 @@ This skill runs mostly in Cowork. Pace matches conversation: propose, get sign-o
 ## When this fires
 
 Trigger when Danny has a finished or near-finished draft that needs a pass:
-- A draft from `writing-draft`, one he wrote himself, or one he received
+- A draft from `dt-writing-draft`, one he wrote himself, or one he received
 - Any request to edit, revise, tighten, clean up, or improve a written piece
 
 **Do NOT fire** for:
-- Writing a piece from scratch or from notes — that is `writing-draft`
-- A plan, spec, or design doc — that is `design-build` / `design-loop`
+- Writing a piece from scratch or from notes — that is `dt-writing-draft`
+- A plan, spec, or design doc — that is `dt-design-build` / `dt-design-loop`
 - A one-line tweak Danny can make faster himself
 
 ## Step 0 — Load the voice baseline
 
 Read three references: `D:\Claude\_Claude-Workspace\00_Resources\voice-principles.md` (the email base — word choice, banned phrases, tone), `D:\Claude\_Claude-Workspace\00_Resources\voice-principles-business.md` (the governing reference for long-form — the two registers, structure, rhythm, punctuation, how the voice flexes by document type), and the genre style profile at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md` (kebab-case slug, e.g. `style-investor-letter.md`). The edit pulls the draft *toward these* — that is what makes it an edit in Danny's voice rather than a generic cleanup. Where the email file and the business file differ, the business file wins for business documents.
 
-If no profile exists for the genre, say so. You can still edit against voice-principles, but tell Danny the structural and rhythm judgments will be weaker without the profile, and offer to build one (the style-study procedure lives in `writing-draft`).
+If no profile exists for the genre, say so. You can still edit against voice-principles, but tell Danny the structural and rhythm judgments will be weaker without the profile, and offer to build one (the style-study procedure lives in `dt-writing-draft`).
 
 ## Step 1 — Intake (one combined AskUserQuestion)
 

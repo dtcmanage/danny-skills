@@ -1,6 +1,6 @@
 ---
-name: handoff
-description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Do not use for capturing memory or preferences mid-session - that is starter-session-audit's job."
+name: dt-handoff
+description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Do not use for capturing memory or preferences mid-session - that is dt-starter-session-audit's job."
 argument-hint: "What should the next session focus on?"
 ---
 
@@ -57,4 +57,4 @@ ii "<absolute path>"
 
 ## Step 5: Run the session audit
 
-After the handoff is written and reported, invoke the `starter-session-audit` skill to capture any uncaptured corrections, preferences, and decisions from the session.
+After the handoff is written and reported, invoke the `dt-starter-session-audit` skill to capture any uncaptured corrections, preferences, and decisions from the session.
