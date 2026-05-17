@@ -77,16 +77,19 @@ One foreman, two coding agents (Claude + Codex) each in their own git worktree, 
 
 **Trigger:** `/starter-session-audit`, or "audit this session" / "session audit" / "what did we miss" / "end of session check"
 
-A lightweight end-of-session audit. Scans the conversation for corrections, preferences, decisions, and new context that were stated but never written down, then proposes where each belongs — file, section, exact wording — for approval before anything is saved.
+A scope-aware end-of-session audit. Scans the conversation for things that were stated but never written down, then routes each one to the right file at the right scope tier — for approval before anything is saved.
 
 **What it does:**
 
-- Discovers the workspace root and reads the CLAUDE.md / MEMORY.md layers that were in play this session.
-- Scans the full conversation for four signal types: corrections, explicit preferences, decisions, and new context.
-- Filters each finding against what's already saved, so only genuinely new items surface.
-- Presents findings grouped into "Recommend" and "Your call", then writes only the approved changes.
+- Discovers the workspace root and reads the CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md layers that were in play this session, plus the workspace Routing Map (read as scope-topology data) to enumerate workstation tiers.
+- Scans the full conversation for five signal types: corrections, explicit preferences, decisions, project state changes, and **pinned terminology**.
+- **Routes on two axes.** Axis A — content class: rules go to a `CLAUDE.md`, facts to a `MEMORY.md`, terms to a project `CONTEXT.md` or workstation `glossary.md`. Axis B — scope tier: each finding lands at the narrowest tier (root / workstation / project) where it is fully true. A fixed Execution Pipeline orders every decision, with five non-write / multi outcomes — DROP, CONFLICT, CONFLICT-CLEANUP, MULTI_SCOPE, UNCERTAIN.
+- **Catches terminology.** A retroactive safety net for terms a session pinned that never made it into a file — placed per the self-contained terminology contract in Appendix A (project `CONTEXT.md` vs workstation `glossary.md`, narrowing, split-term, promotion gate, entry format).
+- **Never resolves a contradiction silently.** A finding that contradicts a broader-scope rule or fact is never auto-filed — it is surfaced under "Conflicts" with the colliding entry named and a structured per-content-class resolution (rules: fix root / exclusion at root / flagged override; facts: update broader fact / scoped delta / keep-and-drop; terms: Keep / Replace / Split). Root stays the single source of truth for rules.
+- **Recognizes one-offs.** A genuinely session-scoped finding is a DROP — deliberately not written anywhere, listed compactly under "Not saving (one-off)" so a misclassification can still be caught.
+- Presents findings grouped into Recommend / Your call / Conflicts / Not saving, then writes only the approved batch — there are no zero-click writes.
 
-**Skip it for:** sessions where nothing was corrected, decided, or newly shared — it reports a clean session rather than manufacture findings.
+**Skip it for:** sessions where nothing was corrected, decided, pinned, or newly shared — it reports a clean session rather than manufacture findings.
 
 ---
 
