@@ -383,13 +383,37 @@ Resume rules:
 ## Finalization
 
 1. Copy the final accepted draft to `design-final.md`.
-2. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `parallel-build` skill or implement directly), and a one-line per round summary of what Codex pushed for and how Claude responded.
-3. Bare-path output to Danny:
+
+2. **Reconcile the glossary.** The adversarial loop sharpens, renames, and redefines terminology across rounds. The `CONTEXT.md` glossary written at plan time by `design-build` can drift out of sync with `design-final.md` — a future reader, or `parallel-build`, would then be working from stale definitions. Bring it back in line:
+
+   **Locate `CONTEXT.md`.** It sits one level above the `design\` folder: `D:\Claude\_Claude-Workspace\<workstation>\<project>\CONTEXT.md`. If it is not there, also check alongside the original plan file path supplied in the trigger (Mode A).
+
+   **If `CONTEXT.md` exists:** Read it end-to-end, then read `design-final.md`. For each glossary term, check how `design-final.md` actually uses it, and handle one of three cases:
+   - **Drifted** — the term's meaning, name, or boundaries changed during the loop. Rewrite the entry to match `design-final.md`.
+   - **New load-bearing term** — `design-final.md` leans on a domain term that was pinned or coined during the dialogue (visible in the per-round files and Dialogue Log) but never made it into the glossary. Add an entry.
+   - **Stable** — leave it untouched.
+
+   Only domain-meaningful terms belong in the glossary — not implementation details. Do not invent or pad. Use the exact entry format below (identical to `design-build`):
+
+   ```markdown
+   ## <Term>
+   **Definition:** <One-sentence canonical meaning.>
+   **Not to be confused with:** <Sibling terms that get mixed up, and how they differ.>
+   **Example:** <Concrete instance from the project.>
+   ```
+
+   **If `CONTEXT.md` does not exist:** Do not silently skip. Scan `design-final.md` and the Dialogue Log for terms the loop materially defined or disambiguated. If there are any, tell Danny and ask whether to create `CONTEXT.md` for them. `design-loop` does not build a glossary from scratch unprompted — that is `design-build`'s conversational job.
+
+3. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `parallel-build` skill — point its build agents at `CONTEXT.md` so parallel chunks stay terminologically consistent — or implement directly), a one-line per round summary of what Codex pushed for and how Claude responded, and — if the glossary changed in step 2 — a short "Glossary changes" note listing which terms were added or rewritten and why.
+
+4. Bare-path output to Danny:
    ```
    D:\Claude\_Claude-Workspace\<workstation>\<project>\design\design-final.md
    D:\Claude\_Claude-Workspace\<workstation>\<project>\design\design-summary.md
    ```
-4. Ask whether to proceed to implementation now or scope a new session for it.
+   If `CONTEXT.md` was created or updated in step 2, list its path on its own line below these.
+
+5. Ask whether to proceed to implementation now or scope a new session for it.
 
 ## Guardrails
 
@@ -402,6 +426,7 @@ Resume rules:
 - The 30-min hang guard is ONLY for genuine hangs, not for thought cutoff. Codex on `gpt-5.4` doing a deep architectural critique can legitimately run 10-20 min. Trust it.
 - Status markers from Codex are best-effort. If Codex stops emitting them mid-round but is still producing output (visible in the stream log), it is working.
 - Plan structure is the author's call. Do NOT restructure draft-v1.md when accepting it from a file or trigger prompt. Engage with substance, not form.
+- **Glossary reconciliation is finalization-only.** Do NOT try to maintain `CONTEXT.md` per round — Codex runs headless and cannot read it, and a per-round sync bloats an already dense loop. The end-state design is what the glossary must match, so reconcile once, at Finalization, against `design-final.md`.
 
 ## Dialogue Log
 
