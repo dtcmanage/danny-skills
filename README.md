@@ -1,21 +1,21 @@
 # danny-skills
 
-Claude Code skills authored for this workspace. Three of them form a single pipeline — scope a project, stress-test the design, then build it in parallel — and `starter-session-audit` is a standalone end-of-session skill.
+Claude Code skills authored for this workspace. Three of them form a single pipeline — scope a project, stress-test the design, then build it in parallel — and `dt-starter-session-audit` is a standalone end-of-session skill.
 
 ```
-design-build  →  design-loop  →  parallel-build
-   (plan)         (critique)        (implement)
+dt-design-build  →  dt-design-loop  →  dt-parallel-build
+    (plan)            (critique)          (implement)
 ```
 
-The three pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `starter-session-audit` runs independently at the end of any session.
+The three pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `dt-starter-session-audit` runs independently at the end of any session.
 
 ---
 
-## design-build
+## dt-design-build
 
-**Trigger:** `/design-build` or `design-build <topic>`
+**Trigger:** `/dt-design-build` or `dt-design-build <topic>`
 
-A conversational planning partner — not a notetaker. Drives section-by-section discussion to produce a markdown plan file good enough that `design-loop` can critique it without first cleaning up bad scaffolding.
+A conversational planning partner — not a notetaker. Drives section-by-section discussion to produce a markdown plan file good enough that `dt-design-loop` can critique it without first cleaning up bad scaffolding.
 
 **What it does:**
 
@@ -28,15 +28,15 @@ A conversational planning partner — not a notetaker. Drives section-by-section
 
 ---
 
-## design-loop
+## dt-design-loop
 
-**Trigger:** `/design-loop` or `design-loop <plan-path>`
+**Trigger:** `/dt-design-loop` or `dt-design-loop <plan-path>`
 
 Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the design as equals across multiple rounds until the design is genuinely shippable — or until the round cap forces a decision.
 
 **What it does:**
 
-- Reads the plan (from `design-build`, a file path, or a substantive trigger prompt) into `draft-v1.md` verbatim. Plan structure is the author's call; the skill is structure-agnostic from Round 1 onward.
+- Reads the plan (from `dt-design-build`, a file path, or a substantive trigger prompt) into `draft-v1.md` verbatim. Plan structure is the author's call; the skill is structure-agnostic from Round 1 onward.
 - Pre-flight: cheap sanity check that Codex responds, before burning reasoning tokens.
 - Each round: Codex critiques the current draft (edge cases, security, robustness, consistency, engagement with prior reasoning) and emits a structured verdict (`NOTHING_TO_ADD` / `MINOR_POLISH_ONLY` / `MATERIAL_CHANGES_NEEDED`) + confidence.
 - Claude reconciles per item — ACCEPT / REJECT / DEFER / COUNTER with real reasoning. Repeat-rejects (Codex raises, Claude rejects, Codex raises again) pause for the user to adjudicate.
@@ -47,9 +47,9 @@ Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the desig
 
 ---
 
-## parallel-build
+## dt-parallel-build
 
-**Trigger:** `/parallel-build`
+**Trigger:** `/dt-parallel-build`
 
 One foreman, two coding agents (Claude + Codex) each in their own git worktree, one merge agent. Semantic conflicts escalate. Built for implementation work that decomposes cleanly into 2–6 independent chunks.
 
@@ -73,18 +73,22 @@ One foreman, two coding agents (Claude + Codex) each in their own git worktree, 
 
 ---
 
-## starter-session-audit
+## dt-starter-session-audit
 
-**Trigger:** `/starter-session-audit`, or "audit this session" / "session audit" / "what did we miss" / "end of session check"
+**Trigger:** `/dt-starter-session-audit`, or "audit this session" / "session audit" / "what did we miss" / "end of session check"
 
-A lightweight end-of-session audit. Scans the conversation for corrections, preferences, decisions, and new context that were stated but never written down, then proposes where each belongs — file, section, exact wording — for approval before anything is saved.
+A scope-aware end-of-session audit. Scans the conversation for things stated but never written down, then routes each finding on two axes — content class and scope tier — to one exact destination, surfacing contradictions for adjudication instead of filing them silently. Nothing is saved without batch approval.
 
 **What it does:**
 
-- Discovers the workspace root and reads the CLAUDE.md / MEMORY.md layers that were in play this session.
-- Scans the full conversation for four signal types: corrections, explicit preferences, decisions, and new context.
-- Filters each finding against what's already saved, so only genuinely new items surface.
-- Presents findings grouped into "Recommend" and "Your call", then writes only the approved changes.
+- Discovers the workspace root and reads the CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md layers in play this session, and the workspace Routing Map (as scope-topology data) to enumerate workstation tiers.
+- Scans the full conversation for five signal types: corrections, explicit preferences, decisions, project state changes, and newly pinned terminology.
+- **Routes on two axes.** Axis A — content class: rules → CLAUDE.md, facts → MEMORY.md, terminology → CONTEXT.md (project) or glossary.md (workstation). Axis B — scope tier: the narrowest of root / workstation / project where the finding is fully true. A finding true in disjoint scopes is handled as MULTI_SCOPE with a presentation and atomic-apply contract.
+- **Runs a fixed Execution pipeline** with provenance, persisted-file trust, and redaction (fallback-ladder) gates, so different runs persist the same memory. An undecidable call resolves to UNCERTAIN and is surfaced, never auto-filed.
+- **Refines instead of duplicating.** A deterministic match order selects the entry to touch; exact duplicates are silently skipped, sharper-same-meaning findings refine in place, governed by content-class-specific refine tests.
+- **Never auto-files a contradiction.** A finding that negates a broader-scope rule or fact is surfaced under "Conflicts" with a structured resolution — fix-root / exclusion / flagged override for rules, update / scoped-delta / keep-and-drop for facts, Keep / Replace / Split for terms. Root stays the single source of truth for rules.
+- **Drops genuine one-offs.** Session-only findings are listed under "Not saving (one-off)" and deliberately not persisted.
+- Presents findings grouped into Recommend / Your call / Conflicts / Not saving / Auto-handled, each with a one-line rationale, then writes only the approved changes.
 
 **Skip it for:** sessions where nothing was corrected, decided, or newly shared — it reports a clean session rather than manufacture findings.
 
