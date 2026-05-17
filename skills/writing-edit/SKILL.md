@@ -22,7 +22,7 @@ Trigger when Danny has a finished or near-finished draft that needs a pass:
 
 ## Step 0 — Load the voice baseline
 
-Read `D:\Claude\_Claude-Workspace\00_Resources\voice-principles.md` and the genre style profile at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md` (kebab-case slug, e.g. `style-investor-letter.md`). The edit pulls the draft *toward these* — that is what makes it an edit in Danny's voice rather than a generic cleanup. voice-principles is email-derived: apply its word-choice and tone rules, ignore its email-length guidance for long-form.
+Read three references: `D:\Claude\_Claude-Workspace\00_Resources\voice-principles.md` (the email base — word choice, banned phrases, tone), `D:\Claude\_Claude-Workspace\00_Resources\voice-principles-business.md` (the governing reference for long-form — the two registers, structure, rhythm, punctuation, how the voice flexes by document type), and the genre style profile at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md` (kebab-case slug, e.g. `style-investor-letter.md`). The edit pulls the draft *toward these* — that is what makes it an edit in Danny's voice rather than a generic cleanup. Where the email file and the business file differ, the business file wins for business documents.
 
 If no profile exists for the genre, say so. You can still edit against voice-principles, but tell Danny the structural and rhythm judgments will be weaker without the profile, and offer to build one (the style-study procedure lives in `writing-draft`).
 
@@ -52,7 +52,7 @@ Surface the proposed structural changes as a short list — move, cut, merge, ad
 With the structure agreed, work one section at a time:
 
 - Tighten. Cut padding, hedges, and throat-clearing. If a sentence does two jobs, split it. If a paragraph does not move the reader forward, cut it.
-- Pull the prose onto Danny's voice: kill the banned phrases ("leverage", "dive into", "circle back", "touch base", "game-changing" and the rest), remove em dashes, drop fluffy openers. Match the rhythm and devices in the style profile.
+- Pull the prose onto Danny's voice: cut the empty corporate register ("dive into", "circle back", "touch base", "game-changing", "synergize"), drop fluffy openers, and apply the business profile's punctuation rules — em dashes only for the occasional inline definition, never as a semicolon substitute. Keep "leverage": it is a precise financial term in business writing, banned only as email filler. Match the rhythm and devices in the style profile.
 - Do not impose an arbitrary length cap. Match length to stakes — a dense argument paragraph and a one-line transition are both fine when the job calls for them.
 - Preserve Danny's meaning and his calls. Edit the prose, not the argument. If you think a point is wrong, flag it; do not quietly rewrite it.
 
@@ -95,9 +95,9 @@ No `computer://` links, no markdown wrappers around the paths — Danny's client
 
 ## Guardrails
 
-- **Load voice-principles and the style profile first.** They are what make this an edit in Danny's voice, not a generic cleanup.
+- **Load the voice references and the style profile first.** `voice-principles-business.md` governs, `voice-principles.md` is the email base beneath it, and the genre style profile is the per-genre layer. They are what make this an edit in Danny's voice, not a generic cleanup.
 - **Never overwrite the original.** The edit is always a new versioned file. Danny compares and decides.
 - **Get sign-off before restructuring.** Reordering is a big, visible change — propose, then move. Clarity edits within an agreed structure do not need per-section permission.
 - **Edit the prose, not the argument.** Preserve Danny's meaning and his calls. A point you think is wrong gets flagged, not silently rewritten.
-- **No arbitrary length caps.** Match length to stakes, per voice-principles.
+- **No arbitrary length caps.** Match length to stakes, per the business voice profile.
 - **Flag, do not fabricate.** Unsupported facts get surfaced; nothing gets smoothed over or invented.

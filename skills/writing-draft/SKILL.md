@@ -28,11 +28,13 @@ If unsure, ask: "Are we writing this from scratch, or tightening something you a
 
 ## Step 0 — Load the voice baseline (before writing anything)
 
-Before drafting a single sentence, load two things. This is a standing rule, not a suggestion: a draft written without them sounds generic and gets thrown away.
+Before drafting a single sentence, load the voice references. This is a standing rule, not a suggestion: a draft written without them sounds generic and gets thrown away.
 
-1. **Voice principles.** Read `D:\Claude\_Claude-Workspace\00_Resources\voice-principles.md`. This is the genre-independent floor — word choice, banned phrases, tone, no em dashes. It was extracted from Danny's *email*, so its word-choice and tone rules carry to everything, but its length guidance ("one to three sentences") is email-specific. Ignore that part for long-form.
+1. **Voice principles — the email base.** Read `D:\Claude\_Claude-Workspace\00_Resources\voice-principles.md`. The genre-independent floor: word choice, banned phrases, tone. It was extracted from Danny's *email*, so its word-choice and tone rules carry over, but it does not govern long-form on its own.
 
-2. **Genre style profile.** Each genre has a profile at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md`, where `<genre>` is the kebab-case slug (e.g. `style-investor-letter.md`). It captures how Danny actually writes that genre: structure, rhythm, how he handles numbers, recurring devices, and topics to skip. Read it if it exists.
+2. **Business writing voice — the governing reference.** Read `D:\Claude\_Claude-Workspace\00_Resources\voice-principles-business.md`. Distilled from Danny's actual business documents, this governs everything the skill produces: the two registers (personal versus institutional), structure, sentence rhythm, how he handles numbers and bad news, punctuation, and how the voice flexes by document type. Where it and the email file differ — em dashes and the word "leverage" being the clearest cases — this file wins for business writing.
+
+3. **Genre style profile.** Each genre has a profile at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md`, where `<genre>` is the kebab-case slug (e.g. `style-investor-letter.md`). It captures how Danny actually writes that genre: structure, rhythm, how he handles numbers, recurring devices, and topics to skip. Read it if it exists.
 
    If no profile exists for this genre, run the **style study** below before drafting.
 
@@ -195,8 +197,8 @@ Close with: "To run a structural and clarity pass when ready, point `writing-edi
 
 ## Guardrails
 
-- **Load voice-principles and the style profile before writing a word.** A draft written without them sounds like a model, not like Danny, and gets discarded.
-- **voice-principles.md is email-derived.** Its word-choice, banned-phrase, and tone rules apply to everything. Its length guidance does not — long-form pieces match length to stakes.
+- **Load the voice references and the style profile before writing a word.** A draft written without them sounds like a model, not like Danny, and gets discarded.
+- **The business voice profile governs.** `voice-principles-business.md` is the governing voice reference for long-form; `voice-principles.md` is the email base beneath it. Where they differ, the business profile wins — it permits the sparing definitional em dash and the financial term "leverage", both banned by the email file. Length always matches stakes, never an arbitrary cap.
 - **Pull comprehensively.** The full quarter of newsletters, not a convenient sample. Sampling is how events get missed, and catching missed events is half the point of the corpus.
 - **The corpus is a quarry, not a script.** Mine it; rework what you pull; the draft reads as one voice.
 - **Never fabricate a source or a fact.** An unsupported claim gets flagged, not smoothed over. Fabrication destroys the fact-check discipline.
