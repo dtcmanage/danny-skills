@@ -16,6 +16,21 @@ Two things, and only two things:
 
 That's it. No file reorganization, no cleanup, no progress tracking. Just: "Did I learn anything this session that should be remembered?"
 
+## The Core Principle: MEMORY.md Is a Snapshot, Not a Log
+
+MEMORY.md is loaded into context at the start of every session. It must stay a **tight, canonical snapshot of current project state** — what's true now, what's done, what's next. It is not a changelog.
+
+This means: when a session changes a project, you **revise that project's entry in place** — overwrite stale state with current state. You do **not** append a new narrative paragraph describing what changed this session. Detailed change history lives in git commits and project logs, not MEMORY.md.
+
+Symptoms of doing it wrong (avoid these):
+
+- A project entry that has grown into a 200+ word run-on paragraph.
+- Multiple sentences narrating the same project's evolution across several sessions ("first we did X, then Y, then a follow-up did Z...").
+- Commit hashes, migration numbers, and test counts piled up as a play-by-play. Keep only the *latest* such marker if it identifies current state; drop the trail.
+- Verified-complete sub-tasks that no longer inform future work but are still listed.
+
+A good MEMORY.md project entry is a few tight lines a future session can read in seconds and know exactly where things stand.
+
 ## Step 1: Discover Your Workspace
 
 Find your workspace root dynamically. Look for a CLAUDE.md file in the mounted workspace folder. Read whatever workspace files exist. The audit adapts to your setup — it works whether you have one workstation or twenty.
@@ -55,40 +70,91 @@ You made a decision that affects future work. Chose one option over another, set
 
 **Example:** "Let's go with the $5,000 savings target." "Cancel the gym membership, keep Spotify."
 
-### D. New Context
+### D. Project State Changes
 
-You shared a fact about yourself, your work, or your world that Cowork didn't previously know. Contact details, schedules, relationships, project updates, or anything that changes how Cowork should approach future tasks.
+The session moved a project forward, finished a task, changed an architecture, or otherwise changed the *current state* of something already tracked in MEMORY.md (or something new that should be).
 
-**What to look for:** Information that would help Cowork in a future session if it remembered it.
+**What to look for:** Work that changes what a future session needs to know about a project's status — a phase completed, a task done, a next step identified, a path or ID changed.
 
-**Example:** "My rent went up to $2,600 starting next month." "Sarah is my new manager."
+**Example:** "Phase 2 of the dashboard build is done; Phase 3 (renderer) is next." "The repo moved to a new path."
 
 ## Step 3: Filter Against What's Already Saved
 
-For each finding from Step 2, check whether it's already captured in the workspace files you loaded in Step 1. Skip anything that's already written down. Only surface genuinely new findings.
+For each finding from Step 2, check whether it's already captured in the workspace files you loaded in Step 1.
 
-## Step 4: Present Findings
+- **Corrections, preferences, decisions:** Skip anything already written down. Only surface genuinely new findings.
+- **Project state changes:** Don't just check whether the project is mentioned — check whether the *current entry is still accurate*. If the session made the entry stale, the finding is a **revision** to that entry, not an addition.
+
+## Step 4: Decide File and Shape for Each Finding
+
+### Which file
+
+Apply the two-test rule from CLAUDE.md:
+- **Prescribes behavior** ("always," "never," "before X do Y") → CLAUDE.md, under the right section.
+- **A fact about the world that can change** (status, paths, IDs, contacts, decisions) → MEMORY.md.
+
+When unsure, say which file you think it belongs in and ask.
+
+### How MEMORY.md entries are shaped
+
+MEMORY.md changes are one of three operations — pick the right one:
+
+1. **Revise in place** (the common case for project state changes). Rewrite the existing project entry so it reflects current reality. Replace stale status, prune verified-complete items that no longer inform future work, update changed paths/IDs. Do not append a new paragraph.
+2. **Add a new entry** (only when the fact is genuinely new and has no home). Use the per-entry shape below.
+3. **Append a discrete fact** to a stable list (a new contact, a new tool, a new credential location). Short list items, not narrative.
+
+**Per-entry shape for any project in MEMORY.md.** Each project entry should fit this skeleton — keep it tight, a few lines, not a wall of text:
+
+```
+- **[Project name]** — [one-line identity: what it is, repo path, key IDs].
+  - **Status:** [one line — the current phase/state in plain terms].
+  - **Current state:** [the canonical snapshot — what is true right now, the
+    facts a future session needs. Latest relevant markers only (one commit
+    hash / migration number if it pins current state), not a trail of them].
+  - **Next:** [what remains — the immediate next step(s) or open tasks].
+  - **Done:** [optional — recently completed, verified items kept ONLY while
+    they still give useful context. Drop an item once it no longer informs
+    future work. This is not a permanent changelog.]
+```
+
+Not every entry needs every field — a dormant or low-priority project may just be identity + Status + Next. The point is consistency and tightness, not filling a template.
+
+When you revise an entry, **rewrite the whole entry** to this shape. Carry forward every durable fact — paths, IDs, contacts, decisions, open tasks. Only cut the play-by-play change narrative and verified-complete noise. If you are unsure whether a detail is still relevant, **keep it and flag it** for Danny rather than deleting it.
+
+Non-project MEMORY.md sections (who Danny is, the M365/Azure stack, service providers, etc.) are stable reference. Update a value in place when it changes; don't restructure them.
+
+## Step 5: Present Findings
 
 Present each finding in this format:
 
 ```
 **[Number]. [What happened]**
 
-- **The rule/fact:** [Exact wording to save, written as a clear instruction or statement]
-- **Where it goes:** [File path and section name]
+- **Type:** [Correction / Preference / Decision / Project state]
+- **Operation:** [for MEMORY.md: Revise in place / Add new entry / Append fact.
+  For CLAUDE.md: Add rule]
+- **Where it goes:** [File path and section / entry name]
+- **The change:** [For a revision, show the rewritten entry — or the
+  before/after of the part that changes. For an addition, show the exact
+  text to add. For a CLAUDE.md rule, the exact wording.]
 - **Why:** [One sentence on why this matters for future sessions]
 ```
+
+For a **revise-in-place** finding, always show the proposed rewritten entry in full so Danny can see exactly what is being replaced and confirm nothing durable was dropped.
 
 Group findings into two categories:
 
 **Recommend (apply unless you object):** Clear-cut findings where the right action is obvious.
 
-**Your call:** Findings where there's a judgment call or where you might want to phrase the rule differently.
+**Your call:** Findings where there's a judgment call — phrasing, or whether a detail should be pruned or kept.
 
 If there are no findings, say so: "Clean session. Nothing new to capture." Don't manufacture findings.
 
-## Step 5: Apply Approved Changes
+## Step 6: Apply Approved Changes
 
-After you approve (all, some, or none), write the approved changes to the appropriate files. For each change, confirm what was written and where.
+After you approve (all, some, or none), write the approved changes to the appropriate files.
+
+- For a **revise-in-place** change, replace the old entry with the rewritten one — do not leave both.
+- After writing, confirm what was written and where, and note anything you kept-but-flagged as possibly stale so Danny can decide later.
 
 **Important:** Never write changes without approval. Always present findings first and wait.
