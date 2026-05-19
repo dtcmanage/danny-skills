@@ -18,7 +18,7 @@ Trigger when the work is at the "scope this before building" stage:
 
 **Do NOT fire** for:
 - Adversarial review of an existing plan (that's `dt-design-loop`)
-- Implementation handoff from a finalized plan (that's `dt-parallel-build`)
+- Implementation handoff from a finalized plan (that's `dt-build`)
 - Single-file changes, bug fixes, or exploratory hacks where planning overhead exceeds savings
 
 If unsure, ask: "Is this scoped enough to plan, or still fuzzy enough that we should just discuss first?"
@@ -256,5 +256,5 @@ If a `CONTEXT.md` or ADR was also written, list them on their own lines below th
 - **If Danny pushes back on a section structure you proposed, take it seriously.** He sees the shape of the project; you see the shape of a planning template. He wins on shape.
 - **Don't call Codex.** That's dt-design-loop's job. dt-design-build ends with the plan file written.
 - **Keep the plan honest.** If Danny hasn't thought through security, write the section as "Security — not yet thought through, see Open Questions" rather than fabricating one. Codex will see through fabrication in dt-design-loop and waste a round on it.
-- **Don't push toward dt-design-loop or dt-parallel-build.** End with the handoff text and stop. Danny decides when to advance.
+- **Don't push toward dt-design-loop or dt-build.** End with the handoff text and stop. Danny decides when to advance.
 - **Canonical Dimension Contract drift check.** The Canonical Dimension Contract block is the shared spine of `dt-design-build` and `dt-design-loop`. On any release touching either skill, diff the whole block (`<!-- BEGIN canonical-dimension-contract -->` to `<!-- END canonical-dimension-contract -->`) between the two SKILL.md files — any mismatch blocks the release. The block is edited in one place and copied verbatim; never hand-edit one copy alone.

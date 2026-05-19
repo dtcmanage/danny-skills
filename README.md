@@ -1,10 +1,10 @@
 # danny-skills
 
-Claude Code skills authored for this workspace. Three of them form a single pipeline — scope a project, stress-test the design, then build it in parallel — and `dt-starter-session-audit` is a standalone end-of-session skill.
+Claude Code skills authored for this workspace. Three of them form a single pipeline — scope a project, stress-test the design, then build it — and `dt-starter-session-audit` is a standalone end-of-session skill.
 
 ```
-dt-design-build  →  dt-design-loop  →  dt-parallel-build
-    (plan)            (critique)          (implement)
+dt-design-build  →  dt-design-loop  →  dt-build
+    (plan)            (critique)         (build)
 ```
 
 The three pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `dt-starter-session-audit` runs independently at the end of any session.
@@ -47,29 +47,29 @@ Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the desig
 
 ---
 
-## dt-parallel-build
+## dt-build
 
-**Trigger:** `/dt-parallel-build`
+**Trigger:** `/dt-build` or `dt-build <plan-path>`
 
-One foreman, two coding agents (Claude + Codex) each in their own git worktree, one merge agent. Semantic conflicts escalate. Built for implementation work that decomposes cleanly into 2–6 independent chunks.
+Owns the whole build. Takes a finalized plan and delivers it on `dev` — complete to spec, verified, committed milestone by milestone. One orchestrator decomposes the plan and drives a roster of build / verification / merge subagents across Claude and Codex; it never writes product code itself. Parallelism is one tactic, reached for only when the work genuinely splits — not a precondition.
 
 **What it does:**
 
-- **Phase 1 — Foreman decomposition.** Freezes shared contracts (`contracts.md` — types, endpoints, schema, migration order, generated paths) BEFORE decomposing. Splits the plan into chunks with explicit file lists, dependencies, and acceptance criteria in `build-manifest.md`. Initializes `build-state.md` as the live ground-truth view.
-- **Phase 2 — Worktrees.** One `git worktree` per chunk under `../worktrees/<RUN_ID>-<chunk-slug>/`. Hard containment check blocks any worktree that escapes the expected scope.
-- **Phase 3 — Parallel execution.** Launches all agents in a single message so they actually run concurrently. Each prompt embeds the contracts revision SHA-256; agents must echo it back. Post-completion scope check catches unexpected files and escalates via 3-option adjudication (accept / revert / abort).
-- **Phase 4 — Merge integration.** A dedicated Claude merge agent integrates branches in dependency order. Conflicts are classified against a fixed decision table — mechanical (formatting / import order / trivial-merge) and lockfile (policy-driven) can auto-resolve; semantic and generated-code conflicts always escalate with a standardized bundle (repro diff, impacted tests, blast radius, A/B candidates, recommendation).
-- **Phase 5 — Cleanup and handoff.** Archives every artifact into `build-log-<RUN_ID>.md`. Optional PR or merge-to-main.
+- **Scales to the plan.** No minimum-chunk gate: an easy plan runs as one milestone on one build subagent; a sprawling plan becomes many sequential milestones, several fanned out into parallel chunks across worktrees.
+- **Milestone model.** A build is an ordered sequence of milestones — each a coherent, independently verifiable, independently committable slice, committed once verification passes. Milestones run sequentially; chunks within a milestone run in parallel.
+- **One authoritative spec.** Phase 1 extracts a Decision Ledger and runs a mandatory preflight (repo state, dirty-tree isolation, a secret-bearing denylist scan, baseline-floor discovery, a two-level toolchain probe). Phase 2 writes an immutable `build-plan.md` with a unified verification manifest and takes a single explicit approval. Mid-build plan defects become numbered amendments; everything targets the resulting effective spec.
+- **Verify-and-patch.** Every milestone is verified — machine-checkable or by a Claude verification subagent — before commit. Off-spec code is patched by a fresh fix subagent within a hard 2-attempt budget; plan defects escalate instead.
+- **`dev` is never the surface a failure lands on.** Phase 4 reruns integrated verification, rehearses the merge on a branch cut from the latest `dev`, then updates `dev` under a compare-and-swap.
 
-**Resume:** Phase 0 reconciles `build-state.md` against actual git/worktree state if a prior run was interrupted.
+**Resume:** Phase 0 reattaches to the run-specific branch and continues from the first uncommitted milestone — a committed milestone is a git commit.
 
 **Safety boundaries:**
-- Test commands never reach a shell as a string — they're tokenized into argv and shell-quoted per element. Control characters in input are hard-rejected.
-- Codex runs `--sandbox workspace-write` (never elevated).
-- Agents are forbidden from writing outside their worktree.
-- The merge agent has auto-action authority only for the conflict decision table; everything else escalates.
+- Sandbox / model-routing / fix-budget are orchestrator-set and never derivable from artifact content.
+- A secret-bearing denylist keeps secret files from reaching an external model provider; subagent output is scrubbed for secret-shaped values at the moment of ingest.
+- Codex runs `--sandbox workspace-write` (never elevated); worktree containment is a hard block.
+- `dt-build` lands work on `dev` and never touches `main`.
 
-**Skip it for:** single-file features, tightly-coupled work, anything under ~1 hour of agent time.
+**Skip it for:** authoring or reviewing the plan (that's `dt-design-build` / `dt-design-loop`), or non-git projects.
 
 ---
 

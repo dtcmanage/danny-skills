@@ -476,7 +476,7 @@ Resume rules:
 
 1. Copy the final accepted draft to `design-final.md`.
 
-2. **Reconcile the glossary.** The adversarial loop sharpens, renames, and redefines terminology across rounds. The `CONTEXT.md` glossary written at plan time by `dt-design-build` can drift out of sync with `design-final.md` — a future reader, or `dt-parallel-build`, would then be working from stale definitions. Bring it back in line:
+2. **Reconcile the glossary.** The adversarial loop sharpens, renames, and redefines terminology across rounds. The `CONTEXT.md` glossary written at plan time by `dt-design-build` can drift out of sync with `design-final.md` — a future reader, or `dt-build`, would then be working from stale definitions. Bring it back in line:
 
    **Locate `CONTEXT.md` — Location contract, in precedence order:**
    1. The project folder root: `D:\Claude\_Claude-Workspace\<workstation>\<project>\CONTEXT.md` — alongside `plan-draft.md`, one level above the `design\` folder.
@@ -503,7 +503,7 @@ Resume rules:
 
    **If `CONTEXT.md` does not exist:** Do not silently skip. Scan `design-final.md` and the Dialogue Log for terms the loop materially defined or disambiguated. If there are any, tell Danny and ask whether to create `CONTEXT.md` for them. `dt-design-loop` does not build a glossary from scratch unprompted — that is `dt-design-build`'s conversational job.
 
-3. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `dt-parallel-build` skill — point its build agents at `CONTEXT.md` so parallel chunks stay terminologically consistent — or implement directly), a one-line per round summary of what Codex pushed for and how Claude responded, and — if the glossary changed in step 2 — a "Glossary changes" changelog block plus any promotion candidates.
+3. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `dt-build` skill — point its build agents at `CONTEXT.md` so parallel chunks stay terminologically consistent — or implement directly), a one-line per round summary of what Codex pushed for and how Claude responded, and — if the glossary changed in step 2 — a "Glossary changes" changelog block plus any promotion candidates.
 
    The "Glossary changes" note is a structured changelog: three lists — **Added**, **Changed**, **Removed** — one line of rationale per term. Below it, list any glossary-promotion candidates that passed the promotion gate, so Danny can approve or decline promotion in this same pass.
 
