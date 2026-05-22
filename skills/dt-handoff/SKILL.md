@@ -10,6 +10,25 @@ Produce a self-contained handoff that lets a fresh session resume this work with
 
 Run the steps in order. The handoff is written and reported **before** the session audit, so momentum is captured first.
 
+## Step 0: Executable-next-phase gate (mandatory, runs before Step 1)
+
+A handoff must point at an **executable next phase**, not bookmark something that isn't ready to be built. Before writing anything, identify the unmet prerequisites that would block the next session from starting work:
+
+- Upstream dependencies that haven't shipped (a package version, a tag, a published artifact).
+- Decisions Danny hasn't made (architecture choices, scope (a) vs (b), permission shape, vendor selection).
+- Local-state work Danny hasn't done (credentials, key custody, account hardening, substrate setup).
+- Verifications that haven't run (MFA confirmations, feature-availability checks).
+
+If ANY of these are unmet, **do not write the handoff yet.** Instead:
+
+1. **Surface every unmet prerequisite in chat**, in a numbered list. For each one, name it concretely and recommend a concrete solution or the specific check Danny can run to close it. Don't give a research paper — give the decision Danny needs to make and your recommendation.
+2. **Wait for Danny to close them** or to explicitly say "park it anyway."
+3. **Only then write the handoff** — and only for the now-executable next phase.
+
+A handoff that says "start work when X, Y, and Z all become true" is the failure mode this gate exists to prevent. Burying conditions in artifacts wastes the next session's time and Danny's time. The chat is the right surface for unresolved conditions; the handoff is the right surface for ready-to-execute work.
+
+If Danny explicitly says "park it pending external work" after seeing the prerequisites, that's the one path where a conditional handoff is acceptable — and the chat conversation that preceded it is the receipt that the conditions were surfaced first.
+
 ## Step 1: Locate the project
 
 Identify the root folder of the project this session worked on — for a code repo, the repo root; otherwise the workstation folder. If no project is apparent from the session, ask Danny which project this belongs to before continuing.
