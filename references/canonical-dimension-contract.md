@@ -2,7 +2,7 @@
 
 **Framework state:** `provisional`. The acceptance-test runbook has not yet been run, so the six dimensions and their boundaries are the working set — used, but treated as not-yet-final. The set becomes `frozen` only when the runbook passes and Danny declares it. Surface the current state (`provisional` / `frozen`) in this skill's round provenance / plan metadata.
 
-This block is the single canonical source. It is copied verbatim — byte-identical — into both `dt-design-build` and `dt-design-loop`, and it is everything the two skills must execute identically. The release checklist diffs this block between the two SKILL.md files; any mismatch blocks the release.
+The Canonical Dimension Contract is maintained as a single source at the repo-level `references/canonical-dimension-contract.md`. Pipeline skills reference it from there rather than copying it; any skill that still carries an inline copy keeps that copy byte-identical to the canonical file, and the release checklist diffs each inline copy against it — any mismatch blocks the release.
 
 ### The six dimensions
 

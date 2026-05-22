@@ -9,19 +9,40 @@ Cross-skill references break the moment a script trusts the current working dire
 invoked from anywhere; `pwd` is whatever the user happened to be standing in. Every script therefore
 resolves its paths from the SKILL.md location, not the cwd.
 
-Canonical PowerShell pattern:
+### The junction reparse trap
+
+All three surfaces (CLI/Agent-SDK, Cowork, Codex) load skills through **per-skill directory junctions**
+— e.g. `~\.agents\skills\dt-plan` is a junction whose target is `danny-skills\skills\dt-plan`. A naive
+`..`/`..` walk out of a script under such a junction stays *inside the junction tree*
+(`~\.agents\skills\`), never reaching the real repo. Repo-level `references/`, `scripts/`, and `assets/`
+live only under the real `danny-skills\` root, so the walk-up MUST first resolve the skill folder through
+its reparse point to the real target, then climb to the repo root.
+
+Canonical PowerShell pattern (PowerShell 7+):
 
 ```powershell
-$ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$SkillRoot  = Split-Path -Parent $ScriptDir                       # the skill's SKILL.md folder
-$RepoRoot   = Split-Path -Parent (Split-Path -Parent $SkillRoot)  # danny-skills/
-$RepoRefs   = Join-Path $RepoRoot 'references'
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$SkillRoot = Split-Path -Parent $ScriptDir                        # the skill's SKILL.md folder
+
+# Resolve the skill folder through any junction/symlink to its REAL target before
+# walking up. ResolveLinkTarget($true) returns the final target for a reparse point,
+# or $null when the path is not a link (i.e. the skill is being run directly inside
+# the repo working tree) -- in which case keep $SkillRoot as-is.
+$resolved = (Get-Item -LiteralPath $SkillRoot).ResolveLinkTarget($true)
+if ($resolved) { $SkillRoot = $resolved.FullName }
+
+$RepoRoot    = Split-Path -Parent (Split-Path -Parent $SkillRoot) # danny-skills/
+$RepoRefs    = Join-Path $RepoRoot 'references'
 $RepoScripts = Join-Path $RepoRoot 'scripts'
 ```
 
+Verified 2026-05-21 against a live junction: from `~\.agents\skills\<skill>\scripts\` the pattern resolves
+to `danny-skills\references`, and from inside the repo working tree the `$null` fallback keeps the literal
+path. Every repo-level script must use this reparse-resolving form, never a bare `..`/`..` walk.
+
 Rules:
-- A script in `skills/<name>/scripts/` reaches its own skill's files via `$SkillRoot`, and repo-level
-  shared files via `$RepoRoot`.
+- A script in `skills/<name>/scripts/` reaches its own skill's files via `$SkillRoot` (post-resolution),
+  and repo-level shared files via `$RepoRoot`.
 - A SKILL.md references its own per-skill files first (relative to the skill folder); cross-skill and
   repo-level references use repo-relative paths anchored on the SKILL.md location.
 - Never hardcode an absolute path, and never assume the cwd is the repo root or the skill folder.

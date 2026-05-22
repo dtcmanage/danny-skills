@@ -17,7 +17,7 @@ Trigger when Danny has a finished or near-finished draft that needs a pass:
 
 **Do NOT fire** for:
 - Writing a piece from scratch or from notes — that is `dt-writing-draft`
-- A plan, spec, or design doc — that is `dt-design-build` / `dt-design-loop`
+- A plan, spec, or design doc — that is `dt-plan` / `dt-design-loop`
 - A one-line tweak Danny can make faster himself
 
 ## Step 0 — Load the voice baseline

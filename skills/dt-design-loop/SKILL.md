@@ -43,7 +43,7 @@ Trigger when the work is one of:
 
 **Framework state:** `provisional`. The acceptance-test runbook has not yet been run, so the six dimensions and their boundaries are the working set — used, but treated as not-yet-final. The set becomes `frozen` only when the runbook passes and Danny declares it. Surface the current state (`provisional` / `frozen`) in this skill's round provenance / plan metadata.
 
-This block is the single canonical source. It is copied verbatim — byte-identical — into both `dt-design-build` and `dt-design-loop`, and it is everything the two skills must execute identically. The release checklist diffs this block between the two SKILL.md files; any mismatch blocks the release.
+The Canonical Dimension Contract is maintained as a single source at the repo-level `references/canonical-dimension-contract.md`. Pipeline skills reference it from there rather than copying it; any skill that still carries an inline copy keeps that copy byte-identical to the canonical file, and the release checklist diffs each inline copy against it — any mismatch blocks the release.
 
 ### The six dimensions
 
@@ -476,7 +476,7 @@ Resume rules:
 
 1. Copy the final accepted draft to `design-final.md`.
 
-2. **Reconcile the glossary.** The adversarial loop sharpens, renames, and redefines terminology across rounds. The `CONTEXT.md` glossary written at plan time by `dt-design-build` can drift out of sync with `design-final.md` — a future reader, or `dt-build`, would then be working from stale definitions. Bring it back in line:
+2. **Reconcile the glossary.** The adversarial loop sharpens, renames, and redefines terminology across rounds. The `CONTEXT.md` glossary written at plan time by `dt-plan` can drift out of sync with `design-final.md` — a future reader, or `dt-build`, would then be working from stale definitions. Bring it back in line:
 
    **Locate `CONTEXT.md` — Location contract, in precedence order:**
    1. The project folder root: `D:\Claude\_Claude-Workspace\<workstation>\<project>\CONTEXT.md` — alongside `plan-draft.md`, one level above the `design\` folder.
@@ -488,7 +488,7 @@ Resume rules:
    - **New load-bearing term** — `design-final.md` leans on a domain term that was pinned or coined during the dialogue (visible in the per-round files and Dialogue Log) but never made it into the glossary. Add an entry.
    - **Stable** — leave it untouched.
 
-   Only domain-meaningful terms belong in the glossary — not implementation details. Do not invent or pad. Use the exact entry format below (identical to `dt-design-build`):
+   Only domain-meaningful terms belong in the glossary — not implementation details. Do not invent or pad. Use the exact entry format below (identical to `dt-plan`):
 
    ```markdown
    ## <Term>
@@ -501,7 +501,7 @@ Resume rules:
 
    **Flag promotion candidates.** A `CONTEXT.md` term is a glossary-promotion candidate — a project term that should move up to the workstation `glossary.md` — only if it passes the **promotion gate**, all three true: (1) it appears in two or more durable artifacts or projects; (2) its definition is implementation-agnostic; (3) no project-specific qualifier is required. List every candidate that passes in `design-summary.md` (step 3). On Danny's approval, promotion completes within this same finalization pass: add the term to the workstation `glossary.md` (`D:\Claude\_Claude-Workspace\<workstation>\<Workstation> Resources\glossary.md`) and remove the `CONTEXT.md` entry — or rewrite it as a narrowing pointer ("Project-specific narrowing of workstation term `<Term>`") if a project-specific delta remains. Never leave both as full definitions.
 
-   **If `CONTEXT.md` does not exist:** Do not silently skip. Scan `design-final.md` and the Dialogue Log for terms the loop materially defined or disambiguated. If there are any, tell Danny and ask whether to create `CONTEXT.md` for them. `dt-design-loop` does not build a glossary from scratch unprompted — that is `dt-design-build`'s conversational job.
+   **If `CONTEXT.md` does not exist:** Do not silently skip. Scan `design-final.md` and the Dialogue Log for terms the loop materially defined or disambiguated. If there are any, tell Danny and ask whether to create `CONTEXT.md` for them. `dt-design-loop` does not build a glossary from scratch unprompted — that is `dt-plan`'s conversational job.
 
 3. Write a `design-summary.md` with: one-paragraph TL;DR, key architectural decisions made, top 3 risks, list of open questions, suggested next-step (typically: hand to `dt-build` skill — point its build agents at `CONTEXT.md` so parallel chunks stay terminologically consistent — or implement directly), a one-line per round summary of what Codex pushed for and how Claude responded, and — if the glossary changed in step 2 — a "Glossary changes" changelog block plus any promotion candidates.
 
@@ -537,7 +537,7 @@ Resume rules:
 - Status markers from Codex are best-effort. If Codex stops emitting them mid-round but is still producing output (visible in the stream log), it is working.
 - Plan structure is the author's call. Do NOT restructure draft-v1.md when accepting it from a file or trigger prompt. Engage with substance, not form.
 - **Glossary reconciliation is finalization-only.** Do NOT try to maintain `CONTEXT.md` per round — Codex runs headless and cannot read it, and a per-round sync bloats an already dense loop. The end-state design is what the glossary must match, so reconcile once, at Finalization, against `design-final.md`. Locate `CONTEXT.md` by the Location contract precedence list — never guess a path, never create the file in a guessed place; hard-stop and ask Danny if it does not resolve. A meaning-changing glossary conflict pauses for Danny via the structured 3-option `AskUserQuestion`; only wording-only edits (all four of scope, exclusions, actor mapping, example class preserved) apply automatically.
-- **Canonical Dimension Contract drift check.** The Canonical Dimension Contract block is the shared spine of `dt-design-build` and `dt-design-loop`. On any release touching either skill, diff the whole block (`<!-- BEGIN canonical-dimension-contract -->` to `<!-- END canonical-dimension-contract -->`) between the two SKILL.md files — any mismatch blocks the release. The block is edited in one place and copied verbatim; never hand-edit one copy alone.
+- **Canonical Dimension Contract drift check.** This skill still carries the Canonical Dimension Contract inline; the repo-level single source is `references/canonical-dimension-contract.md` (a pointer-swap to it is planned, matching the swap `dt-plan` already made). Until then, the inline block (`<!-- BEGIN canonical-dimension-contract -->` to `<!-- END canonical-dimension-contract -->`) must stay byte-identical to that canonical file; on any release touching this skill, diff the block against the canonical file — any mismatch blocks the release. Edit the contract only in the canonical file, never hand-edit the inline copy alone.
 
 ## Dialogue Log
 

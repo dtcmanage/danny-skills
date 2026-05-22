@@ -22,7 +22,7 @@ Trigger when Danny wants to produce a substantial written piece:
 **Do NOT fire** for:
 - Editing or tightening a draft that already exists — that is `dt-writing-edit`
 - A single email or a short reply — email has its own workflow
-- A plan, spec, or design doc — that is `dt-design-build`
+- A plan, spec, or design doc — that is `dt-plan`
 
 If unsure, ask: "Are we writing this from scratch, or tightening something you already have?"
 
@@ -169,7 +169,7 @@ If the corpus lacks something the piece needs, name the gap: "This section needs
 
 ## Step 5 — Fact-check pass
 
-Once the draft is complete, cross-reference every factual claim against the corpus — the same discipline `dt-design-build` uses against code.
+Once the draft is complete, cross-reference every factual claim against the corpus — the same discipline `dt-plan` uses against code.
 
 - For each number, date, name, and attribution: find its source in the corpus.
 - **Unsupported claim** — flag it: "This stat isn't in any source. Confirm it or cut it." Do not paper over it.

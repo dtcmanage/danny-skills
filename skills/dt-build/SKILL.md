@@ -5,20 +5,20 @@ description: Own a finalized plan end-to-end — decompose it into milestones, b
 
 # Build — Finalized Plan to a Merged, Tested dev Branch
 
-`dt-build` owns the whole build. It takes a finalized plan — `design-final.md` from a completed `dt-design-loop`, or a `plan-draft.md` straight from `dt-design-build` when Danny skips adversarial review — and delivers it as a finished product on `dev`: complete to spec, verified, committed milestone by milestone. One orchestrator drives the run. It never writes product code and never ingests broad code context — it decomposes the plan, spawns build / verification / merge subagents with exact prompts, reads only their structured reports, and commits each milestone once it passes. Parallelism across worktrees is one tactic the orchestrator reaches for when the work genuinely splits — not a precondition for the skill to run.
+`dt-build` owns the whole build. It takes a finalized plan — `design-final.md` from a completed `dt-design-loop`, or a `plan-draft.md` straight from `dt-plan` when Danny skips adversarial review — and delivers it as a finished product on `dev`: complete to spec, verified, committed milestone by milestone. One orchestrator drives the run. It never writes product code and never ingests broad code context — it decomposes the plan, spawns build / verification / merge subagents with exact prompts, reads only their structured reports, and commits each milestone once it passes. Parallelism across worktrees is one tactic the orchestrator reaches for when the work genuinely splits — not a precondition for the skill to run.
 
-`dt-build` is the third stage of the pipeline: `dt-design-build` (plan) → `dt-design-loop` (adversarial review) → **`dt-build`** (build).
+`dt-build` is the third stage of the pipeline: `dt-plan` (plan) → `dt-design-loop` (adversarial review) → **`dt-build`** (build).
 
 ## When this fires
 
 Trigger when BOTH hold:
-- There is a finalized plan ready to build — typically `design-final.md` from a completed `dt-design-loop`, or a `plan-draft.md` from `dt-design-build` when Danny chooses to skip adversarial review.
+- There is a finalized plan ready to build — typically `design-final.md` from a completed `dt-design-loop`, or a `plan-draft.md` from `dt-plan` when Danny chooses to skip adversarial review.
 - The project is a git repository.
 
 **Scale-to-plan — there is no minimum-chunk gate.** `dt-build` reads the plan and chooses its own approach: an easy plan becomes one milestone with one build subagent working directly on the build branch, no worktrees; a large sprawling plan becomes many sequential milestones, several fanned out into parallel chunks across worktrees. Parallelism is something the orchestrator reaches for, never a bar the plan must clear.
 
 **Do NOT fire** for:
-- Authoring or revising the plan — that is `dt-design-build` / `dt-design-loop`, upstream.
+- Authoring or revising the plan — that is `dt-plan` / `dt-design-loop`, upstream.
 - Adversarial design review — that is `dt-design-loop`.
 - Non-git projects — `dt-build` requires a git repository.
 

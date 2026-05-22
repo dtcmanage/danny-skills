@@ -124,7 +124,7 @@ Read these files if they exist:
 3. Any project `CLAUDE.md` and `MEMORY.md` files that were used during this session.
 4. Any project `CONTEXT.md` files and workstation `glossary.md` files for the projects/workstations in play, per the Location contract in Appendix A: a project `CONTEXT.md` lives at the project folder root; a workstation `glossary.md` lives at `<workstation>\<Workstation> Resources\glossary.md`.
 5. Any reference files that were loaded during this session (e.g., `voice-principles.md`).
-6. The **Routing Map** in the workspace `CLAUDE.md` — read this purely as scope-topology *data* to enumerate the workstation tiers (which workstations exist). This is the same map `dt-design-build` reads. The audit must not invent its own workstation-detection mechanism, and the Routing Map is data, not behavioral logic — see the routing-truth boundary.
+6. The **Routing Map** in the workspace `CLAUDE.md` — read this purely as scope-topology *data* to enumerate the workstation tiers (which workstations exist). This is the same map `dt-plan` reads. The audit must not invent its own workstation-detection mechanism, and the Routing Map is data, not behavioral logic — see the routing-truth boundary.
 
 The workstation tier is a **first-class routing destination**, not just a file the skill happens to read. Step 1 enumerates it so Axis B can place findings against named workstations.
 
@@ -172,7 +172,7 @@ A session moment where a fuzzy or overloaded term was pinned to a precise meanin
 
 **Example:** the session settled that "tearsheet" means the one-page LP performance summary, distinct from the full investor report. That is a term to pin.
 
-The terminology pass executes the **normative terminology contract in Appendix A**. It catches terms that any session pinned but never wrote to a file — `dt-design-build` pins terms *during* planning; this audit is the retroactive safety net for terms pinned in any session. The audit never builds a glossary from scratch unprompted — it only captures terms a session actually pinned.
+The terminology pass executes the **normative terminology contract in Appendix A**. It catches terms that any session pinned but never wrote to a file — `dt-plan` pins terms *during* planning; this audit is the retroactive safety net for terms pinned in any session. The audit never builds a glossary from scratch unprompted — it only captures terms a session actually pinned.
 
 ## Step 3: Filter and Classify (Match Order and Classification)
 
@@ -253,7 +253,7 @@ Many session findings are neither one-off noise nor scoped exceptions — they a
 
 ### Root-tier terminology
 
-The shipped glossary workflow tops out at workstation `glossary.md`; there is no root glossary, and adding one is out of scope for this skill. A **workspace-level / genuinely cross-workstation term** — a term intended as a single canonical concept across the whole workspace — therefore has no auto-file destination. The hard rule: **a workspace-level term is never auto-filed.** It is always surfaced under "Your call" with an explicit note that no root terminology store exists, so Danny decides — scope it down to one workstation, accept it in multiple workstation glossaries, or open a separate `dt-design-build`-led change to add a root glossary. The skill must never invent a root glossary file and must never silently downgrade a workspace-level term into one workstation's glossary.
+The shipped glossary workflow tops out at workstation `glossary.md`; there is no root glossary, and adding one is out of scope for this skill. A **workspace-level / genuinely cross-workstation term** — a term intended as a single canonical concept across the whole workspace — therefore has no auto-file destination. The hard rule: **a workspace-level term is never auto-filed.** It is always surfaced under "Your call" with an explicit note that no root terminology store exists, so Danny decides — scope it down to one workstation, accept it in multiple workstation glossaries, or open a separate `dt-plan`-led change to add a root glossary. The skill must never invent a root glossary file and must never silently downgrade a workspace-level term into one workstation's glossary.
 
 **Terminology routing precedence.** Terminology and the general MULTI_SCOPE rule interact, so the precedence is explicit: a term that is valid in **specific named workstations** and whose scopes are unambiguous may take the **MULTI_SCOPE** path — it proposes parallel entries in those named workstation `glossary.md` files. A term intended as a **workspace-level canonical** with no root terminology store is forced to **"Your call,"** never auto-filed, per the hard rule above. The distinction is the agent's mechanical call: enumerable named workstations -> MULTI_SCOPE; "this means one thing everywhere" -> Your call.
 

@@ -3,17 +3,17 @@
 Claude Code skills authored for this workspace. Three of them form a single pipeline — scope a project, stress-test the design, then build it — and `dt-starter-session-audit` is a standalone end-of-session skill.
 
 ```
-dt-design-build  →  dt-design-loop  →  dt-build
-    (plan)            (critique)         (build)
+dt-plan  →  dt-design-loop  →  dt-build
+ (plan)        (critique)        (build)
 ```
 
 The three pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `dt-starter-session-audit` runs independently at the end of any session.
 
 ---
 
-## dt-design-build
+## dt-plan
 
-**Trigger:** `/dt-design-build` or `dt-design-build <topic>`
+**Trigger:** `/dt-plan` or `dt-plan <topic>`
 
 A conversational planning partner — not a notetaker. Drives section-by-section discussion to produce a markdown plan file good enough that `dt-design-loop` can critique it without first cleaning up bad scaffolding.
 
@@ -36,7 +36,7 @@ Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the desig
 
 **What it does:**
 
-- Reads the plan (from `dt-design-build`, a file path, or a substantive trigger prompt) into `draft-v1.md` verbatim. Plan structure is the author's call; the skill is structure-agnostic from Round 1 onward.
+- Reads the plan (from `dt-plan`, a file path, or a substantive trigger prompt) into `draft-v1.md` verbatim. Plan structure is the author's call; the skill is structure-agnostic from Round 1 onward.
 - Pre-flight: cheap sanity check that Codex responds, before burning reasoning tokens.
 - Each round: Codex critiques the current draft (edge cases, security, robustness, consistency, engagement with prior reasoning) and emits a structured verdict (`NOTHING_TO_ADD` / `MINOR_POLISH_ONLY` / `MATERIAL_CHANGES_NEEDED`) + confidence.
 - Claude reconciles per item — ACCEPT / REJECT / DEFER / COUNTER with real reasoning. Repeat-rejects (Codex raises, Claude rejects, Codex raises again) pause for the user to adjudicate.
@@ -69,7 +69,7 @@ Owns the whole build. Takes a finalized plan and delivers it on `dev` — comple
 - Codex runs `--sandbox workspace-write` (never elevated); worktree containment is a hard block.
 - `dt-build` lands work on `dev` and never touches `main`.
 
-**Skip it for:** authoring or reviewing the plan (that's `dt-design-build` / `dt-design-loop`), or non-git projects.
+**Skip it for:** authoring or reviewing the plan (that's `dt-plan` / `dt-design-loop`), or non-git projects.
 
 ---
 
