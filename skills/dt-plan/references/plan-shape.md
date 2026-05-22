@@ -3,7 +3,7 @@
 The shape contract for the `plan-draft.md` that dt-plan produces. It is a **soft contract**: consumers degrade gracefully (via `AskUserQuestion`) rather than hard-rejecting, because the artifact is markdown consumed by LLM reasoning, not a strict API.
 
 - **Producer:** dt-plan
-- **Consumers:** dt-visualize-plan, dt-prototype, dt-design-loop (later renamed dt-review)
+- **Consumers:** dt-visualize-plan, dt-prototype, dt-review 
 - **Version field:** `shape_version` in frontmatter. Current accepted value: `1`.
 - **Pinned at:** this file (`dt-plan/references/plan-shape.md`) — the single canonical home for the plan-shape spec.
 
@@ -35,3 +35,5 @@ A consumer reading a `plan-draft.md`:
 - **Deprecated version** → accept with an explicit notice surfaced to Danny.
 
 dt-plan is the producer and writes `shape_version: 1`; the consumer behavior above is exercised at runtime by the first consumer skill (dt-visualize-plan, Phase 2). Until a consumer exists, this file is the authoritative spec of that behavior.
+
+
