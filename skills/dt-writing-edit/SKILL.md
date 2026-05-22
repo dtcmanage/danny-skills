@@ -17,7 +17,7 @@ Trigger when Danny has a finished or near-finished draft that needs a pass:
 
 **Do NOT fire** for:
 - Writing a piece from scratch or from notes — that is `dt-writing-draft`
-- A plan, spec, or design doc — that is `dt-plan` / `dt-design-loop`
+- A plan, spec, or design doc — that is `dt-plan` / `dt-review`
 - A one-line tweak Danny can make faster himself
 
 ## Step 0 — Load the voice baseline
@@ -101,3 +101,4 @@ No `computer://` links, no markdown wrappers around the paths — Danny's client
 - **Edit the prose, not the argument.** Preserve Danny's meaning and his calls. A point you think is wrong gets flagged, not silently rewritten.
 - **No arbitrary length caps.** Match length to stakes, per the business voice profile.
 - **Flag, do not fabricate.** Unsupported facts get surfaced; nothing gets smoothed over or invented.
+

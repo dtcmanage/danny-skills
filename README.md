@@ -3,7 +3,7 @@
 Claude Code skills authored for this workspace. The pipeline now includes a visualization pass and a conditional prototype pass between planning and adversarial review, and `dt-starter-session-audit` is a standalone end-of-session skill.
 
 ```
-dt-plan  →  dt-visualize-plan  →  dt-prototype*  →  dt-design-loop  →  dt-build
+dt-plan  →  dt-visualize-plan  →  dt-prototype*  →  dt-review  →  dt-build
  (plan)         (visualize)       (prototype)         (critique)        (build)
 
 * conditional: only when behavior/UI questions need runnable validation
@@ -17,7 +17,7 @@ The pipeline skills are self-contained and can be triggered on their own, but th
 
 **Trigger:** `/dt-plan` or `dt-plan <topic>`
 
-A conversational planning partner — not a notetaker. Drives section-by-section discussion to produce a markdown plan file good enough that `dt-design-loop` can critique it without first cleaning up bad scaffolding.
+A conversational planning partner — not a notetaker. Drives section-by-section discussion to produce a markdown plan file good enough that `dt-review` can critique it without first cleaning up bad scaffolding.
 
 **What it does:**
 
@@ -34,7 +34,7 @@ A conversational planning partner — not a notetaker. Drives section-by-section
 
 **Trigger:** `/dt-visualize-plan` or `dt-visualize-plan <plan-path>`
 
-Renders a saved plan into `plan-view.html` so structure and sequencing issues are obvious before design-loop critique.
+Renders a saved plan into `plan-view.html` so structure and sequencing issues are obvious before adversarial review.
 
 **What it does:**
 
@@ -44,7 +44,7 @@ Renders a saved plan into `plan-view.html` so structure and sequencing issues ar
 - Runs redaction (`scripts/security/redact-secrets.ps1`) before rendering injected content.
 - Adds a dependency-provenance footer with active renderer/assets and any fallback debt tags.
 
-**Skip it for:** adversarial review (`dt-design-loop`) or implementation (`dt-build`).
+**Skip it for:** adversarial review (`dt-review`) or implementation (`dt-build`).
 
 ---
 
@@ -63,13 +63,13 @@ A conditional prototype stage between planning and adversarial review. Use it wh
 - Uses vendored starter templates in `skills/dt-prototype/assets/` for TypeScript/Python logic prototypes and a React variant switcher.
 - Captures the result in `NOTES.md` next to the prototype, then expects cleanup (delete throwaway shells once decision is absorbed).
 
-**Skip it for:** final production implementation, adversarial critique (`dt-design-loop`), or build execution (`dt-build`).
+**Skip it for:** final production implementation, adversarial critique (`dt-review`), or build execution (`dt-build`).
 
 ---
 
-## dt-design-loop
+## dt-review
 
-**Trigger:** `/dt-design-loop` or `dt-design-loop <plan-path>`
+**Trigger:** `/dt-review` or `dt-review <plan-path>`
 
 Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the design as equals across multiple rounds until the design is genuinely shippable — or until the round cap forces a decision.
 
@@ -108,7 +108,7 @@ Owns the whole build. Takes a finalized plan and delivers it on `dev` — comple
 - Codex runs `--sandbox workspace-write` (never elevated); worktree containment is a hard block.
 - `dt-build` lands work on `dev` and never touches `main`.
 
-**Skip it for:** authoring or reviewing the plan (that's `dt-plan` / `dt-design-loop`), or non-git projects.
+**Skip it for:** authoring or reviewing the plan (that's `dt-plan` / `dt-review`), or non-git projects.
 
 ---
 
@@ -136,3 +136,4 @@ A scope-aware end-of-session audit. Scans the conversation for things stated but
 ## Installing
 
 Each skill lives in `skills/<skill-name>/SKILL.md`. To use them in Claude Code, copy or symlink the `skills/` subfolders into your user-level skills directory (`~/.agents/skills/` on this machine — note: not `~/.claude/skills/`).
+

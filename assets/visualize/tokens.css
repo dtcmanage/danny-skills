@@ -1,0 +1,161 @@
+:root {
+  --bg: #f6f1e7;
+  --ink: #1c2433;
+  --ink-soft: #4b5871;
+  --panel: #ffffff;
+  --line: #d8cbb6;
+  --accent: #0f8f6f;
+  --accent-soft: #d7f3eb;
+  --warning: #a44f20;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: "Aptos", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(1000px 600px at 85% -30%, #d8ecff 0%, transparent 60%),
+    radial-gradient(900px 500px at -10% 20%, #f6e6cf 0%, transparent 55%),
+    var(--bg);
+}
+
+.page {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.hero {
+  background: linear-gradient(165deg, #fff6e8 0%, #f7ffff 100%);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  font-size: 12px;
+}
+
+h1 {
+  margin: 6px 0 4px 0;
+  font-size: 32px;
+  line-height: 1.2;
+}
+
+.date {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.summary-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.summary-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fff;
+  display: grid;
+  gap: 4px;
+}
+
+.summary-card .label {
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.summary-card .value {
+  font-weight: 600;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+h2 {
+  margin: 0 0 10px 0;
+  font-size: 20px;
+}
+
+h3 {
+  margin: 0 0 8px 0;
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.milestone-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.milestone-table th,
+.milestone-table td {
+  border: 1px solid var(--line);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.milestone-table th {
+  background: #f1f8f5;
+}
+
+.diagram-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 10px;
+}
+
+.diagram-card {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fffdfa;
+}
+
+.code-block {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #f6f8fc;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+li {
+  margin-bottom: 6px;
+}
+
+@media (max-width: 760px) {
+  .page {
+    padding: 14px;
+  }
+}
+

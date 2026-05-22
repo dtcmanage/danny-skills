@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{TITLE}} - plan view</title>
+  <style>
+{{TOKENS_CSS}}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <p class="eyebrow">dt-visualize-plan artifact</p>
+      <h1>{{TITLE}}</h1>
+      <p class="date">Source plan date: {{DATE}}</p>
+      <section class="summary-grid">
+        {{SUMMARY_CARDS}}
+      </section>
+    </header>
+
+    <section class="panel">
+      <h2>Milestone Table</h2>
+      {{MILESTONE_TABLE}}
+    </section>
+
+    <section class="panel">
+      <h2>Open Questions</h2>
+      {{OPEN_QUESTIONS}}
+    </section>
+
+    <section class="panel">
+      <h2>Dependency Graph + Gantt</h2>
+      {{MERMAID_BLOCKS}}
+    </section>
+
+    <section class="panel">
+      <h2>UI Mockup</h2>
+      {{UI_MOCKUP}}
+    </section>
+
+    <section class="panel">
+      <h2>Plan Preview (redacted)</h2>
+      {{PLAN_PREVIEW}}
+    </section>
+
+    <footer class="panel">
+      <h2>Dependency Provenance</h2>
+      {{DEPENDENCY_PROVENANCE}}
+    </footer>
+  </main>
+  {{MERMAID_SCRIPT}}
+</body>
+</html>
+
