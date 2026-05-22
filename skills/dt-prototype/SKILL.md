@@ -1,6 +1,6 @@
 ---
 name: dt-prototype
-description: "Prototype unresolved logic or UI questions before adversarial review: build either a one-command runnable terminal TUI for behavior/state validation or a multi-variant UI switcher route for visual comparison. Trigger on /dt-prototype or 'dt-prototype <question>'. Do NOT use for final production implementation, full design critique (dt-review now, dt-review after Phase 4), or roadmap/build execution."
+description: "Prototype unresolved logic or UI questions before adversarial review: build either a one-command runnable terminal TUI for behavior/state validation or a multi-variant UI switcher route for visual comparison. Trigger on /dt-prototype or 'dt-prototype <question>'. Do NOT use for final production implementation, full design critique (dt-design-loop now, dt-review after Phase 4), or roadmap/build execution."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
@@ -27,7 +27,7 @@ Trigger when at least one of these is true:
 
 Do NOT fire for:
 - Final implementation quality work (tests, abstractions, production hardening).
-- Adversarial design critique (`dt-review` now, renamed to `dt-review` in Phase 4).
+- Adversarial design critique (`dt-design-loop` now, renamed to `dt-review` in Phase 4).
 - Build decomposition/execution (`dt-build`), or roadmap contract work.
 
 ## Branch selection
@@ -86,5 +86,4 @@ State the assumption explicitly at the top of the output notes.
 - Keep the logic core portable and pure when running the `logic` branch.
 - For UI branch, variants must be structurally different, not color tweaks.
 - Do not present prototype output as production-ready code.
-
 

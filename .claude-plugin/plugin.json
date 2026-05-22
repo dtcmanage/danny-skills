@@ -1,7 +1,7 @@
 {
   "name": "danny-skills",
   "version": "0.7.0",
-  "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-starter-session-audit (scope-aware end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md with a conflict policy), and dt-handoff for single-use session continuity.",
+  "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-design-loop, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-starter-session-audit (scope-aware end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md with a conflict policy), and dt-handoff for single-use session continuity.",
   "author": {
     "name": "Danny Thai",
     "email": "danny@thaicapital.com"
@@ -25,9 +25,7 @@
       "0.7.0 phase-0-foundation: repo-level references/scripts/assets scaffolding; canonical dimension contract + glossary contract single sources; security primitives (wrap-prompt-envelope, redact-secrets) + redaction corpus; vendored mermaid 10.9.3 (SHA256-pinned); upstream-deps governance + fallback table; skill-template scaffold.",
       "0.7.0 phase-1-dt-plan: renamed dt-design-build -> dt-plan onto the Anthropic standard (SKILL.md 2.2k words); CDC + glossary-placement rules now point at repo-level references; surface templates + plan-shape/shape_version policy extracted to dt-plan/references; junction reparse-target resolution added to conventions.md; junctions repaired on CLI x3 + Codex; live cross-skill references updated; no plugin version bump (milestone-based policy).",
       "0.7.0 phase-2-dt-visualize-plan: added dt-visualize-plan (Anthropic-standard greenfield skill) plus shared visualize runtime (html-builder + mermaid-wrap + template/tokens); renders plan-view.html with milestone table, optional mermaid graph/gantt, fallback dependency provenance footer, and vendored mermaid-only loading.",
-      "0.7.0 phase-3-dt-prototype: added dt-prototype (Anthropic-standard greenfield skill) adapted from Matt Pocock's MIT prototype pattern; split logic/UI branches under references/ with vendored starter templates for terminal TUI (TypeScript/Python) and UI variant switching; dt-plan now routes behavior-validatable questions through dt-prototype before adversarial review.",
-      "0.7.0 phase-4-dt-review: renamed dt-design-loop -> dt-review with Anthropic-standard frontmatter; extracted input modes, codex prompt template, recovery, finalization, and design-shape contracts into dt-review/references; pointer-swapped CDC to repo-level canonical contract; added deterministic round scripts (preflight, invoke, verdict parse, provenance capture); updated cross-skill references and junction topology for CLI/Codex surfaces."
+      "0.7.0 phase-3-dt-prototype: added dt-prototype (Anthropic-standard greenfield skill) adapted from Matt Pocock's MIT prototype pattern; split logic/UI branches under references/ with vendored starter templates for terminal TUI (TypeScript/Python) and UI variant switching; dt-plan now routes behavior-validatable questions through dt-prototype before adversarial review."
     ]
   }
 }
-
