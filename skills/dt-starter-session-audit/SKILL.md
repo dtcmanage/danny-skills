@@ -348,34 +348,4 @@ After Danny approves (all, some, or none):
 
 ## Appendix A — Normative Terminology Contract
 
-This appendix is the audit skill's **self-contained, executable** terminology contract. It is a normative subset of the glossary-workflow contracts shipped in `dt-design-build` / `dt-design-loop` / `dt-parallel-build` at commit `4d45d2c` (v0.2.3); a future agent executes terminology decisions from this appendix alone, without loading any other skill. The commit reference exists so the subset can be checked for parity against upstream and updated deliberately if upstream changes. **Appendix A is the runtime authority:** if the upstream glossary-workflow skills diverge from this appendix, `dt-starter-session-audit` continues to execute Appendix A until a deliberate update plus version bump lands here.
-
-**A1 — Location contract.** A project-scoped term lives in `CONTEXT.md` at the project folder root. A workstation-scoped term lives in `glossary.md` at `<workstation>\<Workstation> Resources\glossary.md`. There is no root-level terminology store.
-
-**A2 — Placement decision.** For each pinned term:
-
-- means the same thing across one whole workstation domain -> workstation `glossary.md`;
-- specific to a single project -> that project's `CONTEXT.md`;
-- valid in multiple *specific named* workstations, scopes unambiguous -> MULTI_SCOPE: propose parallel `glossary.md` entries (atomic-apply contract);
-- a workspace-level canonical (one meaning everywhere) -> "Your call," never auto-filed (root-tier terminology rule, Step 4);
-- one word, two genuinely different meanings -> split (A4).
-
-**A3 — Narrowing.** A project `CONTEXT.md` may narrow a workstation term with a delta entry headed "Project-specific narrowing of workstation term `<Term>`", stating only the delta. The workstation baseline definition is not duplicated. Narrowing is additive specialization, not a contradiction.
-
-**A4 — Split-term rule.** When one label carries two genuine meanings, write `<Term> (<qualifier>)` entries for each sense, plus a cross-reference entry under the retired ambiguous label pointing to both.
-
-**A5 — Conflict handling.** A wording-only edit (terminology refine test, Step 3: scope / exclusions / actor-entity mapping / example semantic class all preserved) is classified `auto-handled` and applied on batch approval (no adjudication needed; still subject to Step 6 approval). A meaning-changing conflict pauses with a structured three-option `AskUserQuestion`: (A) Keep, (B) Replace, (C) Split.
-
-**A6 — Promotion gate (project -> workstation).** A `CONTEXT.md` term is a promotion candidate only if all three hold: it appears in 2+ durable artifacts; its definition is implementation-agnostic; no project-specific qualifier is required. Promotion is surfaced, not automatic.
-
-**A7 — Entry format.**
-
-```markdown
-## <Term>
-**Definition:** <one-sentence canonical meaning>
-**Not to be confused with:** <sibling terms and how they differ>
-**Example:** <generic or anonymized instance — never a real LP name, account
-number, or counterparty identity>
-```
-
-**A8 — Redaction.** The `Example` field and any persisted term text obey the redaction fallback ladder (raw secret / masked surrogate / non-secret locator / DROP). No real LP name, account number, or counterparty identity in any glossary or `CONTEXT.md` entry.
+The normative terminology contract (rules A1-A8: location, placement, narrowing, split-term, conflict handling, promotion gate, entry format, redaction) has moved to the repo-level shared reference `references/glossary-contract.md`. Resolve it from this SKILL.md's location: `../../references/glossary-contract.md`. That file is the runtime authority; read it when executing the terminology pass. In-body references to "Appendix A" throughout this skill refer to that contract.
