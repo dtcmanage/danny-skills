@@ -29,6 +29,18 @@ Trigger when the work is at the "scope this before building" stage:
 
 If unsure, ask: "Is this scoped enough to plan, or still fuzzy enough that we should just discuss first?"
 
+## Prototype routing decision (Phase 3)
+
+Before handing a finished plan to adversarial review, check whether the plan includes behavior-validatable
+uncertainty:
+- state machine or reducer transitions,
+- classification/routing/policy logic,
+- UI layout questions where variants must be seen side-by-side.
+
+If yes, recommend `dt-prototype` before `dt-design-loop` (renamed `dt-review` in the Phase 4 roadmap). The
+goal is to answer those behavior/visual questions with a runnable prototype first, then critique a better
+informed design.
+
 ## Step 1 — Combined intake (one AskUserQuestion)
 
 Fire ONE `AskUserQuestion` covering all four items below. Use the "Other (specify)" sub-question option for items that aren't naturally multiple-choice.

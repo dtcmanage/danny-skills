@@ -1,13 +1,15 @@
 # danny-skills
 
-Claude Code skills authored for this workspace. Three of them form a single pipeline — scope a project, stress-test the design, then build it — and `dt-starter-session-audit` is a standalone end-of-session skill.
+Claude Code skills authored for this workspace. The pipeline now includes a visualization pass and a conditional prototype pass between planning and adversarial review, and `dt-starter-session-audit` is a standalone end-of-session skill.
 
 ```
-dt-plan  →  dt-design-loop  →  dt-build
- (plan)        (critique)        (build)
+dt-plan  →  dt-visualize-plan  →  dt-prototype*  →  dt-design-loop  →  dt-build
+ (plan)         (visualize)       (prototype)         (critique)        (build)
+
+* conditional: only when behavior/UI questions need runnable validation
 ```
 
-The three pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `dt-starter-session-audit` runs independently at the end of any session.
+The pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `dt-starter-session-audit` runs independently at the end of any session.
 
 ---
 
@@ -25,6 +27,43 @@ A conversational planning partner — not a notetaker. Drives section-by-section
 - Saves a clean markdown plan (decisions only, no transcript) at the agreed path.
 
 **Skip it for:** bug fixes, single-file changes, or anything where planning overhead exceeds savings.
+
+---
+
+## dt-visualize-plan
+
+**Trigger:** `/dt-visualize-plan` or `dt-visualize-plan <plan-path>`
+
+Renders a saved plan into `plan-view.html` so structure and sequencing issues are obvious before design-loop critique.
+
+**What it does:**
+
+- Supports three modes: `milestone-table-only`, `plan-plus-mermaid`, `ui-mockup`.
+- Builds a single local HTML artifact (no dev server) with summary cards, milestone table, open questions, and plan preview.
+- In mermaid modes, renders dependency graph + Gantt with local vendored mermaid (`assets/visualize/vendored/mermaid-10.9.3.min.js`) and `securityLevel: 'strict'`.
+- Runs redaction (`scripts/security/redact-secrets.ps1`) before rendering injected content.
+- Adds a dependency-provenance footer with active renderer/assets and any fallback debt tags.
+
+**Skip it for:** adversarial review (`dt-design-loop`) or implementation (`dt-build`).
+
+---
+
+## dt-prototype
+
+**Trigger:** `/dt-prototype` or `dt-prototype <question>`
+
+A conditional prototype stage between planning and adversarial review. Use it when text alone cannot answer a behavior or UI question.
+
+**What it does:**
+
+- Routes to one of two branches:
+  - `logic`: builds a one-command terminal TUI to exercise reducers/state machines/policy logic.
+  - `ui`: builds multiple radically different UI variants switchable from one route.
+- Adapts Matt Pocock's prototype pattern with local vendored references and templates.
+- Uses vendored starter templates in `skills/dt-prototype/assets/` for TypeScript/Python logic prototypes and a React variant switcher.
+- Captures the result in `NOTES.md` next to the prototype, then expects cleanup (delete throwaway shells once decision is absorbed).
+
+**Skip it for:** final production implementation, adversarial critique (`dt-design-loop`), or build execution (`dt-build`).
 
 ---
 

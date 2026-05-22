@@ -1,0 +1,68 @@
+"""
+PROTOTYPE ONLY
+Question:
+<fill this in>
+
+Run:
+python <this-file>.py
+"""
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class State:
+    step: int = 0
+    status: str = "idle"
+    notes: List[str] = field(default_factory=list)
+
+
+def apply_action(state: State, action: str) -> State:
+    if action == "start":
+        state.status = "active"
+    elif action == "advance":
+        if state.status == "active":
+            state.step += 1
+            if state.step >= 3:
+                state.status = "done"
+    elif action == "reset":
+        state.step = 0
+        state.status = "idle"
+        state.notes = []
+    elif action == "note":
+        state.notes.append("manual note")
+    return state
+
+
+def render(state: State) -> None:
+    print("\033[2J\033[H", end="")
+    print("=== LOGIC PROTOTYPE ===")
+    print("State:")
+    print(f"  step:   {state.step}")
+    print(f"  status: {state.status}")
+    print(f"  notes:  {state.notes}")
+    print("")
+    print("[s] start  [a] advance  [n] note  [r] reset  [q] quit")
+
+
+def main() -> None:
+    state = State()
+    while True:
+        render(state)
+        key = input("> ").strip().lower()
+        if key == "q":
+            break
+        if key == "s":
+            state = apply_action(state, "start")
+        elif key == "a":
+            state = apply_action(state, "advance")
+        elif key == "r":
+            state = apply_action(state, "reset")
+        elif key == "n":
+            state = apply_action(state, "note")
+
+
+if __name__ == "__main__":
+    main()
+

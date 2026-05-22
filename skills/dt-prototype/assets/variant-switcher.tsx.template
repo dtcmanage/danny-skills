@@ -1,0 +1,69 @@
+import { useEffect } from "react";
+
+type VariantSwitcherProps = {
+  variants: string[];
+  current: string;
+  onSelect: (next: string) => void;
+};
+
+export function PrototypeVariantSwitcher({
+  variants,
+  current,
+  onSelect,
+}: VariantSwitcherProps) {
+  const currentIndex = Math.max(0, variants.indexOf(current));
+
+  function move(delta: number) {
+    const len = variants.length;
+    const nextIndex = (currentIndex + delta + len) % len;
+    onSelect(variants[nextIndex]);
+  }
+
+  useEffect(() => {
+    function handleKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const editable =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable;
+      if (editable) return;
+
+      if (event.key === "ArrowLeft") move(-1);
+      if (event.key === "ArrowRight") move(1);
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  });
+
+  if (process.env.NODE_ENV === "production") return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left: "50%",
+        bottom: 16,
+        transform: "translateX(-50%)",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "#0f172a",
+        color: "#f8fafc",
+        borderRadius: 999,
+        padding: "8px 12px",
+        boxShadow: "0 6px 20px rgba(0, 0, 0, 0.25)",
+      }}
+    >
+      <button type="button" onClick={() => move(-1)} aria-label="Previous variant">
+        {"<"}
+      </button>
+      <strong>{current}</strong>
+      <button type="button" onClick={() => move(1)} aria-label="Next variant">
+        {">"}
+      </button>
+    </div>
+  );
+}
+

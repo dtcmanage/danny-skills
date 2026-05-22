@@ -1,0 +1,80 @@
+/**
+ * PROTOTYPE ONLY
+ * Question:
+ * <fill this in>
+ *
+ * Run:
+ * node <this-file>.ts
+ * or wire into package.json as "prototype:logic".
+ */
+
+type State = {
+  step: number;
+  status: "idle" | "active" | "done";
+  notes: string[];
+};
+
+type Action =
+  | { type: "start" }
+  | { type: "advance" }
+  | { type: "reset" }
+  | { type: "note"; value: string };
+
+const initialState: State = {
+  step: 0,
+  status: "idle",
+  notes: [],
+};
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case "start":
+      return { ...state, status: "active" };
+    case "advance":
+      if (state.status !== "active") return state;
+      return {
+        ...state,
+        step: state.step + 1,
+        status: state.step + 1 >= 3 ? "done" : "active",
+      };
+    case "reset":
+      return initialState;
+    case "note":
+      return { ...state, notes: [...state.notes, action.value] };
+    default:
+      return state;
+  }
+}
+
+function render(state: State): void {
+  process.stdout.write("\x1Bc");
+  console.log("=== LOGIC PROTOTYPE ===");
+  console.log("State:");
+  console.log(JSON.stringify(state, null, 2));
+  console.log("");
+  console.log("[s] start  [a] advance  [n] note  [r] reset  [q] quit");
+}
+
+async function main(): Promise<void> {
+  let state = initialState;
+  render(state);
+
+  process.stdin.setRawMode?.(true);
+  process.stdin.resume();
+  process.stdin.setEncoding("utf8");
+
+  process.stdin.on("data", (key: string) => {
+    const k = key.trim().toLowerCase();
+    if (k === "q" || key === "\u0003") {
+      process.exit(0);
+    }
+    if (k === "s") state = reducer(state, { type: "start" });
+    if (k === "a") state = reducer(state, { type: "advance" });
+    if (k === "r") state = reducer(state, { type: "reset" });
+    if (k === "n") state = reducer(state, { type: "note", value: "manual note" });
+    render(state);
+  });
+}
+
+void main();
+

@@ -1,0 +1,89 @@
+---
+name: dt-prototype
+description: "Prototype unresolved logic or UI questions before adversarial review: build either a one-command runnable terminal TUI for behavior/state validation or a multi-variant UI switcher route for visual comparison. Trigger on /dt-prototype or 'dt-prototype <question>'. Do NOT use for final production implementation, full design critique (dt-design-loop now, dt-review after Phase 4), or roadmap/build execution."
+disable-model-invocation: false
+user-invocable: true
+allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
+compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
+metadata:
+  version: 1.0.0
+  changelog: "Initial Anthropic-standard Phase 3 release. Adapted from Matt Pocock's prototype skill (MIT) with dt-pipeline routing and vendored starter templates for logic TUI (TypeScript/Python) and UI variant switcher."
+---
+
+# Prototype
+
+Adapted from Matt Pocock's prototype skill (MIT) - see `references/ATTRIBUTION.md`.
+
+`dt-prototype` is the conditional stage between planning and adversarial review. Use it when a question
+needs behavior you can press on, not just prose you can read.
+
+## When this fires
+
+Trigger when at least one of these is true:
+- The plan includes a state machine, reducer, classifier, policy engine, or transition logic that is hard to
+  validate in plain text.
+- The open question is primarily visual ("which layout/hierarchy should win?").
+- Danny asks to prototype, sandbox, or "let me play with it" before locking a design.
+
+Do NOT fire for:
+- Final implementation quality work (tests, abstractions, production hardening).
+- Adversarial design critique (`dt-design-loop` now, renamed to `dt-review` in Phase 4).
+- Build decomposition/execution (`dt-build`), or roadmap contract work.
+
+## Branch selection
+
+Pick exactly one branch:
+
+1. `logic`
+- Use for behavior/state questions.
+- Read `references/LOGIC.md`.
+- Output: one-command-runnable terminal TUI prototype.
+
+2. `ui`
+- Use for "what should this look like?" questions.
+- Read `references/UI.md`.
+- Output: multiple radically different UI variants switchable on one route.
+
+If ambiguous and Danny is not reachable, choose based on surrounding code shape:
+- backend/module-heavy context -> `logic`
+- page/component-heavy context -> `ui`
+
+State the assumption explicitly at the top of the output notes.
+
+## Procedure
+
+1. Intake in one question:
+- Target project path.
+- Prototype question to answer (single sentence).
+- Branch (`logic` or `ui`), if not already explicit.
+- Preferred runtime/tooling if the project has multiple options.
+
+2. Load branch guidance and template assets:
+- For `logic`: `references/LOGIC.md`, plus `assets/logic-prototype.ts.template` or
+  `assets/logic-prototype.py.template` based on project stack.
+- For `ui`: `references/UI.md`, plus `assets/variant-switcher.tsx.template`.
+
+3. Build the prototype near the target code:
+- Keep it obviously throwaway (`prototype` in file/route naming).
+- Preserve host project conventions (routing, package manager, file structure).
+- Ensure exactly one command runs it.
+
+4. Capture the answer:
+- Write `NOTES.md` next to the prototype with:
+  - the question,
+  - what was observed,
+  - the decision to keep/delete/fold.
+
+5. Exit with cleanup intent:
+- Recommend deleting throwaway scaffolding after the decision is absorbed.
+- If Danny is offline, leave explicit cleanup TODOs in `NOTES.md`.
+
+## Guardrails
+
+- Prototype fast; do not over-engineer.
+- No persistence by default unless persistence is the question being tested.
+- No new framework/toolchain if the host already has a standard one.
+- Keep the logic core portable and pure when running the `logic` branch.
+- For UI branch, variants must be structurally different, not color tweaks.
+- Do not present prototype output as production-ready code.
+

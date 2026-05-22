@@ -25,7 +25,7 @@ and at every phase-gate transition that touches one.
 | `frontend-design:frontend-design` | External skill | Anthropic skills | to be pinned when first consumed (Phase 2, dt-visualize-plan) | n/a | - | Polished UI mockup. Fallback below. |
 | `anthropic-skills:web-artifacts-builder` | External skill | Anthropic skills | to be pinned when first consumed (Phase 2) | n/a | - | Three sketch variants. Fallback below. |
 | Mermaid MCP | MCP server | MCP server (server-rendered diagrams) | n/a (server) | n/a | - | Server-rendered diagrams. Vendored mermaid.js is the first-class fallback. |
-| Matt Pocock prototype templates | Vendored-at-adapt-time | github.com/mattpocock/skills (MIT) | to be pinned at adapt time (Phase 3, dt-prototype) | n/a | - | Vendored at adapt time; no runtime dependency. |
+| Matt Pocock prototype templates | Vendored-at-adapt-time | github.com/mattpocock/skills (MIT) | `b8be62ffacb0118fa3eaa29a0923c87c8c11985c` (`skills/engineering/prototype`) | `SKILL:a653deb65afa2ee8f45c68f6ef4f593147171b386e994c8cccf89292d9ea9d75; LOGIC:da91dc92195c00d5dc33863b8c1a030998025a0f8583ebf2babd770825b7f70c; UI:d76d565149ee50456c5ddc5e29c27fec8737637874fe5c37d970db085a200b27` | 0.7.0 | Adapted in Phase 3 into `skills/dt-prototype/` with attribution file; runtime is local-only (no upstream fetch). |
 
 ## Per-dependency fallback table
 
