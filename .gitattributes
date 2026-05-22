@@ -1,0 +1,2 @@
+# Vendored binary-ish assets: never normalize line endings, so SHA256 pins stay byte-stable across clones.
+assets/visualize/vendored/*.min.js binary
