@@ -97,11 +97,71 @@ h2 {
 }
 
 h3 {
-  margin: 0 0 8px 0;
+  margin: 0;
 }
 
 .muted {
   color: var(--ink-soft);
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.badge-chip {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.status-added {
+  color: #0b6b4f;
+  background: #d8f5ea;
+  border-color: #8bd7bb;
+}
+
+.status-changed {
+  color: #765100;
+  background: #fff0c2;
+  border-color: #f0cb71;
+}
+
+.status-removed {
+  color: #8a2f2f;
+  background: #ffe0e0;
+  border-color: #efafaf;
+}
+
+.status-unchanged {
+  color: #35507d;
+  background: #dfeaff;
+  border-color: #adc4f2;
+}
+
+.diff-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.diff-card {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fffdfa;
+}
+
+.diff-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .milestone-table {
@@ -158,4 +218,3 @@ li {
     padding: 14px;
   }
 }
-

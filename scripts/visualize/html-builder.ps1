@@ -5,9 +5,11 @@ param(
     [Parameter(Mandatory)]
     [string]$PlanPath,
 
+    [string]$DesignPath = "",
+
     [string]$OutputPath = "",
 
-    [ValidateSet("milestone-table-only", "plan-plus-mermaid", "ui-mockup")]
+    [ValidateSet("milestone-table-only", "plan-plus-mermaid", "ui-mockup", "design-diff")]
     [string]$Mode = "milestone-table-only",
 
     [switch]$ForceMermaidFallback,
@@ -25,6 +27,13 @@ if (-not (Test-Path -LiteralPath $PlanPath)) {
     throw "Plan file not found: $PlanPath"
 }
 
+if ($Mode -eq "design-diff" -and [string]::IsNullOrWhiteSpace($DesignPath)) {
+    throw "DesignPath is required when Mode is design-diff."
+}
+if ($Mode -eq "design-diff" -and -not (Test-Path -LiteralPath $DesignPath)) {
+    throw "Design file not found: $DesignPath"
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
 
@@ -38,9 +47,12 @@ if (-not (Test-Path -LiteralPath $vendoredMermaidPath)) { throw "Vendored mermai
 
 . (Join-Path $repoRoot "scripts\security\redact-secrets.ps1")
 . (Join-Path $scriptDir "mermaid-wrap.ps1")
+. (Join-Path $scriptDir "markdown-section-diff.ps1")
 
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path (Split-Path -Parent $PlanPath) "plan-view.html"
+    $defaultName = if ($Mode -eq "design-diff") { "design-view.html" } else { "plan-view.html" }
+    $baseDir = if ($Mode -eq "design-diff") { Split-Path -Parent $DesignPath } else { Split-Path -Parent $PlanPath }
+    $OutputPath = Join-Path $baseDir $defaultName
 }
 
 function Escape-Html {
@@ -121,16 +133,26 @@ function Get-SectionBody {
     return ""
 }
 
-$raw = Get-Content -LiteralPath $PlanPath -Raw
-$redacted = Invoke-SecretRedaction -Text $raw
+$planRaw = Get-Content -LiteralPath $PlanPath -Raw
+$planRedacted = Invoke-SecretRedaction -Text $planRaw
 
-$title = if ($redacted -match '(?m)^#\s+(.+)$') { $Matches[1].Trim() } else { [System.IO.Path]::GetFileNameWithoutExtension($PlanPath) }
-$date = if ($redacted -match '(?m)^\*\*Date:\*\*\s*(.+)$') { $Matches[1].Trim() } else { "n/a" }
-$surface = if ($redacted -match '(?m)^\*\*Surface:\*\*\s*(.+)$') { $Matches[1].Trim() } else { "n/a" }
-$scope = if ($redacted -match '(?m)^\*\*Scope:\*\*\s*(.+)$') { $Matches[1].Trim() } else { "n/a" }
+$designRaw = ""
+$designRedacted = ""
+if ($Mode -eq "design-diff") {
+    $designRaw = Get-Content -LiteralPath $DesignPath -Raw
+    $designRedacted = Invoke-SecretRedaction -Text $designRaw
+}
+
+$primaryRedacted = if ($Mode -eq "design-diff") { $designRedacted } else { $planRedacted }
+$primaryPath = if ($Mode -eq "design-diff") { $DesignPath } else { $PlanPath }
+
+$title = if ($primaryRedacted -match '(?m)^#\s+(.+)$') { $Matches[1].Trim() } else { [System.IO.Path]::GetFileNameWithoutExtension($primaryPath) }
+$date = if ($primaryRedacted -match '(?m)^\*\*Date:\*\*\s*(.+)$') { $Matches[1].Trim() } else { "n/a" }
+$surface = if ($primaryRedacted -match '(?m)^\*\*Surface:\*\*\s*(.+)$') { $Matches[1].Trim() } else { "n/a" }
+$scope = if ($primaryRedacted -match '(?m)^\*\*Scope:\*\*\s*(.+)$') { $Matches[1].Trim() } else { "n/a" }
 
 $milestones = @()
-$phaseMatches = [regex]::Matches($redacted, '(?m)^###\s+(Phase\s+[0-9A-Za-z\- ]+.*|Contract Freeze Gate.*|Value Review.*)$')
+$phaseMatches = [regex]::Matches($primaryRedacted, '(?m)^###\s+(Phase\s+[0-9A-Za-z\- ]+.*|Contract Freeze Gate.*|Value Review.*)$')
 if ($phaseMatches.Count -gt 0) {
     $idx = 0
     foreach ($m in $phaseMatches) {
@@ -143,7 +165,7 @@ if ($phaseMatches.Count -gt 0) {
     }
 }
 else {
-    $sectionMatches = [regex]::Matches($redacted, '(?m)^##\s+(.+)$')
+    $sectionMatches = [regex]::Matches($primaryRedacted, '(?m)^##\s+(.+)$')
     $idx = 0
     foreach ($m in $sectionMatches) {
         $name = $m.Groups[1].Value.Trim()
@@ -169,7 +191,7 @@ $milestoneRows = foreach ($m in $milestones) {
     "<tr><td>{0}</td><td>{1}</td><td>{2}</td></tr>" -f (Escape-Html $m.id), (Escape-Html $m.name), (Escape-Html $m.dependsOn)
 }
 $milestoneTable = @"
-<table class="milestone-table">
+<table class=""milestone-table"">
   <thead>
     <tr><th>ID</th><th>Milestone</th><th>Depends On</th></tr>
   </thead>
@@ -179,7 +201,7 @@ $milestoneTable = @"
 </table>
 "@
 
-$openQuestions = Get-SectionBody -Text $redacted -Heading "Open Questions"
+$openQuestions = Get-SectionBody -Text $primaryRedacted -Heading "Open Questions"
 $openQuestionsHtml = if ([string]::IsNullOrWhiteSpace($openQuestions)) {
     "<p class=""muted"">No explicit Open Questions section found.</p>"
 }
@@ -192,7 +214,8 @@ $mermaidBlocks = ""
 $mermaidScript = ""
 $mermaidMode = "disabled"
 
-if ($Mode -ne "milestone-table-only") {
+$renderMermaid = $Mode -in @("plan-plus-mermaid", "ui-mockup", "design-diff")
+if ($renderMermaid) {
     $payload = New-MermaidRenderPayload -Milestones $milestones -TryMcp:(-not $ForceMermaidFallback) -VendoredAssetPath $vendoredMermaidPath
     $mermaidMode = $payload.Renderer
     foreach ($line in $payload.Provenance) {
@@ -202,16 +225,16 @@ if ($Mode -ne "milestone-table-only") {
     $graphDefinition = Escape-Html $payload.GraphDefinition
     $ganttDefinition = Escape-Html $payload.GanttDefinition
     $mermaidBlocks = @"
-<section class="diagram-grid">
-  <article class="diagram-card">
+<section class=""diagram-grid"">
+  <article class=""diagram-card"">
     <h3>Dependency Graph</h3>
-    <div class="mermaid">
+    <div class=""mermaid"">
 $graphDefinition
     </div>
   </article>
-  <article class="diagram-card">
+  <article class=""diagram-card"">
     <h3>Sequential Gantt</h3>
-    <div class="mermaid">
+    <div class=""mermaid"">
 $ganttDefinition
     </div>
   </article>
@@ -220,7 +243,7 @@ $ganttDefinition
 
     $assetRel = Get-RelativePath -FromDirectory (Split-Path -Parent $OutputPath) -ToPath $vendoredMermaidPath
     $mermaidScript = @"
-<script src="$assetRel"></script>
+<script src=""$assetRel""></script>
 <script>
 if (window.mermaid) {
   window.mermaid.initialize({ startOnLoad: true, securityLevel: 'strict' });
@@ -258,6 +281,85 @@ if ($Mode -eq "ui-mockup") {
     }
 }
 
+$artifactLabel = "dt-visualize-plan artifact"
+$viewSuffix = "plan view"
+$openQuestionsTitle = "Open Questions"
+$primaryPreviewTitle = "Plan Preview (redacted)"
+$changeSummaryPanel = "<section class=""panel""><h2>Change Summary</h2><p class=""muted"">Not applicable in plan mode.</p></section>"
+$sectionDiffPanel = "<section class=""panel""><h2>Section Diff</h2><p class=""muted"">Not applicable in plan mode.</p></section>"
+
+if ($Mode -eq "design-diff") {
+    $artifactLabel = "dt-visualize-design artifact"
+    $viewSuffix = "design view"
+    $openQuestionsTitle = "Open Questions (from design-final)"
+    $primaryPreviewTitle = "Design Preview (redacted)"
+
+    $diff = New-MarkdownSectionDiff -PlanText $planRedacted -DesignText $designRedacted
+    $dependencyProvenance.Add("Diff source: plan-draft vs design-final")
+
+    $added = [int]$diff.Summary.Added
+    $changed = [int]$diff.Summary.Changed
+    $removed = [int]$diff.Summary.Removed
+    $unchanged = [int]$diff.Summary.Unchanged
+
+    $changeSummaryPanel = @"
+<section class=""panel"">
+  <h2>Change Summary</h2>
+  <div class=""badge-row"">
+    <span class=""badge-chip status-added"">[ADDED] $added</span>
+    <span class=""badge-chip status-changed"">[CHANGED] $changed</span>
+    <span class=""badge-chip status-removed"">[REMOVED] $removed</span>
+    <span class=""badge-chip status-unchanged"">[UNCHANGED] $unchanged</span>
+  </div>
+</section>
+"@
+
+    $diffRows = foreach ($row in $diff.Sections) {
+        if ($row.Status -eq "UNCHANGED") { continue }
+        $statusClass = switch ($row.Status) {
+            "ADDED" { "status-added"; break }
+            "CHANGED" { "status-changed"; break }
+            "REMOVED" { "status-removed"; break }
+            default { "status-unchanged" }
+        }
+
+        $body = switch ($row.Status) {
+            "ADDED" { [string]$row.DesignBody; break }
+            "CHANGED" { [string]$row.DesignBody; break }
+            "REMOVED" { [string]$row.PlanBody; break }
+            default { [string]$row.DesignBody }
+        }
+
+        $preview = $body
+        if ($preview.Length -gt 360) {
+            $preview = $preview.Substring(0, 360) + "..."
+        }
+
+        @"
+<article class=""diff-card"">
+  <div class=""diff-head"">
+    <span class=""badge-chip $statusClass"">[$($row.Status)]</span>
+    <h3>$(Escape-Html $row.Title)</h3>
+  </div>
+  <p class=""muted"">$(Escape-Html $preview)</p>
+</article>
+"@
+    }
+
+    if (-not $diffRows -or $diffRows.Count -eq 0) {
+        $diffRows = @('<p class="muted">No section-level differences detected between plan and design.</p>')
+    }
+
+    $sectionDiffPanel = @"
+<section class=""panel"">
+  <h2>Section Diff</h2>
+  <section class=""diff-grid"">
+    $($diffRows -join "`n    ")
+  </section>
+</section>
+"@
+}
+
 $summaryCards = @"
 <article class="summary-card"><span class="label">Surface</span><span class="value">$(Escape-Html $surface)</span></article>
 <article class="summary-card"><span class="label">Scope</span><span class="value">$(Escape-Html $scope)</span></article>
@@ -265,7 +367,7 @@ $summaryCards = @"
 <article class="summary-card"><span class="label">Mermaid renderer</span><span class="value">$(Escape-Html $mermaidMode)</span></article>
 "@
 
-$fullPlanHtml = "<pre class=""code-block"">" + (Escape-Html $redacted) + "</pre>"
+$fullPlanHtml = "<pre class=""code-block"">" + (Escape-Html $primaryRedacted) + "</pre>"
 $template = Get-Content -LiteralPath $templatePath -Raw
 $tokens = Get-Content -LiteralPath $tokensPath -Raw
 
@@ -284,6 +386,13 @@ $rendered = $rendered.Replace("{{UI_MOCKUP}}", $uiMockupHtml)
 $rendered = $rendered.Replace("{{PLAN_PREVIEW}}", $fullPlanHtml)
 $rendered = $rendered.Replace("{{DEPENDENCY_PROVENANCE}}", $provenanceHtml)
 $rendered = $rendered.Replace("{{MERMAID_SCRIPT}}", $mermaidScript)
+$rendered = $rendered.Replace("{{ARTIFACT_LABEL}}", (Escape-Html $artifactLabel))
+$rendered = $rendered.Replace("{{VIEW_SUFFIX}}", (Escape-Html $viewSuffix))
+$rendered = $rendered.Replace("{{CHANGE_SUMMARY_PANEL}}", $changeSummaryPanel)
+$rendered = $rendered.Replace("{{OPEN_QUESTIONS_TITLE}}", (Escape-Html $openQuestionsTitle))
+$rendered = $rendered.Replace("{{PRIMARY_PREVIEW_TITLE}}", (Escape-Html $primaryPreviewTitle))
+$rendered = $rendered.Replace("{{SECTION_DIFF_PANEL}}", $sectionDiffPanel)
+$rendered = $rendered -replace '""', '"'
 
 $outDir = Split-Path -Parent $OutputPath
 if (-not (Test-Path -LiteralPath $outDir)) {
