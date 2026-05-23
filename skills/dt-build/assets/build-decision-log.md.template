@@ -1,0 +1,12 @@
+# Build Decision Log — __RUN_ID__
+
+Append-only. Latest at bottom.
+
+## Contract freeze carry-forward
+- Legacy pre-refactor `.dt-build/<RUN_ID>/` folders are historical-only and cannot be resumed.
+- Intake contract source is `roadmap.md` validated against dt-roadmap canonical schema.
+
+## Intake notes
+- roadmap_path: __ROADMAP_PATH__
+- schema_major: __SCHEMA_MAJOR__
+- generated_at_utc: __GENERATED_AT_UTC__

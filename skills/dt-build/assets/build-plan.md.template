@@ -1,0 +1,21 @@
+# Build Plan — __RUN_ID__
+
+## Run
+RUN_ID: __RUN_ID__
+build_branch: dt-build/__RUN_ID__
+base_sha: __BASE_SHA__
+merge_target: __MERGE_TARGET__
+intake_contract: roadmap-v1
+roadmap_path: __ROADMAP_PATH__
+schema_major: __SCHEMA_MAJOR__
+milestone_count: __MILESTONE_COUNT__
+chunk_count: __CHUNK_COUNT__
+verification_item_count: __VERIFICATION_COUNT__
+
+## Intake contract
+- Source of truth schema: `skills/dt-roadmap/references/roadmap-schema.md`
+- Validator: `skills/dt-roadmap/scripts/roadmap-validator.ps1`
+- Outcome: roadmap validator pass required before execution stages.
+
+## Decision ledger (intake ambiguity)
+- If roadmap validation passes, no additional intake ambiguity is open.

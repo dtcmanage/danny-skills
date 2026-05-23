@@ -1,0 +1,19 @@
+# Build State — __RUN_ID__
+
+## Run
+RUN_ID: __RUN_ID__
+build_branch: dt-build/__RUN_ID__
+base_sha: __BASE_SHA__
+merge_target: __MERGE_TARGET__
+spec_revision: r0
+isolation_handle: none
+roadmap_path: __ROADMAP_PATH__
+roadmap_schema_major: __SCHEMA_MAJOR__
+
+## Milestones
+| m# | name | verification-mode | status | commit-sha |
+|----|------|-------------------|--------|------------|
+
+## Chunks (current milestone)
+| chunk-slug | milestone | model | worktree | branch | status |
+|------------|-----------|-------|----------|--------|--------|
