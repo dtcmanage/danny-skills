@@ -6,6 +6,11 @@ Intake resilience controls in Phase 7A:
 - Resume compatibility gate rejects legacy pre-refactor run folders.
 - Contract validation fails closed on schema and dependency violations.
 
+Execution resilience controls in Phase 7B:
+- Codex prompt assembly and verify gates run through deterministic scripts.
+- Verify/fix loop budget is capped at two attempts per milestone.
+- `dev` updates run through compare-and-swap (`scripts/dev-cas-update.ps1`) after rehearsal.
+
 Shared posture:
 - Use repo-level `references/security-posture.md` as the policy anchor.
 - Route run-log writes through repo-level redaction module.

@@ -6,15 +6,14 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 2.0.0
-  changelog: "Phase 7A intake-parity refactor: roadmap-first intake, canonical dt-roadmap contract validation, and legacy run hard-cutover behavior."
+  version: 2.1.0
+  changelog: "Phase 7B execution-parity refactor: deterministic codex-prompt assembly/verification scripts, dev compare-and-swap script, and execution-path parity guardrails."
 ---
 
 # Build Executor
 
 `dt-build` consumes a finalized `roadmap.md` contract and executes milestones on `dev`.
-This Phase-7A scope is intake-parity only: deterministic intake scaffolding and contract validation.
-Execution-parity behavior is Phase 7B and is intentionally not implemented here.
+Phase 7A established deterministic roadmap-first intake. Phase 7B restores execution parity through deterministic execution-side scripts.
 
 ## When this fires
 
@@ -26,7 +25,6 @@ Trigger when all are true:
 Do NOT fire for:
 - Plan authoring or redesign (`dt-plan`, `dt-review`).
 - Roadmap production (`dt-roadmap`).
-- Any Phase-7B execution-parity changes.
 
 ## Contract source of truth
 
@@ -34,7 +32,7 @@ Do NOT fire for:
 - Canonical validator: `skills/dt-roadmap/scripts/roadmap-validator.ps1`.
 - `dt-build` must read both through repo-relative paths; no copied schema is allowed.
 
-## Procedure (Phase 7A)
+## Procedure (7A intake + 7B execution)
 
 1. Intake in one question:
 - Repo path (absolute).
@@ -48,39 +46,41 @@ Do NOT fire for:
 
 3. Enforce legacy hard-cutover (Contract Freeze Gate):
 - If a resume RUN_ID points to a pre-refactor `.dt-build/<RUN_ID>/` folder, reject intake.
-- Pre-refactor is detected when run artifacts do not carry the new intake marker (`intake_contract: roadmap-v1` in build-plan).
-- Error must explicitly cite the Contract Freeze Gate decision:
-  legacy pre-refactor run folders are historical-only and cannot be resumed by refactored dt-build.
+- Pre-refactor is detected when run artifacts do not carry the intake marker (`intake_contract: roadmap-v1` in build-plan).
+- Error must explicitly cite the Contract Freeze Gate decision: legacy pre-refactor run folders are historical-only and cannot be resumed by refactored dt-build.
 
 4. Produce deterministic intake scaffolding:
 - `build-state.md` via `scripts/write-build-state.ps1` (atomic full-file rewrite).
 - `build-decision-log.md` scaffold.
 - `build-plan.md` scaffold (roadmap-driven intake contract).
-- reference-pack files + `reference-manifest.md` via `scripts/build-reference-pack.ps1`.
+- Reference-pack files + `reference-manifest.md` via `scripts/build-reference-pack.ps1`.
 
 5. Spawn preflight contract check:
 - Resolve each chunk entitlement through `scripts/spawn-preflight.ps1`.
 - Abort if any manifest mismatch or missing entitlement.
 
-6. Guardrails:
-- Branch drift check only (`scripts/check-drift.ps1`); no execution-loop changes in 7A.
-- Worktree containment hard-block (`scripts/check-worktree-containment.ps1`).
+6. Execute milestones with deterministic execution-side procedures:
+- Assemble Codex prompt bytes through `scripts/assemble-codex-prompt.ps1` (single canonical implementation; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`).
+- Run the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every Codex invocation.
+- Run verify/fix loops with a hard two-attempt budget per milestone; if still failing, escalate instead of spinning.
+- Update `dev` only via compare-and-swap through `scripts/dev-cas-update.ps1` after rehearsal checks pass.
+
+7. Guardrails:
+- Branch drift detection via `scripts/check-drift.ps1`.
+- Worktree containment hard-block via `scripts/check-worktree-containment.ps1`.
+- Subagent prompt envelope boundaries are mandatory via repo-level `scripts/wrap-prompt-envelope.ps1`.
 - Run-log writes route through repo-level `scripts/security/redact-secrets.ps1`.
 
-## Deterministic intake verification (7A exit gate)
+## Required verification
 
-- Use a frozen sample roadmap.
-- Run intake dry-run twice.
-- Require byte-identical outputs for:
-  - `build-state.md`
-  - `build-decision-log.md`
-  - `build-plan.md`
-- Run negative-path checks for roadmap contract failures:
-  - dependency cycle
-  - missing required column
-  - `schema_version` major mismatch
-
-Phase 7B must not start until these checks pass.
+- Real small build against an actual roadmap (`roadmap.md`) that exercises:
+  - milestone-commit behavior
+  - dev compare-and-swap flow
+  - verify/fix loop budget behavior
+- Execution parity check:
+  - same milestone-commit outcome class as pre-refactor dt-build behavior
+  - artifact integrity checks still pass
+  - no regression to verify/fix budget policy
 
 ## References
 

@@ -12,3 +12,7 @@ Chunk branches (multi-chunk milestones):
 Commit boundaries:
 - Milestone commits are scoped to milestone outputs.
 - `.dt-build/<RUN_ID>/` artifacts are never added to milestone commits.
+
+dev update:
+- `dev` is updated only by compare-and-swap through `scripts/dev-cas-update.ps1`.
+- If observed `dev` sha differs from expected pre-rehearsal sha, the CAS update is blocked.
