@@ -67,10 +67,17 @@ skill's `metadata.version`: the plugin bumps on milestone drops; a skill bumps w
 
 ## The `_log.md` friction-note convention
 
-Each skill folder may carry a `_log.md` — an append-only friction log, one line per invocation that hit
+Each skill folder carries a `_log.md` — an append-only friction log, one line per invocation that hit
 friction. Format: a single line capturing what tripped, e.g. `2026-05-21 dt-review: verdict parse missed a
-lowercase confidence token`. These notes are the raw material the compounding loop reads when proposing a
-SKILL.md amendment. Keep entries to one line; never rewrite or reorder past entries (append-only).
+lowercase confidence token`. These notes are the raw material `dt-tune` reads when proposing a SKILL.md
+amendment.
 
-(Retention policy for `_log.md` and the session-end stop-hook recommendation are added when the compounding
-loop ships; until then, `_log.md` is simply an append-only note file a skill may keep.)
+Rules:
+- One line per friction event; include date, skill name, and the concrete failure/friction.
+- Never rewrite, reorder, or delete historical lines in `_log.md`.
+- Retention: when `_log.md` exceeds 200 lines, move the oldest lines into `_log-archive.md` (append-only),
+  preserving order, and keep the newest 100 lines in `_log.md`.
+
+Session-end stop-hook recommendation:
+- If any `_log.md` received a new friction line in the session, suggest `/dt-tune <skill>` for each
+  implicated skill before ending the session.

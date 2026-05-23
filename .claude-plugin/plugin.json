@@ -22,6 +22,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.8.0 phase-8-dt-tune-and-audit-extension: added dt-tune for approval-gated skill-level SKILL.md amendments, extended dt-starter-session-audit with the skill-amendment routing class, and standardized per-skill _log.md friction-note convention plus session-end tune stop-hook guidance.",
       "0.8.0 phase-7b-dt-build-execution: completed dt-build execution parity by adding deterministic execution scripts (assemble-codex-prompt, verify-codex-prompt, dev-cas-update), wiring codex prompt verify-gate and dev compare-and-swap flow, and preserving Phase-7A roadmap-intake contract behavior.",
       "0.7.0 phase-0-foundation: repo-level references/scripts/assets scaffolding; canonical dimension contract + glossary contract single sources; security primitives (wrap-prompt-envelope, redact-secrets) + redaction corpus; vendored mermaid 10.9.3 (SHA256-pinned); upstream-deps governance + fallback table; skill-template scaffold.",
       "0.7.0 phase-1-dt-plan: renamed dt-design-build -> dt-plan onto the Anthropic standard (SKILL.md 2.2k words); CDC + glossary-placement rules now point at repo-level references; surface templates + plan-shape/shape_version policy extracted to dt-plan/references; junction reparse-target resolution added to conventions.md; junctions repaired on CLI x3 + Codex; live cross-skill references updated; no plugin version bump (milestone-based policy).",
