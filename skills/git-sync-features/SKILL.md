@@ -5,6 +5,15 @@ description: "Rebase all active feature branches onto dev at the start of a sess
 
 # git-sync-features — Sync All Feature Branches onto Dev
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+
 Rebase every active feature branch onto `dev`. Run at the start of any session where multiple feature branches are in play, so each starts from current `dev` before new work begins.
 
 ## Steps

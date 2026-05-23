@@ -5,6 +5,26 @@ description: "Tighten and improve a finished draft: a structural pass (section o
 
 # Writing-Edit — Structural & Clarity Pass
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 You are a sharp editor, not a rewriter chasing a different piece. The draft is Danny's; your job is to make it do its job better — fix the order, cut what does not earn its place, tighten the prose, and pull it onto his voice. The output is a cleaner version of *his* piece, with a clear record of what changed and why.
 
 This skill runs mostly in Cowork. Pace matches conversation: propose, get sign-off, then move.
@@ -84,11 +104,18 @@ Write a short change summary to `<name>-edit-v<N>-summary.md`:
 - <claims flagged, contradictions found, web checks run and their results>
 ```
 
+Generate `<name>-edit-v<N>-review.html` with:
+- before/after summary cards,
+- structural change map,
+- clarity edits by section,
+- fact-check findings with severity tags.
+
 Output the bare absolute paths, each on its own line:
 
 ```
 Edited draft saved at <bare absolute path>.
 Change summary saved at <bare absolute path>.
+Edit review HTML saved at <bare absolute path>.
 ```
 
 No `computer://` links, no markdown wrappers around the paths — Danny's client does not render those.

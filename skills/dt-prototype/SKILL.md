@@ -12,6 +12,26 @@ metadata:
 
 # Prototype
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 Adapted from Matt Pocock's prototype skill (MIT) - see `references/ATTRIBUTION.md`.
 
 `dt-prototype` is the conditional stage between planning and adversarial review. Use it when a question
@@ -73,6 +93,10 @@ State the assumption explicitly at the top of the output notes.
   - the question,
   - what was observed,
   - the decision to keep/delete/fold.
+- Write `NOTES-view.html` beside `NOTES.md` with:
+  - question/status summary cards,
+  - observed behavior flow (Mermaid or SVG),
+  - keep/delete/fold decision panel.
 
 5. Exit with cleanup intent:
 - Recommend deleting throwaway scaffolding after the decision is absorbed.

@@ -12,6 +12,26 @@ metadata:
 
 # Tune Skill Behavior
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 `dt-tune` proposes precise amendments to a skill's `SKILL.md` when real sessions expose friction.
 It never writes automatically: propose first, explain why, and apply only after explicit approval.
 
@@ -30,7 +50,7 @@ If transcript evidence is missing, proceed from the target skill's `_log.md` and
 
 Trigger when one of these is true:
 - A skill underperformed in a real session and the fix belongs in that skill's instructions.
-- `dt-starter-session-audit` surfaced a `skill amendment` finding.
+- `dt-session-audit` surfaced a `skill amendment` finding.
 - `_log.md` entries indicate repeated friction for the same skill.
 
 Do NOT fire for:
@@ -40,7 +60,7 @@ Do NOT fire for:
 
 ## Procedure
 
-1. Resolve paths from this SKILL.md location (never from `pwd`):
+1. Resolve paths per shared baseline:
 - Target skill path: `../<target-skill>/SKILL.md`
 - Target friction logs: `../<target-skill>/_log.md` and optional `../<target-skill>/_log-archive.md`
 
@@ -58,6 +78,7 @@ Do NOT fire for:
 - Exact unified diff for `SKILL.md`.
 - Rationale for each hunk.
 - Risk check: what could regress if this change is wrong.
+- Companion review artifact: `dt-tune-proposal.html` with change cards, diff summary, and risk matrix.
 - Version/changelog plan:
   - Default bump: patch (x.y.Z + 1).
   - Use minor only when behavior surface expands meaningfully.
@@ -82,7 +103,7 @@ Do NOT fire for:
 8. Verify and report:
 - Re-read target `SKILL.md` and confirm approved hunks landed.
 - Confirm version bump and changelog append are present.
-- Report changed file path, version before/after, and concise diff summary.
+- Report changed file path, version before/after, concise diff summary, and proposal HTML path.
 
 ## Guardrails
 
@@ -96,3 +117,4 @@ Do NOT fire for:
 
 Each skill folder has an append-only `_log.md` for friction notes (one line per invocation with friction).
 `dt-tune` reads these notes as tuning evidence and does not rewrite past lines.
+

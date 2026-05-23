@@ -12,6 +12,26 @@ metadata:
 
 # Build Executor
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 `dt-build` consumes a finalized `roadmap.md` contract and executes milestones on `dev`.
 Phase 7A established deterministic roadmap-first intake. Phase 7B restores execution parity through deterministic execution-side scripts.
 
@@ -65,6 +85,13 @@ Do NOT fire for:
 - Run verify/fix loops with a hard two-attempt budget per milestone; if still failing, escalate instead of spinning.
 - Update `dev` only via compare-and-swap through `scripts/dev-cas-update.ps1` after rehearsal checks pass.
 
+6.5 Emit review artifact:
+- Generate `build-run-review.html` in the run artifact folder with:
+  - milestone status cards,
+  - execution timeline,
+  - verify/fix loop outcomes,
+  - blockers/escalations panel.
+
 7. Guardrails:
 - Branch drift detection via `scripts/check-drift.ps1`.
 - Worktree containment hard-block via `scripts/check-worktree-containment.ps1`.
@@ -81,6 +108,7 @@ Do NOT fire for:
   - same milestone-commit outcome class as pre-refactor dt-build behavior
   - artifact integrity checks still pass
   - no regression to verify/fix budget policy
+- Report bare absolute paths for primary run artifacts and `build-run-review.html`.
 
 ## References
 

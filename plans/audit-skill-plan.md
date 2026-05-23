@@ -1,13 +1,13 @@
-# starter-session-audit Enhancement — Build Plan
+# dt-session-audit Enhancement — Build Plan
 **Date:** 2026-05-17
 **Surface:** Claude Code skill authoring (enhancement to an existing skill)
 **Scope:** complex
 **Repo:** dtcmanage/danny-skills
-**Target:** `skills/starter-session-audit/SKILL.md`
+**Target:** `skills/dt-session-audit/SKILL.md`
 
 ## Goal
 
-Extend `starter-session-audit` from a two-file router into a scope-aware,
+Extend `dt-session-audit` from a two-file router into a scope-aware,
 three-file router that also catches terminology and never lets a session
 silently contradict a broader-scope rule.
 
@@ -250,11 +250,11 @@ Question 1.
 
 - `plugin.json` and `.claude-plugin/marketplace.json`: bump `0.2.3 -> 0.2.4`
   (enhancement to an existing skill, pre-1.0). Convention is Open Question 6.
-- Update the `starter-session-audit` description string in both manifests and in
+- Update the `dt-session-audit` description string in both manifests and in
   the `SKILL.md` frontmatter to reflect the third file (`CONTEXT.md`),
   terminology capture, and scope-aware routing. The current description hard-codes
   "CLAUDE.md and MEMORY.md in the root folder" — that becomes stale.
-- Update the `starter-session-audit` section of `README.md` to describe the
+- Update the `dt-session-audit` section of `README.md` to describe the
   two-axis routing, the terminology pass, the conflict policy, and the DROP
   outcome.
 
@@ -323,3 +323,4 @@ Question 1.
   `design-build`'s job.
 - Non-terminology workspace cleanup or file reorganization — the skill stays an
   audit, not a refactor.
+

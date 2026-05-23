@@ -145,7 +145,7 @@ mistake `prototype` for an unfinished skill next to its heavier siblings.
   language and `/prototype`. The other three skills keep their existing "skip
   for exploratory throwaway code" exclusions, which now point at `prototype`
   by name. No trigger collides with `/design-build`, `/design-loop`,
-  `/parallel-build`, or `/starter-session-audit`.
+  `/parallel-build`, or `/dt-session-audit`.
 - **No auto-invocation.** No skill calls another. Danny decides each transition,
   consistent with how the pack already composes.
 
@@ -199,5 +199,6 @@ mistake `prototype` for an unfinished skill next to its heavier siblings.
   `danny-skills` plugin.
 - A wholesale rewrite of upstream `LOGIC.md` / `UI.md` — this is an adaptation
   of their substance, not a from-scratch redesign.
-- Changes to `parallel-build` or `starter-session-audit` beyond the manifest
+- Changes to `parallel-build` or `dt-session-audit` beyond the manifest
   description string.
+

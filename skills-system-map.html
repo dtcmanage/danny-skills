@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Danny Skills Operating Map</title>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+
+    :root {
+      --bg-0: #f6f8ff;
+      --bg-1: #e9efff;
+      --ink: #13203f;
+      --muted: #4d608f;
+      --panel: rgba(255, 255, 255, 0.82);
+      --line: rgba(40, 67, 129, 0.22);
+      --accent: #0f63ff;
+      --accent-2: #0aa57f;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 540px at 90% -20%, #c9d8ff 0%, transparent 55%),
+        radial-gradient(900px 460px at -10% 8%, #d7e4ff 0%, transparent 58%),
+        linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+    }
+
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 20px 36px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      backdrop-filter: blur(6px);
+      padding: 16px;
+      box-shadow: 0 10px 26px rgba(17, 40, 93, 0.08);
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      letter-spacing: -0.02em;
+      color: #0f1d3e;
+    }
+
+    h1 { font-size: 34px; line-height: 1.06; }
+    h2 { font-size: 21px; margin-bottom: 10px; }
+    h3 { font-size: 16px; margin-bottom: 8px; }
+
+    p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .pill {
+      border: 1px solid rgba(15, 99, 255, 0.24);
+      color: #1546b2;
+      background: rgba(15, 99, 255, 0.08);
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .legend-item {
+      border: 1px solid rgba(32, 61, 121, 0.2);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.7);
+      font-size: 13px;
+      color: #1e315e;
+    }
+
+    .charts {
+      display: grid;
+      gap: 12px;
+    }
+
+    .mermaid {
+      border: 1px solid rgba(40, 67, 129, 0.16);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.66);
+      padding: 8px;
+      overflow: auto;
+    }
+
+    @media (max-width: 980px) {
+      .hero {
+        grid-template-columns: 1fr;
+      }
+      h1 { font-size: 29px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <article class="panel">
+        <h1>Danny Skills Operating Map</h1>
+        <p>This is the corrected version: the chart now separates baseline delivery from prototype-required delivery so dependencies are explicit and not contradictory.</p>
+        <div class="pill-row">
+          <span class="pill">15 skills mapped</span>
+          <span class="pill">core pipeline + writing + git + closeout</span>
+          <span class="pill">Mermaid 10.9.3 local runtime</span>
+        </div>
+      </article>
+      <aside class="panel">
+        <h3>How To Read It</h3>
+        <div class="legend">
+          <div class="legend-item"><strong>Flowchart:</strong> control and data flow between skills.</div>
+          <div class="legend-item"><strong>Gantt A:</strong> normal path where prototype is skipped.</div>
+          <div class="legend-item"><strong>Gantt B:</strong> alternate path when unresolved logic/UI requires prototype work.</div>
+          <div class="legend-item"><strong>Writing lane:</strong> independent but can run in parallel with delivery.</div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel charts">
+      <h2>System Flow</h2>
+      <div class="mermaid">
+flowchart LR
+  subgraph GitOps["Branch Operations"]
+    gs["git-sync-features"]
+    gm["git-merge-feature"]
+  end
+
+  subgraph Delivery["Product Delivery"]
+    p["dt-plan"]
+    vp["dt-visualize-plan"]
+    gate{"Need prototype?"}
+    proto["dt-prototype"]
+    rev["dt-review"]
+    vd["dt-visualize-design"]
+    rm["dt-roadmap"]
+    b["dt-build"]
+  end
+
+  subgraph Writing["Writing Workstream"]
+    wd["dt-writing-draft"]
+    we["dt-writing-edit"]
+  end
+
+  subgraph Closeout["Session Closeout"]
+    ho["dt-handoff"]
+    audit["dt-session-audit"]
+    hyg["dt-memory-hygiene"]
+  end
+
+  gs --> p --> vp --> gate
+  gate -- Yes --> proto --> rev
+  gate -- No --> rev
+  rev --> vd --> rm --> b --> gm
+  wd --> we --> ho
+  b --> ho --> audit
+  audit -- bloat threshold tripped --> hyg
+      </div>
+    </section>
+
+    <section class="panel charts">
+      <h2>Gantt A: Baseline Delivery (No Prototype)</h2>
+      <p>Use this when requirements are already clear after planning and visualization.</p>
+      <div class="mermaid">
+gantt
+  title Baseline Skill Sequence (No Prototype Gate Opened)
+  dateFormat YYYY-MM-DD
+  axisFormat %m/%d
+  excludes weekends
+
+  section Git
+  Sync branches (git-sync-features) :done, gs, 2026-05-25, 1d
+
+  section Design to Build
+  Plan scope (dt-plan) :done, plan, after gs, 2d
+  Render plan view (dt-visualize-plan) :done, vizplan, after plan, 1d
+  Adversarial review (dt-review) :active, review, after vizplan, 2d
+  Render design diff (dt-visualize-design) :done, vizdesign, after review, 1d
+  Produce roadmap contract (dt-roadmap) :done, roadmap, after vizdesign, 1d
+  Execute roadmap (dt-build) :crit, build, after roadmap, 3d
+  Land branch to dev (git-merge-feature) :milestone, merge, after build, 0d
+
+  section Closeout
+  Prepare handoff prompt (dt-handoff) :done, handoff, after build, 1d
+  Capture memory deltas (dt-session-audit) :milestone, audit, after handoff, 0d
+  Optional memory hygiene (dt-memory-hygiene) :milestone, hygiene, after audit, 0d
+
+  section Parallel Writing
+  Draft piece (dt-writing-draft) :done, draft, after plan, 3d
+  Edit piece (dt-writing-edit) :active, edit, after draft, 2d
+      </div>
+    </section>
+
+    <section class="panel charts">
+      <h2>Gantt B: Prototype-Required Delivery</h2>
+      <p>Use this when behavior/state/UI risk is still unresolved after plan visualization.</p>
+      <div class="mermaid">
+gantt
+  title Alternate Sequence When Prototype Is Required
+  dateFormat YYYY-MM-DD
+  axisFormat %m/%d
+  excludes weekends
+
+  section Git
+  Sync branches (git-sync-features) :done, gs2, 2026-05-25, 1d
+
+  section Exploration Path
+  Plan scope (dt-plan) :done, plan2, after gs2, 2d
+  Render plan view (dt-visualize-plan) :done, vizplan2, after plan2, 1d
+  Prototype logic or UI (dt-prototype) :crit, proto2, after vizplan2, 2d
+
+  section Build Path
+  Adversarial review (dt-review) :active, review2, after proto2, 2d
+  Render design diff (dt-visualize-design) :done, vizdesign2, after review2, 1d
+  Produce roadmap contract (dt-roadmap) :done, roadmap2, after vizdesign2, 1d
+  Execute roadmap (dt-build) :crit, build2, after roadmap2, 3d
+  Land branch to dev (git-merge-feature) :milestone, merge2, after build2, 0d
+
+  section Closeout
+  Prepare handoff prompt (dt-handoff) :done, handoff2, after build2, 1d
+  Capture memory deltas (dt-session-audit) :milestone, audit2, after handoff2, 0d
+  Optional memory hygiene (dt-memory-hygiene) :milestone, hygiene2, after audit2, 0d
+
+  section Parallel Writing
+  Draft piece (dt-writing-draft) :done, draft2, after plan2, 3d
+  Edit piece (dt-writing-edit) :active, edit2, after draft2, 2d
+      </div>
+    </section>
+  </main>
+
+  <script src="assets/visualize/vendored/mermaid-10.9.3.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "strict",
+      theme: "base",
+      themeVariables: {
+        primaryColor: "#dfe9ff",
+        primaryTextColor: "#13203f",
+        primaryBorderColor: "#2c4fa8",
+        lineColor: "#385bac",
+        secondaryColor: "#e9f8f5",
+        tertiaryColor: "#fff6e6",
+        background: "#ffffff"
+      },
+      flowchart: {
+        curve: "basis"
+      },
+      gantt: {
+        barHeight: 24,
+        barGap: 8,
+        topPadding: 36,
+        leftPadding: 90,
+        fontSize: 12,
+        numberSectionStyles: 2
+      }
+    });
+  </script>
+</body>
+</html>

@@ -12,6 +12,26 @@ metadata:
 
 # Review — Claude x Codex Coworker Dialogue
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 `dt-review` is adversarial design critique for a plan. Two engineers debate the design as equals across
 rounds until it converges or the cap is reached.
 
@@ -110,6 +130,11 @@ Run the finalization workflow from `references/finalization.md`:
 - copy accepted draft to `design-final.md`
 - reconcile `CONTEXT.md` glossary against `design-final.md`
 - write `design-summary.md`
+- generate `design-review-view.html` (single-file review surface) that includes:
+  - verdict/status cards,
+  - review-flow diagram (Mermaid or SVG),
+  - prioritized findings/conflicts table,
+  - links to `design-final.md` and `design-summary.md`
 - list output paths as bare absolute paths
 
 ## Deterministic scripts

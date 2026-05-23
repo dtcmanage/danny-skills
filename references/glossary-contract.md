@@ -1,6 +1,6 @@
 # Glossary Contract (Normative Terminology Contract)
 
-This is the danny-skills pipeline's **self-contained, executable** terminology contract — the single canonical home for the terminology-placement rules (A1-A8 below). It originated as a normative subset of the glossary-workflow contracts that shipped inline in `dt-design-build` / `dt-design-loop` / `dt-parallel-build` at commit `4d45d2c` (v0.2.3); the commit reference is retained for historical provenance. **This file is the runtime authority:** `dt-starter-session-audit` and the pipeline skills execute the rules below verbatim; changing them is a deliberate edit here plus a version bump, never an edit to a consumer's local copy.
+This is the danny-skills pipeline's **self-contained, executable** terminology contract — the single canonical home for the terminology-placement rules (A1-A8 below). It originated as a normative subset of the glossary-workflow contracts that shipped inline in `dt-design-build` / `dt-design-loop` / `dt-parallel-build` at commit `4d45d2c` (v0.2.3); the commit reference is retained for historical provenance. **This file is the runtime authority:** `dt-session-audit` and the pipeline skills execute the rules below verbatim; changing them is a deliberate edit here plus a version bump, never an edit to a consumer's local copy.
 
 **A1 — Location contract.** A project-scoped term lives in `CONTEXT.md` at the project folder root. A workstation-scoped term lives in `glossary.md` at `<workstation>\<Workstation> Resources\glossary.md`. There is no root-level terminology store.
 
@@ -31,3 +31,4 @@ number, or counterparty identity>
 ```
 
 **A8 — Redaction.** The `Example` field and any persisted term text obey the redaction fallback ladder (raw secret / masked surrogate / non-secret locator / DROP). No real LP name, account number, or counterparty identity in any glossary or `CONTEXT.md` entry.
+

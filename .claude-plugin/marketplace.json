@@ -12,7 +12,7 @@
     {
       "name": "danny-skills",
       "source": "./",
-      "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-starter-session-audit (scope-aware end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md with a conflict policy), and dt-handoff for single-use session continuity.",
+      "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-session-audit (autonomous end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic memory bloat cleanup), and dt-handoff for single-use session continuity.",
       "version": "0.9.9",
       "keywords": [
         "planning",
@@ -23,9 +23,11 @@
         "writing",
         "editing",
         "session-audit",
+        "memory-hygiene",
         "dt-handoff",
         "personal"
       ]
     }
   ]
 }
+

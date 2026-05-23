@@ -12,6 +12,26 @@ metadata:
 
 # Visualize Plan
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 Turn a saved plan into a fast-read HTML artifact (`plan-view.html`) that catches structural issues before
 adversarial review or build. This skill owns rendering and clarity, not decision-making or implementation.
 
@@ -60,6 +80,7 @@ If unsure, default to `plan-plus-mermaid`.
 - Confirm `plan-view.html` exists.
 - Confirm no remote Mermaid URL is present (must use vendored local `mermaid-10.9.3.min.js`).
 - Confirm "Dependency Provenance" footer is populated.
+- Confirm the first viewport is skim-first (summary strip + key diagram/timeline, not a wall of prose).
 
 4. Report result:
 - Return the saved absolute path.

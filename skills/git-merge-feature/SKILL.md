@@ -5,6 +5,15 @@ description: "Rebase a named feature branch onto dev then fast-forward merge it 
 
 # git-merge-feature — Rebase and Merge a Feature Branch into Dev
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+
 Takes a named feature branch, rebases it onto the latest `dev`, fast-forward merges it into `dev`, then deletes the branch. This is the clean, linear merge path — no merge commits.
 
 ## Input

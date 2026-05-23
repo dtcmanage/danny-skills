@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Skills Audit Report</title>
+  <style>
+    :root {
+      --bg: #0f131a;
+      --panel: #171d26;
+      --text: #e9eef7;
+      --muted: #9ba7bd;
+      --line: #2a3342;
+      --accent: #55d6be;
+      --accent2: #6fb1ff;
+      --hot: #ff7d7d;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", "Aptos", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    .wrap { max-width: 1300px; margin: 0 auto; padding: 22px; }
+    .hero { background: linear-gradient(130deg, #171d26 0%, #1e2733 100%); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+    .hero h1 { margin: 0; font-size: 24px; }
+    .meta { color: var(--muted); margin-top: 8px; font-size: 13px; }
+    .cards { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 10px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+    .card .k { color: var(--muted); font-size: 12px; }
+    .card .v { margin-top: 6px; font-size: 22px; font-weight: 700; }
+    .panel { margin-top: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+    .panel h2 { margin: 0 0 8px 0; font-size: 17px; }
+    .note { color: var(--muted); font-size: 12px; line-height: 1.5; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: top; }
+    th { color: #c8d4eb; font-weight: 600; background: #141a23; position: sticky; top: 0; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .bars { display: grid; gap: 8px; }
+    .bar-row { display: grid; grid-template-columns: 220px 1fr 90px; gap: 8px; align-items: center; font-size: 13px; }
+    .bar-track { width: 100%; height: 10px; background: #121722; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+    .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); }
+    .bar-hot { background: linear-gradient(90deg, #ffb26b, var(--hot)); }
+    .small { font-size: 12px; color: var(--muted); }
+    .cmd { margin-top: 8px; background: #121722; border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-family: Consolas, "Courier New", monospace; font-size: 12px; color: #d9e6ff; overflow-x: auto; white-space: nowrap; }
+    .actions { margin-top: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .btn {
+      border: 1px solid #2a4d93;
+      background: linear-gradient(180deg, #214f9d 0%, #1a3d7b 100%);
+      color: #eaf2ff;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .status { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <h1>Skills Audit: Size, Token Footprint, and Heaviness</h1>
+      <div class="meta">Generated: 2026-05-23 03:24:22 -04:00 | Repo: danny-skills | Source: skills/*</div>
+      <div class="cards">
+        <div class="card"><div class="k">Skills Audited</div><div class="v">15</div></div>
+        <div class="card"><div class="k">SKILL.md Lines</div><div class="v">2007</div></div>
+        <div class="card"><div class="k">SKILL.md Tokens (est)</div><div class="v">25941</div></div>
+        <div class="card"><div class="k">Effective Prompt Tokens (est)</div><div class="v">28569</div></div>
+        <div class="card"><div class="k">Script Lines</div><div class="v">2181</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Refresh Command</h2>
+      <p class="note">Run from repo root to regenerate this report:</p>
+      <div class="cmd" id="refresh-cmd">cd 'D:\Claude\_Claude-Workspace\Skill Creation\danny-skills'; pwsh -File scripts/audit-skills-metrics.ps1</div>
+      <div class="actions">
+        <button class="btn" id="copy-refresh-cmd-btn" type="button">Copy Refresh Command</button>
+        <span class="status" id="copy-refresh-cmd-status"></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Heaviest Skills (Heaviness Score)</h2>
+      <div class="bars" id="heaviness-bars"></div>
+      <p class="note">Heaviness score formula: 0.65 * EffectivePromptTokensEst + 0.35 * RuntimeSurfaceScore.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Largest Prompt Footprint (Effective Prompt Tokens)</h2>
+      <div class="bars" id="prompt-bars"></div>
+      <p class="note">EffectivePromptTokensEst = SKILL.md tokens + 45% of references tokens (references are often conditional reads).</p>
+    </section>
+
+    <section class="panel">
+      <h2>Per-Skill Metrics</h2>
+      <div style="overflow:auto; max-height:70vh;">
+        <table id="metrics">
+          <thead>
+            <tr>
+              <th>Skill</th>
+              <th class="num">SKILL.md Lines</th>
+              <th class="num">SKILL.md Tokens*</th>
+              <th class="num">Ref Files</th>
+              <th class="num">Ref Tokens*</th>
+              <th class="num">Script Files</th>
+              <th class="num">Script Lines</th>
+              <th class="num">Total Files</th>
+              <th class="num">Total KB</th>
+              <th class="num">Effective Prompt*</th>
+              <th class="num">Runtime Surface</th>
+              <th class="num">Heaviness</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="small">* Token values are estimates from character count / 4, not model-tokenizer exact counts.</p>
+    </section>
+  </main>
+
+  <script>
+    const data = [
+  {
+    "Skill": "dt-plan",
+    "SkillMdLines": 210,
+    "SkillMdWords": 2329,
+    "SkillMdTokensEst": 4027.0,
+    "ReferenceFiles": 2,
+    "ReferenceLines": 52,
+    "ReferenceTokensEst": 974.0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 0,
+    "TotalFiles": 4,
+    "TotalKb": 19.7,
+    "EffectivePromptTokensEst": 4465.0,
+    "RuntimeSurfaceScore": 0.6,
+    "HeavinessScore": 2902.5
+  },
+  {
+    "Skill": "dt-writing-draft",
+    "SkillMdLines": 235,
+    "SkillMdWords": 2479,
+    "SkillMdTokensEst": 4052.0,
+    "ReferenceFiles": 0,
+    "ReferenceLines": 0,
+    "ReferenceTokensEst": 0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 0,
+    "TotalFiles": 2,
+    "TotalKb": 16.0,
+    "EffectivePromptTokensEst": 4052.0,
+    "RuntimeSurfaceScore": 0.3,
+    "HeavinessScore": 2633.9
+  },
+  {
+    "Skill": "dt-session-audit",
+    "SkillMdLines": 311,
+    "SkillMdWords": 1394,
+    "SkillMdTokensEst": 2766.0,
+    "ReferenceFiles": 0,
+    "ReferenceLines": 0,
+    "ReferenceTokensEst": 0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 0,
+    "TotalFiles": 2,
+    "TotalKb": 10.9,
+    "EffectivePromptTokensEst": 2766.0,
+    "RuntimeSurfaceScore": 0.3,
+    "HeavinessScore": 1798.0
+  },
+  {
+    "Skill": "dt-review",
+    "SkillMdLines": 158,
+    "SkillMdWords": 885,
+    "SkillMdTokensEst": 1789.0,
+    "ReferenceFiles": 5,
+    "ReferenceLines": 220,
+    "ReferenceTokensEst": 1534.0,
+    "ScriptFiles": 4,
+    "ScriptLines": 176,
+    "AssetFiles": 0,
+    "TotalFiles": 11,
+    "TotalKb": 18.6,
+    "EffectivePromptTokensEst": 2479.0,
+    "RuntimeSurfaceScore": 177.6,
+    "HeavinessScore": 1673.5
+  },
+  {
+    "Skill": "dt-build",
+    "SkillMdLines": 121,
+    "SkillMdWords": 685,
+    "SkillMdTokensEst": 1459.0,
+    "ReferenceFiles": 7,
+    "ReferenceLines": 105,
+    "ReferenceTokensEst": 1150.0,
+    "ScriptFiles": 10,
+    "ScriptLines": 1067,
+    "AssetFiles": 3,
+    "TotalFiles": 22,
+    "TotalKb": 46.4,
+    "EffectivePromptTokensEst": 1976.0,
+    "RuntimeSurfaceScore": 1070.7,
+    "HeavinessScore": 1659.1
+  },
+  {
+    "Skill": "dt-writing-edit",
+    "SkillMdLines": 131,
+    "SkillMdWords": 1289,
+    "SkillMdTokensEst": 2127.0,
+    "ReferenceFiles": 0,
+    "ReferenceLines": 0,
+    "ReferenceTokensEst": 0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 0,
+    "TotalFiles": 2,
+    "TotalKb": 8.4,
+    "EffectivePromptTokensEst": 2127.0,
+    "RuntimeSurfaceScore": 0.3,
+    "HeavinessScore": 1382.7
+  },
+  {
+    "Skill": "dt-roadmap",
+    "SkillMdLines": 102,
+    "SkillMdWords": 607,
+    "SkillMdTokensEst": 1216.0,
+    "ReferenceFiles": 1,
+    "ReferenceLines": 84,
+    "ReferenceTokensEst": 677.0,
+    "ScriptFiles": 3,
+    "ScriptLines": 707,
+    "AssetFiles": 1,
+    "TotalFiles": 7,
+    "TotalKb": 30.8,
+    "EffectivePromptTokensEst": 1521.0,
+    "RuntimeSurfaceScore": 708.0,
+    "HeavinessScore": 1236.4
+  },
+  {
+    "Skill": "dt-prototype",
+    "SkillMdLines": 114,
+    "SkillMdWords": 670,
+    "SkillMdTokensEst": 1250.0,
+    "ReferenceFiles": 3,
+    "ReferenceLines": 123,
+    "ReferenceTokensEst": 1151.0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 3,
+    "TotalFiles": 9,
+    "TotalKb": 14.5,
+    "EffectivePromptTokensEst": 1768.0,
+    "RuntimeSurfaceScore": 2.6,
+    "HeavinessScore": 1150.1
+  },
+  {
+    "Skill": "dt-handoff",
+    "SkillMdLines": 105,
+    "SkillMdWords": 898,
+    "SkillMdTokensEst": 1527.0,
+    "ReferenceFiles": 0,
+    "ReferenceLines": 0,
+    "ReferenceTokensEst": 0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 0,
+    "TotalFiles": 2,
+    "TotalKb": 6.1,
+    "EffectivePromptTokensEst": 1527.0,
+    "RuntimeSurfaceScore": 0.3,
+    "HeavinessScore": 992.7
+  },
+  {
+    "Skill": "dt-tune",
+    "SkillMdLines": 120,
+    "SkillMdWords": 756,
+    "SkillMdTokensEst": 1394.0,
+    "ReferenceFiles": 0,
+    "ReferenceLines": 0,
+    "ReferenceTokensEst": 0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 0,
+    "TotalFiles": 2,
+    "TotalKb": 5.5,
+    "EffectivePromptTokensEst": 1394.0,
+    "RuntimeSurfaceScore": 0.3,
+    "HeavinessScore": 906.2
+  },
+  {
+    "Skill": "dt-visualize-plan",
+    "SkillMdLines": 104,
+    "SkillMdWords": 605,
+    "SkillMdTokensEst": 1177.0,
+    "ReferenceFiles": 1,
+    "ReferenceLines": 32,
+    "ReferenceTokensEst": 256.0,
+    "ScriptFiles": 1,
+    "ScriptLines": 47,
+    "AssetFiles": 1,
+    "TotalFiles": 5,
+    "TotalKb": 6.9,
+    "EffectivePromptTokensEst": 1292.0,
+    "RuntimeSurfaceScore": 47.8,
+    "HeavinessScore": 856.5
+  },
+  {
+    "Skill": "dt-visualize-design",
+    "SkillMdLines": 84,
+    "SkillMdWords": 514,
+    "SkillMdTokensEst": 1030.0,
+    "ReferenceFiles": 1,
+    "ReferenceLines": 7,
+    "ReferenceTokensEst": 99.0,
+    "ScriptFiles": 1,
+    "ScriptLines": 42,
+    "AssetFiles": 1,
+    "TotalFiles": 6,
+    "TotalKb": 5.5,
+    "EffectivePromptTokensEst": 1075.0,
+    "RuntimeSurfaceScore": 42.9,
+    "HeavinessScore": 713.8
+  },
+  {
+    "Skill": "dt-memory-hygiene",
+    "SkillMdLines": 92,
+    "SkillMdWords": 449,
+    "SkillMdTokensEst": 859.0,
+    "ReferenceFiles": 0,
+    "ReferenceLines": 0,
+    "ReferenceTokensEst": 0,
+    "ScriptFiles": 1,
+    "ScriptLines": 142,
+    "AssetFiles": 0,
+    "TotalFiles": 3,
+    "TotalKb": 8.4,
+    "EffectivePromptTokensEst": 859.0,
+    "RuntimeSurfaceScore": 142.4,
+    "HeavinessScore": 608.2
+  },
+  {
+    "Skill": "git-merge-feature",
+    "SkillMdLines": 67,
+    "SkillMdWords": 406,
+    "SkillMdTokensEst": 697.0,
+    "ReferenceFiles": 0,
+    "ReferenceLines": 0,
+    "ReferenceTokensEst": 0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 0,
+    "TotalFiles": 2,
+    "TotalKb": 2.8,
+    "EffectivePromptTokensEst": 697.0,
+    "RuntimeSurfaceScore": 0.3,
+    "HeavinessScore": 453.2
+  },
+  {
+    "Skill": "git-sync-features",
+    "SkillMdLines": 53,
+    "SkillMdWords": 331,
+    "SkillMdTokensEst": 571.0,
+    "ReferenceFiles": 0,
+    "ReferenceLines": 0,
+    "ReferenceTokensEst": 0,
+    "ScriptFiles": 0,
+    "ScriptLines": 0,
+    "AssetFiles": 0,
+    "TotalFiles": 2,
+    "TotalKb": 2.3,
+    "EffectivePromptTokensEst": 571.0,
+    "RuntimeSurfaceScore": 0.3,
+    "HeavinessScore": 371.3
+  }
+];
+    const refreshCmd = document.getElementById("refresh-cmd").textContent.trim();
+
+    const fmt = (n) => new Intl.NumberFormat().format(n);
+
+    function renderBars(elId, key, hot=false) {
+      const root = document.getElementById(elId);
+      const top = [...data].sort((a,b)=>b[key]-a[key]).slice(0,10);
+      const max = Math.max(...top.map(x=>x[key]), 1);
+      for (const item of top) {
+        const row = document.createElement("div");
+        row.className = "bar-row";
+        const label = document.createElement("div");
+        label.textContent = item.Skill;
+        const track = document.createElement("div");
+        track.className = "bar-track";
+        const fill = document.createElement("div");
+        fill.className = "bar-fill" + (hot ? " bar-hot" : "");
+        fill.style.width = ((item[key] / max) * 100).toFixed(1) + "%";
+        track.appendChild(fill);
+        const value = document.createElement("div");
+        value.className = "num";
+        value.textContent = fmt(item[key]);
+        row.appendChild(label);
+        row.appendChild(track);
+        row.appendChild(value);
+        root.appendChild(row);
+      }
+    }
+
+    function renderTable() {
+      const tbody = document.querySelector("#metrics tbody");
+      for (const r of data) {
+        const tr = document.createElement("tr");
+        const cells = [
+          r.Skill,
+          r.SkillMdLines,
+          r.SkillMdTokensEst,
+          r.ReferenceFiles,
+          r.ReferenceTokensEst,
+          r.ScriptFiles,
+          r.ScriptLines,
+          r.TotalFiles,
+          r.TotalKb,
+          r.EffectivePromptTokensEst,
+          r.RuntimeSurfaceScore,
+          r.HeavinessScore
+        ];
+        cells.forEach((c, idx) => {
+          const td = document.createElement("td");
+          td.textContent = (typeof c === "number") ? fmt(c) : c;
+          if (idx > 0) td.className = "num";
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function copyRefreshCommand() {
+      const status = document.getElementById("copy-refresh-cmd-status");
+      status.textContent = "";
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(refreshCmd);
+        } else {
+          const temp = document.createElement("textarea");
+          temp.value = refreshCmd;
+          temp.setAttribute("readonly", "");
+          temp.style.position = "absolute";
+          temp.style.left = "-9999px";
+          document.body.appendChild(temp);
+          temp.select();
+          document.execCommand("copy");
+          document.body.removeChild(temp);
+        }
+        status.textContent = "Copied.";
+      } catch (err) {
+        status.textContent = "Copy failed. Select the command text and copy manually.";
+      }
+    }
+
+    document.getElementById("copy-refresh-cmd-btn").addEventListener("click", copyRefreshCommand);
+    renderBars("heaviness-bars", "HeavinessScore", true);
+    renderBars("prompt-bars", "EffectivePromptTokensEst", false);
+    renderTable();
+  </script>
+</body>
+</html>

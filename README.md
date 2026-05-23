@@ -1,6 +1,6 @@
 # danny-skills
 
-Claude Code skills authored for this workspace. The pipeline now includes a visualization pass and a conditional prototype pass between planning and adversarial review, and `dt-starter-session-audit` is a standalone end-of-session skill.
+Claude Code skills authored for this workspace. The pipeline now includes a visualization pass and a conditional prototype pass between planning and adversarial review, and `dt-session-audit` is a standalone end-of-session skill.
 
 ```
 dt-plan  →  dt-visualize-plan  →  dt-prototype*  →  dt-review  →  dt-build
@@ -9,7 +9,17 @@ dt-plan  →  dt-visualize-plan  →  dt-prototype*  →  dt-review  →  dt-bui
 * conditional: only when behavior/UI questions need runnable validation
 ```
 
-The pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `dt-starter-session-audit` runs independently at the end of any session.
+The pipeline skills are self-contained and can be triggered on their own, but they're designed to compose: the output of one is the input of the next. `dt-session-audit` runs independently at the end of any session.
+
+## Shared Skill Policy
+
+All skills now include a `Shared Policy Baseline` block that points to:
+
+- `references/deterministic-reference-policy.md` for deterministic execution + reference-loading rules.
+- `references/conventions.md` for SKILL.md-anchored path resolution (`never from pwd`).
+- `references/html-artifact-policy.md` for HTML-first review artifact standards.
+
+This keeps deterministic and referencing behavior consistent across the full skill pack while allowing tighter per-skill domain guardrails where needed.
 
 ---
 
@@ -112,11 +122,11 @@ Owns the whole build. Takes a finalized plan and delivers it on `dev` — comple
 
 ---
 
-## dt-starter-session-audit
+## dt-session-audit
 
-**Trigger:** `/dt-starter-session-audit`, or "audit this session" / "session audit" / "what did we miss" / "end of session check"
+**Trigger:** `/dt-session-audit`, or "audit this session" / "session audit" / "what did we miss" / "end of session check"
 
-A scope-aware end-of-session audit. Scans the conversation for things stated but never written down, then routes each finding on two axes — content class and scope tier — to one exact destination, surfacing contradictions for adjudication instead of filing them silently. Nothing is saved without batch approval.
+A scope-aware end-of-session audit. Scans the conversation for things stated but never written down, then routes each finding on two axes — content class and scope tier — to one exact destination. Deterministic non-conflict writes are applied automatically.
 
 **What it does:**
 
@@ -127,13 +137,33 @@ A scope-aware end-of-session audit. Scans the conversation for things stated but
 - **Refines instead of duplicating.** A deterministic match order selects the entry to touch; exact duplicates are silently skipped, sharper-same-meaning findings refine in place, governed by content-class-specific refine tests.
 - **Never auto-files a contradiction.** A finding that negates a broader-scope rule or fact is surfaced under "Conflicts" with a structured resolution — fix-root / exclusion / flagged override for rules, update / scoped-delta / keep-and-drop for facts, Keep / Replace / Split for terms. Root stays the single source of truth for rules.
 - **Drops genuine one-offs.** Session-only findings are listed under "Not saving (one-off)" and deliberately not persisted.
-- Presents findings grouped into Recommend / Your call / Conflicts / Not saving / Auto-handled, each with a one-line rationale, then writes only the approved changes.
+- Runs in autonomous mode: applies deterministic non-conflict updates without waiting for approval.
+- Escalates only conflict/uncertain/ambiguous cases under "Your call" or "Conflicts".
+- Runs deterministic bloat detection after writes; if tripped, automatically invokes `dt-memory-hygiene`.
 
 **Skip it for:** sessions where nothing was corrected, decided, or newly shared — it reports a clean session rather than manufacture findings.
+
+---
+
+## dt-memory-hygiene
+
+**Trigger:** auto-invoked by `dt-session-audit` when bloat is detected, or manual `/dt-memory-hygiene`
+
+A periodic cleanup pass for memory/governance files (`CLAUDE.md`, `MEMORY.md`, `CONTEXT.md`, `glossary.md`) that trims bloat without changing policy intent.
+
+**What it does:**
+
+- Uses `skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1` to score bloat deterministically.
+- Triggers on explicit thresholds (token size, long-line count, duplicate ratio, bullet density, or composite score).
+- Compacts run-on entries, removes duplicate drift, and normalizes memory shape for fast future loading.
+- Preserves scope boundaries and escalates semantic conflicts instead of silently rewriting intent.
+
+**Skip it for:** normal small sessions where the detector says `should_run_hygiene=false`.
 
 ---
 
 ## Installing
 
 Each skill lives in `skills/<skill-name>/SKILL.md`. To use them in Claude Code, copy or symlink the `skills/` subfolders into your user-level skills directory (`~/.agents/skills/` on this machine — note: not `~/.claude/skills/`).
+
 

@@ -5,6 +5,26 @@ description: "Turn an idea or a pile of notes into a publishable draft: investor
 
 # Writing-Draft — From Sources to Publishable Draft
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 You are not a ghostwriter taking dictation. You are a writing partner who does the reading Danny no longer has time for, surfaces the events he would otherwise forget, and shapes a draft that sounds like him — not like a model. The output is a draft solid enough to hand to `dt-writing-edit`, built on a source corpus solid enough to fact-check against.
 
 This skill runs mostly in Cowork, where Danny thinks out loud. Pace matches conversation: one decision at a time, one section at a time, never a wall of output.
@@ -182,6 +202,12 @@ Fabricating a fact, or quietly assuming an unsourced claim is fine, poisons the 
 
 The corpus and draft are already written (you wrote to them inline). Confirm both are saved.
 
+Generate `draft-review.html` beside the draft with:
+- executive summary cards,
+- argument flow/section map (Mermaid or SVG),
+- key claims table with source anchors,
+- open verification gaps and follow-ups.
+
 If this piece is finished enough to serve as a future style reference, copy the final draft into `D:\Claude\_Claude-Workspace\00_Resources\writing-samples\<genre>\` and refresh the genre style profile so it tracks Danny's style as it evolves. Each finished piece makes the next one's style match better.
 
 Output the bare absolute paths, each on its own line:
@@ -189,6 +215,7 @@ Output the bare absolute paths, each on its own line:
 ```
 Draft saved at <bare absolute path>.
 Corpus saved at <bare absolute path>.
+Draft review HTML saved at <bare absolute path>.
 ```
 
 No `computer://` links, no markdown wrappers around the paths — Danny's client does not render those.

@@ -12,6 +12,26 @@ metadata:
 
 # Visualize Design
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 Turn a reviewed design into a fast-read HTML artifact (`design-view.html`) that highlights what changed from the
 original plan at section level. This skill owns rendering and change-surface clarity only.
 
@@ -43,6 +63,7 @@ Do NOT fire for:
 - Confirm change-summary header appears with `[ADDED]`, `[CHANGED]`, `[REMOVED]` counts.
 - Confirm section cards carry badge chips for changed sections.
 - Confirm dependency provenance footer is populated and Mermaid is vendored-local only.
+- Confirm the top fold is skim-first (status cards + key change visuals before long narrative blocks).
 
 4. Report result:
 - Return absolute output path.

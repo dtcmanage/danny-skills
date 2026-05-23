@@ -12,6 +12,26 @@ metadata:
 
 # Roadmap Builder
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 Produce a contract-grade `roadmap.md` from a finalized design artifact and emit milestone tracking artifacts that
 Phase 7 (`dt-build`) can consume deterministically.
 
@@ -57,9 +77,13 @@ Do NOT fire for:
   - `milestones-table.md`
   - debt tag: `regenerate milestones.xlsx before next milestone bump`
 
+5.5 Generate review HTML:
+- Create `roadmap-view.html` beside `roadmap.md` with summary cards, milestone timeline, dependency flowchart, and highlighted risks/open questions.
+
 6. Report outputs:
 - Return absolute path to `roadmap.md`.
 - Return produced milestone artifacts and whether xlsx primary or csv fallback path was used.
+- Also return absolute path to `roadmap-view.html` (timeline/flowchart-based review artifact).
 
 ## Contract + dependency rules
 

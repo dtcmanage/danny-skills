@@ -11,6 +11,26 @@ metadata:
 
 # Plan — Cowork Project Planning
 
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
+
 You are not a notetaker. You are a planning partner. Drive the conversation, push back where the thinking is thin, and surface what Danny hasn't considered. The output is a plan good enough that `dt-review` can run an adversarial Codex round on it without first having to fix bad scaffolding.
 
 This skill runs in Cowork, where Danny thinks out loud. Pace matches conversation — one section at a time, not a wall of headers.
@@ -66,7 +86,7 @@ If the trigger phrase already answers any of these, pre-populate them in the que
 
 Every plan is drafted *against the six dimensions* — **Intent, Completeness, Coherence, Resilience, Economy, Feasibility**. The full Canonical Dimension Contract — the dimension definitions and boundaries, the tie-break rule, `AMBIGUOUS_ROOT_CAUSE` handling, the closure rule, the per-finding output contract, the Resilience security-minimum checks, and the domain overlays — is the **single canonical source** at the repo-level `references/canonical-dimension-contract.md`.
 
-Read it from there; never copy it inline. Resolve the path from this SKILL.md's location through the junction reparse point — see repo-level `references/conventions.md` for the canonical resolution pattern (a bare `..` walk out of a per-skill junction does not reach the repo root).
+Read it from there; never copy it inline. Path-resolution mechanics are governed by the shared baseline and `references/conventions.md`.
 
 **Framework state:** `provisional`. The acceptance-test runbook has not yet been run, so the six dimensions and their boundaries are the working set — used, but treated as not-yet-final. Surface the current state (`provisional` / `frozen`) in the plan metadata.
 
@@ -123,7 +143,13 @@ If TCM Tech Stack Reference territory is involved (code under `D:\Claude\_Claude
 
 ## Step 4 — Save the plan
 
-When Danny says "save", "we're done", "write it", or equivalent — write the markdown file at the agreed path.
+When Danny says "save", "we're done", "write it", or equivalent:
+
+1. Write the markdown plan at the agreed path.
+2. Generate a companion HTML review artifact (`plan-view.html` by default, beside the plan) with:
+   - summary cards (scope, status, key decisions),
+   - a flow/dependency diagram (Mermaid or SVG),
+   - open questions and risks in a scan-first layout.
 
 The plan's frontmatter carries `shape_version: 1` — the soft-contract version that downstream consumers (`dt-visualize-plan`, `dt-prototype`, `dt-review`) read to confirm the plan shape. The plan-shape spec and the `shape_version` policy (current accepted version, deprecated versions, adaptation rules) live in `references/plan-shape.md`.
 
@@ -156,10 +182,11 @@ Section names match what the conversation produced. No skeleton headers with pla
 
 If `CONTEXT.md` was created or updated during the session, it's already saved (you wrote to it inline as terms got pinned). If an ADR was drafted, save it now to `docs/adr/<NNNN>-<kebab-title>.md` next to `CONTEXT.md`, numbered sequentially from the highest existing ADR + 1.
 
-After saving, output exactly this, with the bare absolute path on its own line:
+After saving, output exactly this, with bare absolute paths on their own lines:
 
 ```
 Plan saved at <bare absolute path>.
+Plan review HTML saved at <bare absolute path>.
 
 To run adversarial review with Codex when ready, open Claude Code in workspace root and trigger /dt-review pointing at this file.
 ```

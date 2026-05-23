@@ -1,7 +1,7 @@
 {
   "name": "danny-skills",
   "version": "0.9.9",
-  "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-starter-session-audit (scope-aware end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md with a conflict policy), and dt-handoff for single-use session continuity.",
+  "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-session-audit (autonomous end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic memory bloat cleanup), and dt-handoff for single-use session continuity.",
   "author": {
     "name": "Danny Thai",
     "email": "danny@thaicapital.com"
@@ -17,13 +17,15 @@
     "writing",
     "editing",
     "session-audit",
+    "memory-hygiene",
     "dt-handoff",
     "personal"
   ],
   "metadata": {
     "changelog": [
+      "0.9.9 session-audit-autonomy-and-hygiene: renamed dt-starter-session-audit to dt-session-audit, switched deterministic non-conflict session capture to autonomous apply mode, added dt-memory-hygiene plus deterministic bloat detection thresholds, and wired post-audit auto-trigger for hygiene when thresholds trip.",
       "0.9.9 pre-value-review-live-testing: promoted current dev state for live testing prior to formal Value Review gate completion.",
-      "0.8.0 phase-8-dt-tune-and-audit-extension: added dt-tune for approval-gated skill-level SKILL.md amendments, extended dt-starter-session-audit with the skill-amendment routing class, and standardized per-skill _log.md friction-note convention plus session-end tune stop-hook guidance.",
+      "0.8.0 phase-8-dt-tune-and-audit-extension: added dt-tune for approval-gated skill-level SKILL.md amendments, extended dt-session-audit with the skill-amendment routing class, and standardized per-skill _log.md friction-note convention plus session-end tune stop-hook guidance.",
       "0.8.0 phase-7b-dt-build-execution: completed dt-build execution parity by adding deterministic execution scripts (assemble-codex-prompt, verify-codex-prompt, dev-cas-update), wiring codex prompt verify-gate and dev compare-and-swap flow, and preserving Phase-7A roadmap-intake contract behavior.",
       "0.7.0 phase-0-foundation: repo-level references/scripts/assets scaffolding; canonical dimension contract + glossary contract single sources; security primitives (wrap-prompt-envelope, redact-secrets) + redaction corpus; vendored mermaid 10.9.3 (SHA256-pinned); upstream-deps governance + fallback table; skill-template scaffold.",
       "0.7.0 phase-1-dt-plan: renamed dt-design-build -> dt-plan onto the Anthropic standard (SKILL.md 2.2k words); CDC + glossary-placement rules now point at repo-level references; surface templates + plan-shape/shape_version policy extracted to dt-plan/references; junction reparse-target resolution added to conventions.md; junctions repaired on CLI x3 + Codex; live cross-skill references updated; no plugin version bump (milestone-based policy).",
@@ -36,3 +38,4 @@
     ]
   }
 }
+

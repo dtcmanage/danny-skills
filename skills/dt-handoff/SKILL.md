@@ -1,10 +1,30 @@
 ---
 name: dt-handoff
-description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Do not use for capturing memory or preferences mid-session - that is dt-starter-session-audit's job."
+description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Do not use for capturing memory or preferences mid-session - that is dt-session-audit's job."
 argument-hint: "What should the next session focus on?"
 ---
 
 # Handoff
+
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+
+## HTML Review Artifact Requirement
+
+For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+
+Baseline requirement:
+- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
+- Also emit a review-first `.html` artifact in the same artifact family/folder.
+- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- Report both output paths in the final skill output.
+
+
 
 Produce a self-contained handoff that lets a fresh session resume this work without re-reading the current conversation. The handoff is a starting prompt Danny can paste — or point a fresh session at — to pick up cleanly.
 
@@ -66,14 +86,20 @@ End the file with this line, with the real absolute path filled in:
 
 > This is a single-use handoff. Once you have absorbed the context above, delete this file (`<absolute path>`) before doing anything else.
 
+Also generate `handoff-YYYY-MM-DD-<slug>.html` beside the markdown file, optimized for skim review:
+- summary cards (task, status, blockers),
+- next-step sequence view,
+- key files/artifacts table with quick links.
+
 ## Step 4: Report
 
-Print the bare absolute path of the handoff file on its own line, followed by a one-line command to open it:
+Print the bare absolute paths of both handoff files on their own lines, followed by a one-line command to open the HTML review artifact:
 
 ```
-ii "<absolute path>"
+ii "<absolute path to .html handoff>"
 ```
 
 ## Step 5: Run the session audit
 
-After the handoff is written and reported, invoke the `dt-starter-session-audit` skill to capture any uncaptured corrections, preferences, and decisions from the session.
+After the handoff is written and reported, invoke the `dt-session-audit` skill to capture any uncaptured corrections, preferences, and decisions from the session.
+
