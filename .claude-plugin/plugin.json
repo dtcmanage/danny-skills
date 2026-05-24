@@ -1,7 +1,7 @@
 {
   "name": "danny-skills",
-  "version": "0.9.12",
-  "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-session-audit (autonomous end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic memory bloat cleanup), and dt-handoff for single-use session continuity.",
+  "version": "0.9.13",
+  "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-app-launcher (hardened local GUI launchers), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-session-audit (autonomous end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic memory bloat cleanup), and dt-handoff for single-use session continuity.",
   "author": {
     "name": "Danny Thai",
     "email": "danny@thaicapital.com"
@@ -19,10 +19,12 @@
     "session-audit",
     "memory-hygiene",
     "dt-handoff",
+    "app-launcher",
     "personal"
   ],
   "metadata": {
     "changelog": [
+      "0.9.13 dt-app-launcher: added deterministic Windows standalone launcher scaffolding with hardened Edge app-mode profile, sync/extension suppression, shortcut generation, stop cleanup, and smoke-test contract.",
       "0.9.12 dt-terminal-format-profile-companion-mode: added a paired repo-plus-workstation-root mode with deterministic companion shade derivation and fixed OrderedDictionary-safe settings writes for the VS Code terminal color script.",
       "0.9.11 dt-terminal-format-profile: added a deterministic workspace-local VS Code terminal color skill plus a reusable PowerShell script for requests like 'make this repo color blue'.",
       "0.9.10 html-mermaid-rendering: made HTML review artifacts treat Mermaid as a rendered diagram only, hardened dt-visualize-plan/design runtime initialization, and added scripted dt-roadmap roadmap-view.html generation with browser-verifiable SVG output.",
