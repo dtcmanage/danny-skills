@@ -1,6 +1,6 @@
 # Input Modes (Round 0)
 
-`dt-review` supports three draft-v1 inputs:
+`dt-review` supports three scratch `draft-v1` inputs:
 
 ## Mode A — Plan file path provided
 
@@ -10,8 +10,7 @@
 - Workstation must match a Routing Map row.
 - Project name cannot be a utility/tooling folder (`skills`, `plugins`, `prompts`, `commands`, `cache`) and
   cannot traverse `00_Resources` or `.claude` between workspace root and plan.
-4. Copy plan verbatim into `design/draft-v1.md`.
-5. Ensure exactly one `## Dialogue Log` section exists at file end; append only if missing.
+4. Copy plan verbatim into `design\_review\draft-v1.md`.
 
 If inference validation fails, still use the supplied plan file content, but ask project/workstation
 explicitly (same as Mode B/C intake).
@@ -19,15 +18,13 @@ explicitly (same as Mode B/C intake).
 ## Mode B — Substantive brief in trigger prompt
 
 1. Treat the user's prompt body as the draft plan.
-2. Write it verbatim to `design/draft-v1.md`.
-3. Ensure exactly one `## Dialogue Log` section exists; append only if missing.
+2. Write it verbatim to `design\_review\draft-v1.md`.
 
 ## Mode C — Interactive drafting
 
 Use only when neither Mode A nor B applies:
 1. Gather objectives, scope, architecture choices, constraints, open questions.
-2. Write resulting draft to `design/draft-v1.md`.
-3. Ensure `## Dialogue Log` exists.
+2. Write resulting draft to `design\_review\draft-v1.md`.
 
 ## Intake fields
 

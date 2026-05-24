@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Single-plugin marketplace exposing Danny's personal skill pack to Cowork and Claude Code.",
-    "version": "0.9.12"
+    "version": "0.9.13"
   },
   "plugins": [
     {
       "name": "danny-skills",
       "source": "./",
       "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-session-audit (autonomous end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic memory bloat cleanup), and dt-handoff for single-use session continuity.",
-      "version": "0.9.12",
+      "version": "0.9.13",
       "keywords": [
         "planning",
         "visualization",

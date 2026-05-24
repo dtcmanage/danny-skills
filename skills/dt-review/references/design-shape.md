@@ -15,43 +15,30 @@ shape_version: 1
 ---
 ```
 
-## `design-final.md` required sections
+## `design-final.md` required content
 
 - Title line
-- Metadata lines including date/framework status
+- Metadata lines already present in the accepted draft (for example date, scope, framework state)
 - Final accepted design body
-- `## Dialogue Log` with per-round entries
 
-## `design-final.md` required sections
+## Retention rule
 
-- Title line
-- Metadata lines including date/framework status
-- Final accepted design body
-- `## Dialogue Log` with per-round entries
-- TL;DR
-- Key architectural decisions
-- Top risks
-- Open questions
-- Round-by-round summary
-- Glossary changes (`Added`, `Changed`, `Removed`)
-- Promotion candidates
-- `## Ambiguity Closures`
+`design-final.md` is the only retained review artifact.
 
-## Ambiguity closure block schema
+Do not copy any of the following into the final file:
+- per-round review text
+- verdict history
+- stream-log paths
+- prompt provenance
+- dialogue logs
+- glossary changelog sections
+- ambiguity-closure bookkeeping that belongs to the review process rather than the final design
 
-For every finding flagged `AMBIGUOUS_ROOT_CAUSE`, include:
-- `finding_id`
-- `candidate_dimensions` (exactly two)
-- `missing_evidence`
-- `temporary_primary`
-- `closure_status` (`closed` or `carry_forward`)
-- `owner` (default `Danny`)
-- `closure_date_or_next_review`
-
-If no ambiguous findings exist, still include `## Ambiguity Closures` with `- None this run.`
+If an `AMBIGUOUS_ROOT_CAUSE` finding remains unresolved, do not finalize yet. Resolve it in the
+active review loop or stop and ask Danny.
 
 ## Compatibility behavior
 
 - Unknown major `shape_version` -> ask Danny whether to attempt adaptation.
 - Deprecated version -> accept with explicit notice.
-- Missing required section -> surface the exact gap and pause.
+- Missing frontmatter or missing final accepted design body -> surface the exact gap and pause.

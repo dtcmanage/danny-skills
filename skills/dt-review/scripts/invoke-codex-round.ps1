@@ -39,10 +39,12 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 . (Join-Path $RepoRoot 'scripts\wrap-prompt-envelope.ps1')
 
 $designDir = Join-Path $ProjectPath 'design'
+$scratchDir = Join-Path $ProjectPath 'design\_review'
 New-Item -ItemType Directory -Path $designDir -Force | Out-Null
+New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
 
-$reviewPath = Join-Path $designDir ("review-v{0}.md" -f $Round)
-$streamPath = Join-Path $designDir ("codex-stream-v{0}.log" -f $Round)
+$reviewPath = Join-Path $scratchDir ("review-v{0}.md" -f $Round)
+$streamPath = Join-Path $scratchDir ("codex-stream-v{0}.log" -f $Round)
 
 $promptRaw = Get-Content -LiteralPath $PromptPath -Raw
 $envelopedPrompt = New-PromptEnvelope -Label ("DT-REVIEW ROUND V{0}" -f $Round) -Content $promptRaw
