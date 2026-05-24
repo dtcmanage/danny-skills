@@ -1,4 +1,4 @@
-# Design Shape Contract (`design-final.md` / `design-summary.md`)
+# Design Shape Contract (`design-final.md`)
 
 - **Producer:** dt-review
 - **Consumers:** dt-visualize-design, dt-roadmap
@@ -7,7 +7,7 @@
 
 ## Required frontmatter
 
-Both files must start with:
+The file must start with:
 
 ```yaml
 ---
@@ -22,8 +22,12 @@ shape_version: 1
 - Final accepted design body
 - `## Dialogue Log` with per-round entries
 
-## `design-summary.md` required sections
+## `design-final.md` required sections
 
+- Title line
+- Metadata lines including date/framework status
+- Final accepted design body
+- `## Dialogue Log` with per-round entries
 - TL;DR
 - Key architectural decisions
 - Top risks

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-session-audit (autonomous end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic memory bloat cleanup), and dt-handoff for single-use session continuity.",
   "author": {
     "name": "Danny Thai",
@@ -23,6 +23,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.9.10 html-mermaid-rendering: made HTML review artifacts treat Mermaid as a rendered diagram only, hardened dt-visualize-plan/design runtime initialization, and added scripted dt-roadmap roadmap-view.html generation with browser-verifiable SVG output.",
       "0.9.9 session-audit-autonomy-and-hygiene: renamed dt-starter-session-audit to dt-session-audit, switched deterministic non-conflict session capture to autonomous apply mode, added dt-memory-hygiene plus deterministic bloat detection thresholds, and wired post-audit auto-trigger for hygiene when thresholds trip.",
       "0.9.9 pre-value-review-live-testing: promoted current dev state for live testing prior to formal Value Review gate completion.",
       "0.8.0 phase-8-dt-tune-and-audit-extension: added dt-tune for approval-gated skill-level SKILL.md amendments, extended dt-session-audit with the skill-amendment routing class, and standardized per-skill _log.md friction-note convention plus session-end tune stop-hook guidance.",
@@ -38,4 +39,3 @@
     ]
   }
 }
-

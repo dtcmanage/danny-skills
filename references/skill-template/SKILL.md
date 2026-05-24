@@ -31,6 +31,7 @@ Baseline requirement:
 - Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
 - Also emit a review-first `.html` artifact in the same artifact family/folder.
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
+- If using Mermaid, render it through the vendored local runtime or inline SVG; raw Mermaid code blocks do not count as a visualization.
 - Report both output paths in the final skill output.
 
 ## When this fires

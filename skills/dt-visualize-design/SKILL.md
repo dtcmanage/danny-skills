@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.0
-  changelog: "Initial Anthropic-standard release (Phase 5): design visualization skill with section-level diff badges and change-summary rendering on top of shared visualize infrastructure."
+  version: 1.0.1
+  changelog: "Hardened shared Mermaid rendering so design-view.html verifies real SVG diagrams instead of raw graph text."
 ---
 
 # Visualize Design
@@ -63,6 +63,7 @@ Do NOT fire for:
 - Confirm change-summary header appears with `[ADDED]`, `[CHANGED]`, `[REMOVED]` counts.
 - Confirm section cards carry badge chips for changed sections.
 - Confirm dependency provenance footer is populated and Mermaid is vendored-local only.
+- Confirm rendered Mermaid exists (`.mermaid svg` in the browser).
 - Confirm the top fold is skim-first (status cards + key change visuals before long narrative blocks).
 
 4. Report result:

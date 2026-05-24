@@ -5,8 +5,8 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.0
-  changelog: "Initial Anthropic-standard release; renamed from dt-design-build. CDC and glossary-placement rules moved to repo-level references; surface templates extracted to references/surface-templates.md; plan-shape + shape_version policy added in references/plan-shape.md."
+  version: 1.0.1
+  changelog: "Tightened HTML review artifact requirement so Mermaid diagrams must render via vendored local Mermaid or inline SVG, not raw code blocks."
 ---
 
 # Plan — Cowork Project Planning
@@ -150,6 +150,7 @@ When Danny says "save", "we're done", "write it", or equivalent:
    - summary cards (scope, status, key decisions),
    - a flow/dependency diagram (Mermaid or SVG),
    - open questions and risks in a scan-first layout.
+   If Mermaid is used, it must satisfy `references/html-artifact-policy.md`: use the vendored local Mermaid runtime or inline SVG and verify a rendered diagram, not raw `graph TD` text.
 
 The plan's frontmatter carries `shape_version: 1` — the soft-contract version that downstream consumers (`dt-visualize-plan`, `dt-prototype`, `dt-review`) read to confirm the plan shape. The plan-shape spec and the `shape_version` policy (current accepted version, deprecated versions, adaptation rules) live in `references/plan-shape.md`.
 
@@ -207,4 +208,3 @@ If a `CONTEXT.md` or ADR was also written, list them on their own lines below th
 - **Keep the plan honest.** If Danny hasn't thought through security, write the section as "Security — not yet thought through, see Open Questions" rather than fabricating one. Codex will see through fabrication in dt-review and waste a round on it.
 - **Don't push toward dt-review or dt-build.** End with the handoff text and stop. Danny decides when to advance.
 - **Never copy the Canonical Dimension Contract or the glossary contract inline.** Both are single-source repo-level files (`references/canonical-dimension-contract.md`, `references/glossary-contract.md`). Reference them by repo-relative path resolved through the junction reparse point; editing them is a deliberate change in one place, never a fork into this skill.
-

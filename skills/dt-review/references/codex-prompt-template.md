@@ -8,7 +8,7 @@ Use this template body for each round prompt file `design/prompts/codex-critique
 2. `=== BEGIN CANONICAL DIMENSION CONTRACT ===`
 3. Verbatim content of repo-level `references/canonical-dimension-contract.md`
 4. `=== END CANONICAL DIMENSION CONTRACT ===`
-5. Envelope-wrapped prior artifacts (`draft-v<N>.md`, optional `claude-response-v<N-1>.md`)
+5. Envelope-wrapped prior artifacts (`draft-v<N>.md`, optional `review-v<N-1>.md`)
 6. Structured output template below
 
 All external artifact text must be wrapped via repo-level `scripts/wrap-prompt-envelope.ps1`.

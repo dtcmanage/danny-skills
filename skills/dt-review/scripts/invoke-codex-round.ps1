@@ -41,7 +41,7 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 $designDir = Join-Path $ProjectPath 'design'
 New-Item -ItemType Directory -Path $designDir -Force | Out-Null
 
-$feedbackPath = Join-Path $designDir ("codex-feedback-v{0}.md" -f $Round)
+$reviewPath = Join-Path $designDir ("review-v{0}.md" -f $Round)
 $streamPath = Join-Path $designDir ("codex-stream-v{0}.log" -f $Round)
 
 $promptRaw = Get-Content -LiteralPath $PromptPath -Raw
@@ -52,7 +52,7 @@ Set-Content -LiteralPath $tmpPrompt -Value $envelopedPrompt -Encoding utf8
 Push-Location $ProjectPath
 try {
     $codexCli = Get-CodexCliPath
-    $rawLines = & $codexCli exec --sandbox read-only --skip-git-repo-check --model $Model --output-last-message $feedbackPath -- "$(Get-Content -LiteralPath $tmpPrompt -Raw)" 2>&1
+    $rawLines = & $codexCli exec --sandbox read-only --skip-git-repo-check --model $Model --output-last-message $reviewPath -- "$(Get-Content -LiteralPath $tmpPrompt -Raw)" 2>&1
     $rawText = ($rawLines -join "`n")
     $redacted = Invoke-SecretRedaction -Text $rawText
     Set-Content -LiteralPath $streamPath -Value $redacted -Encoding utf8
@@ -60,7 +60,7 @@ try {
     $provJson = & (Join-Path $ScriptDir 'capture-provenance.ps1') -PromptPath $PromptPath -CanonicalPath (Resolve-Path -LiteralPath $ProjectPath).Path
     [pscustomobject]@{
         round = $Round
-        feedback_path = $feedbackPath
+        feedback_path = $reviewPath
         stream_path = $streamPath
         provenance = ($provJson | ConvertFrom-Json)
     } | ConvertTo-Json -Depth 6 -Compress

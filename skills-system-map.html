@@ -106,6 +106,31 @@
       display: grid;
       gap: 12px;
     }
+    .skill-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .skill-card {
+      border: 1px solid rgba(32, 61, 121, 0.2);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.7);
+    }
+    .skill-card h3 {
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .skill-card p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.35;
+      color: #2d426f;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
 
     .mermaid {
       border: 1px solid rgba(40, 67, 129, 0.16);
@@ -114,12 +139,23 @@
       padding: 8px;
       overflow: auto;
     }
+    .mermaid svg {
+      display: block;
+    }
 
     @media (max-width: 980px) {
       .hero {
         grid-template-columns: 1fr;
       }
       h1 { font-size: 29px; }
+      .skill-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 620px) {
+      .skill-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -141,15 +177,37 @@
           <div class="legend-item"><strong>Flowchart:</strong> control and data flow between skills.</div>
           <div class="legend-item"><strong>Gantt A:</strong> normal path where prototype is skipped.</div>
           <div class="legend-item"><strong>Gantt B:</strong> alternate path when unresolved logic/UI requires prototype work.</div>
-          <div class="legend-item"><strong>Writing lane:</strong> independent but can run in parallel with delivery.</div>
+          <div class="legend-item"><strong>Writing + tuning:</strong> writing runs in parallel; tuning runs post-session on repeated friction.</div>
         </div>
       </aside>
     </section>
 
     <section class="panel charts">
+      <h2>Skill Quick Reference</h2>
+      <p>Each skill description is intentionally capped to two lines.</p>
+      <div class="skill-grid">
+        <article class="skill-card"><h3>git-sync-features</h3><p>Rebase all active feature branches onto dev before starting work.</p></article>
+        <article class="skill-card"><h3>dt-plan</h3><p>Turn a project idea into a sectioned, critique-ready planning draft.</p></article>
+        <article class="skill-card"><h3>dt-visualize-plan</h3><p>Render a plan into reviewable HTML with milestones and flow visuals.</p></article>
+        <article class="skill-card"><h3>dt-prototype</h3><p>Build quick logic or UI prototypes to resolve unclear design choices.</p></article>
+        <article class="skill-card"><h3>dt-review</h3><p>Run adversarial design critique rounds until the plan is shippable.</p></article>
+        <article class="skill-card"><h3>dt-visualize-design</h3><p>Render design-final with section diffs and a browser-friendly summary.</p></article>
+        <article class="skill-card"><h3>dt-roadmap</h3><p>Convert finalized design into a contract-grade roadmap and milestones.</p></article>
+        <article class="skill-card"><h3>dt-build</h3><p>Execute the validated roadmap end-to-end with verification and commits.</p></article>
+        <article class="skill-card"><h3>git-merge-feature</h3><p>Land a finished feature branch to dev and clean up the branch.</p></article>
+        <article class="skill-card"><h3>dt-writing-draft</h3><p>Build a publishable long-form draft from notes, sources, and structure.</p></article>
+        <article class="skill-card"><h3>dt-writing-edit</h3><p>Tighten a finished draft for structure, clarity, and factual consistency.</p></article>
+        <article class="skill-card"><h3>dt-handoff</h3><p>Package current state into a compact, paste-ready next-session prompt.</p></article>
+        <article class="skill-card"><h3>dt-session-audit</h3><p>Capture missed decisions/preferences and route them to memory files.</p></article>
+        <article class="skill-card"><h3>dt-memory-hygiene</h3><p>Compact bloated memory/governance files without changing intent.</p></article>
+        <article class="skill-card"><h3>dt-tune</h3><p>Propose approval-gated SKILL.md amendments based on session friction.</p></article>
+      </div>
+    </section>
+
+    <section class="panel charts">
       <h2>System Flow</h2>
-      <div class="mermaid">
-flowchart LR
+      <div class="mermaid flow-map">
+flowchart TB
   subgraph GitOps["Branch Operations"]
     gs["git-sync-features"]
     gm["git-merge-feature"]
@@ -175,6 +233,7 @@ flowchart LR
     ho["dt-handoff"]
     audit["dt-session-audit"]
     hyg["dt-memory-hygiene"]
+    tune["dt-tune"]
   end
 
   gs --> p --> vp --> gate
@@ -184,13 +243,14 @@ flowchart LR
   wd --> we --> ho
   b --> ho --> audit
   audit -- bloat threshold tripped --> hyg
+  audit -- skill amendment signal --> tune
       </div>
     </section>
 
     <section class="panel charts">
       <h2>Gantt A: Baseline Delivery (No Prototype)</h2>
       <p>Use this when requirements are already clear after planning and visualization.</p>
-      <div class="mermaid">
+      <div class="mermaid gantt-map">
 gantt
   title Baseline Skill Sequence (No Prototype Gate Opened)
   dateFormat YYYY-MM-DD
@@ -213,6 +273,7 @@ gantt
   Prepare handoff prompt (dt-handoff) :done, handoff, after build, 1d
   Capture memory deltas (dt-session-audit) :milestone, audit, after handoff, 0d
   Optional memory hygiene (dt-memory-hygiene) :milestone, hygiene, after audit, 0d
+  Optional skill amendment proposal (dt-tune) :milestone, tune, after audit, 0d
 
   section Parallel Writing
   Draft piece (dt-writing-draft) :done, draft, after plan, 3d
@@ -223,7 +284,7 @@ gantt
     <section class="panel charts">
       <h2>Gantt B: Prototype-Required Delivery</h2>
       <p>Use this when behavior/state/UI risk is still unresolved after plan visualization.</p>
-      <div class="mermaid">
+      <div class="mermaid gantt-map">
 gantt
   title Alternate Sequence When Prototype Is Required
   dateFormat YYYY-MM-DD
@@ -249,6 +310,7 @@ gantt
   Prepare handoff prompt (dt-handoff) :done, handoff2, after build2, 1d
   Capture memory deltas (dt-session-audit) :milestone, audit2, after handoff2, 0d
   Optional memory hygiene (dt-memory-hygiene) :milestone, hygiene2, after audit2, 0d
+  Optional skill amendment proposal (dt-tune) :milestone, tune2, after audit2, 0d
 
   section Parallel Writing
   Draft piece (dt-writing-draft) :done, draft2, after plan2, 3d

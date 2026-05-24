@@ -28,5 +28,5 @@ Phase 2 render contract for `dt-visualize-plan`.
   - Fallback to vendored `assets/visualize/vendored/mermaid-10.9.3.min.js`.
   - No remote mermaid URL in output.
   - Initialize with `securityLevel: 'strict'`.
+  - Browser verification must find `.mermaid svg`; raw Mermaid text is a failure.
 - Fallback behavior must be explicit in provenance footer, including debt tags where applicable.
-

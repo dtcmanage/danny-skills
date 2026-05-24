@@ -194,6 +194,23 @@ h3 {
   background: #fffdfa;
 }
 
+.mermaid {
+  width: 100%;
+  min-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #ffffff;
+}
+
+.mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 .code-block {
   margin: 0;
   border: 1px solid var(--line);

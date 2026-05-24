@@ -38,6 +38,15 @@ This policy follows the HTML-first approach in Anthropic's "The unreasonable eff
 - HTML/CSS cards, grids, tables, timelines.
 - Lightweight JavaScript for tabs, filtering, and copy/export controls.
 
+## Mermaid Rendering Contract
+
+Mermaid counts as a visual representation only when the HTML renders it as a diagram.
+
+- Do not use raw fenced Mermaid blocks or `<pre class="mermaid">` as the review surface.
+- Use `<div class="mermaid">` with the vendored local renderer at `assets/visualize/vendored/mermaid-10.9.3.min.js`, initialized with `securityLevel: 'strict'`, or render to inline SVG.
+- Never load Mermaid from a CDN or other remote URL.
+- Verify the generated HTML in a browser: at least one `.mermaid svg` (or one intentional inline `svg`) must exist, and the primary review surface must not show raw `graph TD`, `gantt`, or `sequenceDiagram` text where the diagram should be.
+
 ## Delivery Rule
 
 When a skill produces an artifact for review, "done" means:

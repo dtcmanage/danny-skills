@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.0
-  changelog: "Initial Anthropic-standard release (Phase 6): contract-first roadmap producer with schema validator and milestones xlsx/csv fallback exporter."
+  version: 1.0.1
+  changelog: "Added scripted roadmap-view.html generation with vendored Mermaid rendering and explicit SVG validation expectations."
 ---
 
 # Roadmap Builder
@@ -65,6 +65,7 @@ Do NOT fire for:
 - Chunk table includes required contract columns.
 - Verification manifest includes required contract columns.
 - Include Mermaid dependency graph + Gantt sections (Phase-2 shared fallback conventions apply).
+- The same script also emits `roadmap-view.html` beside `roadmap.md` unless `-RoadmapViewPath` is supplied.
 
 4. Validate contract before export:
 - Run `scripts/roadmap-validator.ps1 -RoadmapPath <roadmap.md>`.
@@ -78,7 +79,9 @@ Do NOT fire for:
   - debt tag: `regenerate milestones.xlsx before next milestone bump`
 
 5.5 Generate review HTML:
-- Create `roadmap-view.html` beside `roadmap.md` with summary cards, milestone timeline, dependency flowchart, and highlighted risks/open questions.
+- Use the `roadmap-view.html` emitted by `scripts/build-roadmap.ps1`.
+- It must contain summary cards, a milestone table, Mermaid dependency graph, Mermaid Gantt timeline, and dependency provenance.
+- Validate in a browser that `.mermaid svg` exists; raw `graph TD` text does not satisfy the review artifact contract.
 
 6. Report outputs:
 - Return absolute path to `roadmap.md`.

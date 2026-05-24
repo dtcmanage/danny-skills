@@ -61,6 +61,12 @@ function Escape-Html {
     return [System.Net.WebUtility]::HtmlEncode($Text)
 }
 
+function Escape-MermaidDefinition {
+    param([string]$Text)
+    if ($null -eq $Text) { return "" }
+    return $Text.Replace("&", "&amp;").Replace("<", "&lt;")
+}
+
 function Convert-MarkdownSubsetToHtml {
     param([string]$Text)
 
@@ -222,8 +228,8 @@ if ($renderMermaid) {
         $dependencyProvenance.Add($line)
     }
 
-    $graphDefinition = Escape-Html $payload.GraphDefinition
-    $ganttDefinition = Escape-Html $payload.GanttDefinition
+    $graphDefinition = Escape-MermaidDefinition $payload.GraphDefinition
+    $ganttDefinition = Escape-MermaidDefinition $payload.GanttDefinition
     $mermaidBlocks = @"
 <section class=""diagram-grid"">
   <article class=""diagram-card"">
@@ -245,9 +251,13 @@ $ganttDefinition
     $mermaidScript = @"
 <script src=""$assetRel""></script>
 <script>
-if (window.mermaid) {
-  window.mermaid.initialize({ startOnLoad: true, securityLevel: 'strict' });
-}
+window.addEventListener('DOMContentLoaded', async function () {
+  if (!window.mermaid) {
+    return;
+  }
+  window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });
+  await window.mermaid.run({ querySelector: '.mermaid' });
+});
 </script>
 "@
 }
@@ -314,7 +324,7 @@ if ($Mode -eq "design-diff") {
 </section>
 "@
 
-    $diffRows = foreach ($row in $diff.Sections) {
+    $diffRows = @(foreach ($row in $diff.Sections) {
         if ($row.Status -eq "UNCHANGED") { continue }
         $statusClass = switch ($row.Status) {
             "ADDED" { "status-added"; break }
@@ -344,7 +354,7 @@ if ($Mode -eq "design-diff") {
   <p class=""muted"">$(Escape-Html $preview)</p>
 </article>
 "@
-    }
+    })
 
     if (-not $diffRows -or $diffRows.Count -eq 0) {
         $diffRows = @('<p class="muted">No section-level differences detected between plan and design.</p>')

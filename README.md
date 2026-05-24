@@ -90,7 +90,7 @@ Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the desig
 - Each round: Codex critiques the current draft (edge cases, security, robustness, consistency, engagement with prior reasoning) and emits a structured verdict (`NOTHING_TO_ADD` / `MINOR_POLISH_ONLY` / `MATERIAL_CHANGES_NEEDED`) + confidence.
 - Claude reconciles per item — ACCEPT / REJECT / DEFER / COUNTER with real reasoning. Repeat-rejects (Codex raises, Claude rejects, Codex raises again) pause for the user to adjudicate.
 - All artifacts (prompts, feedback, responses, drafts) live in `design/` with SHA-256 provenance — every decision is reconstructible.
-- Terminates on `NOTHING_TO_ADD`, polish convergence, or round cap (3 for light tier, 6 for complex). Outputs `design-final.md` and `design-summary.md`.
+- Terminates on `NOTHING_TO_ADD`, polish convergence, or round cap (3 for light tier, 6 for complex). Outputs a single `design-final.md` with embedded round summary.
 
 **Skip it for:** bug fixes, single-file changes, exploratory throwaway code.
 
@@ -165,5 +165,4 @@ A periodic cleanup pass for memory/governance files (`CLAUDE.md`, `MEMORY.md`, `
 ## Installing
 
 Each skill lives in `skills/<skill-name>/SKILL.md`. To use them in Claude Code, copy or symlink the `skills/` subfolders into your user-level skills directory (`~/.agents/skills/` on this machine — note: not `~/.claude/skills/`).
-
 

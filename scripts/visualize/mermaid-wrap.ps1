@@ -26,7 +26,7 @@ function New-MermaidRenderPayload {
     foreach ($m in $Milestones) {
         $i++
         $name = [string]$m.name
-        $name = $name.Replace('"', "'").Replace("[", "(").Replace("]", ")")
+        $name = $name.Replace('"', "'").Replace("[", "(").Replace("]", ")").Replace('`', "'")
         $id = if ($m.id) { [string]$m.id } else { "M{0:D2}" -f $i }
         $sanitized += [pscustomobject]@{
             id   = $id
@@ -102,4 +102,3 @@ function New-MermaidRenderPayload {
         AssetVersion    = $PinnedVersion
     }
 }
-

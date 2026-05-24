@@ -23,23 +23,18 @@ Meaning-change conflicts require Danny A/B/C decision:
 - B Replace with new definition
 - C Split into two terms
 
-## 3) Write `design-summary.md`
+## 3) Write `design-final.md`
 
-Include:
-- TL;DR
-- key decisions
-- top risks
-- open questions
-- round-by-round one-line summary
-- glossary changelog (`Added`, `Changed`, `Removed`)
-- promotion candidates
-- `Ambiguity Closures` section per design-shape contract
+`design-final.md` is the single final artifact. In addition to the accepted design body:
+- Add a compact `## Round Summary` section (`round`, `verdict`, `confidence`, one-line outcome).
+- Add `## Key decisions`, `## Top risks`, `## Open questions`, `## Promotion candidates`.
+- Add `## Glossary changelog` (`Added`, `Changed`, `Removed`).
+- Add `## Ambiguity Closures` per design-shape contract.
 
 ## 4) Output paths
 
 Print bare absolute paths for:
 - `design-final.md`
-- `design-summary.md`
 - `CONTEXT.md` when changed/created
 
 ## 5) Stop and handoff

@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.0
-  changelog: "Initial Anthropic-standard release (Phase 2): plan visualization skill with milestone-table-only, plan+mermaid, and UI-mockup modes; shared repo-level html-builder + mermaid-wrap + template/tokens integration."
+  version: 1.0.1
+  changelog: "Hardened Mermaid rendering so plan-view.html uses the vendored local runtime with explicit browser rendering checks instead of leaving raw graph text."
 ---
 
 # Visualize Plan
@@ -79,6 +79,7 @@ If unsure, default to `plan-plus-mermaid`.
 3. Validate output quickly:
 - Confirm `plan-view.html` exists.
 - Confirm no remote Mermaid URL is present (must use vendored local `mermaid-10.9.3.min.js`).
+- Confirm rendered Mermaid exists (`.mermaid svg` in the browser) when using `plan-plus-mermaid` or `ui-mockup`.
 - Confirm "Dependency Provenance" footer is populated.
 - Confirm the first viewport is skim-first (summary strip + key diagram/timeline, not a wall of prose).
 
@@ -100,5 +101,4 @@ If unsure, default to `plan-plus-mermaid`.
 - Do not block on unavailable upstream skills if a documented fallback exists.
 - Do not emit `computer://` links; return plain absolute paths.
 - Keep this skill focused: rendering and surface clarity only.
-
 
