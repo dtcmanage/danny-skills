@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 2.1.0
-  changelog: "Phase 7B execution-parity refactor: deterministic codex-prompt assembly/verification scripts, dev compare-and-swap script, and execution-path parity guardrails."
+  version: 2.2.0
+  changelog: "Skill propagation gate: when the built repo is the danny-skills plugin repo, diff skills/ between merge base and build branch, materialize per-skill directory junctions in the four external surfaces via scripts/verify-skill-junctions.ps1 -Create, and hard-fail the build on any junction failure, wrong target, setup gap, or orphan. Closes the recurring CLI/Codex invisible-new-skill gap."
 ---
 
 # Build Executor
@@ -98,6 +98,23 @@ Do NOT fire for:
 - Subagent prompt envelope boundaries are mandatory via repo-level `scripts/wrap-prompt-envelope.ps1`.
 - Run-log writes route through repo-level `scripts/security/redact-secrets.ps1`.
 
+8. Skill propagation gate (danny-skills builds only):
+- Fires only when the built repo is the `danny-skills` plugin repo. Detect by reading `<repo>/.claude-plugin/plugin.json` and confirming `name == "danny-skills"` and a top-level `skills/` directory exists. Skip the gate otherwise.
+- Detect new skill folders added by this build run:
+  - Resolve the merge base: `git merge-base <merge_target> <build_branch>`.
+  - List added skill folders: `git diff --name-only --diff-filter=A -M <merge_base> <build_branch> -- skills/`, then keep paths matching `^skills/[^/]+/` and reduce to unique top-level skill names.
+  - A folder rename (old removed, new added) surfaces as a new skill on the new side and an orphan in the propagation report; the build does not auto-clean the orphan.
+  - Do NOT fire for SKILL.md-only or content-only edits where the skill folder name is unchanged.
+- For each new skill name, invoke the repo-level propagator:
+  `pwsh -NoProfile -File <repo>/scripts/verify-skill-junctions.ps1 -RepoRoot <repo> -NewSkills <names...> -Create -Json`
+  Targets reconciled by the script: `$CODEX_HOME\skills`, `~\.agents\skills`, `D:\Claude\skills`, `_Claude-Workspace\.claude\skills`. Cowork is auto-propagated by its whole-folder junction and is not touched here.
+- Hard fail the build (block dev compare-and-swap; mark the run failed) when any of these surface in the script output:
+  - any row with status `missing`, `wrong_target`, `create_failed`, or `collision_not_junction`,
+  - any entry in `setup_gaps` (a target parent directory does not exist; never auto-create it),
+  - any entry in `orphans` introduced by this run.
+- Append the full propagation JSON to the build-final summary and surface a "Skill Propagation" panel in `build-run-review.html` listing per-(skill, location) status, any setup gaps, and any orphans.
+- The same script is callable ad-hoc for retroactive sweeps with no `-NewSkills` (scans all skills in the repo) and without `-Create` (report-only).
+
 ## Required verification
 
 - Real small build against an actual roadmap (`roadmap.md`) that exercises:
@@ -119,3 +136,4 @@ Do NOT fire for:
 - Resilience/security: `references/resilience-security.md`
 - Branch contract: `references/branch-contract.md`
 - Codex assembly byte contract: `references/codex-assembly-contract.md`
+- Skill propagation gate (one-shot / build-final): repo-level `scripts/verify-skill-junctions.ps1`
