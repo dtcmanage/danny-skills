@@ -1,7 +1,7 @@
 {
   "name": "danny-skills",
-  "version": "0.9.13",
-  "description": "Personal skill pack: dt-plan, dt-visualize-plan, dt-prototype, dt-review, dt-build (a plan -> visualize -> optional prototype -> critique -> build pipeline), dt-app-launcher (hardened local GUI launchers), dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, and copy), dt-session-audit (autonomous end-of-session capture routing rules, facts, and terminology across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic memory bloat cleanup), and dt-handoff for single-use session continuity.",
+  "version": "0.9.15",
+  "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Git: git-sync-features, git-merge-feature (rebase-forward feature workflow).",
   "author": {
     "name": "Danny Thai",
     "email": "danny@thaicapital.com"
@@ -24,6 +24,8 @@
   ],
   "metadata": {
     "changelog": [
+      "0.9.15 manifest-description-refresh: rewrote plugin.json and marketplace.json descriptions to enumerate all 19 shipped skills grouped by role (pipeline / authoring / hygiene / workstation / writing / git). No skill behavior change.",
+      "0.9.14 dt-app-launcher: added python_gui mode that generates direct pythonw.exe desktop/start menu shortcuts for standalone app windows (no terminal), plus explicit no-bat shortcut guardrails and verification.",
       "0.9.13 dt-app-launcher: added deterministic Windows standalone launcher scaffolding with hardened Edge app-mode profile, sync/extension suppression, shortcut generation, stop cleanup, and smoke-test contract.",
       "0.9.12 dt-terminal-format-profile-companion-mode: added a paired repo-plus-workstation-root mode with deterministic companion shade derivation and fixed OrderedDictionary-safe settings writes for the VS Code terminal color script.",
       "0.9.11 dt-terminal-format-profile: added a deterministic workspace-local VS Code terminal color skill plus a reusable PowerShell script for requests like 'make this repo color blue'.",
