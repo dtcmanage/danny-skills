@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI on Windows; requires danny-skills repo present."
 metadata:
-  version: 0.1.0
-  changelog: "Initial deterministic launcher scaffolder with hardened Edge app-mode profile, shortcut, stop script, and smoke-test contract."
+  version: 0.2.0
+  changelog: "Added python_gui launcher mode for standalone pythonw.exe shortcuts (no terminal), plus mode-selection and verification rules."
 ---
 
 # App Launcher
@@ -55,7 +55,10 @@ Do NOT fire for:
 - Never use File Sorter port `8792`.
 - Check current listeners before writing the launcher.
 
-3. Run the scaffolder from this skill:
+3. Select launcher mode, then run the scaffolder from this skill:
+
+- `edge_static` mode: static/dashboards served locally and opened in hardened Edge app-mode.
+- `python_gui` mode: Python apps that already implement their own GUI window behavior from `main.py` (for example File Sorter). This mode creates shortcuts that target `pythonw.exe` directly and do not use `.bat` as shortcut target.
 
 ```powershell
 pwsh -File skills/dt-app-launcher/scripts/new-app-launcher.ps1 `
@@ -63,7 +66,22 @@ pwsh -File skills/dt-app-launcher/scripts/new-app-launcher.ps1 `
   -TargetPath "<absolute app repo path>" `
   -StaticRoot "<relative or absolute static root>" `
   -EntryFile "<entry html file>" `
+  -LauncherMode edge_static `
   -Port <port> `
+  -CreateShortcuts
+```
+
+Python GUI pattern:
+
+```powershell
+pwsh -File skills/dt-app-launcher/scripts/new-app-launcher.ps1 `
+  -AppName "<app name>" `
+  -TargetPath "<absolute app repo path>" `
+  -StaticRoot "." `
+  -EntryFile "<python entry file again; required field>" `
+  -LauncherMode python_gui `
+  -PythonEntry "<python entry file such as main.py>" `
+  -Port <app port> `
   -CreateShortcuts
 ```
 
@@ -72,6 +90,7 @@ Optional parameters:
 - `-BuildCommand "<command>"` to run before serving.
 - `-AllowedRoot <path>` to enforce a static root containment check.
 - `-NoShortcuts` to write scripts only.
+- `-PythonArgs "<args>"` to pass optional args in `python_gui` mode.
 
 4. Verify the generated launcher:
 - Run the generated `scripts\stop-<slug>.ps1` first to clear stale state.
@@ -83,6 +102,7 @@ Optional parameters:
   - `--disable-extensions`
   - `--no-first-run`
 - Confirm the server listens on the requested port.
+- For `python_gui` mode, confirm the Desktop and Start Menu `.lnk` targets are `pythonw.exe` with arguments `<entry>.py ...`, and not `start-*.bat`.
 - Run the generated stop script and confirm the port is clear.
 
 5. Report the result:
@@ -109,6 +129,13 @@ The generated start script must:
 - disable sync, extensions, first-run, default-browser checks, and Edge onboarding surfaces
 - clean up the server, app window, and temp profile when the app window closes
 
+For `python_gui` mode, the generated shortcut script must:
+- resolve a real `pythonw.exe` (not WindowsApps shim)
+- set `.lnk` TargetPath to `pythonw.exe`
+- set `.lnk` Arguments to the configured Python entrypoint
+- set WorkingDirectory to the target repo root
+- never target `.bat` or `powershell.exe` for the user-facing shortcut
+
 The generated stop script must:
 - stop only windows/processes matching the configured port or temp profile slug
 - stop the listener owning the configured port
@@ -121,5 +148,6 @@ The generated stop script must:
 - Do not leave a port listener behind after a smoke test.
 - Do not leave the user's normal Edge profile involved in the app launcher.
 - Do not create shortcuts that point at a compatibility script if the direct hardened start script exists.
+- For Python GUI apps, do not point shortcuts to `.bat` or `powershell.exe`; point directly to `pythonw.exe`.
 - Quote or backtick paths with spaces in all final output.
 - If a pinned taskbar shortcut could still point at an old target, say that explicitly and tell Danny to unpin the stale one.

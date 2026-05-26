@@ -20,6 +20,13 @@ param(
 
     [string]$AllowedRoot = "",
 
+    [ValidateSet("edge_static", "python_gui")]
+    [string]$LauncherMode = "edge_static",
+
+    [string]$PythonEntry = "main.py",
+
+    [string]$PythonArgs = "",
+
     [switch]$CreateShortcuts,
 
     [switch]$NoShortcuts
@@ -87,7 +94,7 @@ function ConvertTo-JsonLiteral {
     return ($Value | ConvertTo-Json -Compress)
 }
 
-if ($Port -eq 8792) {
+if ($Port -eq 8792 -and $LauncherMode -ne "python_gui") {
     throw "Port 8792 is reserved for File Sorter. Choose a different port."
 }
 
@@ -123,6 +130,174 @@ $relativeEntryFile = [System.IO.Path]::GetRelativePath($staticRootPath, $entryPa
 $existing = Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($existing) {
     throw "Port $Port is already in use by PID(s): $((@($existing.OwningProcess) | Select-Object -Unique) -join ', ')"
+}
+
+if ($LauncherMode -eq "python_gui") {
+    $pythonEntryPath = Resolve-FullPath -Path $PythonEntry -BasePath $targetRoot
+    if (-not (Test-Path -LiteralPath $pythonEntryPath)) {
+        throw "Python entrypoint not found: $pythonEntryPath"
+    }
+
+    $pythonwCandidates = @()
+    foreach ($cmd in (Get-Command pythonw.exe -All -ErrorAction SilentlyContinue)) {
+        if ($cmd.Source -notlike "*WindowsApps*") {
+            $pythonwCandidates += $cmd.Source
+        }
+    }
+    if ($pythonwCandidates.Count -eq 0) {
+        throw "No real pythonw.exe found on PATH. Install Python from python.org and retry."
+    }
+    $pythonwExe = $pythonwCandidates[0]
+
+    $relativePythonEntry = [System.IO.Path]::GetRelativePath($targetRoot, $pythonEntryPath)
+    $pythonArgTail = if ([string]::IsNullOrWhiteSpace($PythonArgs)) { "" } else { " $PythonArgs" }
+
+    $startPythonTemplate = @'
+param(
+    [switch]$NoWait
+)
+
+$ErrorActionPreference = "Stop"
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$PythonExe = __PYTHONW_JSON__
+$EntryRel = __PY_ENTRY_JSON__
+$EntryAbs = Join-Path $ProjectRoot $EntryRel
+$ArgsTail = __PY_ARGS_JSON__
+$Port = __PORT__
+
+if (-not (Test-Path -LiteralPath $PythonExe)) { throw "pythonw.exe not found: $PythonExe" }
+if (-not (Test-Path -LiteralPath $EntryAbs)) { throw "Python entrypoint not found: $EntryAbs" }
+
+$proc = Start-Process -FilePath $PythonExe -ArgumentList "$EntryRel$ArgsTail" -WorkingDirectory $ProjectRoot -PassThru
+
+if (-not $NoWait) {
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $listen = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        if ($listen) {
+            Write-Host "Python GUI launcher is listening on port $Port."
+            exit 0
+        }
+        if ($proc.HasExited) {
+            throw "Python GUI process exited early with code $($proc.ExitCode)."
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    throw "Timed out waiting for listener on port $Port."
+}
+'@
+
+    $stopPythonTemplate = @'
+param(
+    [int]$Port = __PORT__
+)
+
+$ErrorActionPreference = "SilentlyContinue"
+$killed = $false
+
+$connections = Get-NetTCPConnection -LocalPort $Port -State Listen
+foreach ($owningProcessId in ($connections.OwningProcess | Select-Object -Unique)) {
+    Stop-Process -Id $owningProcessId -Force
+    Write-Host "Stopped launcher server (PID $owningProcessId)."
+    $killed = $true
+}
+
+if (-not $killed) {
+    Write-Host "Launcher is not running."
+}
+'@
+
+    $shortcutPythonTemplate = @'
+$ErrorActionPreference = "Stop"
+
+$repo = Split-Path -Parent $PSScriptRoot
+$AppName = __APP_NAME_JSON__
+$PythonExe = __PYTHONW_JSON__
+$PythonArgs = __SHORTCUT_ARGS_JSON__
+
+if (-not (Test-Path -LiteralPath $PythonExe)) {
+    throw "pythonw.exe not found: $PythonExe"
+}
+
+$iconPath = Join-Path $repo "static\favicon.ico"
+if (-not (Test-Path -LiteralPath $iconPath)) {
+    $iconPath = $PythonExe
+}
+
+$shell = New-Object -ComObject WScript.Shell
+$desktop = [Environment]::GetFolderPath("Desktop")
+$startMenuPrograms = Join-Path ([Environment]::GetFolderPath("StartMenu")) "Programs"
+
+foreach ($location in @($desktop, $startMenuPrograms)) {
+    if (-not (Test-Path -LiteralPath $location)) {
+        New-Item -ItemType Directory -Path $location -Force | Out-Null
+    }
+
+    $shortcutPath = Join-Path $location "$AppName.lnk"
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $PythonExe
+    $shortcut.Arguments = $PythonArgs
+    $shortcut.WorkingDirectory = $repo
+    $shortcut.Description = "$AppName - standalone local app launcher"
+    $shortcut.IconLocation = $iconPath
+    $shortcut.Save()
+
+    Write-Host "Created shortcut: `"$shortcutPath`""
+}
+'@
+
+    $batchPythonTemplate = @'
+@echo off
+REM Launch __APP_NAME__ in standalone GUI mode.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-__SLUG__.ps1"
+'@
+
+    $pyRepl = @{
+        "__PORT__" = [string]$Port
+        "__APP_NAME_JSON__" = ConvertTo-JsonLiteral -Value $AppName
+        "__SLUG_JSON__" = ConvertTo-JsonLiteral -Value $launcherSlug
+        "__PYTHONW_JSON__" = ConvertTo-JsonLiteral -Value $pythonwExe
+        "__PY_ENTRY_JSON__" = ConvertTo-JsonLiteral -Value $relativePythonEntry
+        "__PY_ARGS_JSON__" = ConvertTo-JsonLiteral -Value $pythonArgTail
+        "__SHORTCUT_ARGS_JSON__" = ConvertTo-JsonLiteral -Value ("$relativePythonEntry$pythonArgTail")
+        "__APP_NAME__" = $AppName
+        "__SLUG__" = $launcherSlug
+    }
+
+    foreach ($key in $pyRepl.Keys) {
+        $startPythonTemplate = $startPythonTemplate.Replace($key, $pyRepl[$key])
+        $stopPythonTemplate = $stopPythonTemplate.Replace($key, $pyRepl[$key])
+        $shortcutPythonTemplate = $shortcutPythonTemplate.Replace($key, $pyRepl[$key])
+        $batchPythonTemplate = $batchPythonTemplate.Replace($key, $pyRepl[$key])
+    }
+
+    Write-TextFile -Path $startScriptPath -Content $startPythonTemplate
+    Write-TextFile -Path $stopScriptPath -Content $stopPythonTemplate
+    Write-TextFile -Path $shortcutScriptPath -Content $shortcutPythonTemplate
+    Write-TextFile -Path $batchPath -Content $batchPythonTemplate
+
+    $manifest = [ordered]@{
+        app_name = $AppName
+        slug = $launcherSlug
+        launcher_mode = "python_gui"
+        target_root = $targetRoot
+        python_entry = $pythonEntryPath
+        pythonw = $pythonwExe
+        python_args = $PythonArgs
+        port = $Port
+        start_script = $startScriptPath
+        stop_script = $stopScriptPath
+        shortcut_script = $shortcutScriptPath
+        batch_launcher = $batchPath
+    }
+    Write-TextFile -Path $manifestPath -Content ($manifest | ConvertTo-Json -Depth 8)
+
+    if ($CreateShortcuts -and -not $NoShortcuts) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $shortcutScriptPath
+    }
+
+    [pscustomobject]$manifest | ConvertTo-Json -Depth 8
+    exit 0
 }
 
 $serverScript = @'
