@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.0
-  changelog: "Phase 5 output compression: replace per-round split feedback files with one combined `review-v<N>.md`, and collapse finalization into a single `design-final.md` artifact (no `design-summary.md`)."
+  version: 1.1.1
+  changelog: "Retention reset: keep only `design-final.md`; move round prompts/reviews/logs/drafts into scratch state under `design\\_review\\` and delete that scratch folder on successful finalization."
 ---
 
 # Review — Claude x Codex Coworker Dialogue
@@ -20,25 +20,21 @@ Path resolution is governed by `../../references/conventions.md` (resolve from t
 
 If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
 
-## HTML Review Artifact Requirement
-
-For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
-
-Baseline requirement:
-- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
-- Also emit a review-first `.html` artifact in the same artifact family/folder.
-- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
-- Report both output paths in the final skill output.
-
-
-
 `dt-review` is adversarial design critique for a plan. Two engineers debate the design as equals across
 rounds until it converges or the cap is reached.
 
-The output is a traceable design artifact set under `design/`:
-- `draft-v<N>.md`
-- `review-v<N>.md` (combined round record)
-- `design-final.md`
+Persistent output:
+- `design/design-final.md`
+
+Scratch-only review state during an active run:
+- `design\_review\draft-v<N>.md`
+- `design\_review\review-v<N>.md`
+- `design\_review\codex-stream-v<N>.log`
+- `design\_review\prompts\codex-critique-prompt-v<N>.md`
+
+Scratch state exists only to support an interrupted in-progress review. Delete it after successful
+finalization. If Danny wants a retained HTML view after finalization, that is `dt-visualize-design`,
+not `dt-review`.
 
 ## When this fires
 
@@ -83,8 +79,8 @@ Run one `AskUserQuestion` that captures:
 - Tier (`light` or `complex`)
 - Optional model override
 
-Then apply Mode A/B/C from `references/input-modes.md` and write `draft-v1.md` verbatim from the selected
-source, only appending `## Dialogue Log` if absent.
+Then apply Mode A/B/C from `references/input-modes.md` and write scratch `draft-v1.md` verbatim from the
+selected source.
 
 ### Step 2 — Pre-flight
 
@@ -94,47 +90,35 @@ surface the error.
 ### Step 3 — Round N loop
 
 For each round N:
-1. Announce round start in chat with model + stream-log path.
+1. Announce round start in chat with model.
 2. Assemble the codex prompt using `references/codex-prompt-template.md` and the canonical dimension
    contract from `../../references/canonical-dimension-contract.md`.
-3. Execute `scripts/invoke-codex-round.ps1` to run codex, capture stream log, and write
-   `review-v<N>.md` atomically (combined round artifact for that round).
+3. Execute `scripts/invoke-codex-round.ps1` to run codex and write scratch `review-v<N>.md` plus scratch
+   stream log atomically under `design\_review\`.
 4. Parse verdict via `scripts/parse-verdict.ps1`.
 5. Reconcile each finding (ACCEPT / REJECT / DEFER / COUNTER), appending a `## Claude Response`
-   section to the same `review-v<N>.md` artifact.
+   section to the same scratch `review-v<N>.md` artifact.
 6. If a previously REJECTed finding is raised again in the immediately following round, pause and ask Danny
    using A/B/C adjudication:
    - A = accept Codex's point now
    - B = keep rejection with new rationale
    - C = defer to open question
-7. Write `draft-v<N+1>.md` only when termination rules indicate continuation or one final polish pass.
+7. Write scratch `draft-v<N+1>.md` only when termination rules indicate continuation or one final polish pass.
 
 ### Step 4 — Output-shape obligations (Phase 4 addition)
 
-All final outputs use `shape_version: 1` frontmatter per `references/design-shape.md`.
+All retained final outputs use `shape_version: 1` frontmatter per `references/design-shape.md`.
 
-`design-final.md` must include an `Ambiguity Closures` section. For each finding flagged
-`AMBIGUOUS_ROOT_CAUSE`, write a closure block with required fields:
-- `finding_id`
-- `candidate_dimensions`
-- `missing_evidence`
-- `temporary_primary`
-- `closure_status` (`closed` or `carry_forward`)
-- `owner` (default `Danny`)
-- `closure_date_or_next_review`
+`design-final.md` is the accepted design body only. Do not copy round-by-round archaeology, stream-log
+references, or review summaries into the retained final artifact.
 
 ### Step 5 — Finalization
 
 Run the finalization workflow from `references/finalization.md`:
 - copy accepted draft to `design-final.md`
 - reconcile `CONTEXT.md` glossary against `design-final.md`
-- embed a compact review summary in `design-final.md` (no standalone summary file)
-- generate `design-review-view.html` (single-file review surface) that includes:
-  - verdict/status cards,
-  - review-flow diagram (Mermaid or SVG),
-  - prioritized findings/conflicts table,
-  - links to `design-final.md`
-- list output paths as bare absolute paths
+- delete `design\_review\` scratch state after successful finalization
+- list retained output paths as bare absolute paths
 
 ## Deterministic scripts
 
@@ -149,9 +133,10 @@ All stream/log redaction goes through repo-level `scripts/security/redact-secret
 
 ## Guardrails
 
-- Do not edit `draft-v<N>.md` after codex reviews it; only write a new version.
+- Do not edit scratch `draft-v<N>.md` after codex reviews it; only write a new version.
 - Use `--sandbox read-only` for codex rounds; no codebase writes from codex in this skill.
-- Keep every decision reconstructible from prompt, feedback, response, and Dialogue Log artifacts.
+- Keep round-state reconstructible only while the review is active; do not preserve scratch review
+  artifacts after a successful freeze unless Danny explicitly asks.
 - Verdict parsing is line-contract based (`VERDICT:` + `Confidence:`), not heading-based.
 - If feedback is malformed during recovery, archive to `.partial.<timestamp>.md` and re-run round invoke.
 - Keep SKILL.md under 5,000 words; long procedural detail belongs in `references/` and scripts.

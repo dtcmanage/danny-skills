@@ -4,7 +4,10 @@ Finalization starts when termination criteria are met.
 
 ## 1) Final draft
 
-Copy final accepted draft to `design/design-final.md`.
+Copy the accepted scratch draft to `design\design-final.md`.
+
+`design-final.md` is the only retained review artifact. Do not append round summaries, dialogue logs,
+or review provenance.
 
 ## 2) Reconcile terminology
 
@@ -23,13 +26,14 @@ Meaning-change conflicts require Danny A/B/C decision:
 - B Replace with new definition
 - C Split into two terms
 
-## 3) Write `design-final.md`
+## 3) Clean scratch state
 
-`design-final.md` is the single final artifact. In addition to the accepted design body:
-- Add a compact `## Round Summary` section (`round`, `verdict`, `confidence`, one-line outcome).
-- Add `## Key decisions`, `## Top risks`, `## Open questions`, `## Promotion candidates`.
-- Add `## Glossary changelog` (`Added`, `Changed`, `Removed`).
-- Add `## Ambiguity Closures` per design-shape contract.
+After `design-final.md` is written successfully:
+- delete `design\_review\prompts\`
+- delete `design\_review\review-v<N>.md`, `design\_review\codex-stream-v<N>.log`, and scratch `draft-v<N>.md`
+- delete `design\_review\` itself if empty
+
+If finalization fails, leave scratch state intact for recovery.
 
 ## 4) Output paths
 

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.9.15",
+  "version": "0.9.16",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Git: git-sync-features, git-merge-feature (rebase-forward feature workflow).",
   "author": {
     "name": "Danny Thai",
@@ -24,6 +24,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.9.16 dt-review-final-only-retention: changed dt-review so only design-final.md is retained after successful finalization, moved round prompts/reviews/logs/drafts into design\\_review scratch state, and removed retained review archaeology from the final design contract. (Originally shipped as 0.9.13 on main; renumbered when merged onto dev to avoid collision with dev's 0.9.13 dt-app-launcher entry.)",
       "0.9.15 manifest-description-refresh: rewrote plugin.json and marketplace.json descriptions to enumerate all 19 shipped skills grouped by role (pipeline / authoring / hygiene / workstation / writing / git). No skill behavior change.",
       "0.9.14 dt-app-launcher: added python_gui mode that generates direct pythonw.exe desktop/start menu shortcuts for standalone app windows (no terminal), plus explicit no-bat shortcut guardrails and verification.",
       "0.9.13 dt-app-launcher: added deterministic Windows standalone launcher scaffolding with hardened Edge app-mode profile, sync/extension suppression, shortcut generation, stop cleanup, and smoke-test contract.",
