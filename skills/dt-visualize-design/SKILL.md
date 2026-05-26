@@ -1,6 +1,6 @@
 ---
 name: dt-visualize-design
-description: "Render a design-final.md into a browser-openable design-view.html artifact with section-level diff badges ([ADDED]/[CHANGED]/[REMOVED]) against plan-draft.md and a change-summary header. Trigger on /dt-visualize-design or 'dt-visualize-design <design-path>'. Do NOT use for adversarial review (dt-review) or roadmap decomposition (dt-roadmap)."
+description: "Render a design-final.md into a browser-openable design-view.html artifact with section-level diff badges ([ADDED]/[CHANGED]/[REMOVED]) against plan-draft.md and a change-summary header. Trigger on /dt-visualize-design or 'dt-visualize-design [design-path]'. Do NOT use for adversarial review (dt-review) or roadmap decomposition (dt-roadmap)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"

@@ -1,6 +1,6 @@
 ---
 name: dt-build
-description: "Execute a validated roadmap contract end-to-end. Trigger on /dt-build or 'dt-build <roadmap-path>'."
+description: "Execute a validated roadmap contract end-to-end. Trigger on /dt-build or 'dt-build [roadmap-path]'."
 disable-model-invocation: true
 user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"

@@ -1,6 +1,6 @@
 ---
 name: dt-roadmap
-description: "Break a finalized design into a contract-grade roadmap.md plus milestone export artifacts for dt-build intake. Trigger on /dt-roadmap or 'dt-roadmap <design-path>'. Do NOT use for adversarial review (dt-review) or build execution (dt-build)."
+description: "Break a finalized design into a contract-grade roadmap.md plus milestone export artifacts for dt-build intake. Trigger on /dt-roadmap or 'dt-roadmap [design-path]'. Do NOT use for adversarial review (dt-review) or build execution (dt-build)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"

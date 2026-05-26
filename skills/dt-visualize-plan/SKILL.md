@@ -1,6 +1,6 @@
 ---
 name: dt-visualize-plan
-description: "Render a plan-draft.md into a browser-openable plan-view.html artifact with milestone table, optional Mermaid dependency graph + Gantt, and optional UI mockup section. Trigger on /dt-visualize-plan or 'dt-visualize-plan <plan-path>'. Do NOT use for adversarial review (dt-review) or execution (dt-build)."
+description: "Render a plan-draft.md into a browser-openable plan-view.html artifact with milestone table, optional Mermaid dependency graph + Gantt, and optional UI mockup section. Trigger on /dt-visualize-plan or 'dt-visualize-plan [plan-path]'. Do NOT use for adversarial review (dt-review) or execution (dt-build)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"

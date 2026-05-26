@@ -1,6 +1,6 @@
 ---
 name: git-merge-feature
-description: "Rebase a named feature branch onto dev then fast-forward merge it into dev and delete the branch. Use when a feature is complete and ready to land on dev. Trigger on /git-merge-feature <branch> or 'merge feature X to dev' or 'land feature X'."
+description: "Rebase a named feature branch onto dev then fast-forward merge it into dev and delete the branch. Use when a feature is complete and ready to land on dev. Trigger on /git-merge-feature [branch] or 'merge feature X to dev' or 'land feature X'."
 ---
 
 # git-merge-feature — Rebase and Merge a Feature Branch into Dev

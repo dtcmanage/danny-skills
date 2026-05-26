@@ -1,6 +1,6 @@
 ---
 name: dt-tune
-description: "Turn session friction into a proposed SKILL.md amendment for a target skill, with an approval gate before any write. Trigger on /dt-tune <skill> or 'dt-tune <skill> [session reference]'. Do NOT use for broad project planning (dt-plan), adversarial design critique (dt-review), or implementation execution (dt-build)."
+description: "Turn session friction into a proposed SKILL.md amendment for a target skill, with an approval gate before any write. Trigger on /dt-tune [skill] or 'dt-tune [skill] [session reference]'. Do NOT use for broad project planning (dt-plan), adversarial design critique (dt-review), or implementation execution (dt-build)."
 disable-model-invocation: true
 user-invocable: true
 allowed-tools: "Read Write Edit AskUserQuestion Bash(pwsh:*)"

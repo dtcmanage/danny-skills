@@ -1,6 +1,6 @@
 ---
 name: dt-review
-description: "Adversarial Claude-vs-Codex design dialogue on a plan. Trigger on /dt-review or 'dt-review <plan-path>'. Do NOT use for small bug fixes or single-file edits."
+description: "Adversarial Claude-vs-Codex design dialogue on a plan. Trigger on /dt-review or 'dt-review [plan-path]'. Do NOT use for small bug fixes or single-file edits."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"

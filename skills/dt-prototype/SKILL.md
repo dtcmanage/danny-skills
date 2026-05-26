@@ -1,6 +1,6 @@
 ---
 name: dt-prototype
-description: "Prototype unresolved logic or UI questions before adversarial review: build either a one-command runnable terminal TUI for behavior/state validation or a multi-variant UI switcher route for visual comparison. Trigger on /dt-prototype or 'dt-prototype <question>'. Do NOT use for final production implementation, full design critique (dt-review now, dt-review after Phase 4), or roadmap/build execution."
+description: "Prototype unresolved logic or UI questions before adversarial review: build either a one-command runnable terminal TUI for behavior/state validation or a multi-variant UI switcher route for visual comparison. Trigger on /dt-prototype or 'dt-prototype [question]'. Do NOT use for final production implementation, full design critique (dt-review now, dt-review after Phase 4), or roadmap/build execution."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
