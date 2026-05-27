@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 2.2.0
-  changelog: "Skill propagation gate: when the built repo is the danny-skills plugin repo, diff skills/ between merge base and build branch, materialize per-skill directory junctions in the four external surfaces via scripts/verify-skill-junctions.ps1 -Create, and hard-fail the build on any junction failure, wrong target, setup gap, or orphan. Closes the recurring CLI/Codex invisible-new-skill gap."
+  version: 2.3.0
+  changelog: "Acceptance contract gate: per-milestone verify-before-complete protocol replaces verify-at-end. Adds references/acceptance-contract.md (the contract) and four deterministic scripts: verify-milestone-acceptance.ps1 (artifact presence + named-command exit-code check), check-downgrade-language.ps1 (banned-phrase scanner with approval-block override), identify-load-bearing.ps1 (triggers load-bearing-first ordering within a DAG layer), build-acceptance-ledger.ps1 (final four-axis ledger as md+html). Closes the failure class surfaced by the 2026-05-27 file-sorter learning-loop build, where a build was reported complete while load-bearing E2E coverage, the human-edit ingestion hook, the real ONNX embedding model, and the proposal state-machine guards were all missing or substituted with placeholders that nominally satisfied a thinner test."
 ---
 
 # Build Executor
@@ -52,7 +52,18 @@ Do NOT fire for:
 - Canonical validator: `skills/dt-roadmap/scripts/roadmap-validator.ps1`.
 - `dt-build` must read both through repo-relative paths; no copied schema is allowed.
 
-## Procedure (7A intake + 7B execution)
+## Acceptance contract (per-milestone verify-before-complete)
+
+**Read `references/acceptance-contract.md` before step 6 fires for the first time.** That reference is the binding contract for what counts as a milestone being "done." It replaces the prior "verify at the end" pattern with per-milestone artifact-presence + named-command + downgrade-language gates, enforced by four deterministic scripts:
+
+- `scripts/verify-milestone-acceptance.ps1` — extracts artifacts the roadmap names for a milestone and confirms each exists in the working tree; with `-RunTests`, runs every named pytest/python command and folds exit codes into the verdict.
+- `scripts/check-downgrade-language.ps1` — scans milestone notes, commit messages, and per-chunk output for the calibrated phrase list ("compatible fallback," "deterministic fallback," "production can replace," "scaffold implementation," "verifier passes" paired with artifact-missing context, etc.). Approval blocks (`downgrade_approved_by: danny`) suppress matches inside their range.
+- `scripts/identify-load-bearing.ps1` — flags milestones whose name/acceptance/verification text contains `load-bearing`, `gate`, `publish`, `persistence`, `runtime flip`, `end-to-end`, `E2E`, or `critical path`. The build orders these first within their DAG layer.
+- `scripts/build-acceptance-ledger.ps1` — aggregates per-milestone results into the final ledger as both `.md` and `.html`. The ledger is the build's final answer.
+
+A milestone in any non-PASS state blocks every dependent milestone from starting, regardless of the verify/fix loop budget.
+
+## Procedure (7A intake + 7B execution + 7C acceptance gate)
 
 1. Intake in one question:
 - Repo path (absolute).
@@ -79,18 +90,31 @@ Do NOT fire for:
 - Resolve each chunk entitlement through `scripts/spawn-preflight.ps1`.
 - Abort if any manifest mismatch or missing entitlement.
 
-6. Execute milestones with deterministic execution-side procedures:
-- Assemble Codex prompt bytes through `scripts/assemble-codex-prompt.ps1` (single canonical implementation; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`).
-- Run the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every Codex invocation.
-- Run verify/fix loops with a hard two-attempt budget per milestone; if still failing, escalate instead of spinning.
-- Update `dev` only via compare-and-swap through `scripts/dev-cas-update.ps1` after rehearsal checks pass.
+5.5 Identify load-bearing milestones:
+- Run `scripts/identify-load-bearing.ps1 -RoadmapPath <roadmap> -Json`.
+- Persist the result in the run folder (`load-bearing.json`).
+- Build execution in step 6 uses this set to reorder within each DAG layer: when multiple milestones become unblocked simultaneously, the load-bearing one is built first and its `accepted` status must be `PASS` before any dependent non-load-bearing milestone's chunk is assembled.
 
-6.5 Emit review artifact:
+6. Execute milestones with deterministic execution-side procedures, **per-milestone in this order**:
+- a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
+- b. **Assemble and verify the Codex prompt.** `scripts/assemble-codex-prompt.ps1` (single canonical implementation; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`), then the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every Codex invocation.
+- c. **Run the chunk** under the hard two-attempt verify/fix budget. If still failing, escalate and STOP advancing to dependent milestones.
+- d. **Run the acceptance gate.** `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
+- e. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
+- f. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`.
+- g. **Update `dev`** via compare-and-swap through `scripts/dev-cas-update.ps1` after the per-milestone acceptance gate passes.
+
+6.5 Emit acceptance ledger + review artifact:
+- Run `scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder> -RunTests`.
+  - Emits `build-acceptance-ledger.md` and `build-acceptance-ledger.html`.
+  - The ledger is the final answer for the build run — not a freeform summary.
 - Generate `build-run-review.html` in the run artifact folder with:
+  - the acceptance ledger as the headline panel (above the milestone status cards),
   - milestone status cards,
   - execution timeline,
   - verify/fix loop outcomes,
-  - blockers/escalations panel.
+  - blockers/escalations panel,
+  - downgrade-language matches panel (per-milestone, with approved/blocker badge).
 
 7. Guardrails:
 - Branch drift detection via `scripts/check-drift.ps1`.
@@ -129,6 +153,7 @@ Do NOT fire for:
 
 ## References
 
+- **Acceptance contract (per-milestone verify-before-complete):** `references/acceptance-contract.md` — binding contract for what counts as "milestone complete."
 - Subagent prompts: `references/subagent-prompts.md`
 - Artifact integrity contract: `references/artifact-integrity.md`
 - Run-artifact lifecycle: `references/run-artifact-lifecycle.md`
@@ -137,3 +162,8 @@ Do NOT fire for:
 - Branch contract: `references/branch-contract.md`
 - Codex assembly byte contract: `references/codex-assembly-contract.md`
 - Skill propagation gate (one-shot / build-final): repo-level `scripts/verify-skill-junctions.ps1`
+- Acceptance gate scripts (called by procedure step 6):
+  - `scripts/verify-milestone-acceptance.ps1` — per-milestone artifact + command check
+  - `scripts/check-downgrade-language.ps1` — banned-phrase scanner
+  - `scripts/identify-load-bearing.ps1` — load-bearing-first ordering input
+  - `scripts/build-acceptance-ledger.ps1` — final four-axis ledger (.md + .html)
