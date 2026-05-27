@@ -109,6 +109,9 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $skillRoot = Split-Path -Parent $scriptDir
 $resolved = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
 if ($resolved) { $skillRoot = $resolved.FullName }
+$repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
+
+. (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1')
 
 if ([string]::IsNullOrWhiteSpace($SchemaPath)) {
     $SchemaPath = Join-Path $skillRoot 'references\roadmap-schema.md'
@@ -333,6 +336,30 @@ foreach ($item in $manifest) {
     }
     if ($allowedModes -notcontains $mode) {
         $errors.Add("SCHEMA_REQUIRED_COLUMN_MISSING: verification check '$checkId' has invalid mode '$mode'")
+    }
+}
+
+# VERIFICATION_NAMES_NO_RUNNABLE (schema 1.1.0):
+# Mirror the dt-build per-milestone acceptance gate. For each milestone, combine
+# the acceptance-checks cell with every chk-* procedure cell whose milestone-id
+# matches, run the shared extractor, and fail if no runnable artifact or
+# command is named anywhere on that combined surface. Eliminates the
+# "roadmap verification check names no concrete test file or command" blocker
+# class from dt-build's gate at the producer side.
+foreach ($m in $milestones) {
+    $mid = [string]$m.id
+    if ([string]::IsNullOrWhiteSpace($mid)) { continue }
+
+    $acceptanceText = [string]$m.'acceptance-checks'
+    $matchingProcedures = @($manifest | Where-Object { ([string]$_.'milestone-id').Trim() -eq $mid.Trim() } | ForEach-Object { [string]$_.procedure })
+    $combinedText = (@($acceptanceText) + $matchingProcedures) -join "`n"
+
+    $extracted = Extract-NamedArtifacts -Text $combinedText
+    $artifactCount = @($extracted.artifacts).Count
+    $commandCount = @($extracted.commands).Count
+
+    if ($artifactCount -eq 0 -and $commandCount -eq 0) {
+        $errors.Add("VERIFICATION_NAMES_NO_RUNNABLE: milestone '$mid' names no runnable artifact (no backticked file path, no backticked or inline pytest/python/pwsh/node/npm/bun command) across acceptance-checks + matching verification-manifest procedures. dt-build's per-milestone acceptance gate will reject this milestone with 'roadmap verification check names no concrete test file or command'.")
     }
 }
 

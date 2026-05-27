@@ -10,7 +10,7 @@ Single canonical schema for the Phase-6 roadmap contract consumed by Phase-7 dt-
 ## Version header
 
 ```yaml
-producer_current_version: 1.0.0
+producer_current_version: 1.1.0
 schema_version: 1
 ```
 
@@ -76,9 +76,21 @@ Body sections (required):
 - `DEPENDENCY_CYCLE`: milestone dependency graph contains a cycle.
 - `MILESTONE_INDEPENDENCE_VIOLATION`: duplicate ids, unknown dependency ids, or milestone lacks chunk coverage.
 - `CHUNK_PARALLELISM_FEASIBILITY_VIOLATION`: invalid chunk routing/entitlement or chunk table cannot support parallel chunk execution.
+- `VERIFICATION_NAMES_NO_RUNNABLE`: a milestone's combined verification surface (its `acceptance-checks` cell in `## Milestones` plus the `procedure` cell of every `chk-*` row whose `milestone-id` matches it in `## Verification Manifest`) names no runnable artifact. Added 1.1.0 to keep the producer in lock-step with the dt-build per-milestone acceptance gate (`skills/dt-build/scripts/verify-milestone-acceptance.ps1`).
+
+## Runnable artifact definition (added 1.1.0)
+
+A "runnable artifact" is anything the shared extractor `scripts/extract-named-artifacts.ps1` (byte-identical to the inline `Extract-NamedArtifacts` function inside `skills/dt-build/scripts/verify-milestone-acceptance.ps1`) returns as either an `artifacts` entry or a `commands` entry. Concretely, at least one of the following must appear in the milestone's combined verification surface:
+
+- A backtick-quoted file path with at least one directory component and an extension in `{py, ts, js, ps1, md, yaml, yml, json, html, sql}`. Example: `` `tests/backend/test_durability_fresh_create_v11.py` ``.
+- A backtick-quoted command beginning with one of `pytest`, `python`, `pwsh`, `powershell`, `node`, `npm`, `bun`. Example: `` `pytest tests/backend/test_durability_populated_v10_to_v11.py` ``.
+- An inline (no-backtick) `pytest <args>` invocation. Example: `Run pytest tests/backend/test_x.py to ...`.
+- An inline (no-backtick) `python <path>` invocation where `<path>` starts with `scripts/`, `backend/`, `workers/`, or `tests/` and ends in `.py`.
+
+The shared extractor is the source-of-truth definition. dt-build's gate consumes the inline copy; dt-roadmap's validator dot-sources the shared helper. Both must remain byte-identical.
 
 ## Compatibility policy
 
 - **Breaking change** (renamed/removed columns, table restructure, changed required semantics): bump `schema_version` major and `producer_current_version` major.
-- **Non-breaking additive change** (new optional column/section): keep `schema_version` major, bump `producer_current_version` minor.
+- **Non-breaking additive change** (new optional column/section, or tightening an existing required cell with an additional check): keep `schema_version` major, bump `producer_current_version` minor. `VERIFICATION_NAMES_NO_RUNNABLE` (1.1.0) is additive enforcement on cells that were already required: any roadmap whose verification surface already named a runnable artifact passes unchanged.
 - dt-build reads this file directly by repo-relative path and must not keep a second copy.

@@ -72,6 +72,14 @@ function Parse-MarkdownTableRows {
     return $rows
 }
 
+# NOTE: The body of Extract-NamedArtifacts below is the source-of-truth
+# definition of what counts as a "runnable" artifact / command for this gate.
+# A byte-identical copy lives at repo-level `scripts/extract-named-artifacts.ps1`
+# and is dot-sourced by `skills/dt-roadmap/scripts/roadmap-validator.ps1` so the
+# producer's validator enforces the same definition the consumer's gate enforces.
+# If you change the regex here, also change the shared helper in the same release
+# (and vice versa). The gate keeps an inline copy so it has no external
+# dependency at run time; the shared helper exists for new consumers.
 function Extract-NamedArtifacts {
     # Walks the procedure / acceptance text looking for explicit artifact paths
     # and command invocations. Heuristic but deterministic; the roadmap convention

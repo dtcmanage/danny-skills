@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.1
-  changelog: "Added scripted roadmap-view.html generation with vendored Mermaid rendering and explicit SVG validation expectations."
+  version: 1.1.0
+  changelog: "Hardened producer + validator for dt-build per-milestone acceptance gate compatibility. (1) Added VERIFICATION_NAMES_NO_RUNNABLE schema check: each milestone's combined verification surface (acceptance-checks + every matching chk-* procedure cell) must name at least one runnable artifact — a backticked file path with an extension in the allowlist, a backticked or inline `pytest ...` / `python scripts|backend|workers|tests/...` command, or one of `pwsh|powershell|node|npm|bun`. Validator and gate share the same definition through repo-level `scripts/extract-named-artifacts.ps1` (byte-identical to the inline copy in `skills/dt-build/scripts/verify-milestone-acceptance.ps1`). (2) Broadened the input parser: primary path now reads milestones from a `## Implementation Sequence` (or `Implementation Order` / `Build Sequence` / `Build Order` / `Milestone Sequence`) section's enumerated top-level numbered list; legacy `### Phase ...` heading detection remains as a back-compat fallback. (3) Lifted concrete pytest/python commands verbatim from milestone-tagged bullets in the design's `## Validation Gates` section (tag convention: `- M<NN>: ... \\`cmd\\``) into procedure cells, replacing the prior stub prose. Producer surfaces any milestone without a lifted command in the new `## Producer Warnings` section so the validator's hard-fail is predictable. Bumped producer_current_version 1.0.0 -> 1.1.0 (additive enforcement, no schema_version major bump). Previous 1.0.1: scripted roadmap-view.html generation with vendored Mermaid rendering."
 ---
 
 # Roadmap Builder
@@ -45,6 +45,22 @@ Trigger when all are true:
 Do NOT fire for:
 - Adversarial design critique or closure loops -- that is `dt-review`.
 - Build execution, verification loops, or merge workflows -- that is `dt-build`.
+
+## Input contract (design-final.md sections the producer reads)
+
+The producer is deterministic. It reads two named sections from the design and fails closed if a milestone has no runnable command to lift.
+
+1. **Milestone source** — primary: `## Implementation Sequence` (also accepted: `## Implementation Order`, `## Build Sequence`, `## Build Order`, `## Milestone Sequence`). Each top-level numbered list item (`1. ...`, `2. ...`) becomes one milestone, numbered M01, M02, ... in source order. The first sentence of the line becomes the milestone name. Fallback: legacy `### Phase ...` / `### Contract Freeze Gate ...` / `### Value Review ...` headings (pre-1.1.0 behavior, kept for back-compat).
+
+2. **Verification commands** — `## Validation Gates` (also accepted: `## Acceptance Tests`, `## Milestone Acceptance Commands`). Each bullet must be tagged with a milestone-id and contain at least one backticked runnable command. The producer lifts every backticked entry verbatim into the verification manifest's `procedure` cell for that milestone. Accepted bullet shapes (ASCII only):
+   ```
+   - M01: <description>. `pytest tests/backend/test_x.py`
+   - M02 - <description>. `python scripts/foo.py`
+   - [M03] <description>. `pytest tests/test_y.py`
+   ```
+   A "runnable command" is anything `scripts/extract-named-artifacts.ps1` returns as an `artifact` or a `command` (see `references/roadmap-schema.md` for the canonical definition). Milestones with no lifted command appear under `## Producer Warnings` in the emitted roadmap; the validator hard-fails them with `VERIFICATION_NAMES_NO_RUNNABLE` so the gap is surfaced before dt-build runs.
+
+The producer does NOT infer test paths, assign milestones to gates by prose matching, or invent commands. The design author owns concrete test file paths.
 
 ## Procedure
 
