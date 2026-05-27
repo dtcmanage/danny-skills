@@ -11,43 +11,40 @@ Apply the shared deterministic and referencing baseline at `../../references/det
 
 Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
 
-If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
-
 
 Rebase every active feature branch onto `dev`. Run at the start of any session where multiple feature branches are in play, so each starts from current `dev` before new work begins.
 
-## Steps
+## Procedure
 
-1. Identify the current repo root. If the working directory is not inside a git repo, stop and say so.
+1. Confirm the working directory is inside a git repo. If not, stop and say so.
 
-2. Check out `dev` and pull latest:
-   ```
-   git checkout dev
-   git pull origin dev
-   ```
+2. Run the deterministic sync script from this skill:
 
-3. List all local branches that are not `main` or `dev`:
-   ```
-   git branch --list
-   ```
-   Filter to feature branches only (exclude `main` and `dev`).
-
-4. For each feature branch, in any order:
-   ```
-   git checkout feature/<name>
-   git rebase dev
+   ```powershell
+   pwsh -NoProfile -File skills/git-sync-features/scripts/sync-features.ps1 -Json
    ```
 
-   - If rebase completes cleanly: record success.
-   - If rebase hits a conflict: stop, report which branch conflicted and which files, and ask for resolution before continuing to the next branch. Do not skip a conflicted branch silently.
+   The script:
+   - records the starting branch,
+   - checks out `dev` and runs `git pull origin dev`,
+   - enumerates local branches (excludes `main` and `dev`),
+   - invokes the repo-level `scripts/git/rebase-onto-dev.ps1` per feature branch,
+   - stops at the first conflict (does NOT `--skip` silently),
+   - returns to the starting branch on clean completion,
+   - emits a JSON summary.
 
-5. After all branches are processed, return to the branch that was active at the start of the session (or `dev` if unclear).
+3. Parse the JSON summary and report:
+   - which branches rebased cleanly,
+   - which branch (if any) hit a conflict and which files conflicted,
+   - the starting branch the script returned to.
 
-6. Report a summary: which branches rebased cleanly, which (if any) conflicted and were paused.
+4. If `conflicted_branch` is set, the repo is left mid-rebase on that branch. Surface this to Danny — do not silently abort. He resolves and re-runs the skill (the script picks up any branches that didn't get processed).
+
+5. If rerere is not enabled globally, note it and suggest: `git config --global rerere.enabled true`.
 
 ## Rules
 
 - Never use `git rebase --skip` to bypass a conflict — always surface it.
 - Never rebase `main` or `dev` themselves.
 - Never push the rebased feature branches automatically — rebasing rewrites history; only push if Danny explicitly asks after syncing.
-- If rerere is not enabled globally, note it and suggest: `git config --global rerere.enabled true`.
+- Pass `-SkipPull` only when Danny has explicitly already pulled `dev` and wants to skip the network round-trip.

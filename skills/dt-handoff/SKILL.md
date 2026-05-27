@@ -49,29 +49,29 @@ A handoff that says "start work when X, Y, and Z all become true" is the failure
 
 If Danny explicitly says "park it pending external work" after seeing the prerequisites, that's the one path where a conditional handoff is acceptable — and the chat conversation that preceded it is the receipt that the conditions were surfaced first.
 
-## Step 1: Locate the project
+## Step 1: Locate the project and prep the handoff folder
 
 Identify the root folder of the project this session worked on — for a code repo, the repo root; otherwise the workstation folder. If no project is apparent from the session, ask Danny which project this belongs to before continuing.
 
-Ensure the `_handoffs\` folder exists at that root. In PowerShell:
+Pick a short kebab-case `<slug>` for today's handoff topic, then run the prep script:
 
+```powershell
+pwsh -NoProfile -File skills/dt-handoff/scripts/prep-handoff-folder.ps1 `
+  -ProjectRoot "<project-root>" -Slug "<slug>" -Json
 ```
-New-Item -ItemType Directory -Force "<project-root>\_handoffs"
-```
+
+The script:
+- creates `<project-root>\_handoffs\` if it does not exist,
+- lists existing files in that folder (handoffs generated earlier but never consumed),
+- returns deterministic target paths for today's handoff (`handoff_md_path`, `handoff_html_path`).
 
 ## Step 2: Check for stale handoffs
 
-List any existing files in `_handoffs\`. If any are present, they are handoffs generated earlier but never consumed. Tell Danny what is there and ask whether each is stale (delete it) or still a pending pickup (keep it). Never auto-delete — a lingering file may be a real pending handoff.
+Read `existing_files` from the script output. If any files are present, surface them to Danny and ask whether each is stale (delete it) or still a pending pickup (keep it). Never auto-delete — a lingering file may be a real pending handoff.
 
 ## Step 3: Write the handoff
 
-Write the file with the Write tool to:
-
-```
-<project-root>\_handoffs\handoff-YYYY-MM-DD-<slug>.md
-```
-
-`<slug>` is a short kebab-case topic; the date is today. Never use `mktemp` or any bash temp-file command — this is a Windows/PowerShell environment.
+Write the markdown handoff with the Write tool to `handoff_md_path` from the script output (format: `handoff-YYYY-MM-DD-<slug>.md`). Never use `mktemp` or any bash temp-file command — this is a Windows/PowerShell environment.
 
 Write it as a starting prompt, not a status report. Use this structure:
 
@@ -86,7 +86,7 @@ End the file with this line, with the real absolute path filled in:
 
 > This is a single-use handoff. Once you have absorbed the context above, delete this file (`<absolute path>`) before doing anything else.
 
-Also generate `handoff-YYYY-MM-DD-<slug>.html` beside the markdown file, optimized for skim review:
+Also generate the HTML companion at `handoff_html_path` from the script output, optimized for skim review:
 - summary cards (task, status, blockers),
 - next-step sequence view,
 - key files/artifacts table with quick links.

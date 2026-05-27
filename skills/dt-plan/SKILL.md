@@ -5,8 +5,8 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.1
-  changelog: "Tightened HTML review artifact requirement so Mermaid diagrams must render via vendored local Mermaid or inline SVG, not raw code blocks."
+  version: 1.0.2
+  changelog: "Pointer-swap to shared output-paths convention in references/conventions.md instead of restating the no-computer-link rule inline."
 ---
 
 # Plan — Cowork Project Planning
@@ -183,7 +183,7 @@ Section names match what the conversation produced. No skeleton headers with pla
 
 If `CONTEXT.md` was created or updated during the session, it's already saved (you wrote to it inline as terms got pinned). If an ADR was drafted, save it now to `docs/adr/<NNNN>-<kebab-title>.md` next to `CONTEXT.md`, numbered sequentially from the highest existing ADR + 1.
 
-After saving, output exactly this, with bare absolute paths on their own lines:
+After saving, output exactly this, with bare absolute paths on their own lines per the output-paths convention in `../../references/conventions.md`:
 
 ```
 Plan saved at <bare absolute path>.
@@ -191,8 +191,6 @@ Plan review HTML saved at <bare absolute path>.
 
 To run adversarial review with Codex when ready, open Claude Code in workspace root and trigger /dt-review pointing at this file.
 ```
-
-No `computer://` link, no markdown wrapper around the path — Danny's client doesn't render those.
 
 If a `CONTEXT.md` or ADR was also written, list them on their own lines below the plan path so Danny can see everything that landed this session.
 

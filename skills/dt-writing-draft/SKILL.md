@@ -48,15 +48,9 @@ If unsure, ask: "Are we writing this from scratch, or tightening something you a
 
 ## Step 0 — Load the voice baseline (before writing anything)
 
-Before drafting a single sentence, load the voice references. This is a standing rule, not a suggestion: a draft written without them sounds generic and gets thrown away.
+Before drafting a single sentence, load the voice references per `../../references/voice-load-order.md` (the canonical three-layer load order: email base → business writing voice → genre style profile, with the business profile winning on conflicts in long-form). This is a standing rule, not a suggestion.
 
-1. **Voice principles — the email base.** Read `D:\Claude\_Claude-Workspace\00_Resources\voice-principles.md`. The genre-independent floor: word choice, banned phrases, tone. It was extracted from Danny's *email*, so its word-choice and tone rules carry over, but it does not govern long-form on its own.
-
-2. **Business writing voice — the governing reference.** Read `D:\Claude\_Claude-Workspace\00_Resources\voice-principles-business.md`. Distilled from Danny's actual business documents, this governs everything the skill produces: the two registers (personal versus institutional), structure, sentence rhythm, how he handles numbers and bad news, punctuation, and how the voice flexes by document type. Where it and the email file differ — em dashes and the word "leverage" being the clearest cases — this file wins for business writing.
-
-3. **Genre style profile.** Each genre has a profile at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md`, where `<genre>` is the kebab-case slug (e.g. `style-investor-letter.md`). It captures how Danny actually writes that genre: structure, rhythm, how he handles numbers, recurring devices, and topics to skip. Read it if it exists.
-
-   If no profile exists for this genre, run the **style study** below before drafting.
+If no genre profile exists at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md`, run the **style study** below before drafting.
 
 ### Style study (builds or refreshes a genre profile)
 
@@ -210,15 +204,13 @@ Generate `draft-review.html` beside the draft with:
 
 If this piece is finished enough to serve as a future style reference, copy the final draft into `D:\Claude\_Claude-Workspace\00_Resources\writing-samples\<genre>\` and refresh the genre style profile so it tracks Danny's style as it evolves. Each finished piece makes the next one's style match better.
 
-Output the bare absolute paths, each on its own line:
+Output the bare absolute paths per the output-paths convention in `../../references/conventions.md`, each on its own line:
 
 ```
 Draft saved at <bare absolute path>.
 Corpus saved at <bare absolute path>.
 Draft review HTML saved at <bare absolute path>.
 ```
-
-No `computer://` links, no markdown wrappers around the paths — Danny's client does not render those.
 
 Close with: "To run a structural and clarity pass when ready, point `dt-writing-edit` at the draft."
 

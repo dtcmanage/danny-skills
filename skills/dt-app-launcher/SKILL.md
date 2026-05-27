@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI on Windows; requires danny-skills repo present."
 metadata:
-  version: 0.2.0
-  changelog: "Added python_gui launcher mode for standalone pythonw.exe shortcuts (no terminal), plus mode-selection and verification rules."
+  version: 0.3.0
+  changelog: "Extracted launcher verification to scripts/verify-launcher.ps1: deterministic pass/fail report on manifest files, shortcut .lnk targets (edge_static vs python_gui), TCP listener, and Edge hardening-flag presence. SKILL.md step 4 now invokes the script instead of asking the AI to interpret process command lines and shortcut targets by hand."
 ---
 
 # App Launcher
@@ -95,15 +95,17 @@ Optional parameters:
 4. Verify the generated launcher:
 - Run the generated `scripts\stop-<slug>.ps1` first to clear stale state.
 - Run `scripts\start-<slug>.ps1 -SkipBuild` if the static artifact already exists; otherwise run without `-SkipBuild`.
-- Confirm an Edge process exists with:
-  - `--app=<local url>`
-  - `--user-data-dir=<temp profile containing <slug>>`
-  - `--disable-sync`
-  - `--disable-extensions`
-  - `--no-first-run`
-- Confirm the server listens on the requested port.
-- For `python_gui` mode, confirm the Desktop and Start Menu `.lnk` targets are `pythonw.exe` with arguments `<entry>.py ...`, and not `start-*.bat`.
-- Run the generated stop script and confirm the port is clear.
+- Run the verifier with `-CheckRunning` to confirm the running process matches the contract:
+
+  ```powershell
+  pwsh -NoProfile -File skills/dt-app-launcher/scripts/verify-launcher.ps1 `
+    -ManifestPath "<absolute path to <slug>-launcher.json>" `
+    -CheckRunning -Json
+  ```
+
+  The script reads the manifest and runs a fixed checklist: manifest + helper script files exist; Desktop + Start Menu `.lnk` shortcuts exist and target the right exe (powershell.exe wrapping start-`<slug>`.ps1 for `edge_static`; `pythonw.exe` directly for `python_gui`, never a `.bat` and never the WindowsApps shim); a TCP listener exists on the manifest port; and (for `edge_static`) an `msedge.exe` process exists carrying `--app=`, `--user-data-dir=` containing the slug, `--disable-sync`, `--disable-extensions`, and `--no-first-run`. The JSON output is `{ pass, checks: [{ name, status, detail }] }` — surface any `fail` rows directly without re-interpreting raw process command lines.
+
+- Run the generated stop script and re-run the verifier without `-CheckRunning` to confirm the listener is gone and the install-time artifacts remain.
 
 5. Report the result:
 - quote or backtick every Windows path, especially paths containing spaces such as `Start Menu`

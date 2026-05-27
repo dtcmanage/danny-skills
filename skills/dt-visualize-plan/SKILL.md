@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.1
-  changelog: "Hardened Mermaid rendering so plan-view.html uses the vendored local runtime with explicit browser rendering checks instead of leaving raw graph text."
+  version: 1.0.2
+  changelog: "Pointer-swap to shared output-paths convention in references/conventions.md instead of restating the no-computer-link rule inline."
 ---
 
 # Visualize Plan
@@ -99,6 +99,6 @@ If unsure, default to `plan-plus-mermaid`.
 
 - Do not rewrite the plan content. Render only.
 - Do not block on unavailable upstream skills if a documented fallback exists.
-- Do not emit `computer://` links; return plain absolute paths.
+- Follow the output-paths convention in `../../references/conventions.md` (bare absolute paths, no `computer://` links).
 - Keep this skill focused: rendering and surface clarity only.
 

@@ -42,9 +42,9 @@ Trigger when Danny has a finished or near-finished draft that needs a pass:
 
 ## Step 0 — Load the voice baseline
 
-Read three references: `D:\Claude\_Claude-Workspace\00_Resources\voice-principles.md` (the email base — word choice, banned phrases, tone), `D:\Claude\_Claude-Workspace\00_Resources\voice-principles-business.md` (the governing reference for long-form — the two registers, structure, rhythm, punctuation, how the voice flexes by document type), and the genre style profile at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md` (kebab-case slug, e.g. `style-investor-letter.md`). The edit pulls the draft *toward these* — that is what makes it an edit in Danny's voice rather than a generic cleanup. Where the email file and the business file differ, the business file wins for business documents.
+Load the voice references per `../../references/voice-load-order.md` (the canonical three-layer load order: email base → business writing voice → genre style profile, with the business profile winning on conflicts in long-form). The edit pulls the draft *toward these* — that is what makes it an edit in Danny's voice rather than a generic cleanup.
 
-If no profile exists for the genre, say so. You can still edit against voice-principles, but tell Danny the structural and rhythm judgments will be weaker without the profile, and offer to build one (the style-study procedure lives in `dt-writing-draft`).
+If no genre profile exists, say so. You can still edit against the email base and business voice, but tell Danny the structural and rhythm judgments will be weaker without the profile, and offer to build one (the style-study procedure lives in `dt-writing-draft`).
 
 ## Step 1 — Intake (one combined AskUserQuestion)
 
@@ -86,9 +86,18 @@ Cross-reference the draft's factual claims:
 
 ## Step 5 — Save and close
 
-Write the edited piece as a **new versioned file** — never overwrite the original. If the draft is `<name>.md`, the edit is `<name>-edit-v<N>.md`, where `<N>` is the next number after any existing edit version. The original is left untouched so Danny can compare or revert.
+Write the edited piece as a **new versioned file** — never overwrite the original. The original is left untouched so Danny can compare or revert.
 
-Write a short change summary to `<name>-edit-v<N>-summary.md`:
+Resolve the version number deterministically (do not eyeball the folder):
+
+```powershell
+pwsh -NoProfile -File skills/dt-writing-edit/scripts/next-edit-version.ps1 `
+  -DraftPath "<absolute draft path>" -Json
+```
+
+The script returns `next_version`, `next_edit_path`, `next_summary_path`, and `next_review_html_path` — use those paths for the three artifacts below. Format: if the draft is `<name>.md`, the edit lands at `<name>-edit-v<N>.md`.
+
+Write a short change summary to `next_summary_path`:
 
 ```markdown
 # Edit Summary — <name> v<N>
@@ -104,21 +113,19 @@ Write a short change summary to `<name>-edit-v<N>-summary.md`:
 - <claims flagged, contradictions found, web checks run and their results>
 ```
 
-Generate `<name>-edit-v<N>-review.html` with:
+Generate the review HTML at `next_review_html_path` with:
 - before/after summary cards,
 - structural change map,
 - clarity edits by section,
 - fact-check findings with severity tags.
 
-Output the bare absolute paths, each on its own line:
+Output the bare absolute paths per the output-paths convention in `../../references/conventions.md`, each on its own line:
 
 ```
 Edited draft saved at <bare absolute path>.
 Change summary saved at <bare absolute path>.
 Edit review HTML saved at <bare absolute path>.
 ```
-
-No `computer://` links, no markdown wrappers around the paths — Danny's client does not render those.
 
 ## Guardrails
 

@@ -65,6 +65,23 @@ Every SKILL.md carries YAML frontmatter. Fields used across the pipeline:
 The plugin manifest version (`.claude-plugin/plugin.json` + `marketplace.json`) is separate from any
 skill's `metadata.version`: the plugin bumps on milestone drops; a skill bumps when its own behavior changes.
 
+## Output paths in skill final output
+
+When a skill reports the artifacts it wrote, format each path as a **bare absolute path on its own line**:
+
+- No `computer://` links — Danny's client does not render them.
+- No markdown wrappers around the path (no `[label](path)`, no link-style formatting) — paths get mangled when the renderer eats backslashes.
+- Use plain Windows absolute paths with backslashes.
+
+Example (correct):
+
+```
+Plan saved at D:\Claude\_Claude-Workspace\<workstation>\<project>\plan-draft.md.
+Plan review HTML saved at D:\Claude\_Claude-Workspace\<workstation>\<project>\plan-view.html.
+```
+
+This rule applies to every skill in the repo that writes artifacts and reports their location.
+
 ## The `_log.md` friction-note convention
 
 Each skill folder carries a `_log.md` — an append-only friction log, one line per invocation that hit
