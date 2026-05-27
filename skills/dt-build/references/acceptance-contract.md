@@ -48,7 +48,25 @@ The following phrases trigger an automatic `BLOCKED` status when found in milest
 - `partial verifier`
 - `compatible with deterministic`
 
-These phrases were calibrated against the file-sorter learning-loop post-mortem; they are the verbal signatures of "I substituted something thinner without flagging it as a downgrade." False positives are acceptable — Danny can override per-milestone by adding `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry. The ledger surfaces approved downgrades as annotations rather than blockers.
+These phrases were calibrated against the file-sorter learning-loop post-mortem; they are the verbal signatures of "I substituted something thinner without flagging it as a downgrade." False positives are acceptable — Danny can override per-milestone by adding `downgrade_approved_by: <upn>` with a short rationale to the milestone's `build-decision-log` entry. The ledger surfaces approved downgrades as annotations rather than blockers.
+
+## Downgrade approval (and spec-relaxation approval)
+
+When a milestone is genuinely BLOCKED but the blocker is a spec the operator chooses to relax — a latency threshold that's tight for the target box, a stress-test concurrency level that's environment-bound, etc. — Danny can approve the downgrade without faking the implementation.
+
+**Mechanism (wired in `scripts/build-acceptance-ledger.ps1`):**
+
+1. In the run folder's `build-decision-log.md`, find the milestone's `## M<NN>` section.
+2. On a line of its own, add:
+   ```
+   downgrade_approved_by: danny
+   rationale: <one-line plain-language explanation>
+   ```
+3. Re-run `scripts/build-acceptance-ledger.ps1`. The ledger flips that milestone's status from `BLOCKED` to `APPROVED_DOWNGRADE` and surfaces the original blockers as annotations in the Notes column alongside the approver and rationale.
+
+**`APPROVED_DOWNGRADE` is not `PASS`.** It is a third status that says "the gate caught a genuine spec violation and the operator owns the exception in writing." The build summary breaks it out separately so it stays visible in audit. A build with all milestones at `PASS` is the clean outcome; a build with one `APPROVED_DOWNGRADE` row is shipped-with-receipts. A build with even one `BLOCKED` row is not shipped.
+
+If the downgrade has knock-on effects on a dependent milestone, the dependent milestone runs on its own merits — the approval does not cascade. Each milestone's status is computed independently against its own verification check.
 
 ## Load-bearing E2E ordering
 

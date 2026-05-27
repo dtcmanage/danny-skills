@@ -133,16 +133,36 @@ function Test-ArtifactPresence {
     }
 }
 
+function Normalize-Command {
+    # The roadmap convention names commands as Python ecosystem invocations:
+    #   pytest tests/foo.py
+    #   python scripts/foo.py
+    # When we run those through `pwsh -NoProfile`, the user's profile-supplied
+    # PATH entries (incl. venv Scripts/) are stripped, so the bare `pytest`
+    # entry-point binary isn't found and every gate command exits 1 even when
+    # the tests would otherwise pass. Transforming `pytest ` to
+    # `python -m pytest ` keeps the invocation portable: `python` itself is
+    # generally on the system PATH and the `-m pytest` module runner does not
+    # depend on `Scripts/` being on PATH.
+    param([string]$Command)
+    $trimmed = $Command.TrimStart()
+    if ($trimmed -match '^(pytest)(\s|$)') {
+        return ("python -m " + $trimmed)
+    }
+    return $Command
+}
+
 function Invoke-NamedCommand {
     param([string]$WorkingTree, [string]$Command)
     # Run with cwd = WorkingTree, capture stdout/stderr + exit code.
     # Keep it simple: rely on the shell to parse the command string.
+    $effectiveCommand = Normalize-Command -Command $Command
     $stdoutFile = [System.IO.Path]::GetTempFileName()
     $stderrFile = [System.IO.Path]::GetTempFileName()
     try {
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
         $startInfo.FileName = "pwsh"
-        $startInfo.Arguments = "-NoProfile -Command `"$Command`""
+        $startInfo.Arguments = "-NoProfile -Command `"$effectiveCommand`""
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
         $startInfo.UseShellExecute = $false
@@ -152,10 +172,11 @@ function Invoke-NamedCommand {
         $stderr = $proc.StandardError.ReadToEnd()
         $proc.WaitForExit()
         return [pscustomobject]@{
-            command  = $Command
-            exit_code = $proc.ExitCode
-            stdout_tail = ($stdout -split "`n" | Select-Object -Last 20) -join "`n"
-            stderr_tail = ($stderr -split "`n" | Select-Object -Last 20) -join "`n"
+            command            = $Command
+            effective_command  = $effectiveCommand
+            exit_code          = $proc.ExitCode
+            stdout_tail        = ($stdout -split "`n" | Select-Object -Last 20) -join "`n"
+            stderr_tail        = ($stderr -split "`n" | Select-Object -Last 20) -join "`n"
         }
     } finally {
         if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force }

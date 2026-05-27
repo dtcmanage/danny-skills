@@ -67,11 +67,53 @@ function Parse-MilestoneIds {
 function Status-Badge-Html {
     param([string]$Status)
     $color = switch ($Status) {
-        "PASS"    { "#1f7a3a" }
-        "BLOCKED" { "#a02020" }
-        default   { "#6c757d" }
+        "PASS"                { "#1f7a3a" }
+        "APPROVED_DOWNGRADE"  { "#b08820" }
+        "BLOCKED"             { "#a02020" }
+        default               { "#6c757d" }
     }
     return "<span style=`"display:inline-block;padding:2px 8px;border-radius:10px;background:$color;color:white;font-weight:600;font-size:11px;`">$Status</span>"
+}
+
+function Parse-ApprovalSection {
+    # Parse a Markdown build-decision-log for per-milestone downgrade approvals.
+    # Returns a hashtable mapping milestone-id -> @{ approver = '...'; rationale = '...' }.
+    # Convention: a milestone's section starts with `## M<NN>` (header). Within
+    # that section, a line containing `downgrade_approved_by: <upn>` activates
+    # an approval; the next non-blank line(s) until the next blank line form
+    # the rationale.
+    param([string]$Path)
+    $approvals = @{}
+    if (-not (Test-Path -LiteralPath $Path)) { return $approvals }
+    $lines = [System.IO.File]::ReadAllLines($Path)
+    $currentMid = $null
+    for ($i = 0; $i -lt $lines.Length; $i++) {
+        $line = $lines[$i]
+        $headerMatch = [regex]::Match($line, '^##\s+(M\d+)\b', 'IgnoreCase')
+        if ($headerMatch.Success) {
+            $currentMid = $headerMatch.Groups[1].Value.ToUpperInvariant()
+            continue
+        }
+        if ($currentMid -and $line -match 'downgrade_approved_by\s*:\s*(\S+)') {
+            $approver = $Matches[1].Trim()
+            # Collect rationale = following non-blank lines until blank.
+            # If a captured line starts with `rationale:`, strip that prefix so
+            # the ledger doesn't double-label it.
+            $rationale = New-Object System.Collections.Generic.List[string]
+            for ($j = $i + 1; $j -lt $lines.Length; $j++) {
+                if ([string]::IsNullOrWhiteSpace($lines[$j])) { break }
+                if ($lines[$j] -match '^##\s+M\d+') { break }
+                $cleaned = $lines[$j].Trim()
+                $cleaned = [regex]::Replace($cleaned, '^rationale\s*:\s*', '', 'IgnoreCase')
+                $rationale.Add($cleaned) | Out-Null
+            }
+            $approvals[$currentMid] = @{
+                approver  = $approver
+                rationale = ($rationale -join ' ')
+            }
+        }
+    }
+    return $approvals
 }
 
 function Yes-No-Cell {
@@ -104,6 +146,13 @@ if ($milestoneIds.Count -eq 0) {
     exit 2
 }
 
+# Read downgrade approvals from the run folder's build-decision-log.md, if any.
+$approvals = @{}
+if ($RunFolder -and (Test-Path -LiteralPath $RunFolder)) {
+    $logPath = Join-Path $RunFolder "build-decision-log.md"
+    $approvals = Parse-ApprovalSection -Path $logPath
+}
+
 # Per-milestone verification.
 $ledgerRows = @()
 foreach ($mid in $milestoneIds) {
@@ -132,18 +181,30 @@ foreach ($mid in $milestoneIds) {
             artifacts_missing = @()
             blockers         = @("verify-milestone-acceptance.ps1 produced unparseable output: $jsonText")
             downgrade_hits   = @()
+            approval         = $null
         }
         continue
+    }
+    $key = $mid.ToUpperInvariant()
+    $approval = if ($approvals.ContainsKey($key)) { $approvals[$key] } else { $null }
+    $status = $verifyResult.status
+    $blockers = @($verifyResult.blockers)
+    # If the milestone is BLOCKED but the build-decision-log has an explicit
+    # downgrade approval for it, flip the status to APPROVED_DOWNGRADE and
+    # surface the original blockers as approval annotations instead of failures.
+    if ($status -eq "BLOCKED" -and $approval) {
+        $status = "APPROVED_DOWNGRADE"
     }
     $ledgerRows += [pscustomobject]@{
         milestone_id      = $mid
         implemented       = $verifyResult.implemented_hint
         tested            = $verifyResult.tested
-        accepted          = $verifyResult.accepted
-        status            = $verifyResult.status
+        accepted          = ($status -eq "PASS")
+        status            = $status
         artifacts_missing = @($verifyResult.artifacts_missing)
-        blockers          = @($verifyResult.blockers)
+        blockers          = $blockers
         downgrade_hits    = @()
+        approval          = $approval
     }
 }
 
@@ -199,27 +260,64 @@ $mdLines += "Roadmap: $RoadmapPath"
 $mdLines += "Working tree: $WorkingTree"
 if ($RunFolder) { $mdLines += "Run folder: $RunFolder" }
 $mdLines += ""
-$mdLines += "| ID | Implemented | Tested | Accepted | Status | Blockers |"
-$mdLines += "|----|-------------|--------|----------|--------|----------|"
+$mdLines += "| ID | Implemented | Tested | Accepted | Status | Notes |"
+$mdLines += "|----|-------------|--------|----------|--------|-------|"
 foreach ($r in $ledgerRows) {
-    $blockerStr = if ($r.blockers.Count -gt 0) { ($r.blockers -join " · ") } else { "-" }
+    $noteParts = @()
+    if ($r.status -eq "APPROVED_DOWNGRADE" -and $r.approval) {
+        $noteParts += "approved-by: $($r.approval.approver)"
+        if ($r.approval.rationale) {
+            $noteParts += "rationale: $($r.approval.rationale)"
+        }
+        if ($r.blockers.Count -gt 0) {
+            $noteParts += "originally-blocked: $(($r.blockers -join '; '))"
+        }
+    } elseif ($r.blockers.Count -gt 0) {
+        $noteParts += ($r.blockers -join " · ")
+    } else {
+        $noteParts += "-"
+    }
+    $noteStr = ($noteParts -join " · ")
     $mdLines += "| {0} | {1} | {2} | {3} | {4} | {5} |" -f `
-        $r.milestone_id, (Yes-No-Cell $r.implemented), (Yes-No-Cell $r.tested), (Yes-No-Cell $r.accepted), $r.status, $blockerStr
+        $r.milestone_id, (Yes-No-Cell $r.implemented), (Yes-No-Cell $r.tested), (Yes-No-Cell $r.accepted), $r.status, $noteStr
 }
 $mdLines += ""
 $totalPass = @($ledgerRows | Where-Object { $_.status -eq "PASS" }).Count
+$totalApproved = @($ledgerRows | Where-Object { $_.status -eq "APPROVED_DOWNGRADE" }).Count
 $totalBlocked = @($ledgerRows | Where-Object { $_.status -eq "BLOCKED" }).Count
-$mdLines += "**Summary:** $totalPass PASS, $totalBlocked BLOCKED (of $($ledgerRows.Count) total)."
+$summaryParts = @("$totalPass PASS")
+if ($totalApproved -gt 0) { $summaryParts += "$totalApproved APPROVED_DOWNGRADE" }
+$summaryParts += "$totalBlocked BLOCKED"
+$mdLines += "**Summary:** $($summaryParts -join ', ') (of $($ledgerRows.Count) total)."
 [System.IO.File]::WriteAllText($mdPath, ($mdLines -join "`n"))
 
 # Emit ledger.html
 $htmlPath = Join-Path $OutDir "build-acceptance-ledger.html"
 $htmlRows = @()
 foreach ($r in $ledgerRows) {
-    $blockerHtml = if ($r.blockers.Count -gt 0) { ($r.blockers | ForEach-Object { "<li>$($_)</li>" }) -join "" } else { "" }
-    $blockerCell = if ($blockerHtml) { "<ul style='margin:0;padding-left:18px;'>$blockerHtml</ul>" } else { "&mdash;" }
-    $htmlRows += "<tr><td><code>$($r.milestone_id)</code></td><td>$(Yes-No-Cell $r.implemented)</td><td>$(Yes-No-Cell $r.tested)</td><td>$(Yes-No-Cell $r.accepted)</td><td>$(Status-Badge-Html $r.status)</td><td>$blockerCell</td></tr>"
+    $noteHtml = ""
+    if ($r.status -eq "APPROVED_DOWNGRADE" -and $r.approval) {
+        $noteHtml += "<div><b>approved-by:</b> $([System.Web.HttpUtility]::HtmlEncode($r.approval.approver))</div>"
+        if ($r.approval.rationale) {
+            $noteHtml += "<div><b>rationale:</b> $([System.Web.HttpUtility]::HtmlEncode($r.approval.rationale))</div>"
+        }
+        if ($r.blockers.Count -gt 0) {
+            $items = ($r.blockers | ForEach-Object { "<li>$([System.Web.HttpUtility]::HtmlEncode($_))</li>" }) -join ""
+            $noteHtml += "<div><b>originally-blocked:</b><ul style='margin:4px 0;padding-left:18px;'>$items</ul></div>"
+        }
+    } elseif ($r.blockers.Count -gt 0) {
+        $items = ($r.blockers | ForEach-Object { "<li>$([System.Web.HttpUtility]::HtmlEncode($_))</li>" }) -join ""
+        $noteHtml = "<ul style='margin:0;padding-left:18px;'>$items</ul>"
+    } else {
+        $noteHtml = "&mdash;"
+    }
+    $htmlRows += "<tr><td><code>$($r.milestone_id)</code></td><td>$(Yes-No-Cell $r.implemented)</td><td>$(Yes-No-Cell $r.tested)</td><td>$(Yes-No-Cell $r.accepted)</td><td>$(Status-Badge-Html $r.status)</td><td>$noteHtml</td></tr>"
 }
+Add-Type -AssemblyName System.Web
+$summaryHtml = "$totalPass PASS"
+if ($totalApproved -gt 0) { $summaryHtml += " &middot; $totalApproved APPROVED_DOWNGRADE" }
+$summaryHtml += " &middot; $totalBlocked BLOCKED &middot; of $($ledgerRows.Count) total"
+
 $html = @"
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Build Acceptance Ledger</title>
@@ -241,11 +339,11 @@ $html = @"
   Working tree: <code>$WorkingTree</code>$(if ($RunFolder) {"<br>Run folder: <code>$RunFolder</code>"})
 </div>
 <table>
-<thead><tr><th>ID</th><th>Implemented</th><th>Tested</th><th>Accepted</th><th>Status</th><th>Blockers</th></tr></thead>
+<thead><tr><th>ID</th><th>Implemented</th><th>Tested</th><th>Accepted</th><th>Status</th><th>Notes</th></tr></thead>
 <tbody>
 $($htmlRows -join "`n")
 </tbody></table>
-<div class="summary">$totalPass PASS &middot; $totalBlocked BLOCKED &middot; of $($ledgerRows.Count) total</div>
+<div class="summary">$summaryHtml</div>
 </body></html>
 "@
 [System.IO.File]::WriteAllText($htmlPath, $html)
@@ -253,6 +351,9 @@ $($htmlRows -join "`n")
 Write-Output ("Ledger written:")
 Write-Output ("  {0}" -f $mdPath)
 Write-Output ("  {0}" -f $htmlPath)
-Write-Output ("Summary: {0} PASS, {1} BLOCKED of {2} total." -f $totalPass, $totalBlocked, $ledgerRows.Count)
+$summaryStr = "{0} PASS" -f $totalPass
+if ($totalApproved -gt 0) { $summaryStr += ", {0} APPROVED_DOWNGRADE" -f $totalApproved }
+$summaryStr += ", {0} BLOCKED of {1} total." -f $totalBlocked, $ledgerRows.Count
+Write-Output ("Summary: " + $summaryStr)
 
 if ($totalBlocked -gt 0) { exit 1 } else { exit 0 }
