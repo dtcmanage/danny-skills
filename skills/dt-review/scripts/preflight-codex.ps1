@@ -2,6 +2,8 @@ param(
     [Parameter(Mandatory)]
     [string]$ProjectPath,
     [string]$Model = "gpt-5.3-codex",
+    [ValidateSet('minimal', 'low', 'medium', 'high')]
+    [string]$ReasoningEffort = "low",
     [int]$TimeoutMs = 30000
 )
 
@@ -26,7 +28,10 @@ Push-Location $ProjectPath
 try {
     $msg = "Reply with the single word OK and nothing else"
     $codexCli = Get-CodexCliPath
-    $result = & $codexCli exec --sandbox read-only --skip-git-repo-check --model $Model $msg 2>&1
+    $effortArgs = @('-c', ('model_reasoning_effort="{0}"' -f $ReasoningEffort))
+    # Prompt over stdin (see invoke-codex-round.ps1) and low reasoning effort so the
+    # sanity check returns inside the 30s budget instead of burning a deep-reasoning pass.
+    $result = $msg | & $codexCli exec --sandbox read-only --skip-git-repo-check --model $Model @effortArgs 2>&1
     $joined = ($result -join "`n")
     if ($joined -notmatch '(?m)^OK\s*$') {
         throw "Pre-flight failed: expected single-word OK response. Raw output:`n$joined"

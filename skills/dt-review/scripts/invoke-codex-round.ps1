@@ -6,6 +6,8 @@ param(
     [Parameter(Mandatory)]
     [string]$PromptPath,
     [string]$Model = "gpt-5.3-codex",
+    [ValidateSet('minimal', 'low', 'medium', 'high')]
+    [string]$ReasoningEffort,
     [int]$TimeoutMs = 1800000
 )
 
@@ -54,7 +56,13 @@ Set-Content -LiteralPath $tmpPrompt -Value $envelopedPrompt -Encoding utf8
 Push-Location $ProjectPath
 try {
     $codexCli = Get-CodexCliPath
-    $rawLines = & $codexCli exec --sandbox read-only --skip-git-repo-check --model $Model --output-last-message $reviewPath -- "$(Get-Content -LiteralPath $tmpPrompt -Raw)" 2>&1
+    $effortArgs = @()
+    if ($ReasoningEffort) { $effortArgs = @('-c', ('model_reasoning_effort="{0}"' -f $ReasoningEffort)) }
+    # Feed the prompt to codex over stdin, never as an argv. A round prompt is ~30KB+ and a
+    # positional prompt overruns the OS command-line length limit ("Argument list too long"),
+    # so codex never receives it and review-v<N>.md is never written. codex exec reads the
+    # prompt from stdin when no positional PROMPT arg is given.
+    $rawLines = Get-Content -LiteralPath $tmpPrompt -Raw | & $codexCli exec --sandbox read-only --skip-git-repo-check --model $Model @effortArgs --output-last-message $reviewPath 2>&1
     $rawText = ($rawLines -join "`n")
     $redacted = Invoke-SecretRedaction -Text $rawText
     Set-Content -LiteralPath $streamPath -Value $redacted -Encoding utf8
