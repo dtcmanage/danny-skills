@@ -6,6 +6,8 @@ param(
     [Parameter(Mandatory)]
     [string]$PromptPath,
     [string]$Model = "gpt-5.3-codex",
+    [ValidateSet('complex', 'light')]
+    [string]$Tier = "light",
     [ValidateSet('minimal', 'low', 'medium', 'high')]
     [string]$ReasoningEffort,
     [int]$TimeoutMs = 1800000
@@ -39,6 +41,13 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 
 . (Join-Path $RepoRoot 'scripts\security\redact-secrets.ps1')
 . (Join-Path $RepoRoot 'scripts\wrap-prompt-envelope.ps1')
+. (Join-Path $RepoRoot 'scripts\resolve-codex-model.ps1')
+
+# Self-heal the pin against Codex's live per-account model cache. A dead pin (or a
+# model gone API-only) falls back through the tier candidate list; if nothing
+# resolves this throws before the round runs, instead of writing a failure log that
+# looks like a critique.
+$Model = Resolve-CodexModel -Tier $Tier -PreferredModel $Model
 
 $designDir = Join-Path $ProjectPath 'design'
 $scratchDir = Join-Path $ProjectPath 'design\_review'
@@ -70,6 +79,7 @@ try {
     $provJson = & (Join-Path $ScriptDir 'capture-provenance.ps1') -PromptPath $PromptPath -CanonicalPath (Resolve-Path -LiteralPath $ProjectPath).Path
     [pscustomobject]@{
         round = $Round
+        model = $Model
         feedback_path = $reviewPath
         stream_path = $streamPath
         provenance = ($provJson | ConvertFrom-Json)

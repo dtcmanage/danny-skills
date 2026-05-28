@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.2.1
-  changelog: "Effort tuning: all tiers now default to `medium` reasoning effort (LIGHT/PREFLIGHT raised from low; COMPLEX unchanged). Prior: 1.2.0 execution-model fix — codex rounds run via the Bash tool as `pwsh -NoProfile -File` with the prompt on stdin, fixing the 70-min PowerShell-tool host hang, the ConstrainedLanguage profile crash, and the ~30KB arg-length failure that dropped round output; added per-tier `-ReasoningEffort` to override the global `model_reasoning_effort=high`."
+  version: 1.3.0
+  changelog: "Self-healing model resolution: preflight and round scripts now call shared `scripts/resolve-codex-model.ps1`, which validates the pinned model against Codex's live per-account cache and falls back through a per-tier candidate list (throwing an actionable error if nothing resolves) — kills the `gpt-5.1-codex-max`-class failure where a dead pin or a config-default-drift produced a failure log that looked like a critique. Added `-Tier light|complex` to both scripts; round output now reports the actually-resolved model. Prior: 1.2.1 effort tuning (all tiers default `medium`); 1.2.0 execution-model fix — codex rounds run via the Bash tool as `pwsh -NoProfile -File` with the prompt on stdin, fixing the 70-min PowerShell-tool host hang, the ConstrainedLanguage profile crash, and the ~30KB arg-length failure that dropped round output."
 ---
 
 # Review — Claude x Codex Coworker Dialogue
@@ -51,13 +51,13 @@ Do NOT fire for:
 ## Operating constants
 
 These constants are the single source of truth for which Codex model and reasoning effort each tier uses.
-Always pass the matching `-Model` and `-ReasoningEffort` to every script — the script defaults are a
+Always pass the matching `-Model`, `-Tier`, and `-ReasoningEffort` to every script — the script defaults are a
 fallback, not the contract. Use them unless Danny explicitly overrides:
-- `LIGHT_MODEL = gpt-5.3-codex` — fast codex-tuned tier (light rounds + preflight). Best available fast
-  model on ChatGPT-subscription auth; the codex-tuned successor `gpt-5.5-codex` is blocked there, so this
-  stays the fast pin.
+- `LIGHT_MODEL = gpt-5.3-codex` (`-Tier light`) — fast codex-tuned tier (light rounds + preflight). Best
+  available fast model on ChatGPT-subscription auth; the codex-tuned successor `gpt-5.5-codex` is blocked
+  there, so this stays the fast pin.
 - `LIGHT_EFFORT = medium`
-- `COMPLEX_MODEL = gpt-5.5` — deep-reasoning tier for hard architectural rounds. Supersedes `gpt-5.4`.
+- `COMPLEX_MODEL = gpt-5.5` (`-Tier complex`) — deep-reasoning tier for hard architectural rounds. Supersedes `gpt-5.4`.
 - `COMPLEX_EFFORT = medium` — bump to `high` only for the hardest architectural rounds; `high` is
   materially slower and burns far more subscription quota.
 - `PREFLIGHT_MODEL = gpt-5.3-codex`
@@ -70,10 +70,21 @@ so without an explicit `-ReasoningEffort` every round — even the preflight "re
 deep-reasoning pass (tens of thousands of tokens, minutes of wall time). The scripts pass
 `-c model_reasoning_effort=<effort>` to override the global default per invocation.
 
+Self-healing model resolution: the scripts do NOT trust these pins blindly. Both `preflight-codex.ps1` and
+`invoke-codex-round.ps1` call the shared `scripts/resolve-codex-model.ps1` (`Resolve-CodexModel -Tier
+<light|complex> -PreferredModel <pin>`), which reads Codex's live per-account model cache
+(`~/.codex/models_cache.json`), prefers the pin when it is still selectable, and otherwise falls back
+through a curated per-tier candidate list. If the pin has gone API-only (the historical `gpt-5.1-codex-max`
+failure), the round still runs on a live model and a warning names the dead pin. If nothing in the
+candidate list resolves, the script throws an actionable error listing what IS selectable — instead of
+writing a failure log that looks like a critique. This makes the skill immune to both pin rot and the
+config-default drift that bites any hand-rolled `codex exec` call that omits `--model`.
+
 Model freshness: when OpenAI ships a new Codex model, re-probe availability on Danny's auth per the
 workspace Codex matrix (`_Claude-Workspace\00_Resources\codex-cli-usage.md`) with a read-only "reply OK"
-probe, then update the pins above and that matrix in the same pass. Pin explicitly; never rely on Codex's
-auto-migrated config default, which can drift silently.
+probe, then update the pins above, the candidate lists in `scripts/resolve-codex-model.ps1`, and that
+matrix in the same pass. Pin explicitly; never rely on Codex's auto-migrated config default, which can
+drift silently.
 
 ## Canonical contracts and references
 
@@ -105,7 +116,9 @@ This is load-bearing. Get it wrong and a round hangs for over an hour or silentl
 3. **Wrap the Bash call in a timeout** — `PREFLIGHT_TIMEOUT_MS` for preflight, `HANG_GUARD_MS` for a round.
 4. **The prompt goes to Codex over stdin, handled inside the scripts.** Never pass a round prompt as a
    command-line argument: it is ~30KB+ and overruns the OS arg-length limit, so the round output is lost.
-5. **Pass `-Model` and `-ReasoningEffort`** from the operating constants for the active tier.
+5. **Pass `-Model`, `-Tier`, and `-ReasoningEffort`** from the operating constants for the active tier.
+   `-Tier` (`light` or `complex`) drives the self-healing fallback chain when the pinned `-Model` is no
+   longer selectable on the current auth (see the operating-constants "Self-healing model resolution" note).
 
 The pure-PowerShell scripts (`parse-verdict.ps1`, `capture-provenance.ps1`) do no Codex I/O and may run
 either way, but run them via Bash too for consistency.
@@ -126,9 +139,10 @@ selected source.
 ### Step 2 — Pre-flight
 
 Run `scripts/preflight-codex.ps1` before Round 1, via Bash per the Execution model section:
-`pwsh -NoProfile -File <...>/preflight-codex.ps1 -ProjectPath <abs> -Model PREFLIGHT_MODEL -ReasoningEffort PREFLIGHT_EFFORT`,
+`pwsh -NoProfile -File <...>/preflight-codex.ps1 -ProjectPath <abs> -Model PREFLIGHT_MODEL -Tier light -ReasoningEffort PREFLIGHT_EFFORT`,
 wrapped in a `PREFLIGHT_TIMEOUT_MS` timeout. If it does not return `OK` in 30 seconds, stop and surface the
-error.
+error. A model-resolution throw here means every candidate model for the tier is unavailable on the current
+auth — the error lists what IS selectable; update the pins.
 
 ### Step 3 — Round N loop
 
@@ -138,9 +152,10 @@ For each round N:
    contract from `../../references/canonical-dimension-contract.md`.
 3. Execute `scripts/invoke-codex-round.ps1` via Bash per the Execution model section
    (`pwsh -NoProfile -File <...>/invoke-codex-round.ps1 -ProjectPath <abs> -Round <N> -PromptPath <abs>
-   -Model <tier model> -ReasoningEffort <tier effort>`, wrapped in a `HANG_GUARD_MS` timeout) to run codex
-   and write scratch `review-v<N>.md` plus scratch stream log atomically under `design\_review\`. The script
-   pipes the prompt to codex over stdin.
+   -Model <tier model> -Tier <light|complex> -ReasoningEffort <tier effort>`, wrapped in a `HANG_GUARD_MS`
+   timeout) to run codex and write scratch `review-v<N>.md` plus scratch stream log atomically under
+   `design\_review\`. The script pipes the prompt to codex over stdin and reports the actually-resolved
+   model in its JSON output (`model` field) — announce that model, not just the requested pin.
 4. Parse verdict via `scripts/parse-verdict.ps1`.
 5. Reconcile each finding (ACCEPT / REJECT / DEFER / COUNTER), appending a `## Claude Response`
    section to the same scratch `review-v<N>.md` artifact.
@@ -176,6 +191,8 @@ This skill uses extracted deterministic scripts:
 
 All external-text prompt assembly goes through repo-level `scripts/wrap-prompt-envelope.ps1`.
 All stream/log redaction goes through repo-level `scripts/security/redact-secrets.ps1`.
+All Codex model selection goes through repo-level `scripts/resolve-codex-model.ps1` (self-healing pin
+resolution against the live model cache, shared so `dt-build` can adopt it).
 
 ## Guardrails
 
