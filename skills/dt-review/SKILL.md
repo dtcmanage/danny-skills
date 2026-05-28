@@ -50,12 +50,21 @@ Do NOT fire for:
 
 ## Operating constants
 
-Use these constants unless Danny explicitly overrides:
-- `LIGHT_MODEL = gpt-5.3-codex`
-- `COMPLEX_MODEL = gpt-5.4`
+These constants are the single source of truth for which Codex model each tier uses. Always pass the
+matching one to every script via `-Model` — the script defaults are a fallback, not the contract. Use
+them unless Danny explicitly overrides:
+- `LIGHT_MODEL = gpt-5.3-codex` — fast codex-tuned tier (light rounds + preflight). Best available fast
+  model on ChatGPT-subscription auth; the codex-tuned successor `gpt-5.5-codex` is blocked there, so this
+  stays the fast pin.
+- `COMPLEX_MODEL = gpt-5.5` — deep-reasoning tier for hard architectural rounds. Supersedes `gpt-5.4`.
 - `PREFLIGHT_MODEL = gpt-5.3-codex`
 - `PREFLIGHT_TIMEOUT_MS = 30000`
 - `HANG_GUARD_MS = 1800000`
+
+Model freshness: when OpenAI ships a new Codex model, re-probe availability on Danny's auth per the
+workspace Codex matrix (`_Claude-Workspace\00_Resources\codex-cli-usage.md`) with a read-only "reply OK"
+probe, then update the pins above and that matrix in the same pass. Pin explicitly; never rely on Codex's
+auto-migrated config default, which can drift silently.
 
 ## Canonical contracts and references
 
