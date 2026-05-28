@@ -6,15 +6,16 @@ Hard verification gate for every milestone dt-build executes. Replaces the prior
 
 For each milestone in the roadmap, in DAG order with load-bearing milestones first within a layer:
 
-1. **Quote the verification check.** Before writing any code, read the `chk-mNN` row from the roadmap's `## Verification Manifest` section and restate the procedure text verbatim in the milestone's `build-decision-log` entry.
+1. **Quote every verification check for the milestone.** Before writing any code, read **every** `CHK-MNN-*` row from the roadmap's `## Verification Manifest` section whose `milestone-id` matches the current milestone, and restate each procedure text verbatim in the milestone's `build-decision-log` entry. A milestone with three checks gets three quoted procedure blocks; the gate evaluates all of them.
 2. **Quote the acceptance checks** for the same `mNN` from the `## Milestones` table.
 3. **Build the chunk.** Per the existing build steps (assemble Codex prompt → verify → run).
-4. **Run the exact verification check** named in step 1.
-   - If the check names a test file path, the file must exist in the working tree.
-   - If the check names a `pytest` command, that exact command must run and exit 0.
-   - If the check names a script, that script must run and produce its named output artifact.
+4. **Run every verification check** named in step 1.
+   - If a check names a test file path, the file must exist in the working tree.
+   - If a check names a `pytest` command, that exact command must run and exit 0.
+   - If a check names a script, that script must run and produce its named output artifact.
+   - Every check must pass on its own merits. A milestone with three checks where two pass and one fails is `BLOCKED`, not `PASS`.
 5. **Run the deterministic gates** (in this order):
-   - `scripts/verify-milestone-acceptance.ps1` — confirms every artifact named in the verification check exists and (with `-RunTests`) the named test command exits 0.
+   - `scripts/verify-milestone-acceptance.ps1` — pools **every** verification-manifest row whose `milestone-id` matches the requested milestone, confirms every artifact named across all of those checks exists in the working tree, and (with `-RunTests`) runs every named test command and folds every exit code into the verdict. JSON output exposes a `verification_checks` array with per-check `check_id`, `procedure_text`, `artifacts_named`, `artifacts_missing`, `commands_named`, `command_results`, and `blockers`; top-level `status` is the rolled-up view and is `PASS` only when every check's blockers are empty.
    - `scripts/check-downgrade-language.ps1` — scans the milestone's commit message, build-decision-log entry, and any per-chunk Codex output for banned phrases (see below).
 6. **Mark the milestone status** using the four-axis split:
    - `implemented` — code changed for this milestone's chunks (chunk files touched between merge-base and HEAD).
@@ -84,7 +85,9 @@ The DAG still governs build order; this rule applies **within a DAG layer**: whe
 
 ## Test-count parity
 
-The roadmap's Verification Manifest names test files explicitly (e.g., `pytest tests/backend/test_external_text_contract.py`). Before the build is marked complete, every named test file must exist in the working tree. The ledger surfaces missing files per milestone via the `artifacts_missing` column.
+The roadmap's Verification Manifest names test files explicitly (e.g., `pytest tests/backend/test_external_text_contract.py`). Before the build is marked complete, every named test file across **every** verification-manifest row for the milestone must exist in the working tree. The gate evaluates each CHK-* row independently — a milestone with three named checks gets three independent presence + command-exit checks, and the milestone is `PASS` only when all three are clean. The ledger surfaces missing files per milestone via the rolled-up `artifacts_missing` column and exposes the per-check breakdown (which check each missing artifact belongs to) in the HTML ledger's Verification Check Detail section.
+
+**Calibration event (2026-05-27 db-durability build at file-sorter):** before v2.4.0, the gate took `Select-Object -First 1` against the verification rows for a milestone and silently skipped every check after the first. The M02 acceptance row reported PASS by running only `CHK-M02-POPULATED-UPGRADE`; `CHK-M02-ROLLBACK` and `CHK-M02-STALE-V11-REGRESSION` were ignored despite being load-bearing in the roadmap. v2.4.0 pools every matching row and runs all named commands.
 
 If the build consolidated multiple named test files into one combined file (and that combined file's pytest run passes), the ledger row's `accepted` column is `YES` only when Danny has approved the consolidation in writing in the build-decision-log (`consolidation_approved_by: danny` with a short rationale); otherwise the milestone is `BLOCKED` with `consolidation_not_approved` as the blocker.
 

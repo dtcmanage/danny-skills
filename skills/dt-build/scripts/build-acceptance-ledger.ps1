@@ -173,15 +173,16 @@ foreach ($mid in $milestoneIds) {
         $verifyResult = $jsonText | ConvertFrom-Json
     } catch {
         $ledgerRows += [pscustomobject]@{
-            milestone_id     = $mid
-            implemented      = $false
-            tested           = $false
-            accepted         = $false
-            status           = "BLOCKED"
-            artifacts_missing = @()
-            blockers         = @("verify-milestone-acceptance.ps1 produced unparseable output: $jsonText")
-            downgrade_hits   = @()
-            approval         = $null
+            milestone_id        = $mid
+            implemented         = $false
+            tested              = $false
+            accepted            = $false
+            status              = "BLOCKED"
+            artifacts_missing   = @()
+            blockers            = @("verify-milestone-acceptance.ps1 produced unparseable output: $jsonText")
+            downgrade_hits      = @()
+            approval            = $null
+            verification_checks = @()
         }
         continue
     }
@@ -195,16 +196,21 @@ foreach ($mid in $milestoneIds) {
     if ($status -eq "BLOCKED" -and $approval) {
         $status = "APPROVED_DOWNGRADE"
     }
+    $verificationChecks = @()
+    if ($verifyResult.PSObject.Properties.Name -contains 'verification_checks' -and $verifyResult.verification_checks) {
+        $verificationChecks = @($verifyResult.verification_checks)
+    }
     $ledgerRows += [pscustomobject]@{
-        milestone_id      = $mid
-        implemented       = $verifyResult.implemented_hint
-        tested            = $verifyResult.tested
-        accepted          = ($status -eq "PASS")
-        status            = $status
-        artifacts_missing = @($verifyResult.artifacts_missing)
-        blockers          = $blockers
-        downgrade_hits    = @()
-        approval          = $approval
+        milestone_id        = $mid
+        implemented         = $verifyResult.implemented_hint
+        tested              = $verifyResult.tested
+        accepted            = ($status -eq "PASS")
+        status              = $status
+        artifacts_missing   = @($verifyResult.artifacts_missing)
+        blockers            = $blockers
+        downgrade_hits      = @()
+        approval            = $approval
+        verification_checks = $verificationChecks
     }
 }
 
@@ -238,14 +244,16 @@ if ($RunFolder -and (Test-Path -LiteralPath $RunFolder)) {
     } catch {
         # Surface as a global blocker row.
         $ledgerRows += [pscustomobject]@{
-            milestone_id      = "<downgrade-scan>"
-            implemented       = $false
-            tested            = $false
-            accepted          = $false
-            status            = "BLOCKED"
-            artifacts_missing = @()
-            blockers          = @("check-downgrade-language.ps1 produced unparseable output: $downgradeJson")
-            downgrade_hits    = @()
+            milestone_id        = "<downgrade-scan>"
+            implemented         = $false
+            tested              = $false
+            accepted            = $false
+            status              = "BLOCKED"
+            artifacts_missing   = @()
+            blockers            = @("check-downgrade-language.ps1 produced unparseable output: $downgradeJson")
+            downgrade_hits      = @()
+            approval            = $null
+            verification_checks = @()
         }
     }
 }
@@ -318,6 +326,70 @@ $summaryHtml = "$totalPass PASS"
 if ($totalApproved -gt 0) { $summaryHtml += " &middot; $totalApproved APPROVED_DOWNGRADE" }
 $summaryHtml += " &middot; $totalBlocked BLOCKED &middot; of $($ledgerRows.Count) total"
 
+# Per-milestone verification-check detail. One sub-table per milestone whose
+# verify-milestone-acceptance.ps1 result exposed verification_checks. Lists
+# every CHK-* row for that milestone, its named artifacts (present/missing),
+# its named commands, and each command's exit code -- the per-check view the
+# rolled-up Notes column in the main ledger flattens.
+$detailSections = @()
+foreach ($r in $ledgerRows) {
+    if (-not $r.verification_checks -or $r.verification_checks.Count -eq 0) { continue }
+    $checkRowsHtml = @()
+    foreach ($vc in $r.verification_checks) {
+        $artHtml = if ($vc.artifacts_named.Count -eq 0) {
+            "&mdash;"
+        } else {
+            $items = @()
+            foreach ($a in $vc.artifacts_named) {
+                $missing = ($vc.artifacts_missing -contains $a)
+                $marker = if ($missing) { " <span style='color:#a02020;font-weight:600;'>(missing)</span>" } else { "" }
+                $items += "<li><code>$([System.Web.HttpUtility]::HtmlEncode($a))</code>$marker</li>"
+            }
+            "<ul style='margin:0;padding-left:18px;'>$($items -join '')</ul>"
+        }
+        $cmdHtml = if ($vc.commands_named.Count -eq 0) {
+            "&mdash;"
+        } else {
+            $items = @()
+            foreach ($c in $vc.commands_named) {
+                $exitText = ""
+                $exitColor = "#666"
+                $cr = $vc.command_results | Where-Object { $_.command -eq $c } | Select-Object -First 1
+                if ($cr) {
+                    $exitText = "[exit=$($cr.exit_code)] "
+                    $exitColor = if ($cr.exit_code -eq 0) { "#1f7a3a" } else { "#a02020" }
+                } elseif ($vc.test_status -eq "NOT_RUN") {
+                    $exitText = "[not run] "
+                }
+                $items += "<li><span style='color:$exitColor;font-weight:600;'>$exitText</span><code>$([System.Web.HttpUtility]::HtmlEncode($c))</code></li>"
+            }
+            "<ul style='margin:0;padding-left:18px;'>$($items -join '')</ul>"
+        }
+        $statusBadge = switch ($vc.test_status) {
+            "PASS"             { Status-Badge-Html "PASS" }
+            "FAIL"             { Status-Badge-Html "BLOCKED" }
+            "NO_COMMAND_NAMED" { "<span style='display:inline-block;padding:2px 8px;border-radius:10px;background:#6c757d;color:white;font-weight:600;font-size:11px;'>NO_COMMAND</span>" }
+            default            { "<span style='display:inline-block;padding:2px 8px;border-radius:10px;background:#6c757d;color:white;font-weight:600;font-size:11px;'>NOT_RUN</span>" }
+        }
+        $checkRowsHtml += "<tr><td><code>$([System.Web.HttpUtility]::HtmlEncode($vc.check_id))</code></td><td>$statusBadge</td><td>$artHtml</td><td>$cmdHtml</td></tr>"
+    }
+    if ($checkRowsHtml.Count -eq 0) { continue }
+    $detailSections += @"
+<h3 style="margin-top:24px;margin-bottom:6px;font-size:14px;">Milestone <code>$($r.milestone_id)</code> &mdash; verification checks</h3>
+<table>
+<thead><tr><th>Check</th><th>Status</th><th>Named artifacts</th><th>Named commands</th></tr></thead>
+<tbody>
+$($checkRowsHtml -join "`n")
+</tbody></table>
+"@
+}
+$detailHtml = if ($detailSections.Count -gt 0) {
+    @"
+<h2 style="margin-top:32px;font-size:16px;">Verification Check Detail</h2>
+$($detailSections -join "`n")
+"@
+} else { "" }
+
 $html = @"
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Build Acceptance Ledger</title>
@@ -344,6 +416,7 @@ $html = @"
 $($htmlRows -join "`n")
 </tbody></table>
 <div class="summary">$summaryHtml</div>
+$detailHtml
 </body></html>
 "@
 [System.IO.File]::WriteAllText($htmlPath, $html)

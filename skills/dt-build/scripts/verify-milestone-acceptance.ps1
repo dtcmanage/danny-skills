@@ -216,68 +216,156 @@ $verificationRows = Parse-MarkdownTableRows -SectionText $verificationSection
 
 $mid = $MilestoneId.ToUpperInvariant().Trim()
 $milestoneRow = $milestonesRows | Where-Object { $_.id.ToString().ToUpperInvariant().Trim() -eq $mid } | Select-Object -First 1
-$verificationRow = $verificationRows | Where-Object { $_.'milestone-id'.ToString().ToUpperInvariant().Trim() -eq $mid } | Select-Object -First 1
+# Pool EVERY verification-manifest row whose milestone-id matches the requested
+# milestone. The gate evaluates all named checks for that milestone, not just
+# the first one. (Prior behavior used `Select-Object -First 1`, which silently
+# skipped any second/third CHK-* row even when the roadmap explicitly named
+# them as load-bearing -- calibration event: 2026-05-27 db-durability build at
+# file-sorter, where M02 reported PASS by only running CHK-M02-POPULATED-UPGRADE
+# while CHK-M02-ROLLBACK and CHK-M02-STALE-V11-REGRESSION were skipped.)
+$matchingVerificationRows = @($verificationRows | Where-Object { $_.'milestone-id'.ToString().ToUpperInvariant().Trim() -eq $mid })
 
 if (-not $milestoneRow) {
     Write-Error "MILESTONE_NOT_FOUND: $MilestoneId not present in ## Milestones"
     exit 2
 }
-if (-not $verificationRow) {
+if ($matchingVerificationRows.Count -eq 0) {
     Write-Error "VERIFICATION_CHECK_NOT_FOUND: no chk-* row for milestone-id=$MilestoneId in ## Verification Manifest"
     exit 2
 }
 
 $acceptanceText = [string]$milestoneRow.'acceptance-checks'
-$procedureText = [string]$verificationRow.procedure
-
 $accept = Extract-NamedArtifacts -Text $acceptanceText
-$verify = Extract-NamedArtifacts -Text $procedureText
 
-$allArtifacts = @($accept.artifacts + $verify.artifacts | Select-Object -Unique)
-$allCommands = @($accept.commands + $verify.commands | Select-Object -Unique)
+# Per-check evaluation. Each verification row in the manifest produces an
+# independent breakdown (check_id, procedure_text, artifacts/commands named in
+# its procedure cell, presence check against the working tree, command exit
+# codes when -RunTests, and per-check blockers). The top-level rolled-up view
+# below preserves the existing fields the ledger consumes.
+$verificationChecks = New-Object System.Collections.Generic.List[object]
+$allArtifactsList = New-Object System.Collections.Generic.List[string]
+foreach ($a in $accept.artifacts) { if (-not $allArtifactsList.Contains($a)) { $allArtifactsList.Add($a) | Out-Null } }
+$allCommandsList = New-Object System.Collections.Generic.List[string]
+$allCommandResults = New-Object System.Collections.Generic.List[object]
+$topBlockers = New-Object System.Collections.Generic.List[string]
+$procedureTexts = New-Object System.Collections.Generic.List[string]
+$anyCommandFailed = $false
+$anyCommandRan = $false
 
+# Milestone-level acceptance-text artifacts (not tied to any single check, but
+# still required to be present in the working tree).
+$acceptancePresence = Test-ArtifactPresence -WorkingTree $WorkingTree -Artifacts $accept.artifacts
+foreach ($m in $acceptancePresence.missing) {
+    $msg = "named artifact missing (from milestone acceptance text): $m"
+    if (-not $topBlockers.Contains($msg)) { $topBlockers.Add($msg) | Out-Null }
+}
+
+foreach ($vRow in $matchingVerificationRows) {
+    $checkId = [string]$vRow.'check-id'
+    $procedureText = [string]$vRow.procedure
+    $procedureTexts.Add($procedureText) | Out-Null
+
+    $extracted = Extract-NamedArtifacts -Text $procedureText
+    $checkArtifacts = @($extracted.artifacts)
+    $checkCommands = @($extracted.commands)
+    $checkPresence = Test-ArtifactPresence -WorkingTree $WorkingTree -Artifacts $checkArtifacts
+
+    foreach ($a in $checkArtifacts) {
+        if (-not $allArtifactsList.Contains($a)) { $allArtifactsList.Add($a) | Out-Null }
+    }
+    foreach ($c in $checkCommands) {
+        if (-not $allCommandsList.Contains($c)) { $allCommandsList.Add($c) | Out-Null }
+    }
+
+    $checkCommandResults = @()
+    $checkTestStatus = "NOT_RUN"
+    if ($RunTests) {
+        if ($checkCommands.Count -eq 0) {
+            $checkTestStatus = "NO_COMMAND_NAMED"
+        } else {
+            $anyFailedHere = $false
+            foreach ($cmd in $checkCommands) {
+                $r = Invoke-NamedCommand -WorkingTree $WorkingTree -Command $cmd
+                $r | Add-Member -NotePropertyName "check_id" -NotePropertyValue $checkId -Force
+                $checkCommandResults += $r
+                $allCommandResults.Add($r) | Out-Null
+                $anyCommandRan = $true
+                if ($r.exit_code -ne 0) { $anyFailedHere = $true; $anyCommandFailed = $true }
+            }
+            $checkTestStatus = if ($anyFailedHere) { "FAIL" } else { "PASS" }
+        }
+    }
+
+    $checkBlockers = New-Object System.Collections.Generic.List[string]
+    foreach ($m in $checkPresence.missing) {
+        $msg = "named artifact missing: $m"
+        $checkBlockers.Add($msg) | Out-Null
+        $tagged = "[$checkId] $msg"
+        if (-not $topBlockers.Contains($tagged)) { $topBlockers.Add($tagged) | Out-Null }
+    }
+    if ($checkTestStatus -eq "FAIL") {
+        foreach ($r in $checkCommandResults | Where-Object { $_.exit_code -ne 0 }) {
+            $msg = "verification command failed (exit=$($r.exit_code)): $($r.command)"
+            $checkBlockers.Add($msg) | Out-Null
+            $tagged = "[$checkId] $msg"
+            if (-not $topBlockers.Contains($tagged)) { $topBlockers.Add($tagged) | Out-Null }
+        }
+    }
+    if ($checkArtifacts.Count -eq 0 -and $checkCommands.Count -eq 0) {
+        # This individual verification check names nothing runnable.
+        $msg = "verification check names no concrete test file or command"
+        $checkBlockers.Add($msg) | Out-Null
+        $tagged = "[$checkId] $msg"
+        if (-not $topBlockers.Contains($tagged)) { $topBlockers.Add($tagged) | Out-Null }
+    }
+
+    $verificationChecks.Add([pscustomobject]@{
+        check_id          = $checkId
+        procedure_text    = $procedureText
+        artifacts_named   = $checkArtifacts
+        artifacts_present = @($checkPresence.present)
+        artifacts_missing = @($checkPresence.missing)
+        commands_named    = $checkCommands
+        command_results   = @($checkCommandResults)
+        test_status       = $checkTestStatus
+        blockers          = @($checkBlockers)
+    }) | Out-Null
+}
+
+$allArtifacts = $allArtifactsList.ToArray()
+$allCommands = $allCommandsList.ToArray()
 $presence = Test-ArtifactPresence -WorkingTree $WorkingTree -Artifacts $allArtifacts
+$commandResults = $allCommandResults.ToArray()
 
-$commandResults = @()
+# Rolled-up test_status mirrors the per-check union.
 $testStatus = "NOT_RUN"
 if ($RunTests) {
-    if ($allCommands.Count -eq 0) {
+    if (-not $anyCommandRan) {
         $testStatus = "NO_COMMAND_NAMED"
+    } elseif ($anyCommandFailed) {
+        $testStatus = "FAIL"
     } else {
-        $anyFailed = $false
-        foreach ($cmd in $allCommands) {
-            $r = Invoke-NamedCommand -WorkingTree $WorkingTree -Command $cmd
-            $commandResults += $r
-            if ($r.exit_code -ne 0) { $anyFailed = $true }
-        }
-        $testStatus = if ($anyFailed) { "FAIL" } else { "PASS" }
+        $testStatus = "PASS"
     }
 }
 
-$blockers = New-Object System.Collections.Generic.List[string]
-foreach ($m in $presence.missing) {
-    $blockers.Add("named artifact missing: $m") | Out-Null
-}
-if ($testStatus -eq "FAIL") {
-    foreach ($r in $commandResults | Where-Object { $_.exit_code -ne 0 }) {
-        $blockers.Add("verification command failed (exit=$($r.exit_code)): $($r.command)") | Out-Null
-    }
-}
+# Milestone-wide "no command named anywhere AND no artifact named anywhere"
+# blocker (separate from per-check NO_COMMAND blockers above).
 if ($testStatus -eq "NO_COMMAND_NAMED" -and $allArtifacts.Count -eq 0) {
-    # Verification check named no concrete artifacts at all -- the roadmap is too
-    # vague for the gate to enforce anything. Surface as a blocker so the operator
-    # knows to tighten the roadmap.
-    $blockers.Add("roadmap verification check names no concrete test file or command") | Out-Null
+    $msg = "roadmap names no concrete test file or command across any verification check for $mid"
+    if (-not $topBlockers.Contains($msg)) { $topBlockers.Add($msg) | Out-Null }
 }
+
+$blockers = $topBlockers.ToArray()
 
 $accepted = ($blockers.Count -eq 0) -and ($presence.missing.Count -eq 0) -and ($testStatus -in @("PASS", "NOT_RUN", "NO_COMMAND_NAMED"))
-# Treat NOT_RUN as pending acceptance: status PASS requires either tests ran green OR -RunTests was not requested AND artifacts all present.
 $status = if ($accepted) { "PASS" } else { "BLOCKED" }
 
 $result = [pscustomobject]@{
     milestone_id              = $mid
     acceptance_checks_text    = $acceptanceText
-    verification_check_text   = $procedureText
+    verification_check_text   = ($procedureTexts -join "`n---`n")
+    verification_checks       = $verificationChecks.ToArray()
     artifacts_named           = $allArtifacts
     artifacts_present         = $presence.present
     artifacts_missing         = $presence.missing
@@ -292,18 +380,18 @@ $result = [pscustomobject]@{
 }
 
 if ($Json) {
-    $result | ConvertTo-Json -Depth 6
+    $result | ConvertTo-Json -Depth 8
 }
 else {
     Write-Output ("Milestone {0}: {1}" -f $result.milestone_id, $result.status)
-    if ($result.artifacts_missing.Count -gt 0) {
-        Write-Output "  Missing artifacts:"
-        $result.artifacts_missing | ForEach-Object { Write-Output "    - $_" }
-    }
-    if ($result.command_results.Count -gt 0) {
-        Write-Output "  Commands run:"
-        foreach ($r in $result.command_results) {
-            Write-Output ("    [exit={0}] {1}" -f $r.exit_code, $r.command)
+    Write-Output ("  Verification checks: {0}" -f $result.verification_checks.Count)
+    foreach ($vc in $result.verification_checks) {
+        Write-Output ("  - {0} [{1}]" -f $vc.check_id, $vc.test_status)
+        foreach ($r in $vc.command_results) {
+            Write-Output ("      [exit={0}] {1}" -f $r.exit_code, $r.command)
+        }
+        foreach ($m in $vc.artifacts_missing) {
+            Write-Output ("      missing: {0}" -f $m)
         }
     }
     if ($result.blockers.Count -gt 0) {
