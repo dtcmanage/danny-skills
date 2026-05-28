@@ -82,9 +82,9 @@ Write it as a starting prompt, not a status report. Use this structure:
 - **Decisions & gotchas** — choices already made and traps to avoid.
 - **Suggested skills** — skills the next session should invoke, if any.
 
-End the file with this line, with the real absolute path filled in:
+End the file with these lines, with the real absolute path filled in:
 
-> This is a single-use handoff. Once you have absorbed the context above, delete this file (`<absolute path>`) before doing anything else.
+> This is a single-use handoff. Keep this file in place while you work — it is your reference for the task. Delete it (`<absolute path>`) only once the task described above is actually complete, not when you finish reading it. Deleting it on read means a deleted handoff cannot be recovered if the work is interrupted before it is done.
 
 Also generate the HTML companion at `handoff_html_path` from the script output, optimized for skim review:
 - summary cards (task, status, blockers),
