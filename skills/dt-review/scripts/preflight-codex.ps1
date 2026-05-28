@@ -3,7 +3,7 @@ param(
     [string]$ProjectPath,
     [string]$Model = "gpt-5.3-codex",
     [ValidateSet('minimal', 'low', 'medium', 'high')]
-    [string]$ReasoningEffort = "low",
+    [string]$ReasoningEffort = "medium",
     [int]$TimeoutMs = 30000
 )
 
@@ -29,8 +29,8 @@ try {
     $msg = "Reply with the single word OK and nothing else"
     $codexCli = Get-CodexCliPath
     $effortArgs = @('-c', ('model_reasoning_effort="{0}"' -f $ReasoningEffort))
-    # Prompt over stdin (see invoke-codex-round.ps1) and low reasoning effort so the
-    # sanity check returns inside the 30s budget instead of burning a deep-reasoning pass.
+    # Prompt over stdin (see invoke-codex-round.ps1); -ReasoningEffort overrides the global
+    # model_reasoning_effort=high so the sanity check is not a full deep-reasoning pass.
     $result = $msg | & $codexCli exec --sandbox read-only --skip-git-repo-check --model $Model @effortArgs 2>&1
     $joined = ($result -join "`n")
     if ($joined -notmatch '(?m)^OK\s*$') {

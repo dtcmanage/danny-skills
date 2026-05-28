@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.2.0
-  changelog: "Execution-model fix: codex rounds now run via the Bash tool as `pwsh -NoProfile -File` with the prompt on stdin, fixing the 70-min PowerShell-tool host hang, the ConstrainedLanguage profile crash, and the ~30KB arg-length failure that dropped round output. Added per-tier `-ReasoningEffort` (LIGHT/PREFLIGHT=low, COMPLEX=medium) to override the global `model_reasoning_effort=high`. Prior: 1.1.1 retention reset — keep only `design-final.md`; round scratch under `design\\_review\\`, deleted on finalization."
+  version: 1.2.1
+  changelog: "Effort tuning: all tiers now default to `medium` reasoning effort (LIGHT/PREFLIGHT raised from low; COMPLEX unchanged). Prior: 1.2.0 execution-model fix — codex rounds run via the Bash tool as `pwsh -NoProfile -File` with the prompt on stdin, fixing the 70-min PowerShell-tool host hang, the ConstrainedLanguage profile crash, and the ~30KB arg-length failure that dropped round output; added per-tier `-ReasoningEffort` to override the global `model_reasoning_effort=high`."
 ---
 
 # Review — Claude x Codex Coworker Dialogue
@@ -56,12 +56,12 @@ fallback, not the contract. Use them unless Danny explicitly overrides:
 - `LIGHT_MODEL = gpt-5.3-codex` — fast codex-tuned tier (light rounds + preflight). Best available fast
   model on ChatGPT-subscription auth; the codex-tuned successor `gpt-5.5-codex` is blocked there, so this
   stays the fast pin.
-- `LIGHT_EFFORT = low`
+- `LIGHT_EFFORT = medium`
 - `COMPLEX_MODEL = gpt-5.5` — deep-reasoning tier for hard architectural rounds. Supersedes `gpt-5.4`.
 - `COMPLEX_EFFORT = medium` — bump to `high` only for the hardest architectural rounds; `high` is
   materially slower and burns far more subscription quota.
 - `PREFLIGHT_MODEL = gpt-5.3-codex`
-- `PREFLIGHT_EFFORT = low`
+- `PREFLIGHT_EFFORT = medium`
 - `PREFLIGHT_TIMEOUT_MS = 30000`
 - `HANG_GUARD_MS = 1800000`
 
