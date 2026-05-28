@@ -329,7 +329,7 @@ $milestonesAugmented = foreach ($m in $milestones) {
 
 # Track milestones with no commands so we can surface the gap in the producer
 # output (validator will hard-fail VERIFICATION_NAMES_NO_RUNNABLE on these).
-$milestonesMissingCommands = @($milestonesAugmented | Where-Object { $_.commands.Count -eq 0 } | ForEach-Object { $_.id })
+$milestonesMissingCommands = @($milestonesAugmented | Where-Object { @($_.commands).Count -eq 0 } | ForEach-Object { $_.id })
 
 $chunkRows = New-Object System.Collections.Generic.List[object]
 $milestoneRows = New-Object System.Collections.Generic.List[string]
@@ -348,7 +348,7 @@ foreach ($m in $milestonesAugmented) {
     })
 
     $procedureText = Format-ProcedureCell -MilestoneId $m.id -Commands $m.commands
-    $acceptanceText = if ($m.commands.Count -gt 0) {
+    $acceptanceText = if (@($m.commands).Count -gt 0) {
         $procedureText
     } else {
         ('acceptance to be enumerated for {0} in design ## Validation Gates' -f $m.id)
