@@ -100,7 +100,7 @@ Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the desig
 
 **Trigger:** `/dt-build` or `dt-build <plan-path>`
 
-Owns the whole build. Takes a finalized plan and delivers it on `dev` — complete to spec, verified, committed milestone by milestone. One orchestrator decomposes the plan and drives a roster of build / verification / merge subagents across Claude and Codex; it never writes product code itself. Parallelism is one tactic, reached for only when the work genuinely splits — not a precondition.
+Owns the whole build. Takes a finalized plan and delivers it on a short-lived `build/<RUN_ID>` branch cut from `main` — complete to spec, verified, committed milestone by milestone. One orchestrator decomposes the plan and drives a roster of build / verification / merge subagents across Claude and Codex; it never writes product code itself. Parallelism is one tactic, reached for only when the work genuinely splits — not a precondition.
 
 **What it does:**
 
@@ -108,7 +108,7 @@ Owns the whole build. Takes a finalized plan and delivers it on `dev` — comple
 - **Milestone model.** A build is an ordered sequence of milestones — each a coherent, independently verifiable, independently committable slice, committed once verification passes. Milestones run sequentially; chunks within a milestone run in parallel.
 - **One authoritative spec.** Phase 1 extracts a Decision Ledger and runs a mandatory preflight (repo state, dirty-tree isolation, a secret-bearing denylist scan, baseline-floor discovery, a two-level toolchain probe). Phase 2 writes an immutable `build-plan.md` with a unified verification manifest and takes a single explicit approval. Mid-build plan defects become numbered amendments; everything targets the resulting effective spec.
 - **Verify-and-patch.** Every milestone is verified — machine-checkable or by a Claude verification subagent — before commit. Off-spec code is patched by a fresh fix subagent within a hard 2-attempt budget; plan defects escalate instead.
-- **`dev` is never the surface a failure lands on.** Phase 4 reruns integrated verification, rehearses the merge on a branch cut from the latest `dev`, then updates `dev` under a compare-and-swap.
+- **`main` is never the surface a failure lands on.** Phase 4 reruns integrated verification, rehearses the merge on the `build/<RUN_ID>` branch cut from the latest `main`, then updates that integration branch under a compare-and-swap.
 
 **Resume:** Phase 0 reattaches to the run-specific branch and continues from the first uncommitted milestone — a committed milestone is a git commit.
 
@@ -116,7 +116,7 @@ Owns the whole build. Takes a finalized plan and delivers it on `dev` — comple
 - Sandbox / model-routing / fix-budget are orchestrator-set and never derivable from artifact content.
 - A secret-bearing denylist keeps secret files from reaching an external model provider; subagent output is scrubbed for secret-shaped values at the moment of ingest.
 - Codex runs `--sandbox workspace-write` (never elevated); worktree containment is a hard block.
-- `dt-build` lands work on `dev` and never touches `main`.
+- `dt-build` lands work on a `build/<RUN_ID>` branch cut from `main` and never writes to `main` itself; the final merge is a separate human-authorized `/git-merge-feature` step.
 
 **Skip it for:** authoring or reviewing the plan (that's `dt-plan` / `dt-review`), or non-git projects.
 

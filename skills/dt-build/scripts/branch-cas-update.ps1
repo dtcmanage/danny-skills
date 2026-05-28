@@ -3,9 +3,11 @@ param(
     [string]$SourceRef,
 
     [Parameter(Mandatory)]
-    [string]$ExpectedDevSha,
+    [string]$ExpectedTargetSha,
 
-    [string]$DevBranch = "dev",
+    [Parameter(Mandatory)]
+    [string]$TargetBranch,
+
     [switch]$Json
 )
 
@@ -20,7 +22,7 @@ function Invoke-Git {
     $out = & git @Args 2>&1
     $code = $LASTEXITCODE
     if (-not $AllowFailure -and $code -ne 0) {
-        throw ("DEV_CAS_FAIL: git {0}`n{1}" -f ($Args -join " "), ($out -join "`n"))
+        throw ("CAS_FAIL: git {0}`n{1}" -f ($Args -join " "), ($out -join "`n"))
     }
     return [pscustomobject]@{
         code = $code
@@ -31,39 +33,39 @@ function Invoke-Git {
 
 $gitRoot = Invoke-Git -Args @("rev-parse", "--show-toplevel")
 $sourceSha = (Invoke-Git -Args @("rev-parse", $SourceRef)).text.Trim()
-$currentDevSha = (Invoke-Git -Args @("rev-parse", $DevBranch)).text.Trim()
+$currentTargetSha = (Invoke-Git -Args @("rev-parse", $TargetBranch)).text.Trim()
 
 $result = [ordered]@{
     pass = $false
-    dev_branch = $DevBranch
+    target_branch = $TargetBranch
     source_ref = $SourceRef
     source_sha = $sourceSha
-    expected_dev_sha = $ExpectedDevSha
-    observed_dev_sha = $currentDevSha
+    expected_target_sha = $ExpectedTargetSha
+    observed_target_sha = $currentTargetSha
     mode = "compare-and-swap"
     updated = $false
     reason = ""
 }
 
-if ($currentDevSha -ne $ExpectedDevSha) {
-    $result.reason = "DEV_CAS_BLOCKED: dev advanced before compare-and-swap update."
+if ($currentTargetSha -ne $ExpectedTargetSha) {
+    $result.reason = "CAS_BLOCKED: $TargetBranch advanced before compare-and-swap update."
 }
 else {
-    $ancestorCheck = Invoke-Git -Args @("merge-base", "--is-ancestor", $currentDevSha, $sourceSha) -AllowFailure
+    $ancestorCheck = Invoke-Git -Args @("merge-base", "--is-ancestor", $currentTargetSha, $sourceSha) -AllowFailure
     if ($ancestorCheck.code -ne 0) {
-        $result.reason = "DEV_CAS_BLOCKED: source is not a fast-forward descendant of current dev."
+        $result.reason = "CAS_BLOCKED: source is not a fast-forward descendant of current $TargetBranch."
     }
     else {
-        $refName = "refs/heads/$DevBranch"
-        Invoke-Git -Args @("update-ref", $refName, $sourceSha, $ExpectedDevSha) | Out-Null
-        $afterSha = (Invoke-Git -Args @("rev-parse", $DevBranch)).text.Trim()
+        $refName = "refs/heads/$TargetBranch"
+        Invoke-Git -Args @("update-ref", $refName, $sourceSha, $ExpectedTargetSha) | Out-Null
+        $afterSha = (Invoke-Git -Args @("rev-parse", $TargetBranch)).text.Trim()
         if ($afterSha -ne $sourceSha) {
-            $result.reason = "DEV_CAS_FAIL: dev ref update did not land expected source sha."
+            $result.reason = "CAS_FAIL: $TargetBranch ref update did not land expected source sha."
         }
         else {
             $result.pass = $true
             $result.updated = $true
-            $result.observed_dev_sha = $afterSha
+            $result.observed_target_sha = $afterSha
             $result.reason = "PASS"
         }
     }
@@ -78,5 +80,5 @@ else {
     if (-not $obj.pass) {
         throw $obj.reason
     }
-    Write-Output ("PASS: compare-and-swap updated {0} to {1}" -f $obj.dev_branch, $obj.source_sha)
+    Write-Output ("PASS: compare-and-swap updated {0} to {1}" -f $obj.target_branch, $obj.source_sha)
 }

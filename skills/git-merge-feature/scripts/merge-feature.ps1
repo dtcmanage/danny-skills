@@ -1,11 +1,11 @@
-# Rebase a named feature branch onto dev, then fast-forward merge into dev,
+# Rebase a named feature branch onto main, then fast-forward merge into main,
 # then delete the branch.
 #
 # 1. Verify repo + clean working tree on the feature branch.
-# 2. Resolve the branch name (supports `feature/<name>` or bare `<name>`).
-# 3. Refresh dev (checkout + pull origin dev).
-# 4. Rebase via repo-level scripts/git/rebase-onto-dev.ps1.
-# 5. Fast-forward merge dev <- feature (--ff-only; never --no-ff).
+# 2. Resolve the branch name (supports bare <name>, feat/<name>, or feature/<name>).
+# 3. Refresh main (checkout + pull origin main).
+# 4. Rebase via repo-level scripts/git/rebase-onto-main.ps1.
+# 5. Fast-forward merge main <- feature (--ff-only; never --no-ff).
 # 6. Delete the local feature branch.
 #
 # Returns a JSON summary on -Json: branch, resolved_branch, rebase_status,
@@ -50,7 +50,7 @@ $skillRoot = Split-Path -Parent $scriptDir
 $resolved = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
 if ($resolved) { $skillRoot = $resolved.FullName }
 $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
-$rebaseScript = Join-Path $repoRoot 'scripts\git\rebase-onto-dev.ps1'
+$rebaseScript = Join-Path $repoRoot 'scripts\git\rebase-onto-main.ps1'
 if (-not (Test-Path -LiteralPath $rebaseScript)) {
     Fail "Missing shared helper: $rebaseScript"
 }
@@ -61,23 +61,17 @@ if ($insideRepo.ExitCode -ne 0 -or $insideRepo.Output.Trim() -ne 'true') {
     Fail "Not inside a git repository."
 }
 
-# Resolve branch name
+# Resolve branch name (bare, then feat/, then feature/)
 $resolvedBranch = $null
-$exactExists = Invoke-Git -GitArgs @('rev-parse', '--verify', "refs/heads/$Branch")
-if ($exactExists.ExitCode -eq 0) {
-    $resolvedBranch = $Branch
-}
-else {
-    $prefixedExists = Invoke-Git -GitArgs @('rev-parse', '--verify', "refs/heads/feature/$Branch")
-    if ($prefixedExists.ExitCode -eq 0) {
-        $resolvedBranch = "feature/$Branch"
-    }
+foreach ($candidate in @($Branch, "feat/$Branch", "feature/$Branch")) {
+    $exists = Invoke-Git -GitArgs @('rev-parse', '--verify', "refs/heads/$candidate")
+    if ($exists.ExitCode -eq 0) { $resolvedBranch = $candidate; break }
 }
 
 if (-not $resolvedBranch) {
     $branchList = Invoke-Git -GitArgs @('branch', '--list', '--format=%(refname:short)')
     $branches = $branchList.Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    Fail "No local branch named '$Branch' or 'feature/$Branch'. Local branches: $($branches -join ', ')"
+    Fail "No local branch named '$Branch', 'feat/$Branch', or 'feature/$Branch'. Local branches: $($branches -join ', ')"
 }
 
 # Check for uncommitted changes on the feature branch
@@ -91,21 +85,21 @@ if (-not [string]::IsNullOrWhiteSpace($status.Output)) {
     Fail "Uncommitted changes on '$resolvedBranch'. Commit or stash first." @{ uncommitted = $status.Output }
 }
 
-# Refresh dev
-$devPulled = $false
-$checkoutDev = Invoke-Git -GitArgs @('checkout', 'dev')
-if ($checkoutDev.ExitCode -ne 0) {
-    Fail "Could not checkout dev: $($checkoutDev.Output)"
+# Refresh main
+$mainPulled = $false
+$checkoutMain = Invoke-Git -GitArgs @('checkout', 'main')
+if ($checkoutMain.ExitCode -ne 0) {
+    Fail "Could not checkout main: $($checkoutMain.Output)"
 }
 if (-not $SkipPull) {
-    $pullDev = Invoke-Git -GitArgs @('pull', 'origin', 'dev')
-    if ($pullDev.ExitCode -ne 0) {
-        Fail "git pull origin dev failed: $($pullDev.Output)"
+    $pullMain = Invoke-Git -GitArgs @('pull', 'origin', 'main')
+    if ($pullMain.ExitCode -ne 0) {
+        Fail "git pull origin main failed: $($pullMain.Output)"
     }
-    $devPulled = $true
+    $mainPulled = $true
 }
 
-$devShaBefore = (Invoke-Git -GitArgs @('rev-parse', 'dev')).Output.Trim()
+$mainShaBefore = (Invoke-Git -GitArgs @('rev-parse', 'main')).Output.Trim()
 
 # Rebase via shared helper
 $rebaseOutput = & pwsh -NoProfile -File $rebaseScript -Branch $resolvedBranch -Json
@@ -117,13 +111,13 @@ try { $rebaseParsed = $rebaseOutput | ConvertFrom-Json -ErrorAction Stop } catch
 
 if ($rebaseParsed.status -ne 'clean') {
     $detail = @{ rebase = $rebaseParsed }
-    Fail "Rebase of '$resolvedBranch' onto dev failed with status '$($rebaseParsed.status)'. Repo may be mid-rebase." $detail
+    Fail "Rebase of '$resolvedBranch' onto main failed with status '$($rebaseParsed.status)'. Repo may be mid-rebase." $detail
 }
 
-# Fast-forward merge into dev
-$checkoutDevAgain = Invoke-Git -GitArgs @('checkout', 'dev')
-if ($checkoutDevAgain.ExitCode -ne 0) {
-    Fail "Could not return to dev for merge: $($checkoutDevAgain.Output)"
+# Fast-forward merge into main
+$checkoutMainAgain = Invoke-Git -GitArgs @('checkout', 'main')
+if ($checkoutMainAgain.ExitCode -ne 0) {
+    Fail "Could not return to main for merge: $($checkoutMainAgain.Output)"
 }
 
 $merge = Invoke-Git -GitArgs @('merge', '--ff-only', $resolvedBranch)
@@ -131,8 +125,8 @@ if ($merge.ExitCode -ne 0) {
     Fail "git merge --ff-only failed (should not happen after a clean rebase): $($merge.Output). Do NOT fall back to --no-ff."
 }
 
-$devShaAfter = (Invoke-Git -GitArgs @('rev-parse', 'dev')).Output.Trim()
-$commitRange = if ($devShaBefore -ne $devShaAfter) { "$($devShaBefore.Substring(0,7))..$($devShaAfter.Substring(0,7))" } else { 'no-op' }
+$mainShaAfter = (Invoke-Git -GitArgs @('rev-parse', 'main')).Output.Trim()
+$commitRange = if ($mainShaBefore -ne $mainShaAfter) { "$($mainShaBefore.Substring(0,7))..$($mainShaAfter.Substring(0,7))" } else { 'no-op' }
 
 # Delete the feature branch
 $delete = Invoke-Git -GitArgs @('branch', '-d', $resolvedBranch)
@@ -144,7 +138,7 @@ if (-not $branchDeleted) {
 $summary = [pscustomobject]@{
     branch = $Branch
     resolved_branch = $resolvedBranch
-    dev_pulled = $devPulled
+    main_pulled = $mainPulled
     rebase_status = $rebaseParsed.status
     merge_status = 'ff-only'
     commit_range = $commitRange
@@ -157,7 +151,7 @@ if ($Json) {
     exit 0
 }
 
-Write-Output "Merged '$resolvedBranch' into dev (ff-only). Range: $commitRange."
+Write-Output "Merged '$resolvedBranch' into main (ff-only). Range: $commitRange."
 if ($branchDeleted) {
     Write-Output "Deleted local branch '$resolvedBranch'."
 } else {

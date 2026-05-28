@@ -1,5 +1,5 @@
-# Rebase a single feature branch onto dev. Assumes caller has already pulled
-# the latest dev. Leaves the repo in conflict state on failure so the caller
+# Rebase a single feature branch onto main. Assumes caller has already pulled
+# the latest main. Leaves the repo in conflict state on failure so the caller
 # (or Danny) can decide whether to resolve or abort.
 #
 # Returns a JSON object with: branch, status (clean | conflict | error),
@@ -52,13 +52,13 @@ if ($branchExists.ExitCode -ne 0) {
     throw $result.error_message
 }
 
-# Verify dev exists
-$devExists = Invoke-Git -GitArgs @('rev-parse', '--verify', 'refs/heads/dev')
-if ($devExists.ExitCode -ne 0) {
+# Verify main exists
+$mainExists = Invoke-Git -GitArgs @('rev-parse', '--verify', 'refs/heads/main')
+if ($mainExists.ExitCode -ne 0) {
     $result = [pscustomobject]@{
         branch = $Branch
         status = 'error'
-        error_message = "Local 'dev' branch not found. Caller must ensure dev exists and is current."
+        error_message = "Local 'main' branch not found. Caller must ensure main exists and is current."
         conflicted_files = @()
     }
     if ($Json) { $result | ConvertTo-Json -Depth 4; exit 1 }
@@ -79,7 +79,7 @@ if ($checkout.ExitCode -ne 0) {
 }
 
 # Attempt the rebase
-$rebase = Invoke-Git -GitArgs @('rebase', 'dev')
+$rebase = Invoke-Git -GitArgs @('rebase', 'main')
 if ($rebase.ExitCode -eq 0) {
     $result = [pscustomobject]@{
         branch = $Branch
@@ -87,7 +87,7 @@ if ($rebase.ExitCode -eq 0) {
         conflicted_files = @()
     }
     if ($Json) { $result | ConvertTo-Json -Depth 4 } else {
-        Write-Output "Rebased '$Branch' cleanly onto dev."
+        Write-Output "Rebased '$Branch' cleanly onto main."
     }
     exit 0
 }
@@ -104,7 +104,7 @@ if ($files.Count -gt 0) {
         rebase_output = $rebase.Output
     }
     if ($Json) { $result | ConvertTo-Json -Depth 4; exit 2 }
-    Write-Warning "Rebase of '$Branch' onto dev hit conflicts in:"
+    Write-Warning "Rebase of '$Branch' onto main hit conflicts in:"
     foreach ($f in $files) { Write-Warning "  $f" }
     Write-Warning "Repo is mid-rebase. Resolve or run 'git rebase --abort'."
     exit 2

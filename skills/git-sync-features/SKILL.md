@@ -1,9 +1,9 @@
 ---
 name: git-sync-features
-description: "Rebase all active feature branches onto dev at the start of a session. Use when there are multiple feature branches in a repo and you need to sync them before starting work. Trigger on /git-sync-features or 'sync feature branches' or 'sync all features'."
+description: "Rebase all active feature branches onto main at the start of a session. Use when there are multiple feature branches in a repo and you need to sync them before starting work. Trigger on /git-sync-features or 'sync feature branches' or 'sync all features'."
 ---
 
-# git-sync-features — Sync All Feature Branches onto Dev
+# git-sync-features — Sync All Feature Branches onto main
 
 ## Shared Policy Baseline
 
@@ -12,7 +12,7 @@ Apply the shared deterministic and referencing baseline at `../../references/det
 Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
 
 
-Rebase every active feature branch onto `dev`. Run at the start of any session where multiple feature branches are in play, so each starts from current `dev` before new work begins.
+Rebase every active feature branch onto `main`. Run at the start of any session where feature branches are in play, so each starts from current `main` before new work begins. Branches checked out in a separate worktree are skipped (git cannot rebase them from the primary tree) and reported.
 
 ## Procedure
 
@@ -26,15 +26,17 @@ Rebase every active feature branch onto `dev`. Run at the start of any session w
 
    The script:
    - records the starting branch,
-   - checks out `dev` and runs `git pull origin dev`,
-   - enumerates local branches (excludes `main` and `dev`),
-   - invokes the repo-level `scripts/git/rebase-onto-dev.ps1` per feature branch,
+   - checks out `main` and runs `git pull origin main`,
+   - enumerates local branches (excludes `main`),
+   - skips any feature branch checked out in another worktree (reports it under `skipped_worktree`),
+   - invokes the repo-level `scripts/git/rebase-onto-main.ps1` per remaining feature branch,
    - stops at the first conflict (does NOT `--skip` silently),
    - returns to the starting branch on clean completion,
    - emits a JSON summary.
 
 3. Parse the JSON summary and report:
    - which branches rebased cleanly,
+   - which branches were skipped because they are checked out in a worktree,
    - which branch (if any) hit a conflict and which files conflicted,
    - the starting branch the script returned to.
 
@@ -45,6 +47,6 @@ Rebase every active feature branch onto `dev`. Run at the start of any session w
 ## Rules
 
 - Never use `git rebase --skip` to bypass a conflict — always surface it.
-- Never rebase `main` or `dev` themselves.
+- Never rebase `main` itself.
 - Never push the rebased feature branches automatically — rebasing rewrites history; only push if Danny explicitly asks after syncing.
-- Pass `-SkipPull` only when Danny has explicitly already pulled `dev` and wants to skip the network round-trip.
+- Pass `-SkipPull` only when Danny has explicitly already pulled `main` and wants to skip the network round-trip.

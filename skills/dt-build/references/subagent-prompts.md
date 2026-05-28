@@ -2,7 +2,7 @@
 
 Execution parity scope:
 - Prompt templates remain reference artifacts so `SKILL.md` stays lean.
-- Deterministic procedures are enforced by scripts (`assemble-codex-prompt.ps1`, `verify-codex-prompt.ps1`, `dev-cas-update.ps1`).
+- Deterministic procedures are enforced by scripts (`assemble-codex-prompt.ps1`, `verify-codex-prompt.ps1`, `branch-cas-update.ps1`).
 
 Required templates:
 - recon prompt

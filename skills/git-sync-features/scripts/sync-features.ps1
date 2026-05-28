@@ -1,13 +1,14 @@
-# Rebase every local feature branch onto dev.
+# Rebase every local feature branch onto main.
 #
 # 1. Verify repo + remember starting branch.
-# 2. Refresh dev (checkout + pull origin dev).
-# 3. Enumerate local branches excluding main/dev.
-# 4. Invoke repo-level rebase-onto-dev.ps1 per branch.
-# 5. Stop and report on the first conflict; never use --skip silently.
-# 6. Return to the starting branch (or dev if unclear).
+# 2. Refresh main (checkout + pull origin main).
+# 3. Enumerate local branches excluding main.
+# 4. Skip any feature branch checked out in another worktree (report it).
+# 5. Invoke repo-level rebase-onto-main.ps1 per remaining branch.
+# 6. Stop and report on the first conflict; never use --skip silently.
+# 7. Return to the starting branch (or main if unclear).
 #
-# Returns a JSON summary: starting_branch, dev_pulled, branches[], conflicted_branch.
+# Returns a JSON summary: starting_branch, main_pulled, feature_branches, skipped_worktree, results, conflicted_branch.
 
 param(
     [switch]$Json,
@@ -32,7 +33,7 @@ $skillRoot = Split-Path -Parent $scriptDir
 $resolved = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
 if ($resolved) { $skillRoot = $resolved.FullName }
 $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
-$rebaseScript = Join-Path $repoRoot 'scripts\git\rebase-onto-dev.ps1'
+$rebaseScript = Join-Path $repoRoot 'scripts\git\rebase-onto-main.ps1'
 
 if (-not (Test-Path -LiteralPath $rebaseScript)) {
     throw "Missing shared helper: $rebaseScript"
@@ -48,22 +49,29 @@ if ($insideRepo.ExitCode -ne 0 -or $insideRepo.Output.Trim() -ne 'true') {
 $current = Invoke-Git -GitArgs @('rev-parse', '--abbrev-ref', 'HEAD')
 $startingBranch = $current.Output.Trim()
 if ([string]::IsNullOrWhiteSpace($startingBranch) -or $startingBranch -eq 'HEAD') {
-    $startingBranch = 'dev'
+    $startingBranch = 'main'
 }
 
-# Refresh dev
-$devPulled = $false
-$checkoutDev = Invoke-Git -GitArgs @('checkout', 'dev')
-if ($checkoutDev.ExitCode -ne 0) {
-    throw "Could not checkout dev: $($checkoutDev.Output)"
+# Refresh main
+$mainPulled = $false
+$checkoutMain = Invoke-Git -GitArgs @('checkout', 'main')
+if ($checkoutMain.ExitCode -ne 0) {
+    throw "Could not checkout main: $($checkoutMain.Output)"
 }
 
 if (-not $SkipPull) {
-    $pullDev = Invoke-Git -GitArgs @('pull', 'origin', 'dev')
-    if ($pullDev.ExitCode -ne 0) {
-        throw "git pull origin dev failed: $($pullDev.Output)"
+    $pullMain = Invoke-Git -GitArgs @('pull', 'origin', 'main')
+    if ($pullMain.ExitCode -ne 0) {
+        throw "git pull origin main failed: $($pullMain.Output)"
     }
-    $devPulled = $true
+    $mainPulled = $true
+}
+
+# Branches checked out in worktrees cannot be checked out from the primary tree.
+$wt = Invoke-Git -GitArgs @('worktree', 'list', '--porcelain')
+$worktreeBranches = @()
+foreach ($line in ($wt.Output -split "`r?`n")) {
+    if ($line -match '^branch refs/heads/(.+)$') { $worktreeBranches += $Matches[1] }
 }
 
 # List feature branches
@@ -73,7 +81,9 @@ if ($branchList.ExitCode -ne 0) {
 }
 
 $allBranches = $branchList.Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-$featureBranches = @($allBranches | Where-Object { $_ -ne 'main' -and $_ -ne 'dev' })
+$candidateBranches = @($allBranches | Where-Object { $_ -ne 'main' })
+$skippedWorktree = @($candidateBranches | Where-Object { $worktreeBranches -contains $_ })
+$featureBranches = @($candidateBranches | Where-Object { $worktreeBranches -notcontains $_ })
 
 $results = @()
 $conflictedBranch = $null
@@ -108,8 +118,8 @@ foreach ($branch in $featureBranches) {
 # Return to the starting branch unless we're mid-conflict on a different branch
 if (-not $conflictedBranch) {
     $returnTarget = $startingBranch
-    if ($featureBranches -notcontains $returnTarget -and $returnTarget -notin @('main', 'dev')) {
-        $returnTarget = 'dev'
+    if ($featureBranches -notcontains $returnTarget -and $returnTarget -ne 'main') {
+        $returnTarget = 'main'
     }
     $returnCheckout = Invoke-Git -GitArgs @('checkout', $returnTarget)
     if ($returnCheckout.ExitCode -ne 0) {
@@ -119,8 +129,9 @@ if (-not $conflictedBranch) {
 
 $summary = [pscustomobject]@{
     starting_branch = $startingBranch
-    dev_pulled = $devPulled
+    main_pulled = $mainPulled
     feature_branches = $featureBranches
+    skipped_worktree = $skippedWorktree
     results = $results
     conflicted_branch = $conflictedBranch
 }
@@ -132,8 +143,11 @@ if ($Json) {
 }
 
 Write-Output "Starting branch: $startingBranch"
-Write-Output "dev pulled: $devPulled"
+Write-Output "main pulled: $mainPulled"
 Write-Output ("Feature branches: " + ($featureBranches -join ', '))
+if ($skippedWorktree.Count -gt 0) {
+    Write-Output ("Skipped (checked out in a worktree): " + ($skippedWorktree -join ', '))
+}
 foreach ($r in $results) {
     if ($r.status -eq 'clean') {
         Write-Output "  [OK] $($r.branch)"
@@ -151,4 +165,4 @@ if ($conflictedBranch) {
     exit 2
 }
 
-Write-Output "All feature branches rebased onto dev cleanly."
+Write-Output "All feature branches rebased onto main cleanly."

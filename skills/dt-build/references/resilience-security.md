@@ -9,7 +9,7 @@ Intake resilience controls in Phase 7A:
 Execution resilience controls in Phase 7B:
 - Codex prompt assembly and verify gates run through deterministic scripts.
 - Verify/fix loop budget is capped at two attempts per milestone.
-- `dev` updates run through compare-and-swap (`scripts/dev-cas-update.ps1`) after rehearsal.
+- Integration-branch updates run through compare-and-swap (`scripts/branch-cas-update.ps1`) after rehearsal.
 
 Shared posture:
 - Use repo-level `references/security-posture.md` as the policy anchor.
