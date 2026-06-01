@@ -100,7 +100,11 @@ function Parse-MilestonesFromImplementationSequence {
         'Milestone Sequence'
     )
     $section = Get-SectionBody -Text $Text -Headers $sectionCandidates
-    if ($null -eq $section) { return @() }
+    # Force an empty *array* (not a bare @() that the pipeline collapses to $null on
+    # return). The caller does `$milestones.Count` under StrictMode; a $null there throws
+    # an opaque "property 'Count' cannot be found" instead of the intended graceful
+    # "No milestones derivable" message. The leading comma preserves the empty array.
+    if ($null -eq $section) { return ,@() }
 
     $body = $section.Body
     $milestones = New-Object System.Collections.Generic.List[object]
@@ -303,6 +307,11 @@ if ([string]::IsNullOrWhiteSpace($RoadmapViewPath)) {
 $RoadmapViewPath = [System.IO.Path]::GetFullPath($RoadmapViewPath)
 
 $inputContractMode = 'implementation_sequence'
+# Both parsers return comma-protected arrays (`return ,$arr` / `return ,@()`), so the
+# empty case yields an empty array (Count 0) rather than a $null that would throw on
+# .Count under StrictMode. Do NOT wrap these calls in @(): the comma already delivers the
+# array as a single pipeline item, and @() would re-wrap it into a length-1 array (folding
+# all milestones into one). The graceful throw below stays reachable via the Count 0 path.
 $milestones = Parse-MilestonesFromImplementationSequence -Text $redacted
 if ($milestones.Count -eq 0) {
     $inputContractMode = 'phase_headings_fallback'

@@ -1,13 +1,13 @@
 ---
 name: dt-build
-description: "Execute a validated roadmap contract end-to-end. Trigger on /dt-build or 'dt-build [roadmap-path]'."
+description: "Execute a finalized build end-to-end. Trigger on /dt-build or 'dt-build [roadmap-or-design-path]'. Prefers a dt-roadmap roadmap.md for heavier builds but accepts a design-final.md directly and auto-generates the roadmap; a missing roadmap is never required or a crash."
 disable-model-invocation: true
 user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 2.5.0
-  changelog: "2.5.0 trunk-based-branch-model: integration target moved off the retired dev branch to a short-lived build/<RUN_ID> branch cut from main (2026-05-28 workspace-wide trunk migration); per-milestone accepted work compare-and-swaps onto build/<RUN_ID>, and the rehearsed branch is left for a separate human-authorized /git-merge-feature to main (dt-build never writes to main). scripts/dev-cas-update.ps1 renamed to scripts/branch-cas-update.ps1 and generalized (mandatory -TargetBranch/-ExpectedTargetSha; output keys target_branch/expected_target_sha/observed_target_sha; CAS_* error prefixes). branch-contract.md, resilience-security.md, and subagent-prompts.md updated. Prior 2.4.0 behavior retained: Per-milestone acceptance gate now evaluates EVERY verification-manifest row for a milestone, not just the first. Prior implementation (verify-milestone-acceptance.ps1) used `Select-Object -First 1` against the rows matched by milestone-id, so any milestone with multiple CHK-* checks had partial gate coverage — only the first check's procedure was parsed for artifacts/commands and only its named test command was run. Calibration event: 2026-05-27 db-durability build at file-sorter, where M02 reported PASS by running only CHK-M02-POPULATED-UPGRADE while CHK-M02-ROLLBACK and CHK-M02-STALE-V11-REGRESSION were silently skipped despite being load-bearing in the roadmap. v2.4.0 changes: (1) verify-milestone-acceptance.ps1 pools every matching verification row, extracts artifacts and commands per row, presence-checks each row's artifacts against the working tree, runs each row's named commands under -RunTests, and folds every exit code into the verdict. JSON output adds a `verification_checks` array (each element exposes check_id, procedure_text, artifacts_named/present/missing, commands_named, command_results, test_status, blockers) alongside the existing top-level fields (status/accepted/blockers/artifacts_missing/commands_named/command_results) which remain the rolled-up view consumed by build-acceptance-ledger.ps1. status is PASS only when every check's blockers are empty. (2) build-acceptance-ledger.ps1 surfaces the per-check breakdown in the HTML ledger as a Verification Check Detail section — one sub-table per milestone listing each CHK-* id, status badge, named artifacts (with missing markers), and named commands with exit codes. Markdown ledger remains the roll-up. (3) acceptance-contract.md updated to document that the gate evaluates every verification row per milestone — the contract previously read as if every check was enforced; v2.4.0 makes the implementation match. Previous 2.3.1 acceptance gate fixes (pytest -> python -m pytest, downgrade_approved_by parser + APPROVED_DOWNGRADE status) are retained unchanged."
+  version: 2.6.0
+  changelog: "2.6.0 roadmap-preferred-not-required intake: dt-build now accepts a finalized design (design-final.md / plan-draft.md) as input, not only a dt-roadmap roadmap.md. New procedure steps 2 (detect roadmap vs design), 2.5 (auto-generate the roadmap from a design via the canonical skills/dt-roadmap/scripts/build-roadmap.ps1 — no re-implemented milestone parsing, no schema duplication), and 2.6 (validate, formerly step 2). A roadmap is preferred for heavier builds (many milestones or any load-bearing/gate milestone, which dt-build now recommends a reviewed dt-roadmap pass for) but is never a hard requirement; when a design lacks an Implementation Sequence / Validation Gates surface the build STOPS with the producer's graceful explanatory message instead of crashing. 'When this fires' and references/shared-input-routing.md updated to document design-or-roadmap intake. Prior 2.5.0 trunk-based-branch-model: integration target moved off the retired dev branch to a short-lived build/<RUN_ID> branch cut from main (2026-05-28 workspace-wide trunk migration); per-milestone accepted work compare-and-swaps onto build/<RUN_ID>, and the rehearsed branch is left for a separate human-authorized /git-merge-feature to main (dt-build never writes to main). scripts/dev-cas-update.ps1 renamed to scripts/branch-cas-update.ps1 and generalized (mandatory -TargetBranch/-ExpectedTargetSha; output keys target_branch/expected_target_sha/observed_target_sha; CAS_* error prefixes). branch-contract.md, resilience-security.md, and subagent-prompts.md updated. Prior 2.4.0 behavior retained: Per-milestone acceptance gate now evaluates EVERY verification-manifest row for a milestone, not just the first. Prior implementation (verify-milestone-acceptance.ps1) used `Select-Object -First 1` against the rows matched by milestone-id, so any milestone with multiple CHK-* checks had partial gate coverage — only the first check's procedure was parsed for artifacts/commands and only its named test command was run. Calibration event: 2026-05-27 db-durability build at file-sorter, where M02 reported PASS by running only CHK-M02-POPULATED-UPGRADE while CHK-M02-ROLLBACK and CHK-M02-STALE-V11-REGRESSION were silently skipped despite being load-bearing in the roadmap. v2.4.0 changes: (1) verify-milestone-acceptance.ps1 pools every matching verification row, extracts artifacts and commands per row, presence-checks each row's artifacts against the working tree, runs each row's named commands under -RunTests, and folds every exit code into the verdict. JSON output adds a `verification_checks` array (each element exposes check_id, procedure_text, artifacts_named/present/missing, commands_named, command_results, test_status, blockers) alongside the existing top-level fields (status/accepted/blockers/artifacts_missing/commands_named/command_results) which remain the rolled-up view consumed by build-acceptance-ledger.ps1. status is PASS only when every check's blockers are empty. (2) build-acceptance-ledger.ps1 surfaces the per-check breakdown in the HTML ledger as a Verification Check Detail section — one sub-table per milestone listing each CHK-* id, status badge, named artifacts (with missing markers), and named commands with exit codes. Markdown ledger remains the roll-up. (3) acceptance-contract.md updated to document that the gate evaluates every verification row per milestone — the contract previously read as if every check was enforced; v2.4.0 makes the implementation match. Previous 2.3.1 acceptance gate fixes (pytest -> python -m pytest, downgrade_approved_by parser + APPROVED_DOWNGRADE status) are retained unchanged."
 ---
 
 # Build Executor
@@ -38,13 +38,19 @@ Phase 7A established deterministic roadmap-first intake. Phase 7B restores execu
 ## When this fires
 
 Trigger when all are true:
-- Input artifact is `roadmap.md` produced by `dt-roadmap`.
+- Input artifact is **either** a `roadmap.md` produced by `dt-roadmap` **or** a finalized design
+  (`design-final.md`, or `plan-draft.md` when review was skipped). A roadmap is *preferred* for heavier
+  builds (many milestones, load-bearing/gate milestones, anything you want a reviewed contract for);
+  it is **not** a hard requirement. When handed a design, dt-build auto-generates the roadmap itself
+  (step 2.5) — a missing roadmap is never a crash or a refusal.
 - Repository is a git repo.
 - Danny is asking to run the build stage, not planning/review.
 
 Do NOT fire for:
 - Plan authoring or redesign (`dt-plan`, `dt-review`).
-- Roadmap production (`dt-roadmap`).
+- Standalone roadmap production for review (`dt-roadmap`) — that skill is still the way to produce a
+  curated, separately-reviewed contract. dt-build's auto-generation (step 2.5) is the convenience path
+  for lighter builds, not a replacement for a deliberate dt-roadmap pass on heavy work.
 
 ## Contract source of truth
 
@@ -67,11 +73,29 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 
 1. Intake in one question:
 - Repo path (absolute).
-- Roadmap path (default: `<project>/design/roadmap.md`).
+- Input path — a `roadmap.md` **or** a finalized design (`design-final.md` / `plan-draft.md`).
+  Default: `<project>/design/roadmap.md`, falling back to `<project>/design/design-final.md`.
 - Optional RUN_ID for resume check.
 - Optional integration branch (default `build/<RUN_ID>`, cut from `main`).
 
-2. Validate roadmap contract before any build setup:
+2. Resolve the input to a roadmap contract:
+- If the input file already parses as a roadmap (frontmatter `schema_version` + a `## Milestones`
+  section), treat it as the roadmap directly.
+- Otherwise treat it as a design artifact and go to step 2.5 to generate one.
+
+2.5 Auto-generate a roadmap from a design (only when step 2 found a design, not a roadmap):
+- Run `skills/dt-roadmap/scripts/build-roadmap.ps1 -DesignPath <design> -RoadmapPath <project>/design/roadmap.md`,
+  then proceed with that roadmap. This reuses the canonical dt-roadmap producer — dt-build does not
+  re-implement milestone parsing or duplicate the schema.
+- If the producer emits a `## Producer Warnings` section or throws "No milestones derivable", surface
+  it and STOP: the design lacks an `## Implementation Sequence` / `## Validation Gates` surface with
+  runnable commands. This is a graceful, explanatory stop — not a crash — and tells the author exactly
+  what the design must add (or to run a deliberate `dt-roadmap` pass first).
+- For a heavy build (the generated roadmap has many milestones or any load-bearing/gate milestone per
+  `scripts/identify-load-bearing.ps1`), recommend in chat that Danny run a reviewed `dt-roadmap` pass
+  before proceeding — then continue if he wants the auto-generated contract.
+
+2.6 Validate the roadmap contract before any build setup:
 - Run `skills/dt-roadmap/scripts/roadmap-validator.ps1 -RoadmapPath <roadmap> -SchemaPath <repo>/skills/dt-roadmap/references/roadmap-schema.md`.
 - Fail closed on validator error.
 
