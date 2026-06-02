@@ -23,7 +23,7 @@ Decide where a piece of work should live before it starts — on `main`, a `feat
    - **Risk / criticality** — does it touch a prod-critical path (NAV, money, DB schema/migration, auth, the live deploy)?
    - **Parallelism** — is other feature work already in flight (another `feat/*` branch or worktree exists, or another agent/session is running)?
 
-   Apply the two overrides: criticality beats size; parallelism forces a worktree.
+   Apply the three overrides: criticality beats size; parallelism forces a worktree; and **an agent (Codex or a Claude sub-agent) doing the work, OR a live app/server running from this checkout, forces a worktree** — never the `medium` branch-in-primary-tree path. Switching the primary tree to an in-progress branch can hijack a running app that auto-reloads templates/assets from disk: it serves the new branch's files against the old in-memory code and can crash (every page 500s). The primary checkout stays on `main`.
 
 3. **Derive a meaningful name** from the work's intent: kebab-case, 2-4 words, `feat/` (or `fix/` for a bug fix). Never generic. "add CSV export to the trade log" -> `trade-log-csv-export`.
 
@@ -38,7 +38,7 @@ Decide where a piece of work should live before it starts — on `main`, a `feat
    ```
 
    - `light` — stays on `main`, no branch.
-   - `medium` — creates and checks out `feat/<slug>` in the primary tree.
+   - `medium` — creates and checks out `feat/<slug>` in the primary tree. Use only when Danny is editing interactively AND no app/server runs from this checkout; if an agent is doing the work or a live app reads from this tree, recommend `heavy` instead (see the overrides).
    - `heavy` — creates a worktree at `..\<repo>-<slug>` on `feat/<slug>`; the primary tree stays on `main`.
 
    Pass `-Prefix fix` for a bug fix. The script refuses to run with a dirty tree for `medium`/`heavy` (commit or stash first).
