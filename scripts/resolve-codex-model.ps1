@@ -28,9 +28,14 @@ function Resolve-CodexModel {
     # gpt-5.x model is alive. Update these (and the SKILL.md operating constants)
     # when OpenAI rotates the model line -- the matrix in
     # _Claude-Workspace\00_Resources\codex-cli-usage.md is the human-readable mirror.
+    # light: gpt-5.4 is the deliberate pin (Danny, 2026-06-02 — do NOT resolve to
+    # gpt-5.3-codex-spark). The codex-tuned fast slugs (gpt-5.3-codex, gpt-5.5-codex)
+    # are gone/blocked on ChatGPT-subscription auth, so the fast tier rides general
+    # gpt-5.4. spark stays ONLY as the last-ditch backstop so resolution never hard-
+    # fails while any gpt-5.4/5.5 is alive; it should never actually be selected.
     $fallbacks = @{
         complex = @('gpt-5.5', 'gpt-5.4', 'gpt-5.2')
-        light   = @('gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.4-mini', 'gpt-5.4', 'gpt-5.5')
+        light   = @('gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-5.3-codex-spark')
     }
 
     # Candidate order: preferred pin first, then the tier allowlist (de-duped).

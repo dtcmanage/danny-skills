@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.3.0
-  changelog: "Self-healing model resolution: preflight and round scripts now call shared `scripts/resolve-codex-model.ps1`, which validates the pinned model against Codex's live per-account cache and falls back through a per-tier candidate list (throwing an actionable error if nothing resolves) — kills the `gpt-5.1-codex-max`-class failure where a dead pin or a config-default-drift produced a failure log that looked like a critique. Added `-Tier light|complex` to both scripts; round output now reports the actually-resolved model. Prior: 1.2.1 effort tuning (all tiers default `medium`); 1.2.0 execution-model fix — codex rounds run via the Bash tool as `pwsh -NoProfile -File` with the prompt on stdin, fixing the 70-min PowerShell-tool host hang, the ConstrainedLanguage profile crash, and the ~30KB arg-length failure that dropped round output."
+  version: 1.4.0
+  changelog: "Light/preflight model pin moved gpt-5.3-codex -> gpt-5.4 (Danny, 2026-06-02). The dead gpt-5.3-codex pin had been self-healing to gpt-5.3-codex-spark; Danny directed the fast tier to ride gpt-5.4 instead and never spark. resolve-codex-model.ps1 light candidate list reordered to (gpt-5.4, gpt-5.4-mini, gpt-5.5, gpt-5.3-codex-spark) — spark demoted to last-ditch backstop only; dead gpt-5.3-codex removed. SKILL operating constants (LIGHT_MODEL/PREFLIGHT_MODEL) and both script -Model defaults updated to gpt-5.4; codex-cli-usage.md matrix refreshed against the live 2026-06-02 cache (selectable: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex-spark). Prior 1.3.0: Self-healing model resolution: preflight and round scripts now call shared `scripts/resolve-codex-model.ps1`, which validates the pinned model against Codex's live per-account cache and falls back through a per-tier candidate list (throwing an actionable error if nothing resolves) — kills the `gpt-5.1-codex-max`-class failure where a dead pin or a config-default-drift produced a failure log that looked like a critique. Added `-Tier light|complex` to both scripts; round output now reports the actually-resolved model. Prior: 1.2.1 effort tuning (all tiers default `medium`); 1.2.0 execution-model fix — codex rounds run via the Bash tool as `pwsh -NoProfile -File` with the prompt on stdin, fixing the 70-min PowerShell-tool host hang, the ConstrainedLanguage profile crash, and the ~30KB arg-length failure that dropped round output."
 ---
 
 # Review — Claude x Codex Coworker Dialogue
@@ -53,14 +53,15 @@ Do NOT fire for:
 These constants are the single source of truth for which Codex model and reasoning effort each tier uses.
 Always pass the matching `-Model`, `-Tier`, and `-ReasoningEffort` to every script — the script defaults are a
 fallback, not the contract. Use them unless Danny explicitly overrides:
-- `LIGHT_MODEL = gpt-5.3-codex` (`-Tier light`) — fast codex-tuned tier (light rounds + preflight). Best
-  available fast model on ChatGPT-subscription auth; the codex-tuned successor `gpt-5.5-codex` is blocked
-  there, so this stays the fast pin.
+- `LIGHT_MODEL = gpt-5.4` (`-Tier light`) — fast tier (light rounds + preflight). The codex-tuned fast
+  slugs (`gpt-5.3-codex`, `gpt-5.5-codex`) are gone/blocked on ChatGPT-subscription auth, so the fast tier
+  rides general `gpt-5.4`. Do NOT resolve to `gpt-5.3-codex-spark` (Danny, 2026-06-02); spark remains only
+  as the resolver's last-ditch backstop and should never actually be selected.
 - `LIGHT_EFFORT = medium`
 - `COMPLEX_MODEL = gpt-5.5` (`-Tier complex`) — deep-reasoning tier for hard architectural rounds. Supersedes `gpt-5.4`.
 - `COMPLEX_EFFORT = medium` — bump to `high` only for the hardest architectural rounds; `high` is
   materially slower and burns far more subscription quota.
-- `PREFLIGHT_MODEL = gpt-5.3-codex`
+- `PREFLIGHT_MODEL = gpt-5.4`
 - `PREFLIGHT_EFFORT = medium`
 - `PREFLIGHT_TIMEOUT_MS = 30000`
 - `HANG_GUARD_MS = 1800000`

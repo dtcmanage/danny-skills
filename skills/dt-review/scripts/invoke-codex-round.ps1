@@ -5,7 +5,7 @@ param(
     [int]$Round,
     [Parameter(Mandatory)]
     [string]$PromptPath,
-    [string]$Model = "gpt-5.3-codex",
+    [string]$Model = "gpt-5.4",
     [ValidateSet('complex', 'light')]
     [string]$Tier = "light",
     [ValidateSet('minimal', 'low', 'medium', 'high')]
