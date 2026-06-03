@@ -16,14 +16,17 @@ Decide where a piece of work should live before it starts — on `main`, a `feat
 
 ## Procedure
 
-1. Confirm the working directory is a git repo. If not, stop and say so.
+1. Confirm the working directory is a git repo. If not, stop and say so. Then capture the **launch guard**: run `git rev-parse --show-toplevel` and `git worktree list`. Isolation is a property of the working *tree* (a directory with its own HEAD), not the branch — a `feat/` branch in the shared primary tree gives zero isolation, because one directory has one HEAD and another session's checkout flips it out from under you. If another session shares this toplevel, treat the work as needing its own worktree.
 
-2. **Classify the work** against the tier rubric in `git-workflow.md`, scoring three axes:
-   - **Scope** — roughly one file, a few files, or many files / multiple modules.
-   - **Risk / criticality** — does it touch a prod-critical path (NAV, money, DB schema/migration, auth, the live deploy)?
-   - **Parallelism** — is other feature work already in flight (another `feat/*` branch or worktree exists, or another agent/session is running)?
+2. **Apply the worktree gate FIRST, before scoring size.** A worktree is **mandatory — no judgment call** — if ANY of these holds:
+   - an **agent** (Codex or a Claude sub-agent) is doing the work, rather than Danny editing interactively by hand;
+   - **another session or worktree is, or may be, open** on this repo (concurrent / multi-session);
+   - an **app or server runs from this checkout** (switching the primary tree to an in-progress branch hijacks a running app that auto-reloads templates/assets — it serves the new files against stale in-memory code and 500s);
+   - the work touches a **prod-critical path** (NAV, money, DB schema/migration, auth, the live deploy).
 
-   Apply the three overrides: criticality beats size; parallelism forces a worktree; and **an agent (Codex or a Claude sub-agent) doing the work, OR a live app/server running from this checkout, forces a worktree** — never the `medium` branch-in-primary-tree path. Switching the primary tree to an in-progress branch can hijack a running app that auto-reloads templates/assets from disk: it serves the new branch's files against the old in-memory code and can crash (every page 500s). The primary checkout stays on `main`.
+   If the gate fires, recommend **heavy (worktree)** regardless of size; the primary tree stays pinned to `main`. In practice almost all agent-run work trips the gate — that is intended.
+
+   **Only if the gate is clear** (a human editing by hand, solo, sequential, nothing else in flight, no app running) score by size against the rubric in `git-workflow.md`: **Scope** (one file / a few / many) decides light vs medium. Criticality still beats size.
 
 3. **Derive a meaningful name** from the work's intent: kebab-case, 2-4 words, `feat/` (or `fix/` for a bug fix). Never generic. "add CSV export to the trade log" -> `trade-log-csv-export`.
 
