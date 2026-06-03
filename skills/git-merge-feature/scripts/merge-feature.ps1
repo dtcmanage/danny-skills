@@ -74,6 +74,112 @@ if (-not $resolvedBranch) {
     Fail "No local branch named '$Branch', 'feat/$Branch', or 'feature/$Branch'. Local branches: $($branches -join ', ')"
 }
 
+# Detect whether the resolved branch is checked out in a worktree. Under the
+# trunk-based workflow every feature lives in its own worktree, so the branch
+# usually cannot be checked out in the primary tree. The first "worktree" entry
+# is the primary tree; a path split with limit 2 preserves spaces in paths.
+$wtList = Invoke-Git -GitArgs @('worktree', 'list', '--porcelain')
+$mainWorktree = $null
+$branchWorktree = $null
+$curPath = $null
+foreach ($wtLine in ($wtList.Output -split "`r?`n")) {
+    if ($wtLine -like 'worktree *') {
+        $curPath = ($wtLine -split '\s+', 2)[1].Trim()
+        if (-not $mainWorktree) { $mainWorktree = $curPath }
+    }
+    elseif ($wtLine -like 'branch *') {
+        $wtRef = ($wtLine -split '\s+', 2)[1].Trim()
+        if ($wtRef -eq "refs/heads/$resolvedBranch") { $branchWorktree = $curPath }
+    }
+}
+
+if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
+    # --- Worktree-aware merge (branch lives in its own worktree) ---
+    # Do not check the branch out in the primary tree; inspect/rebase in place.
+    $wtStatus = Invoke-Git -GitArgs @('-C', $branchWorktree, 'status', '--porcelain')
+    if (-not [string]::IsNullOrWhiteSpace($wtStatus.Output)) {
+        Fail "Uncommitted changes on '$resolvedBranch' in worktree '$branchWorktree'. Commit or stash first." @{ uncommitted = $wtStatus.Output; worktree_path = $branchWorktree }
+    }
+
+    $coMain = Invoke-Git -GitArgs @('-C', $mainWorktree, 'checkout', 'main')
+    if ($coMain.ExitCode -ne 0) {
+        Fail "Could not checkout main in primary tree '$mainWorktree': $($coMain.Output)" @{ worktree_path = $branchWorktree }
+    }
+
+    $mainPulled = $false
+    if (-not $SkipPull) {
+        $pullMain = Invoke-Git -GitArgs @('-C', $mainWorktree, 'pull', '--ff-only', 'origin', 'main')
+        if ($pullMain.ExitCode -ne 0) {
+            Fail "git pull --ff-only origin main failed: $($pullMain.Output)" @{ worktree_path = $branchWorktree }
+        }
+        $mainPulled = $true
+    }
+
+    $mainShaBefore = (Invoke-Git -GitArgs @('-C', $mainWorktree, 'rev-parse', 'main')).Output.Trim()
+
+    # Rebase the feature branch inside its own worktree, onto the refreshed main.
+    $wtRebase = Invoke-Git -GitArgs @('-C', $branchWorktree, 'rebase', 'main')
+    if ($wtRebase.ExitCode -ne 0) {
+        $null = Invoke-Git -GitArgs @('-C', $branchWorktree, 'rebase', '--abort')
+        Fail "Rebase of '$resolvedBranch' onto main failed in worktree (conflicts). Resolve in '$branchWorktree', then retry. Do NOT fall back to --no-ff." @{ rebase = $wtRebase.Output; worktree_path = $branchWorktree }
+    }
+
+    # Fast-forward merge into main from the primary tree.
+    $wtMerge = Invoke-Git -GitArgs @('-C', $mainWorktree, 'merge', '--ff-only', $resolvedBranch)
+    if ($wtMerge.ExitCode -ne 0) {
+        Fail "git merge --ff-only failed (should not happen after a clean rebase): $($wtMerge.Output). Do NOT fall back to --no-ff." @{ worktree_path = $branchWorktree }
+    }
+
+    $mainShaAfter = (Invoke-Git -GitArgs @('-C', $mainWorktree, 'rev-parse', 'main')).Output.Trim()
+    $wtCommitRange = if ($mainShaBefore -ne $mainShaAfter) { "$($mainShaBefore.Substring(0,7))..$($mainShaAfter.Substring(0,7))" } else { 'no-op' }
+
+    # Remove the worktree (clean after rebase) before deleting the branch -
+    # git refuses to delete a branch still checked out in a worktree.
+    $wtRemoved = $false
+    $wtRemove = Invoke-Git -GitArgs @('worktree', 'remove', $branchWorktree)
+    if ($wtRemove.ExitCode -eq 0) {
+        $wtRemoved = $true
+    } else {
+        Write-Warning "Could not remove worktree '$branchWorktree': $($wtRemove.Output). Branch left in place."
+    }
+
+    $wtBranchDeleted = $false
+    if ($wtRemoved) {
+        $wtDelete = Invoke-Git -GitArgs @('-C', $mainWorktree, 'branch', '-d', $resolvedBranch)
+        $wtBranchDeleted = ($wtDelete.ExitCode -eq 0)
+        if (-not $wtBranchDeleted) {
+            Write-Warning "Branch '$resolvedBranch' was not deleted: $($wtDelete.Output)"
+        }
+    }
+
+    $wtSummary = [pscustomobject]@{
+        branch = $Branch
+        resolved_branch = $resolvedBranch
+        main_pulled = $mainPulled
+        rebase_status = 'clean'
+        merge_status = 'ff-only'
+        commit_range = $wtCommitRange
+        branch_deleted = $wtBranchDeleted
+        worktree_path = $branchWorktree
+        worktree_removed = $wtRemoved
+        status = 'success'
+    }
+
+    if ($Json) {
+        $wtSummary | ConvertTo-Json -Depth 6
+        exit 0
+    }
+
+    Write-Output "Merged '$resolvedBranch' (worktree) into main (ff-only). Range: $wtCommitRange."
+    if ($wtRemoved) { Write-Output "Removed worktree '$branchWorktree'." }
+    if ($wtBranchDeleted) {
+        Write-Output "Deleted local branch '$resolvedBranch'."
+    } else {
+        Write-Output "Branch '$resolvedBranch' was NOT deleted (see warning above)."
+    }
+    exit 0
+}
+
 # Check for uncommitted changes on the feature branch
 $checkoutFeature = Invoke-Git -GitArgs @('checkout', $resolvedBranch)
 if ($checkoutFeature.ExitCode -ne 0) {

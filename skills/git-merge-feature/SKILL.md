@@ -1,6 +1,11 @@
 ---
 name: git-merge-feature
 description: "Rebase a named feature branch onto main then fast-forward merge it into main and delete the branch. Use when a feature is complete and ready to land on main. Trigger on /git-merge-feature [branch] or 'merge feature X to main' or 'land feature X'."
+metadata:
+  version: 1.1.0
+  changelog:
+    - "1.0.0 - Initial: resolve branch, rebase onto main, ff-only merge, delete branch via merge-feature.ps1."
+    - "1.1.0 - Handle a feature branch checked out in a git worktree (the normal trunk-based case): the script now detects and merges it worktree-aware (rebase inside the worktree, ff-merge from the primary tree, remove the worktree before deleting the branch); SKILL.md documents the same fallback."
 ---
 
 # git-merge-feature — Rebase and Merge a Feature Branch into main
@@ -37,6 +42,13 @@ The feature branch name. Can be the full name (`feat/nav-fix`) or just the suffi
    - deletes the local feature branch on success,
    - emits a JSON summary with `commit_range`, `branch_deleted`, and `status`.
 
+   When the resolved branch is checked out in a worktree (the normal trunk-based
+   case — every feature lives in its own worktree), the script cannot check it
+   out in the primary tree, so it switches to a worktree-aware path: it rebases
+   inside that worktree, fast-forward merges from the primary tree, then removes
+   the worktree before deleting the branch. The JSON summary sets
+   `worktree_path` and `worktree_removed` in that case.
+
 3. Parse the JSON summary and report:
    - the resolved branch name,
    - the commit range that landed on `main`,
@@ -46,6 +58,7 @@ The feature branch name. Can be the full name (`feat/nav-fix`) or just the suffi
    - **Uncommitted changes**: ask Danny to commit or stash, then retry.
    - **Rebase conflict**: the repo is mid-rebase; resolve or `git rebase --abort`, then retry.
    - **ff-only merge failed**: do NOT fall back to a regular merge. Re-run the script (it will re-rebase).
+   - **Branch is checked out in a worktree** (`fatal: '<branch>' is already used by worktree at '<path>'`): expected under the trunk-based workflow. The updated script handles this automatically; if you are merging by hand, do it worktree-aware: (1) `git fetch origin`, then `git -C <worktree> rebase origin/main`; (2) from the primary tree on `main`, `git pull --ff-only origin main` then `git merge --ff-only <branch>`; (3) push only if Danny said ship; (4) after confirming the merge, `git worktree remove <worktree>` then `git branch -d <branch>`. Keep the ff-only guarantee; never remove the worktree or delete the branch before the merge is confirmed.
 
 5. If rerere is not enabled globally, suggest after a successful merge: `git config --global rerere.enabled true`.
 
