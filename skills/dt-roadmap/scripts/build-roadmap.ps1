@@ -74,6 +74,14 @@ function Get-FirstSentence {
     $trimmed = $Text.Trim()
     # Strip leading list/numbering markers (already stripped by caller, but be safe).
     $trimmed = ($trimmed -replace '^\d+[.)]\s+', '').Trim()
+    # Prefer a leading bold span as the milestone name: "**Title.**  Detail..." -> "Title".
+    # The first-sentence regex below misses this because the '.' sits inside '**' with no
+    # trailing whitespace, so it would otherwise run on and capture the whole paragraph.
+    $bold = [regex]::Match($trimmed, '^\*\*(.+?)\*\*')
+    if ($bold.Success) {
+        $name = $bold.Groups[1].Value.Trim().TrimEnd('.', '!', '?', ':').Trim()
+        if ($name.Length -gt 0 -and $name.Length -le 80) { return $name }
+    }
     # Split on sentence terminators followed by whitespace/end.
     $m = [regex]::Match($trimmed, '^(.+?[.!?])(\s|$)')
     if ($m.Success) {
