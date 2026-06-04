@@ -86,6 +86,7 @@ $result = [ordered]@{
     main_pulled   = $pulled
     branch        = $branch
     worktree_path = $null
+    copied_env    = @()
 }
 
 switch ($Tier) {
@@ -117,6 +118,27 @@ switch ($Tier) {
         }
         if ($wt.ExitCode -ne 0) { Fail "Could not create worktree: $($wt.Output)" }
         $result.worktree_path = $wtPath
+
+        # Best-effort: copy gitignored per-worktree local env files the new tree needs
+        # to run (Vite dev, supabase functions serve). A worktree starts without them
+        # because *.local is gitignored, so the freshly created tree can't run until they
+        # are present. Never fail the setup if a copy fails.
+        $envCandidates = @('.env.local', '.env', '.env.development.local', 'supabase/.env.local')
+        $copied = @()
+        foreach ($rel in $envCandidates) {
+            $src = Join-Path $RepoRoot $rel
+            $dst = Join-Path $wtPath $rel
+            if ((Test-Path -LiteralPath $src) -and -not (Test-Path -LiteralPath $dst)) {
+                try {
+                    $dstDir = Split-Path $dst -Parent
+                    if (-not (Test-Path -LiteralPath $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
+                    Copy-Item -LiteralPath $src -Destination $dst -Force
+                    $copied += $rel
+                }
+                catch { }
+            }
+        }
+        $result.copied_env = $copied
     }
 }
 
@@ -126,5 +148,8 @@ if ($Json) { $obj | ConvertTo-Json -Depth 6; exit 0 }
 switch ($Tier) {
     'light' { Write-Output "Light: working on main (no branch). Ship directly when done." }
     'medium' { Write-Output "Medium: on branch '$branch' in the primary tree." }
-    'heavy' { Write-Output "Heavy: worktree at '$($result.worktree_path)' on branch '$branch'. Work there; primary tree stays on main." }
+    'heavy' {
+        $envNote = if ($result.copied_env.Count -gt 0) { " Copied env: $($result.copied_env -join ', ')." } else { "" }
+        Write-Output "Heavy: worktree at '$($result.worktree_path)' on branch '$branch'. Work there; primary tree stays on main.$envNote"
+    }
 }

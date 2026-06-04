@@ -1,6 +1,6 @@
 ---
 name: start-work
-description: "Classify a unit of code work as light/medium/heavy and set up the right git surface: ship on main, a feat/ branch, or a worktree, with a name that matches the work. Trigger on /start-work, 'start a feature', 'set up a branch/worktree for X', or at the start of non-trivial code work. Do NOT use for planning-only (dt-plan) or a trivial one-line edit you will ship immediately."
+description: "Classify a unit of code work as light/medium/heavy and set up the right git surface: ship on main, a feat/ branch, or a worktree, with a name that matches the work. Trigger on /start-work, 'start a feature', 'set up a branch/worktree for X', or at the start of non-trivial code work. FAST-PATH: when the surface is already named in plain language — 'start a feat/feature named X' (-> feat branch, checked out) or 'make a new worktree/tree named X' (-> worktree, created and entered) — skip classification and just run it. Do NOT use for planning-only (dt-plan) or a trivial one-line edit you will ship immediately."
 ---
 
 # start-work — Classify and Set Up the Git Surface for a Unit of Work
@@ -13,6 +13,33 @@ Path resolution is governed by `../../references/conventions.md` (resolve from t
 
 
 Decide where a piece of work should live before it starts — on `main`, a `feat/` branch, or a worktree — and create that surface with a name that describes the work. The tier rubric is the shared one in `_Claude-Workspace\00_Resources\git-workflow.md`; this skill applies it, recommends, lets Danny confirm, then sets up the git surface deterministically. It is agent-neutral: Claude and Codex both invoke it and follow the same recommendation.
+
+## Fast-path: surface already named (no classification)
+
+When Danny's request **already names the surface and a slug**, skip the classify-score-confirm dance entirely — he has made the decision, so just run it. This is the common, token-light path.
+
+Detect it from plain language:
+
+- **"start a feat/feature named `<slug>`"**, "new feature `<slug>`", "cut a branch for `<slug>`" → **medium**. Runs the script with `-Tier medium`, which creates and checks out `feat/<slug>` in the current tree.
+- **"make a new worktree/tree named `<slug>`"**, "new worktree `<slug>`", "spin up a tree for `<slug>`" → **heavy**. Runs the script with `-Tier heavy`, which creates the worktree at `..\<repo>-<slug>`, then this skill **enters it** (see step E below).
+
+Fast-path procedure:
+
+A. Derive the slug from Danny's words: kebab-case, lowercase, 2-4 words. If he gave an exact name (even a jokey one like `fuck-yo-mama`), use it verbatim — do not sanitize beyond kebab-casing. The script still rejects empty/over-generic slugs (`new`, `wip`, `fix`, …); if it does, ask for an intent name.
+
+B. Pass `-Prefix fix` instead of `feat` only if Danny framed it as a bug fix ("fix branch", "hotfix").
+
+C. Run the deterministic script directly — **no `AskUserQuestion`, no tier rationale**:
+
+   ```powershell
+   pwsh -NoProfile -File skills/start-work/scripts/start-work.ps1 -Tier <medium|heavy> -Name <slug> -Json
+   ```
+
+D. **Medium:** report the branch; you are now on it. Done.
+
+E. **Heavy:** read `worktree_path` from the script's JSON, then **call the `EnterWorktree` tool with that path** so the session switches into the new worktree. (Only the agent can switch the session; the script can only create the tree on disk.) The script already copies gitignored per-worktree env files (`.env.local`, `supabase/.env.local`, …) into the new tree, reported as `copied_env`. Report the worktree path, the branch, and any copied env. Done.
+
+If the request is vague about the surface ("start work on X", "I need to do Y") rather than naming feat-vs-worktree, fall through to the full **## Procedure** below and classify.
 
 ## Procedure
 
