@@ -23,11 +23,18 @@ function Get-TokenEstimate {
 }
 
 function Get-BloatThresholds {
+    # CLAUDE.md and MEMORY.md load every session, so token size is real context
+    # cost and gets tight caps. CONTEXT.md and glossary.md are load-on-demand
+    # reference files (dt-plan/dt-review/domain work pull them in as needed), so
+    # size is NOT a per-session cost: token_max is only a runaway backstop and
+    # long-line flagging is disabled (the mandated entry format is paragraph
+    # prose). Duplication remains the live signal for them - duplicate entries
+    # breed drift regardless of loading model. (Danny, 2026-06-12.)
     return @{
         claude = @{ token_max = 7000; long_lines_max = 24; duplicate_ratio_max = 0.12; avg_bullet_words_max = 42; min_bullets_for_density = 8 }
         memory = @{ token_max = 5000; long_lines_max = 18; duplicate_ratio_max = 0.10; avg_bullet_words_max = 36; min_bullets_for_density = 8 }
-        context = @{ token_max = 3200; long_lines_max = 14; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
-        glossary = @{ token_max = 3200; long_lines_max = 14; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
+        context = @{ token_max = 20000; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
+        glossary = @{ token_max = 20000; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
     }
 }
 
