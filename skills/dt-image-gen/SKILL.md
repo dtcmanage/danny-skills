@@ -1,13 +1,13 @@
 ---
 name: dt-image-gen
-description: "Generate raster/bitmap images and visual assets via Codex's built-in gpt-image-2 engine (runs on Danny's ChatGPT subscription - no API key, no per-image billing). Use WHENEVER an image or visual representation is the right output: photos, illustrations, icons, logos, mockups (UI/product), marketing graphics, banners, infographics, textures, sprites, concept art, or any pixel image - whether Danny asks explicitly ('/dt-image-gen', 'generate/make an image/graphic/logo/mockup/banner/illustration') OR Claude itself decides a generated picture best answers the request. Do NOT use for genuine data charts/diagrams better authored as Mermaid/SVG/code, for extending an existing SVG/vector icon or logo system, or for simple shapes/wireframes better drawn directly in HTML/CSS/canvas."
+description: "Generate raster/bitmap images and visual assets via Codex's built-in gpt-image-2 engine (runs on Danny's ChatGPT subscription - no API key, no per-image billing). Use WHENEVER a generated picture is the right output: photos, illustrations, icons, logos, mockups (UI/product), marketing graphics, banners, infographics, textures, sprites, concept art - whether Danny asks explicitly ('/dt-image-gen', 'generate/make an image/graphic/logo/mockup/banner/illustration') OR Claude itself decides a raster image best answers the request. Code-native output WINS BY DEFAULT: genuine data charts/diagrams (Mermaid/SVG), existing vector/logo systems, and simple shapes stay code-native unless the user explicitly asks for a raster or art-directed image."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash Read Write Edit"
-compatibility: "Windows with Codex CLI authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Requires the danny-skills repo present."
+compatibility: "Windows with Codex CLI authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Node required for helpers/gallery. Requires the danny-skills repo present."
 metadata:
   version: 0.1.0
-  changelog: "Initial release. Thin orchestration layer over Codex's built-in image_gen engine: gen-image.sh drives Codex headless and collects/moves the output (never hands Codex a save path - it mis-resolves bash paths), make-gallery.mjs renders a master-detail contact sheet. Modes: single, batch, 5x5 grid-variation. Brand styling is opt-in."
+  changelog: "Initial release (dt-review complex, converged in 3 rounds). Thin orchestration layer over Codex's built-in image_gen engine (gpt-image-2). gen-image.sh drives Codex headless and owns collection under a race-safe contract: before/after UUID-directory set-diff (not mtime -newer), a stale-aware per-run lock, fail-closed counts, and a prompt data-envelope. Helpers: make-grid-prompt, crop-grid-cell (dependency-free PNG crop), resolve-assets-dir, brand-preamble, convert-ref, make-gallery. Modes: single, batch, 5x5 grid-variation with composition-preserving cell refinement. Brand styling opt-in."
 ---
 
 # Image Generation
@@ -15,8 +15,10 @@ metadata:
 Generate bitmap images and visual assets on demand. This skill is a thin, reliable wrapper around
 **Codex's built-in `image_gen` tool** (the `gpt-image-2` engine). It runs on Danny's ChatGPT
 subscription - no `OPENAI_API_KEY`, no per-image billing. It does not reimplement generation; it adds
-the parts the bare engine lacks: reliable file handling, a grid-variation workflow, optional TCM brand
-styling, and a review gallery.
+what the bare engine lacks: a race-safe collection contract, a grid-variation workflow with deterministic
+cell crop, optional brand styling, and a review gallery.
+
+Throughout, `<skill-dir>` is the folder containing this `SKILL.md`. Run every script through the Bash tool.
 
 ## When this fires
 
@@ -25,66 +27,77 @@ Fire whenever the right output is a generated picture, including when Claude dec
 - "make a marketing image / hero image / social post / product shot / UI mockup"
 - any moment in other work where a raster visual is the natural deliverable
 
-Do NOT fire for:
-- genuine data charts or diagrams that should be authored as **Mermaid / SVG / code** (honor the global "use a Mermaid diagram or chart for dense information" preference)
-- extending or matching an existing **SVG/vector** icon set, logo system, or illustration library in a repo - edit those natively
-- simple shapes, wireframes, or boxes-and-arrows better drawn directly in HTML/CSS/canvas
+Do NOT fire (code-native wins by default) for:
+- genuine data charts or diagrams that should be **Mermaid / SVG / code** (honor the global "use a Mermaid diagram or chart for dense information" preference)
+- extending or matching an existing **SVG/vector** icon set, logo system, or illustration library
+- simple shapes, wireframes, or boxes-and-arrows better drawn in HTML/CSS/canvas
 - a small edit to an existing source asset that already has an editable native format
+
+## Dependencies
+
+Required (the wrapper fails clear if a needed one is missing): Codex CLI (authenticated), Bash, Node
+(helpers + gallery), PowerShell. A PDF converter (`pdftoppm` / ImageMagick / Ghostscript) is required
+**only** when a PDF reference is actually supplied.
 
 ## Core discipline: never hand Codex a save path
 
-Codex resolves a caller-supplied save path through .NET/PowerShell, so a bash path like
-`/tmp/x.png` lands at `C:\tmp\x.png` - the wrong place. **Always** let Codex write to its default
-`generated_images` dir and let `gen-image.sh` collect the newest file and move it. The wrapper does
-this for you; never instruct Codex to "save to <path>".
+Codex resolves a caller-supplied save path through .NET/PowerShell, so a bash path like `/tmp/x.png`
+lands at `C:\tmp\x.png`. `gen-image.sh` never hands Codex a target path - it lets Codex write to its
+default `generated_images` dir and collects the result. Never tell Codex to "save to <path>".
 
 ## Where images are saved
 
-Default to the current project's assets folder (`assets/`, `public/`, `src/assets/`, or similar). If
-none is obvious, create `assets/generated/` at the project root. If Danny names a destination, use it.
-If there is no project context, ask for a destination or use a named scratch folder. The wrapper never
-overwrites: a name collision becomes `name-v2.png`, `name-v3.png`, etc.
+Resolve the project's assets folder deterministically:
+
+```bash
+node "<skill-dir>/scripts/resolve-assets-dir.mjs" --root "<project root>" --create
+```
+
+It returns the first existing conventional folder (`assets/`, `src/assets/`, `public/`...) or creates
+`assets/generated/`. If Danny names a destination, use it. If there is no project context, ask or use a
+named scratch folder. The wrapper never overwrites: a collision becomes `name-v2.png`, etc.
 
 ## Procedure - single image
 
 1. **Craft the prompt.** For anything non-trivial, read Codex's prompting guidance first:
-   `C:\Users\Danny\.codex\skills\.system\imagegen\references\prompting.md` and
-   `C:\Users\Danny\.codex\skills\.system\imagegen\references\sample-prompts.md`.
-   Structure the prompt: scene/backdrop -> subject -> key details -> constraints -> intended use.
-   Put any literal in-image text in quotes and specify typography, color, and placement. State the
-   intended use (ad, UI mock, infographic) so the polish level is right.
-2. **Generate.** Run the wrapper through the Bash tool (resolve `<skill-dir>` to this SKILL.md's folder):
+   `C:\Users\Danny\.codex\skills\.system\imagegen\references\prompting.md` and `...\references\sample-prompts.md`.
+   Structure: scene/backdrop -> subject -> key details -> constraints -> intended use. Put literal
+   in-image text in quotes; specify typography, color, placement.
+2. **Generate** (the wrapper wraps the prompt in a data envelope and enforces the collection contract):
 
    ```bash
-   bash "<skill-dir>/scripts/gen-image.sh" \
-     --prompt "<full prompt>" \
-     --dest "<project assets dir>" \
-     --name "<slug>"
+   bash "<skill-dir>/scripts/gen-image.sh" --prompt "<full prompt>" --dest "<assets dir>" --name "<slug>"
    ```
 
-   stdout is the saved Windows path; progress goes to stderr.
-3. **Review.** Open the saved file with the Read tool to view it. Judge subject, composition, text
-   accuracy, and any stated constraints.
-4. **Iterate** with one targeted change at a time, re-stating critical constraints, until it lands.
+   stdout is the saved Windows path; progress + the expected call-count estimate go to stderr.
+3. **Review.** Open the saved file with the Read tool. Judge subject, composition, text accuracy, constraints.
+4. **Iterate** with one targeted change at a time, restating critical constraints, until it lands.
 5. **Report** the saved path in backticks.
 
-## Mode - grid variation (cheap exploration)
+## Mode - grid variation (cheap exploration, then refine the winner)
 
-The most efficient way to explore many options: one generation that contains a numbered grid, so 25
-options cost one image instead of 25.
+One generation containing a numbered grid gives many options for the price of one image; the chosen cell
+is then cropped deterministically and refined at full resolution.
 
-1. Build a single prompt for a **5x5 grid (25 cells)** of distinct variations on the concept, each cell
-   numbered 1-25 in a small white circle at the top-left, even spacing, consistent framing.
-2. Generate once with `--name <concept>-grid` (count 1).
-3. View the grid, present it, and let Danny pick a cell number.
-4. **Regenerate the winner** as a full single image at native resolution, reusing that cell's concept
-   in a clean single-image prompt with `--name <concept>-final`.
+1. Build the grid prompt:
+   ```bash
+   node "<skill-dir>/scripts/make-grid-prompt.mjs" --concept "<concept>"
+   ```
+2. Generate once with that prompt (`--name <concept>-grid`). View the grid; let Danny pick a cell number.
+3. Crop the chosen cell deterministically (known geometry):
+   ```bash
+   node "<skill-dir>/scripts/crop-grid-cell.mjs" --grid "<grid.png>" --cell <N> --rows 5 --cols 5 --out "<concept>-cell-<N>.png"
+   ```
+4. **Refine** (composition-preserving, NOT a pixel upscale): pass the crop as a reference with a clean
+   full-resolution prompt:
+   ```bash
+   bash "<skill-dir>/scripts/gen-image.sh" --prompt "<refined prompt>" --ref "<concept>-cell-<N>.png" --dest "<assets dir>" --name "<concept>-final"
+   ```
 
 ## Mode - batch variants
 
 For genuinely separate variants (not a grid), pass `--count N`. Each is a separate Codex turn
-(~57k tokens each), so prefer the grid mode for wide exploration and reserve `--count` for a small
-number of final-quality alternates.
+(~57k tokens), so prefer grid mode for wide exploration. The wrapper prints the expected call count first.
 
 ```bash
 bash "<skill-dir>/scripts/gen-image.sh" --prompt "<prompt>" --dest "<dir>" --name "<slug>" --count 3
@@ -92,47 +105,60 @@ bash "<skill-dir>/scripts/gen-image.sh" --prompt "<prompt>" --dest "<dir>" --nam
 
 ## Reference images
 
-Pass one or more reference images with repeated `--ref <file>` (style, composition, mood, or subject
-guidance). In the prompt, label each by role ("style reference", "subject to place", "edit target").
-Codex does not accept PDFs - if a reference is a PDF, convert a page to JPEG/PNG first (ImageMagick or
-Ghostscript if present; otherwise ask Danny for an image-format export).
+Pass one or more with repeated `--ref <file>` (style, composition, mood, subject). Label each by role in
+the prompt ("style reference", "subject to place", "edit target"). Codex does not accept PDFs - convert first:
+
+```bash
+bash "<skill-dir>/scripts/convert-ref.sh" "<brand-book.pdf>" "<out.png>"
+```
+
+It passes raster files through unchanged and fails clear (naming what to install) if no converter exists.
 
 ## Brand styling - opt in only
 
-Default output is **not** TCM-branded. Apply TCM styling only when Danny asks for it ("on-brand",
-"TCM brand", "our colors", "for the firm"). When he does:
-- Pull the current palette hex values and typography from the canonical design system (per the global
-  rule, token values live in code - read the design-system guideline/tokens; never hand-copy values
-  from memory).
-- Append a style preamble to the prompt, e.g. deep navy primary, gold accent, Myriad Pro typography,
-  tight corner radius, clean institutional finish - using the actual current values.
-- Keep genuine UI work conformant to the design system; a generated mockup is a reference, not a
-  shippable component.
+Default output is **not** TCM-branded. Apply TCM styling only when Danny asks ("on-brand", "TCM brand",
+"our colors", "for the firm"). When he does:
+- Pull the current palette hex + typography from the canonical design system (values live in code -
+  read the design-system guideline/tokens; never hand-copy from memory).
+- Build the preamble with the resolved values and append it to the prompt:
+  ```bash
+  node "<skill-dir>/scripts/brand-preamble.mjs" --primary "<navy hex>" --accent "<gold hex>" --font "<typeface>"
+  ```
+- A generated UI mockup is a reference, not a shippable component; real UI stays design-system conformant.
+
+## Wrapper collection contract (how gen-image.sh stays reliable)
+
+- Collection = before/after **UUID-directory set difference** under `generated_images`, not mtime.
+- Per-run **lock** (`generated_images/.dt-image-gen.lock`, contents run-id|PID|start) serializes runs;
+  a stale lock with no live owner is reclaimed; a live owner refuses with "run in progress". `--force-unlock`
+  acts only after confirming no live owner.
+- **Fail closed:** exactly one new PNG per generation; 0 or unexpected >1 is a typed error (with the
+  Codex stream-log path). `--allow-extra` takes the newest and logs the rest without moving them.
+- All `--ref`/`--dest` inputs are normalized to absolute paths at the boundary.
 
 ## Gallery review
 
-When there is more than one image to compare (a batch, a set of finals, or several grids), build a
-contact sheet and report its path:
+When there is more than one image to compare, build a contact sheet and report its path:
 
 ```bash
 node "<skill-dir>/scripts/make-gallery.mjs" --dir "<assets dir>" --title "<short title>"
 ```
 
-It writes `gallery.html` into that folder (master-detail: the thumbnail rail navigates, the large
-preview pane stays fixed). It must live beside the images. For a single image, skip the gallery - just
-view and report the path.
+It writes `gallery.html` into that folder (thumbnail rail navigates; fixed preview pane). It must live
+beside the images. For a single image, skip the gallery - just view and report the path.
 
 ## Reporting
 
-- Backtick every Windows path (especially any with spaces) so it stays clickable.
-- Report each saved image path and the gallery path when one was built.
+- Backtick every Windows path (especially any with spaces).
+- Report each saved image path and the gallery path when built.
 - Note that generation used Codex's built-in engine on the subscription (no API key, no extra billing).
 
 ## Guardrails
 
-- Never instruct Codex to save to a specific path; the wrapper collects and moves the file.
+- Never instruct Codex to save to a specific path; the wrapper collects and moves.
 - Never hand-copy design tokens from memory; read current values from the design system when branding.
 - Do not use this skill for code-native charts/diagrams (Mermaid/SVG) or existing vector/logo systems.
 - Default off-brand; style for TCM only on request.
-- Do not overwrite an existing asset; the wrapper versions filenames automatically.
-- Save into the current project's assets folder unless Danny names a destination.
+- Do not overwrite an existing asset; the wrapper versions filenames.
+- Save into the resolved project assets folder unless Danny names a destination.
+- Grid refinement is composition-preserving, not a deterministic upscale - say so when reporting.
