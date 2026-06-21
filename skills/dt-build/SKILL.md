@@ -1,7 +1,7 @@
 ---
 name: dt-build
 description: "Execute a finalized build end-to-end. Trigger on /dt-build or 'dt-build [roadmap-or-design-path]'. Prefers a dt-roadmap roadmap.md for heavier builds but accepts a design-final.md directly and auto-generates the roadmap; a missing roadmap is never required or a crash."
-disable-model-invocation: true
+disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
