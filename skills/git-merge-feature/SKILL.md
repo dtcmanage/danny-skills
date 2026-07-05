@@ -2,10 +2,11 @@
 name: git-merge-feature
 description: "Rebase a named feature branch onto main then fast-forward merge it into main and delete the branch. Use when a feature is complete and ready to land on main. Trigger on /git-merge-feature [branch] or 'merge feature X to main' or 'land feature X'."
 metadata:
-  version: 1.1.0
+  version: 1.2.0
   changelog:
     - "1.0.0 - Initial: resolve branch, rebase onto main, ff-only merge, delete branch via merge-feature.ps1."
     - "1.1.0 - Handle a feature branch checked out in a git worktree (the normal trunk-based case): the script now detects and merges it worktree-aware (rebase inside the worktree, ff-merge from the primary tree, remove the worktree before deleting the branch); SKILL.md documents the same fallback."
+    - "1.2.0 - Post-merge purge hardening for dt-ship: new opt-in -PurgeWorktree switch makes worktree-remove/branch-delete failures hard errors (plus 'git worktree prune' after removal) so merged worktrees can never be silently left behind; default behavior without the switch is unchanged. JSON now always includes worktree_path, worktree_removed, and rerere_enabled (the rerere suggestion moved from prose re-checking into script output)."
 ---
 
 # git-merge-feature — Rebase and Merge a Feature Branch into main
@@ -40,7 +41,9 @@ The feature branch name. Can be the full name (`feat/nav-fix`) or just the suffi
    - invokes the repo-level `scripts/git/rebase-onto-main.ps1` to rebase,
    - runs `git merge --ff-only` from `main` (no `--no-ff` fallback),
    - deletes the local feature branch on success,
-   - emits a JSON summary with `commit_range`, `branch_deleted`, and `status`.
+   - emits a JSON summary with `commit_range`, `branch_deleted`, `worktree_path`, `worktree_removed`, `rerere_enabled`, and `status`.
+
+   Pass `-PurgeWorktree` when the caller requires guaranteed cleanup (dt-ship always passes it): a failed worktree removal or branch deletion then becomes a hard error instead of a warning, and a successful removal is followed by `git worktree prune`. Without the switch, behavior is unchanged from 1.1.0 — existing callers are unaffected.
 
    When the resolved branch is checked out in a worktree (the normal trunk-based
    case — every feature lives in its own worktree), the script cannot check it
@@ -52,7 +55,8 @@ The feature branch name. Can be the full name (`feat/nav-fix`) or just the suffi
 3. Parse the JSON summary and report:
    - the resolved branch name,
    - the commit range that landed on `main`,
-   - whether the branch was deleted.
+   - whether the branch was deleted,
+   - whether a worktree was removed (`worktree_path` / `worktree_removed`).
 
 4. If the script returns an error:
    - **Uncommitted changes**: ask Danny to commit or stash, then retry.
@@ -60,7 +64,7 @@ The feature branch name. Can be the full name (`feat/nav-fix`) or just the suffi
    - **ff-only merge failed**: do NOT fall back to a regular merge. Re-run the script (it will re-rebase).
    - **Branch is checked out in a worktree** (`fatal: '<branch>' is already used by worktree at '<path>'`): expected under the trunk-based workflow. The updated script handles this automatically; if you are merging by hand, do it worktree-aware: (1) `git fetch origin`, then `git -C <worktree> rebase origin/main`; (2) from the primary tree on `main`, `git pull --ff-only origin main` then `git merge --ff-only <branch>`; (3) push only if Danny said ship; (4) after confirming the merge, `git worktree remove <worktree>` then `git branch -d <branch>`. Keep the ff-only guarantee; never remove the worktree or delete the branch before the merge is confirmed.
 
-5. If rerere is not enabled globally, suggest after a successful merge: `git config --global rerere.enabled true`.
+5. Read `rerere_enabled` from the JSON summary — do not re-run `git config` to check. If it is `false`, suggest after a successful merge: `git config --global rerere.enabled true`.
 
 ## Rules
 

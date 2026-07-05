@@ -6,6 +6,10 @@ param(
 
     [string]$RoadmapViewPath = "",
 
+    # HTML companion is on-request only (Danny must explicitly ask). Default is
+    # markdown-only. Passing an explicit -RoadmapViewPath also counts as the request.
+    [switch]$EmitRoadmapView,
+
     [switch]$ForceMermaidFallback
 )
 
@@ -309,6 +313,7 @@ if ([string]::IsNullOrWhiteSpace($RoadmapPath)) {
     $RoadmapPath = Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $DesignPath).Path) 'roadmap.md'
 }
 $RoadmapPath = [System.IO.Path]::GetFullPath($RoadmapPath)
+$emitView = $EmitRoadmapView.IsPresent -or -not [string]::IsNullOrWhiteSpace($RoadmapViewPath)
 if ([string]::IsNullOrWhiteSpace($RoadmapViewPath)) {
     $RoadmapViewPath = Join-Path (Split-Path -Parent $RoadmapPath) 'roadmap-view.html'
 }
@@ -592,11 +597,13 @@ $ganttDefinition
     Set-Content -LiteralPath $OutputPath -Value $html -Encoding UTF8
 }
 
-Write-RoadmapReviewHtml -OutputPath $RoadmapViewPath -Milestones $milestonesForHtml -Mermaid $mermaid -RendererAssetPath $vendoredMermaidPath -GeneratedUtc $generatedUtc -SourcePath $DesignPath -RoadmapMarkdownPath $RoadmapPath
+if ($emitView) {
+    Write-RoadmapReviewHtml -OutputPath $RoadmapViewPath -Milestones $milestonesForHtml -Mermaid $mermaid -RendererAssetPath $vendoredMermaidPath -GeneratedUtc $generatedUtc -SourcePath $DesignPath -RoadmapMarkdownPath $RoadmapPath
+}
 
 [pscustomobject]@{
     roadmap_path = $RoadmapPath
-    roadmap_view_path = $RoadmapViewPath
+    roadmap_view_path = if ($emitView) { $RoadmapViewPath } else { $null }
     milestone_count = $milestonesAugmented.Count
     chunk_count = $chunkRows.Count
     renderer = $mermaid.Renderer

@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash Read Write Edit"
 compatibility: "Windows with Codex CLI authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Node required for helpers/gallery. Requires the danny-skills repo present."
 metadata:
-  version: 0.1.0
+  version: 0.1.1
   changelog: "Initial release (dt-review complex, converged in 3 rounds). Thin orchestration layer over Codex's built-in image_gen engine (gpt-image-2). gen-image.sh drives Codex headless and owns collection under a race-safe contract: before/after UUID-directory set-diff (not mtime -newer), a stale-aware per-run lock, fail-closed counts, and a prompt data-envelope. Helpers: make-grid-prompt, crop-grid-cell (dependency-free PNG crop), resolve-assets-dir, brand-preamble, convert-ref, make-gallery. Modes: single, batch, 5x5 grid-variation with composition-preserving cell refinement. Brand styling opt-in."
 ---
 
@@ -59,8 +59,12 @@ named scratch folder. The wrapper never overwrites: a collision becomes `name-v2
 
 ## Procedure - single image
 
-1. **Craft the prompt.** For anything non-trivial, read Codex's prompting guidance first:
-   `C:\Users\Danny\.codex\skills\.system\imagegen\references\prompting.md` and `...\references\sample-prompts.md`.
+1. **Craft the prompt.** For anything non-trivial, read Codex's prompting guidance first - resolve the
+   path from the user profile, never hardcode it: `$env:USERPROFILE\.codex\skills\.system\imagegen\references\prompting.md`
+   (in bash contexts: `~/.codex/skills/.system/imagegen/references/prompting.md`) and `...\references\sample-prompts.md`
+   in the same folder. If that path is absent (Codex updated or moved it), locate it with
+   `Get-ChildItem $env:USERPROFILE\.codex\skills -Recurse -Filter 'imagegen*' -Directory` before falling back
+   to prompting without the guidance.
    Structure: scene/backdrop -> subject -> key details -> constraints -> intended use. Put literal
    in-image text in quotes; specify typography, color, placement.
 2. **Generate** (the wrapper wraps the prompt in a data envelope and enforces the collection contract):

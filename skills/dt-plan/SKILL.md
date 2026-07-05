@@ -5,7 +5,7 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.2
+  version: 1.1.0
   changelog: "Pointer-swap to shared output-paths convention in references/conventions.md instead of restating the no-computer-link rule inline."
 ---
 
@@ -28,6 +28,8 @@ Baseline requirement:
 - Also emit a review-first `.html` artifact in the same artifact family/folder.
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
 - Report both output paths in the final skill output.
+
+Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default.
 
 
 
@@ -139,18 +141,14 @@ Walk through each section in turn. In each section your job is:
 - **One question at a time within a section.** Stacking three questions in one message kills the conversational flow Cowork is built for.
 - **One section at a time, full stop.** Don't dump the whole plan in chat. After each section, give a one-paragraph "here's what's locked" summary and ask if Danny wants to move on.
 
-If TCM Tech Stack Reference territory is involved (code under `D:\Claude\_Claude-Workspace\`, the production VM, Azure/Supabase/Cloudflare infra, IBKR/STP integrations, or anything in the TCM Database / TCM Website / Valuation workstations), read `D:\Claude\_Claude-Workspace\TCM Tech Stack Reference.docx` before strawmanning architecture sections. Ground the plan in the existing wiring rather than inventing it.
+If TCM Tech Stack Reference territory is involved (code under `D:\Claude\_Claude-Workspace\`, the production VM, Azure/Supabase/Cloudflare infra, IBKR/STP integrations, or anything in the TCM Database / TCM Website / Valuation workstations), read `D:\Claude\_Claude-Workspace\TCM Tech Stack Reference.md` before strawmanning architecture sections. Ground the plan in the existing wiring rather than inventing it.
 
 ## Step 4 — Save the plan
 
 When Danny says "save", "we're done", "write it", or equivalent:
 
 1. Write the markdown plan at the agreed path.
-2. Generate a companion HTML review artifact (`plan-view.html` by default, beside the plan) with:
-   - summary cards (scope, status, key decisions),
-   - a flow/dependency diagram (Mermaid or SVG),
-   - open questions and risks in a scan-first layout.
-   If Mermaid is used, it must satisfy `references/html-artifact-policy.md`: use the vendored local Mermaid runtime or inline SVG and verify a rendered diagram, not raw `graph TD` text.
+2. Visual companion — on request only. Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks for the visual, invoke the `dt-visualize-plan` skill (which owns `render-plan-view.ps1`) against the saved plan — dt-plan itself never builds HTML.
 
 The plan's frontmatter carries `shape_version: 1` — the soft-contract version that downstream consumers (`dt-visualize-plan`, `dt-prototype`, `dt-review`) read to confirm the plan shape. The plan-shape spec and the `shape_version` policy (current accepted version, deprecated versions, adaptation rules) live in `references/plan-shape.md`.
 
@@ -181,18 +179,24 @@ shape_version: 1
 
 Section names match what the conversation produced. No skeleton headers with placeholders left in. If a section was skipped entirely, omit it.
 
-If `CONTEXT.md` was created or updated during the session, it's already saved (you wrote to it inline as terms got pinned). If an ADR was drafted, save it now to `docs/adr/<NNNN>-<kebab-title>.md` next to `CONTEXT.md`, numbered sequentially from the highest existing ADR + 1.
+If `CONTEXT.md` was created or updated during the session, it's already saved (you wrote to it inline as terms got pinned). If an ADR was drafted, save it now to `docs/adr/<NNNN>-<kebab-title>.md` next to `CONTEXT.md`. Resolve the number deterministically (do not eyeball the folder):
+
+```powershell
+pwsh -NoProfile -File skills/dt-plan/scripts/next-adr-number.ps1 -Dir "<project>/docs/adr"
+```
+
+The script scans existing ADR filenames and returns JSON `{ next_number, existing_count }` — use `next_number` for `<NNNN>`. A missing or empty `docs/adr/` folder yields `next_number = 1`.
 
 After saving, output exactly this, with bare absolute paths on their own lines per the output-paths convention in `../../references/conventions.md`:
 
 ```
 Plan saved at <bare absolute path>.
-Plan review HTML saved at <bare absolute path>.
 
+To see the visual, ask and I'll run dt-visualize-plan on it.
 To run adversarial review with Codex when ready, open Claude Code in workspace root and trigger /dt-review pointing at this file.
 ```
 
-If a `CONTEXT.md` or ADR was also written, list them on their own lines below the plan path so Danny can see everything that landed this session.
+If a `CONTEXT.md` or ADR was also written, list them on their own lines below the plan path so Danny can see everything that landed this session. If Danny asked for the visual and `dt-visualize-plan` ran, list the `plan-view.html` path on its own line too.
 
 ## Guardrails
 

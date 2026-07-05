@@ -1,4 +1,5 @@
-# Render a design-view HTML artifact by diffing plan-draft.md vs design-final.md.
+# Render a design-view HTML artifact by diffing plan-draft.md vs the finalized design
+# (design-final-<slug>.md; legacy design-final.md accepted — any path works via -DesignPath).
 
 param(
     [Parameter(Mandatory)]

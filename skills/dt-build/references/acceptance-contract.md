@@ -100,9 +100,10 @@ dt-build's "Execute milestones" step calls the deterministic gates in this order
 3. `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId mNN -WorkingTree <wt> -RunTests` → must return `PASS`. On `BLOCKED`, escalate within the two-attempt budget.
 4. `scripts/check-downgrade-language.ps1 -Path <milestone-notes-dir> -Json` → must return exit 0. Any nonzero exit is a blocker unless explicitly approved.
 5. Append milestone row to the ledger (`scripts/build-acceptance-ledger.ps1` is a one-shot wrapper at run end, but per-milestone the rows are accumulated in `acceptance-rows.jsonl`).
-6. Move to next milestone (DAG order, load-bearing first within a layer).
+6. Rewrite the pipeline checkpoint `_build-state.md` in the project's planning folder (SKILL.md step 6.h; canonical shape: `skills/dt-pipeline/templates/build-state-template.md`).
+7. Move to next milestone (DAG order, load-bearing first within a layer).
 
-When the build completes (or stops at the verify/fix budget cap), `scripts/build-acceptance-ledger.ps1` produces the final ledger and the `build-run-review.html` surfaces it as the headline panel above the milestone status cards.
+When the build completes (or stops at the verify/fix budget cap), `scripts/build-acceptance-ledger.ps1` produces the final ledger. `build-run-review.html` is generated only when Danny explicitly asks (SKILL.md step 6.5); when built, it surfaces the ledger as the headline panel above the milestone status cards.
 
 ## What this gate does not prevent
 

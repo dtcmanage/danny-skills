@@ -1,12 +1,12 @@
 ---
 name: dt-visualize-design
-description: "Render a design-final.md into a browser-openable design-view.html artifact with section-level diff badges ([ADDED]/[CHANGED]/[REMOVED]) against plan-draft.md and a change-summary header. Trigger on /dt-visualize-design or 'dt-visualize-design [design-path]'. Do NOT use for adversarial review (dt-review) or roadmap decomposition (dt-roadmap)."
+description: "Render a finalized design (design-final-<slug>.md, or legacy design-final.md) into a browser-openable design-view.html artifact with section-level diff badges ([ADDED]/[CHANGED]/[REMOVED]) against plan-draft.md and a change-summary header. Trigger on /dt-visualize-design or 'dt-visualize-design [design-path]'. Do NOT use for adversarial review (dt-review) or roadmap decomposition (dt-roadmap)."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.1
+  version: 1.1.0
   changelog: "Hardened shared Mermaid rendering so design-view.html verifies real SVG diagrams instead of raw graph text."
 ---
 
@@ -38,7 +38,8 @@ original plan at section level. This skill owns rendering and change-surface cla
 ## When this fires
 
 Trigger when all are true:
-- There is a saved `design-final.md` artifact.
+- There is a saved finalized design artifact: `design-final-<slug>.md` (dt-review's output naming,
+  e.g. `design-final-lp-statement-linking.md`) or a legacy bare `design-final.md`.
 - There is a baseline `plan-draft.md` to diff against.
 - Danny wants one-page visual diff output with explicit `[ADDED]`, `[CHANGED]`, `[REMOVED]` badges.
 
@@ -50,21 +51,24 @@ Do NOT fire for:
 
 1. Collect input in one question:
 - `plan-draft.md` absolute path.
-- `design-final.md` absolute path.
-- Optional output path (default: `design-view.html` beside `design-final.md`).
+- Finalized design absolute path (`design-final-<slug>.md`, or legacy `design-final.md`).
+- Optional output path (default: `design-view.html` beside the design file).
 
 2. Render with shared infrastructure:
 - Run this skill's `scripts/render-design-view.ps1` wrapper.
 - It calls repo-level `scripts/visualize/html-builder.ps1` in `design-diff` mode.
 - Diff computation is repo-level `scripts/visualize/markdown-section-diff.ps1`.
 
-3. Validate output quickly:
-- Confirm `design-view.html` exists.
-- Confirm change-summary header appears with `[ADDED]`, `[CHANGED]`, `[REMOVED]` counts.
-- Confirm section cards carry badge chips for changed sections.
-- Confirm dependency provenance footer is populated and Mermaid is vendored-local only.
-- Confirm rendered Mermaid exists (`.mermaid svg` in the browser).
-- Confirm the top fold is skim-first (status cards + key change visuals before long narrative blocks).
+3. Validate output with the shared deterministic checker (via Bash):
+- `pwsh -NoProfile -File <repo>/scripts/visualize/verify-html-artifact.ps1 -Path <design-view.html>
+  -RequireMermaid -RequireText 'Change Summary','[ADDED]','Dependency Provenance' -Json`
+  (`-RequireText` takes a comma-separated array).
+- The checker covers existence/size, no remote src/href URLs (vendored Mermaid only), the
+  change-summary header with badge counts, the dependency-provenance footer, and drives the
+  browser-smoke harness to assert a rendered `.mermaid svg` element with no console errors.
+- Do not report success unless the checker's `status` is `pass`.
+- Remaining manual glance: confirm section cards carry badge chips for changed sections and the top
+  fold is skim-first (status cards + key change visuals before long narrative blocks).
 
 4. Report result:
 - Return absolute output path.

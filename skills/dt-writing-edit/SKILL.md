@@ -1,6 +1,8 @@
 ---
 name: dt-writing-edit
 description: "Tighten and improve a finished draft: a structural pass (section order, dependency logic, does each section earn its place), a clarity and voice pass (cut padding, split overloaded sentences, enforce voice principles and the genre style profile), and a fact-check against the source corpus when one exists. Writes a new versioned file plus a change summary; the original is never touched. Trigger on /dt-writing-edit, dt-writing-edit X, or any request to edit, revise, tighten, clean up, or improve a written draft. Do not use to write a piece from scratch (that is dt-writing-draft)."
+metadata:
+  version: 0.2.0
 ---
 
 # Writing-Edit — Structural & Clarity Pass
@@ -22,6 +24,8 @@ Baseline requirement:
 - Also emit a review-first `.html` artifact in the same artifact family/folder.
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
 - Report both output paths in the final skill output.
+
+Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default.
 
 
 
@@ -95,13 +99,22 @@ pwsh -NoProfile -File skills/dt-writing-edit/scripts/next-edit-version.ps1 `
   -DraftPath "<absolute draft path>" -Json
 ```
 
-The script returns `next_version`, `next_edit_path`, `next_summary_path`, and `next_review_html_path` — use those paths for the three artifacts below. Format: if the draft is `<name>.md`, the edit lands at `<name>-edit-v<N>.md`.
+The script returns `next_version`, `next_edit_path`, `next_summary_path`, and `next_review_html_path` — use those paths for the artifacts below. Format: if the draft is `<name>.md`, the edit lands at `<name>-edit-v<N>.md`.
+
+**Original-untouched guarantee (deterministic).** Before writing anything, hash the original draft:
+
+```powershell
+(Get-FileHash -LiteralPath "<absolute draft path>" -Algorithm SHA256).Hash
+```
+
+After the versioned edit file is written, re-hash the original with the same command and compare. Record the result as `original unchanged: <hash match>` in the change summary. If the hashes differ, stop and report it — something wrote to the original, and that breaks the never-overwrite guarantee.
 
 Write a short change summary to `next_summary_path`:
 
 ```markdown
 # Edit Summary — <name> v<N>
 **Date:** <ISO date>
+**Original unchanged:** <hash match — SHA256 before/after identical | MISMATCH — investigate>
 
 ## Structural changes
 - <move / cut / merge / add — and the reason, as agreed in Step 2>
@@ -113,7 +126,7 @@ Write a short change summary to `next_summary_path`:
 - <claims flagged, contradictions found, web checks run and their results>
 ```
 
-Generate the review HTML at `next_review_html_path` with:
+The review HTML is on request only. Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks, generate the review HTML at `next_review_html_path` with:
 - before/after summary cards,
 - structural change map,
 - clarity edits by section,
@@ -124,13 +137,14 @@ Output the bare absolute paths per the output-paths convention in `../../referen
 ```
 Edited draft saved at <bare absolute path>.
 Change summary saved at <bare absolute path>.
-Edit review HTML saved at <bare absolute path>.
 ```
+
+If Danny asked for the review HTML and it was built, add `Edit review HTML saved at <bare absolute path>.` on its own line.
 
 ## Guardrails
 
 - **Load the voice references and the style profile first.** `voice-principles-business.md` governs, `voice-principles.md` is the email base beneath it, and the genre style profile is the per-genre layer. They are what make this an edit in Danny's voice, not a generic cleanup.
-- **Never overwrite the original.** The edit is always a new versioned file. Danny compares and decides.
+- **Never overwrite the original.** The edit is always a new versioned file. Danny compares and decides. The SHA256 before/after check in Step 5 proves it — the summary carries the `original unchanged` line.
 - **Get sign-off before restructuring.** Reordering is a big, visible change — propose, then move. Clarity edits within an agreed structure do not need per-section permission.
 - **Edit the prose, not the argument.** Preserve Danny's meaning and his calls. A point you think is wrong gets flagged, not silently rewritten.
 - **No arbitrary length caps.** Match length to stakes, per the business voice profile.

@@ -1,14 +1,15 @@
 ---
 name: dt-build
-description: "Execute a finalized build end-to-end. Trigger on /dt-build or 'dt-build [roadmap-or-design-path]'. Prefers a dt-roadmap roadmap.md for heavier builds but accepts a design-final.md directly and auto-generates the roadmap; a missing roadmap is never required or a crash."
+description: "Execute a finalized build end-to-end. Trigger on /dt-build or 'dt-build [roadmap-or-design-path]'. Prefers a dt-roadmap roadmap.md for heavier builds but accepts a finalized design directly (design-final-<slug>.md, legacy design-final.md) and auto-generates the roadmap; a missing roadmap is never required or a crash."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 2.6.0
-  changelog: "2.6.0 roadmap-preferred-not-required intake: dt-build now accepts a finalized design (design-final.md / plan-draft.md) as input, not only a dt-roadmap roadmap.md. New procedure steps 2 (detect roadmap vs design), 2.5 (auto-generate the roadmap from a design via the canonical skills/dt-roadmap/scripts/build-roadmap.ps1 — no re-implemented milestone parsing, no schema duplication), and 2.6 (validate, formerly step 2). A roadmap is preferred for heavier builds (many milestones or any load-bearing/gate milestone, which dt-build now recommends a reviewed dt-roadmap pass for) but is never a hard requirement; when a design lacks an Implementation Sequence / Validation Gates surface the build STOPS with the producer's graceful explanatory message instead of crashing. 'When this fires' and references/shared-input-routing.md updated to document design-or-roadmap intake. Prior 2.5.0 trunk-based-branch-model: integration target moved off the retired dev branch to a short-lived build/<RUN_ID> branch cut from main (2026-05-28 workspace-wide trunk migration); per-milestone accepted work compare-and-swaps onto build/<RUN_ID>, and the rehearsed branch is left for a separate human-authorized /git-merge-feature to main (dt-build never writes to main). scripts/dev-cas-update.ps1 renamed to scripts/branch-cas-update.ps1 and generalized (mandatory -TargetBranch/-ExpectedTargetSha; output keys target_branch/expected_target_sha/observed_target_sha; CAS_* error prefixes). branch-contract.md, resilience-security.md, and subagent-prompts.md updated. Prior 2.4.0 behavior retained: Per-milestone acceptance gate now evaluates EVERY verification-manifest row for a milestone, not just the first. Prior implementation (verify-milestone-acceptance.ps1) used `Select-Object -First 1` against the rows matched by milestone-id, so any milestone with multiple CHK-* checks had partial gate coverage — only the first check's procedure was parsed for artifacts/commands and only its named test command was run. Calibration event: 2026-05-27 db-durability build at file-sorter, where M02 reported PASS by running only CHK-M02-POPULATED-UPGRADE while CHK-M02-ROLLBACK and CHK-M02-STALE-V11-REGRESSION were silently skipped despite being load-bearing in the roadmap. v2.4.0 changes: (1) verify-milestone-acceptance.ps1 pools every matching verification row, extracts artifacts and commands per row, presence-checks each row's artifacts against the working tree, runs each row's named commands under -RunTests, and folds every exit code into the verdict. JSON output adds a `verification_checks` array (each element exposes check_id, procedure_text, artifacts_named/present/missing, commands_named, command_results, test_status, blockers) alongside the existing top-level fields (status/accepted/blockers/artifacts_missing/commands_named/command_results) which remain the rolled-up view consumed by build-acceptance-ledger.ps1. status is PASS only when every check's blockers are empty. (2) build-acceptance-ledger.ps1 surfaces the per-check breakdown in the HTML ledger as a Verification Check Detail section — one sub-table per milestone listing each CHK-* id, status badge, named artifacts (with missing markers), and named commands with exit codes. Markdown ledger remains the roll-up. (3) acceptance-contract.md updated to document that the gate evaluates every verification row per milestone — the contract previously read as if every check was enforced; v2.4.0 makes the implementation match. Previous 2.3.1 acceptance gate fixes (pytest -> python -m pytest, downgrade_approved_by parser + APPROVED_DOWNGRADE status) are retained unchanged."
+  version: 2.7.0
+  changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
+
 
 # Build Executor
 
@@ -30,6 +31,8 @@ Baseline requirement:
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
 - Report both output paths in the final skill output.
 
+Exception — `build-run-review.html` is on-request only; see step 6.5 for the binding policy.
+
 
 
 `dt-build` consumes a finalized `roadmap.md` contract and executes milestones on a short-lived `build/<RUN_ID>` branch cut from `main`, leaving it rehearsed and tested for a separate human-authorized merge to `main`.
@@ -39,7 +42,9 @@ Phase 7A established deterministic roadmap-first intake. Phase 7B restores execu
 
 Trigger when all are true:
 - Input artifact is **either** a `roadmap.md` produced by `dt-roadmap` **or** a finalized design
-  (`design-final.md`, or `plan-draft.md` when review was skipped). A roadmap is *preferred* for heavier
+  (`design-final-<slug>.md` — dt-review's current naming, slug describing what is being built — or the
+  legacy `design-final.md`; accept anything matching `design-final-*.md` or `design-final.md`. Also
+  `plan-draft.md` when review was skipped). A roadmap is *preferred* for heavier
   builds (many milestones, load-bearing/gate milestones, anything you want a reviewed contract for);
   it is **not** a hard requirement. When handed a design, dt-build auto-generates the roadmap itself
   (step 2.5) — a missing roadmap is never a crash or a refusal.
@@ -73,8 +78,9 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 
 1. Intake in one question:
 - Repo path (absolute).
-- Input path — a `roadmap.md` **or** a finalized design (`design-final.md` / `plan-draft.md`).
-  Default: `<project>/design/roadmap.md`, falling back to `<project>/design/design-final.md`.
+- Input path — a `roadmap.md` **or** a finalized design (`design-final-*.md` / legacy `design-final.md`
+  / `plan-draft.md`). Default: `<project>/design/roadmap.md`, falling back to
+  `<project>/design/design-final.md` and then the newest `<project>/design/design-final-*.md`.
 - Optional RUN_ID for resume check.
 - Optional integration branch (default `build/<RUN_ID>`, cut from `main`).
 
@@ -127,12 +133,14 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 - e. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
 - f. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`.
 - g. **Update the integration branch** (`build/<RUN_ID>`) via compare-and-swap through `scripts/branch-cas-update.ps1` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
+- h. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (d–f) and the integration branch is updated (g), rewrite `_build-state.md` in the project's planning folder (the folder holding `plan-draft.md` / `design-final*.md` / `roadmap.md`, typically `<project>/design/`) as an atomic full-file rewrite from the canonical template `skills/dt-pipeline/templates/build-state-template.md` — reference that template, never duplicate its shape here. Record phase, current milestone, completed list (this milestone appended with its commit SHA), in-flight work, last commit SHA, uncommitted artifacts, and next step. This file is distinct from the run-folder `build-state.md` (dt-build's internal run scaffold from step 4): `_build-state.md` is the crash-resume checkpoint dt-pipeline and Danny read.
 
-6.5 Emit acceptance ledger + review artifact:
+6.5 Emit acceptance ledger; review artifact on request only:
 - Run `scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder> -RunTests`.
   - Emits `build-acceptance-ledger.md` and `build-acceptance-ledger.html`.
   - The ledger is the final answer for the build run — not a freeform summary.
-- Generate `build-run-review.html` in the run artifact folder with:
+- Mark the run complete in the pipeline checkpoint: rewrite `_build-state.md` (same template and location as step 6.h) with `status: COMPLETE`, the final commit SHA, and no in-flight work.
+- `build-run-review.html`: Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks for it, generate `build-run-review.html` in the run artifact folder with:
   - the acceptance ledger as the headline panel (above the milestone status cards),
   - milestone status cards,
   - execution timeline,
@@ -160,7 +168,7 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
   - any row with status `missing`, `wrong_target`, `create_failed`, or `collision_not_junction`,
   - any entry in `setup_gaps` (a target parent directory does not exist; never auto-create it),
   - any entry in `orphans` introduced by this run.
-- Append the full propagation JSON to the build-final summary and surface a "Skill Propagation" panel in `build-run-review.html` listing per-(skill, location) status, any setup gaps, and any orphans.
+- Append the full propagation JSON to the build-final summary (the always-on record); when Danny has asked for the `build-run-review.html` companion (step 6.5), also surface a "Skill Propagation" panel in it listing per-(skill, location) status, any setup gaps, and any orphans.
 - The same script is callable ad-hoc for retroactive sweeps with no `-NewSkills` (scans all skills in the repo) and without `-Create` (report-only).
 
 ## Required verification
@@ -173,7 +181,7 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
   - same milestone-commit outcome class as pre-refactor dt-build behavior
   - artifact integrity checks still pass
   - no regression to verify/fix budget policy
-- Report bare absolute paths for primary run artifacts and `build-run-review.html`.
+- Report bare absolute paths for primary run artifacts (including the acceptance ledger and `_build-state.md`), and for `build-run-review.html` when Danny asked for it.
 
 ## References
 
@@ -186,6 +194,7 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 - Branch contract: `references/branch-contract.md`
 - Codex assembly byte contract: `references/codex-assembly-contract.md`
 - Skill propagation gate (one-shot / build-final): repo-level `scripts/verify-skill-junctions.ps1`
+- Pipeline checkpoint template (canonical `_build-state.md` shape, step 6.h): `skills/dt-pipeline/templates/build-state-template.md`
 - Acceptance gate scripts (called by procedure step 6):
   - `scripts/verify-milestone-acceptance.ps1` — per-milestone artifact + command check
   - `scripts/check-downgrade-language.ps1` — banned-phrase scanner

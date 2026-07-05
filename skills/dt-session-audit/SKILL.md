@@ -1,6 +1,8 @@
 ---
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
+metadata:
+  version: 0.2.0
 ---
 
 # Session Audit
@@ -22,6 +24,8 @@ Baseline requirement:
 - Also emit a review-first `.html` artifact in the same artifact family/folder.
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
 - Report both output paths in the final skill output.
+
+Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default.
 
 
 
@@ -138,6 +142,8 @@ Discover workspace dynamically. Read relevant files if present:
 4. In-play project `CONTEXT.md` and workstation `glossary.md`.
 5. Any reference files used in-session.
 6. Workspace `CLAUDE.md` routing map as topology data only.
+
+Before routing any finding, enumerate which destination files actually exist for the in-play scopes with a single deterministic pass — one `Get-ChildItem` (or Glob) sweep over the root, in-play workstation, and in-play project folders for `CLAUDE.md`, `MEMORY.md`, `CONTEXT.md`, and `glossary.md`. Route only to files confirmed present in that sweep; if a routing decision points at a file that does not exist, propose creating it explicitly rather than assuming it is there.
 
 ## Scan Targets
 
@@ -280,7 +286,7 @@ Group into:
 
 For revise-in-place, show full rewritten entry (or exact before/after changed block) so durable facts are auditable.
 
-When findings are non-empty, also emit `session-audit-view.html` in the active workspace with:
+`session-audit-view.html` is on request only. Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks and findings are non-empty, emit `session-audit-view.html` in the active workspace with:
 - summary cards by outcome class,
 - scope-routing diagram,
 - conflict/uncertain queues highlighted for fast review.

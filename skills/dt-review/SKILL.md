@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.4.0
+  version: 1.5.0
   changelog: "Light/preflight model pin moved gpt-5.3-codex -> gpt-5.4 (Danny, 2026-06-02). The dead gpt-5.3-codex pin had been self-healing to gpt-5.3-codex-spark; Danny directed the fast tier to ride gpt-5.4 instead and never spark. resolve-codex-model.ps1 light candidate list reordered to (gpt-5.4, gpt-5.4-mini, gpt-5.5, gpt-5.3-codex-spark) — spark demoted to last-ditch backstop only; dead gpt-5.3-codex removed. SKILL operating constants (LIGHT_MODEL/PREFLIGHT_MODEL) and both script -Model defaults updated to gpt-5.4; codex-cli-usage.md matrix refreshed against the live 2026-06-02 cache (selectable: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex-spark). Prior 1.3.0: Self-healing model resolution: preflight and round scripts now call shared `scripts/resolve-codex-model.ps1`, which validates the pinned model against Codex's live per-account cache and falls back through a per-tier candidate list (throwing an actionable error if nothing resolves) — kills the `gpt-5.1-codex-max`-class failure where a dead pin or a config-default-drift produced a failure log that looked like a critique. Added `-Tier light|complex` to both scripts; round output now reports the actually-resolved model. Prior: 1.2.1 effort tuning (all tiers default `medium`); 1.2.0 execution-model fix — codex rounds run via the Bash tool as `pwsh -NoProfile -File` with the prompt on stdin, fixing the 70-min PowerShell-tool host hang, the ConstrainedLanguage profile crash, and the ~30KB arg-length failure that dropped round output."
 ---
 
@@ -24,17 +24,24 @@ If this skill has stricter domain-specific behavior, keep that stricter behavior
 rounds until it converges or the cap is reached.
 
 Persistent output:
-- `design/design-final.md`
+- `design/design-final-<slug>.md` — the single retained design document, written ONCE at convergence.
+  Rounds never write a design document; per-round output lives in scratch only. `<slug>` is 2-4
+  kebab-case words derived from the plan/project name (e.g. a plan named "LP Statement Linking"
+  finalizes as `design-final-lp-statement-linking.md`). Never write a bare `design-final.md` — that
+  name survives only as a legacy input accepted by downstream consumers (`dt-roadmap`, `dt-build`,
+  `dt-visualize-design`).
 
 Scratch-only review state during an active run:
 - `design\_review\draft-v<N>.md`
 - `design\_review\review-v<N>.md`
+- `design\_review\verdicts.json` (per-round parsed verdicts + finding dispositions)
 - `design\_review\codex-stream-v<N>.log`
 - `design\_review\prompts\codex-critique-prompt-v<N>.md`
 
 Scratch state exists only to support an interrupted in-progress review. Delete it after successful
-finalization. If Danny wants a retained HTML view after finalization, that is `dt-visualize-design`,
-not `dt-review`.
+finalization (Finalization step 3 is the explicit checklisted cleanup). If Danny wants a retained
+HTML view after finalization, that is `dt-visualize-design`, not `dt-review` — and only when Danny
+explicitly asks for it.
 
 ## When this fires
 
@@ -94,7 +101,7 @@ Read these files on demand from this skill folder and repo root:
 - `references/codex-prompt-template.md` — codex critique template and required verdict format.
 - `references/recovery.md` — interrupted-round resume rules and malformed feedback handling.
 - `references/finalization.md` — finalization, glossary reconciliation, promotion-gate workflow.
-- `references/design-shape.md` — `shape_version` policy + output schema for `design-final.md`.
+- `references/design-shape.md` — `shape_version` policy + output schema for `design-final-<slug>.md`.
 - `../../references/canonical-dimension-contract.md` — single canonical Dimension Contract source.
 
 Never inline-copy the Canonical Dimension Contract into this SKILL.md. Pointer-swap is mandatory.
@@ -157,29 +164,39 @@ For each round N:
    timeout) to run codex and write scratch `review-v<N>.md` plus scratch stream log atomically under
    `design\_review\`. The script pipes the prompt to codex over stdin and reports the actually-resolved
    model in its JSON output (`model` field) — announce that model, not just the requested pin.
-4. Parse verdict via `scripts/parse-verdict.ps1`.
+4. Parse verdict via `scripts/parse-verdict.ps1 -FeedbackPath <review-v<N>.md> -Round <N>
+   -StatePath <project>\design\_review\verdicts.json`. The script persists the parsed verdict and
+   confidence for round N into `verdicts.json` (one entry per round, replace-on-rerun).
 5. Reconcile each finding (ACCEPT / REJECT / DEFER / COUNTER), appending a `## Claude Response`
-   section to the same scratch `review-v<N>.md` artifact.
-6. If a previously REJECTed finding is raised again in the immediately following round, pause and ask Danny
-   using A/B/C adjudication:
+   section to the same scratch `review-v<N>.md` artifact. Then record each finding's disposition in
+   round N's `findings` array in `verdicts.json`: `{ "finding": "<short stable title>",
+   "disposition": "ACCEPT|REJECT|DEFER|COUNTER", "note": "<one line>" }`.
+6. Re-raise detection is deterministic, never from conversation memory: before reconciling round N,
+   read `verdicts.json` and diff round N's findings against round N-1's recorded dispositions. If a
+   finding REJECTed in round N-1 is raised again in round N, pause and ask Danny using A/B/C
+   adjudication:
    - A = accept Codex's point now
    - B = keep rejection with new rationale
    - C = defer to open question
-7. Write scratch `draft-v<N+1>.md` only when termination rules indicate continuation or one final polish pass.
+7. Write scratch `draft-v<N+1>.md` only when termination rules indicate continuation or one final polish
+   pass. This is a scratch working draft, not a design document — no round ever emits a retained design
+   artifact.
 
 ### Step 4 — Output-shape obligations (Phase 4 addition)
 
 All retained final outputs use `shape_version: 1` frontmatter per `references/design-shape.md`.
 
-`design-final.md` is the accepted design body only. Do not copy round-by-round archaeology, stream-log
-references, or review summaries into the retained final artifact.
+`design-final-<slug>.md` is the accepted design body only. Do not copy round-by-round archaeology,
+stream-log references, or review summaries into the retained final artifact.
 
 ### Step 5 — Finalization
 
 Run the finalization workflow from `references/finalization.md`:
-- copy accepted draft to `design-final.md`
-- reconcile `CONTEXT.md` glossary against `design-final.md`
-- delete `design\_review\` scratch state after successful finalization
+- derive the slug (2-4 kebab-case words from the plan/project name) and copy the accepted draft to
+  `design-final-<slug>.md` — the ONLY point in the whole run where a design document is written
+- reconcile `CONTEXT.md` glossary against `design-final-<slug>.md`
+- delete `design\_review\` scratch state after successful finalization via the explicit scripted
+  cleanup step in `references/finalization.md` (run the command, then confirm the folder is gone)
 - list retained output paths as bare absolute paths
 
 ## Deterministic scripts

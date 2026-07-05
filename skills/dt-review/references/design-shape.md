@@ -1,4 +1,8 @@
-# Design Shape Contract (`design-final.md`)
+# Design Shape Contract (`design-final-<slug>.md`)
+
+Filename contract: `design-final-<slug>.md`, where `<slug>` is 2-4 kebab-case words derived from the
+plan/project name (e.g. `design-final-lp-statement-linking.md`). A bare `design-final.md` is legacy —
+consumers still accept it as input, but the producer must never emit it.
 
 - **Producer:** dt-review
 - **Consumers:** dt-visualize-design, dt-roadmap
@@ -15,7 +19,7 @@ shape_version: 1
 ---
 ```
 
-## `design-final.md` required content
+## `design-final-<slug>.md` required content
 
 - Title line
 - Metadata lines already present in the accepted draft (for example date, scope, framework state)
@@ -23,7 +27,8 @@ shape_version: 1
 
 ## Retention rule
 
-`design-final.md` is the only retained review artifact.
+`design-final-<slug>.md` is the only retained review artifact, written once at convergence — never
+per round.
 
 Do not copy any of the following into the final file:
 - per-round review text

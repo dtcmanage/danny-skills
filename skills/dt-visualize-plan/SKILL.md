@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.2
+  version: 1.1.0
   changelog: "Pointer-swap to shared output-paths convention in references/conventions.md instead of restating the no-computer-link rule inline."
 ---
 
@@ -76,12 +76,16 @@ If unsure, default to `plan-plus-mermaid`.
 - Builder path is repo-level `scripts/visualize/html-builder.ps1`.
 - Output convention: `plan-view.html` next to the source plan unless an explicit output path is provided.
 
-3. Validate output quickly:
-- Confirm `plan-view.html` exists.
-- Confirm no remote Mermaid URL is present (must use vendored local `mermaid-10.9.3.min.js`).
-- Confirm rendered Mermaid exists (`.mermaid svg` in the browser) when using `plan-plus-mermaid` or `ui-mockup`.
-- Confirm "Dependency Provenance" footer is populated.
-- Confirm the first viewport is skim-first (summary strip + key diagram/timeline, not a wall of prose).
+3. Validate output with the shared deterministic checker (via Bash):
+- `pwsh -NoProfile -File <repo>/scripts/visualize/verify-html-artifact.ps1 -Path <plan-view.html>
+  -RequireText 'Dependency Provenance' -Json`, adding `-RequireMermaid` when the mode is
+  `plan-plus-mermaid` or `ui-mockup`.
+- The checker covers existence/size, no remote src/href URLs (vendored `mermaid-10.9.3.min.js` only),
+  the "Dependency Provenance" footer, and — with `-RequireMermaid` — drives the browser-smoke harness
+  to assert a rendered `.mermaid svg` element and no console errors.
+- Do not report success unless the checker's `status` is `pass`.
+- Remaining manual glance: confirm the first viewport is skim-first (summary strip + key
+  diagram/timeline, not a wall of prose).
 
 4. Report result:
 - Return the saved absolute path.

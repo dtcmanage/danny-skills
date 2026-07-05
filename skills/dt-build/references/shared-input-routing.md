@@ -13,7 +13,8 @@ Phase 7A rules:
 - Missing/mismatched entitlement is a hard failure before spawn.
 
 Input routing (roadmap preferred, not required):
-- dt-build accepts either a `roadmap.md` or a finalized design (`design-final.md` / `plan-draft.md`).
+- dt-build accepts either a `roadmap.md` or a finalized design (`design-final-*.md` — dt-review's
+  current `design-final-<slug>.md` naming — / legacy `design-final.md` / `plan-draft.md`).
 - Roadmap detection: frontmatter `schema_version` + a `## Milestones` section → use directly.
 - Otherwise treat the input as a design and generate the roadmap via the canonical producer
   `skills/dt-roadmap/scripts/build-roadmap.ps1` (dt-build never re-implements milestone parsing).

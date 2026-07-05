@@ -1,6 +1,8 @@
 ---
 name: dt-writing-draft
 description: "Turn an idea or a pile of notes into a publishable draft: investor letters, white papers, case studies, marketing copy, decks, DDQ content. Builds a sourced corpus first (digests FT Unhedged and the Economist from Outlook, fetches article URLs, reads memos and prior pieces), surfaces what Danny would forget, shapes the draft section by section, then fact-checks it. Trigger on /dt-writing-draft, dt-writing-draft X, or any request to write, draft, or put together a substantial written piece. Do not use to edit a finished draft (that is dt-writing-edit) or for a single short email."
+metadata:
+  version: 0.1.1
 ---
 
 # Writing-Draft — From Sources to Publishable Draft
@@ -22,6 +24,8 @@ Baseline requirement:
 - Also emit a review-first `.html` artifact in the same artifact family/folder.
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
 - Report both output paths in the final skill output.
+
+Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default.
 
 
 
@@ -196,7 +200,7 @@ Fabricating a fact, or quietly assuming an unsourced claim is fine, poisons the 
 
 The corpus and draft are already written (you wrote to them inline). Confirm both are saved.
 
-Generate `draft-review.html` beside the draft with:
+`draft-review.html` is on request only. Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks, generate `draft-review.html` beside the draft with:
 - executive summary cards,
 - argument flow/section map (Mermaid or SVG),
 - key claims table with source anchors,
@@ -209,8 +213,9 @@ Output the bare absolute paths per the output-paths convention in `../../referen
 ```
 Draft saved at <bare absolute path>.
 Corpus saved at <bare absolute path>.
-Draft review HTML saved at <bare absolute path>.
 ```
+
+If Danny asked for the review HTML and it was built, add `Draft review HTML saved at <bare absolute path>.` on its own line.
 
 Close with: "To run a structural and clarity pass when ready, point `dt-writing-edit` at the draft."
 

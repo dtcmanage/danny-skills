@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.1
-  changelog: "1.1.1 bold-aware milestone naming: Get-FirstSentence in scripts/build-roadmap.ps1 now prefers a leading bold span (`**Title.**`) as the milestone name before the first-sentence fallback. The first-sentence regex `^(.+?[.!?])(\\s|$)` only breaks on a terminator followed by whitespace, so an item that led with a bold title (period inside the `**`, no trailing space) skipped the title and captured the whole paragraph as the name — producing unreadable blob names in the milestone table, dependency graph, and Gantt (surfaced on the 2026-06-03 file-sorter learning-loop-date-extraction roadmap, which had to reword all 10 sequence items to plain sentences as a workaround). Fix: non-greedy `^\\*\\*(.+?)\\*\\*` capture, trimmed of trailing `.!?:`, returned when 1..80 chars, else falls through unchanged. Plain-sentence items are byte-for-byte unchanged. Input-contract doc updated to document the bold-title-as-name behavior. No schema_version or producer_current_version change (producer-internal name refinement). Prior: hardened producer + validator for dt-build per-milestone acceptance gate compatibility. (1) Added VERIFICATION_NAMES_NO_RUNNABLE schema check: each milestone's combined verification surface (acceptance-checks + every matching chk-* procedure cell) must name at least one runnable artifact — a backticked file path with an extension in the allowlist, a backticked or inline `pytest ...` / `python scripts|backend|workers|tests/...` command, or one of `pwsh|powershell|node|npm|bun`. Validator and gate share the same definition through repo-level `scripts/extract-named-artifacts.ps1` (byte-identical to the inline copy in `skills/dt-build/scripts/verify-milestone-acceptance.ps1`). (2) Broadened the input parser: primary path now reads milestones from a `## Implementation Sequence` (or `Implementation Order` / `Build Sequence` / `Build Order` / `Milestone Sequence`) section's enumerated top-level numbered list; legacy `### Phase ...` heading detection remains as a back-compat fallback. (3) Lifted concrete pytest/python commands verbatim from milestone-tagged bullets in the design's `## Validation Gates` section (tag convention: `- M<NN>: ... \\`cmd\\``) into procedure cells, replacing the prior stub prose. Producer surfaces any milestone without a lifted command in the new `## Producer Warnings` section so the validator's hard-fail is predictable. Bumped producer_current_version 1.0.0 -> 1.1.0 (additive enforcement, no schema_version major bump). Previous 1.0.1: scripted roadmap-view.html generation with vendored Mermaid rendering."
+  version: 1.2.0
+  changelog: "Full changelog relocated to skills/dt-roadmap/CHANGELOG.md (newest first)."
 ---
 
 # Roadmap Builder
@@ -20,15 +20,13 @@ Path resolution is governed by `../../references/conventions.md` (resolve from t
 
 If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
 
-## HTML Review Artifact Requirement
+## HTML Companion Policy (on-request only)
 
-For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The
+render harness stays available; skipping it is the default.
 
-Baseline requirement:
-- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
-- Also emit a review-first `.html` artifact in the same artifact family/folder.
-- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
-- Report both output paths in the final skill output.
+When Danny explicitly asks for `roadmap-view.html`, build it per `../../references/html-artifact-policy.md`
+(cards/tables plus Mermaid dependency graph + Gantt) and verify it with the shared checker — see step 5.5.
 
 
 
@@ -38,7 +36,9 @@ Phase 7 (`dt-build`) can consume deterministically.
 ## When this fires
 
 Trigger when all are true:
-- Input is a finalized design artifact (`design-final.md`, or `plan-draft.md` when review was skipped).
+- Input is a finalized design artifact (`design-final-<slug>.md` — dt-review's output naming, e.g.
+  `design-final-lp-statement-linking.md`; legacy bare `design-final.md` is also accepted, as is
+  `plan-draft.md` when review was skipped).
 - Danny wants the build contract surface (`roadmap.md`) produced before dt-build intake refactor.
 - Milestone output is needed as `milestones.xlsx`, with documented fallback when xlsx dependency is unavailable.
 
@@ -46,9 +46,11 @@ Do NOT fire for:
 - Adversarial design critique or closure loops -- that is `dt-review`.
 - Build execution, verification loops, or merge workflows -- that is `dt-build`.
 
-## Input contract (design-final.md sections the producer reads)
+## Input contract (design-doc sections the producer reads)
 
-The producer is deterministic. It reads two named sections from the design and fails closed if a milestone has no runnable command to lift.
+The producer is deterministic and filename-agnostic (the design path is passed as `-DesignPath`;
+`design-final-<slug>.md`, legacy `design-final.md`, and `plan-draft.md` all work). It reads two named
+sections from the design and fails closed if a milestone has no runnable command to lift.
 
 1. **Milestone source** — primary: `## Implementation Sequence` (also accepted: `## Implementation Order`, `## Build Sequence`, `## Build Order`, `## Milestone Sequence`). Each top-level numbered list item (`1. ...`, `2. ...`) becomes one milestone, numbered M01, M02, ... in source order. The first sentence of the line becomes the milestone name. If the line leads with a bold title (`**Title.**  detail...`), that bolded title (<= 80 chars) becomes the name instead — so an author may write either a plain lead sentence or a `**Bold title.**` lead and both yield a clean short name. Fallback: legacy `### Phase ...` / `### Contract Freeze Gate ...` / `### Value Review ...` headings (pre-1.1.0 behavior, kept for back-compat).
 
@@ -81,7 +83,8 @@ The producer does NOT infer test paths, assign milestones to gates by prose matc
 - Chunk table includes required contract columns.
 - Verification manifest includes required contract columns.
 - Include Mermaid dependency graph + Gantt sections (Phase-2 shared fallback conventions apply).
-- The same script also emits `roadmap-view.html` beside `roadmap.md` unless `-RoadmapViewPath` is supplied.
+- The script does NOT emit `roadmap-view.html` by default. Pass `-EmitRoadmapView` (or an explicit
+  `-RoadmapViewPath`) only when Danny has explicitly asked for the HTML companion (see step 5.5).
 
 4. Validate contract before export:
 - Run `scripts/roadmap-validator.ps1 -RoadmapPath <roadmap.md>`.
@@ -94,15 +97,23 @@ The producer does NOT infer test paths, assign milestones to gates by prose matc
   - `milestones-table.md`
   - debt tag: `regenerate milestones.xlsx before next milestone bump`
 
-5.5 Generate review HTML:
-- Use the `roadmap-view.html` emitted by `scripts/build-roadmap.ps1`.
-- It must contain summary cards, a milestone table, Mermaid dependency graph, Mermaid Gantt timeline, and dependency provenance.
-- Validate in a browser that `.mermaid svg` exists; raw `graph TD` text does not satisfy the review artifact contract.
+5.5 Review HTML (on-request only):
+- Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The
+  render harness stays available; skipping it is the default.
+- When Danny asks: re-run `scripts/build-roadmap.ps1` with `-EmitRoadmapView` to emit
+  `roadmap-view.html` beside `roadmap.md`. It must contain summary cards, a milestone table, Mermaid
+  dependency graph, Mermaid Gantt timeline, and dependency provenance.
+- Then verify it deterministically with the shared checker (via Bash):
+  `pwsh -NoProfile -File <repo>/scripts/visualize/verify-html-artifact.ps1 -Path <roadmap-view.html>
+  -RequireMermaid -RequireText 'Dependency Provenance' -Json`.
+  The `-RequireMermaid` checks drive the browser-smoke harness and assert a rendered `.mermaid svg`
+  with no console errors; raw `graph TD` text does not satisfy the review artifact contract. Do not
+  report the view as done if `status` is not `pass`.
 
 6. Report outputs:
 - Return absolute path to `roadmap.md`.
 - Return produced milestone artifacts and whether xlsx primary or csv fallback path was used.
-- Also return absolute path to `roadmap-view.html` (timeline/flowchart-based review artifact).
+- Return absolute path to `roadmap-view.html` only when it was explicitly requested and built.
 
 ## Contract + dependency rules
 

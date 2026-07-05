@@ -1,12 +1,12 @@
 ---
 name: dt-prototype
-description: "Prototype unresolved logic or UI questions before adversarial review: build either a one-command runnable terminal TUI for behavior/state validation or a multi-variant UI switcher route for visual comparison. Trigger on /dt-prototype or 'dt-prototype [question]'. Do NOT use for final production implementation, full design critique (dt-review now, dt-review after Phase 4), or roadmap/build execution."
+description: "Prototype unresolved logic or UI questions before adversarial review: build either a one-command runnable terminal TUI for behavior/state validation or a multi-variant UI switcher route for visual comparison. Trigger on /dt-prototype or 'dt-prototype [question]'. Do NOT use for final production implementation, full design critique (that belongs to dt-review, whether it runs before or after prototyping), or roadmap/build execution."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   changelog: "Initial Anthropic-standard Phase 3 release. Adapted from Matt Pocock's prototype skill (MIT) with dt-pipeline routing and vendored starter templates for logic TUI (TypeScript/Python) and UI variant switcher."
 ---
 
@@ -30,6 +30,8 @@ Baseline requirement:
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
 - Report both output paths in the final skill output.
 
+Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default.
+
 
 
 Adapted from Matt Pocock's prototype skill (MIT) - see `references/ATTRIBUTION.md`.
@@ -47,7 +49,7 @@ Trigger when at least one of these is true:
 
 Do NOT fire for:
 - Final implementation quality work (tests, abstractions, production hardening).
-- Adversarial design critique (`dt-review` now, renamed to `dt-review` in Phase 4).
+- Adversarial design critique — that belongs to `dt-review`, whether it runs before or after prototyping.
 - Build decomposition/execution (`dt-build`), or roadmap contract work.
 
 ## Branch selection
@@ -87,13 +89,19 @@ State the assumption explicitly at the top of the output notes.
 - Keep it obviously throwaway (`prototype` in file/route naming).
 - Preserve host project conventions (routing, package manager, file structure).
 - Ensure exactly one command runs it.
+- Verify the one command — do not just assert it. Actually run the single command, confirm the
+  process starts and serves (or the TUI renders), then stop it. For a TUI, drive it with a trivial
+  scripted input if possible (for example piping a quit keystroke); if scripted input is not
+  feasible, record in `NOTES.md` why not and what was verified instead.
 
 4. Capture the answer:
 - Write `NOTES.md` next to the prototype with:
   - the question,
   - what was observed,
   - the decision to keep/delete/fold.
-- Write `NOTES-view.html` beside `NOTES.md` with:
+- `NOTES-view.html` is on request only. Do NOT generate the HTML companion automatically. Build it
+  only when Danny explicitly asks. The render harness stays available; skipping it is the default.
+  When Danny asks, write `NOTES-view.html` beside `NOTES.md` with:
   - question/status summary cards,
   - observed behavior flow (Mermaid or SVG),
   - keep/delete/fold decision panel.

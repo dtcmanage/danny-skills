@@ -9,14 +9,21 @@
 # 6. Delete the local feature branch.
 #
 # Returns a JSON summary on -Json: branch, resolved_branch, rebase_status,
-# merge_status, branch_deleted, commit_range.
+# merge_status, branch_deleted, commit_range, worktree_path, worktree_removed,
+# rerere_enabled.
+#
+# -PurgeWorktree (opt-in, passed by dt-ship): makes post-merge cleanup mandatory.
+# A worktree-remove or branch-delete failure becomes a hard error (exit 1)
+# instead of a warning, and a successful removal is followed by
+# 'git worktree prune'. Default behavior without the switch is unchanged.
 
 param(
     [Parameter(Mandatory)]
     [string]$Branch,
 
     [switch]$Json,
-    [switch]$SkipPull
+    [switch]$SkipPull,
+    [switch]$PurgeWorktree
 )
 
 Set-StrictMode -Version Latest
@@ -60,6 +67,10 @@ $insideRepo = Invoke-Git -GitArgs @('rev-parse', '--is-inside-work-tree')
 if ($insideRepo.ExitCode -ne 0 -or $insideRepo.Output.Trim() -ne 'true') {
     Fail "Not inside a git repository."
 }
+
+# Report rerere state in the JSON so the model can suggest enabling it without
+# re-checking git config itself.
+$rerereEnabled = ((Invoke-Git -GitArgs @('config', '--get', 'rerere.enabled')).Output.Trim() -eq 'true')
 
 # Resolve branch name (bare, then feat/, then feature/)
 $resolvedBranch = $null
@@ -139,6 +150,11 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
     $wtRemove = Invoke-Git -GitArgs @('worktree', 'remove', $branchWorktree)
     if ($wtRemove.ExitCode -eq 0) {
         $wtRemoved = $true
+        if ($PurgeWorktree) {
+            $null = Invoke-Git -GitArgs @('worktree', 'prune')
+        }
+    } elseif ($PurgeWorktree) {
+        Fail "Merge landed (range $wtCommitRange) but worktree '$branchWorktree' could not be removed: $($wtRemove.Output). Purge is mandatory under -PurgeWorktree; remove the worktree by hand, then delete branch '$resolvedBranch'." @{ merge_status = 'ff-only'; commit_range = $wtCommitRange; worktree_path = $branchWorktree; worktree_removed = $false; rerere_enabled = $rerereEnabled }
     } else {
         Write-Warning "Could not remove worktree '$branchWorktree': $($wtRemove.Output). Branch left in place."
     }
@@ -148,6 +164,9 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
         $wtDelete = Invoke-Git -GitArgs @('-C', $mainWorktree, 'branch', '-d', $resolvedBranch)
         $wtBranchDeleted = ($wtDelete.ExitCode -eq 0)
         if (-not $wtBranchDeleted) {
+            if ($PurgeWorktree) {
+                Fail "Merge landed (range $wtCommitRange) and worktree was removed, but branch '$resolvedBranch' was not deleted: $($wtDelete.Output). Purge is mandatory under -PurgeWorktree." @{ merge_status = 'ff-only'; commit_range = $wtCommitRange; worktree_path = $branchWorktree; worktree_removed = $true; rerere_enabled = $rerereEnabled }
+            }
             Write-Warning "Branch '$resolvedBranch' was not deleted: $($wtDelete.Output)"
         }
     }
@@ -162,6 +181,7 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
         branch_deleted = $wtBranchDeleted
         worktree_path = $branchWorktree
         worktree_removed = $wtRemoved
+        rerere_enabled = $rerereEnabled
         status = 'success'
     }
 
@@ -238,6 +258,9 @@ $commitRange = if ($mainShaBefore -ne $mainShaAfter) { "$($mainShaBefore.Substri
 $delete = Invoke-Git -GitArgs @('branch', '-d', $resolvedBranch)
 $branchDeleted = ($delete.ExitCode -eq 0)
 if (-not $branchDeleted) {
+    if ($PurgeWorktree) {
+        Fail "Merge landed (range $commitRange) but branch '$resolvedBranch' was not deleted: $($delete.Output). Purge is mandatory under -PurgeWorktree." @{ merge_status = 'ff-only'; commit_range = $commitRange; worktree_path = $null; worktree_removed = $false; rerere_enabled = $rerereEnabled }
+    }
     Write-Warning "Branch '$resolvedBranch' was not deleted: $($delete.Output)"
 }
 
@@ -249,6 +272,9 @@ $summary = [pscustomobject]@{
     merge_status = 'ff-only'
     commit_range = $commitRange
     branch_deleted = $branchDeleted
+    worktree_path = $null
+    worktree_removed = $false
+    rerere_enabled = $rerereEnabled
     status = 'success'
 }
 

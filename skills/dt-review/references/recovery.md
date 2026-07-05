@@ -9,7 +9,8 @@ Per round N, canonical scratch sequence:
 1. `design\_review\prompts\codex-critique-prompt-v<N>.md`
 2. `design\_review\review-v<N>.md`
 3. `design\_review\codex-stream-v<N>.log`
-4. `design\_review\draft-v<N+1>.md` (skipped on terminal verdicts)
+4. round-N entry in `design\_review\verdicts.json` (verdict + finding dispositions)
+5. `design\_review\draft-v<N+1>.md` (skipped on terminal verdicts)
 
 ## Resume rule
 
@@ -17,7 +18,8 @@ Per round N, canonical scratch sequence:
 - Resume from the step that creates that artifact.
 - Existing well-formed scratch artifacts are immutable.
 
-If `design\design-final.md` exists and `design\_review\` is absent, the review is already finalized.
+If a `design\design-final-*.md` (or legacy `design\design-final.md`) exists and `design\_review\` is
+absent, the review is already finalized.
 
 ## Malformed feedback rule
 
@@ -27,4 +29,4 @@ When `design\_review\review-v<N>.md` exists but the verdict parser cannot find a
 
 If the file is well-formed but verdict token is unknown, treat as `MATERIAL_CHANGES_NEEDED` in normal flow
 and note the malformed verdict during the active session output. Do not copy that note into
-`design-final.md`.
+`design-final-<slug>.md`.

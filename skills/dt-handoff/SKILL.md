@@ -1,7 +1,9 @@
 ---
 name: dt-handoff
-description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Do not use for capturing memory or preferences mid-session - that is dt-session-audit's job."
+description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Also owns handoff validation: trigger on 'validate the handoff X', 'validate the build X', 'was this handoff acted on?', or '-validate <handoff-path>' to audit a handoff against deterministic evidence. Do not use for capturing memory or preferences mid-session - that is dt-session-audit's job."
 argument-hint: "What should the next session focus on?"
+metadata:
+  version: 0.2.0
 ---
 
 # Handoff
@@ -14,15 +16,24 @@ Path resolution is governed by `../../references/conventions.md` (resolve from t
 
 If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
 
-## HTML Review Artifact Requirement
+## HTML Companion Policy
 
-For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
+Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default.
 
-Baseline requirement:
-- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
-- Also emit a review-first `.html` artifact in the same artifact family/folder.
+When Danny does ask, follow `../../references/html-artifact-policy.md`:
+- Keep the primary machine/edit artifact (the `.md` handoff).
+- Emit a review-first `.html` artifact in the same folder (`handoff_html_path` from the prep script).
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
 - Report both output paths in the final skill output.
+
+## Consumption Convention (binding, applies to every intaker)
+
+When any session or skill intakes a handoff — loads it as the starting prompt for the work it describes — the intaker moves the file to `_handoffs\consumed\` immediately after successfully loading it. This applies to every consumer of a handoff, not just dt-handoff: dt-build, dt-plan, plain sessions, anything. Moving (never deleting) keeps the file recoverable if the work is interrupted, and makes status deterministic:
+
+- A handoff in `_handoffs\consumed\` (or `consumed\_archive\`) is **CONSUMED**.
+- A handoff anywhere else in `_handoffs\` is **OPEN**.
+
+`scripts\handoff-registry.ps1` reads status straight from this layout — no content parsing, no guessing. `-Prune` moves CONSUMED files older than 30 days into `_handoffs\consumed\_archive\`; nothing is ever deleted.
 
 
 
@@ -65,9 +76,21 @@ The script:
 - lists existing files in that folder (handoffs generated earlier but never consumed),
 - returns deterministic target paths for today's handoff (`handoff_md_path`, `handoff_html_path`).
 
-## Step 2: Check for stale handoffs
+## Step 2: Adjudicate stale handoffs via the registry
 
-Read `existing_files` from the script output. If any files are present, surface them to Danny and ask whether each is stale (delete it) or still a pending pickup (keep it). Never auto-delete — a lingering file may be a real pending handoff.
+Run the registry script against the project root:
+
+```powershell
+pwsh -NoProfile -File skills/dt-handoff/scripts/handoff-registry.ps1 `
+  -Root "<project-root>" -Json
+```
+
+Use its output — do not run a manual ask-per-file loop. If there are OPEN handoffs other than today's, present them to Danny **once** as a single numbered table (name, created, age in days) with your recommendation per row (likely stale vs likely pending, based on age and what this session covered). Danny answers once — e.g. "the first three are stale, keep 4" — and you act on the whole answer:
+
+- Stale or superseded → move to `_handoffs\consumed\` (it was overtaken by events; consumed-by-supersession still counts as consumed). Never delete.
+- Still pending → leave in place.
+
+Then run the script once more with `-Prune` to sweep CONSUMED files older than 30 days into `consumed\_archive\`.
 
 ## Step 3: Write the handoff
 
@@ -80,20 +103,25 @@ Write it as a starting prompt, not a status report. Use this structure:
 - **Next steps** — concrete, ordered actions.
 - **Key files & artifacts** — paths and URLs with a one-line note each. Reference PRDs, plans, ADRs, issues, commits, and diffs by path; do not duplicate their content.
 - **Decisions & gotchas** — choices already made and traps to avoid.
+- **Execution setup** — include by default for any build-type handoff (the next session writes code, runs migrations, or touches prod). Keep it one tight paragraph in this shape:
+
+  > Run this build as an orchestrator: delegate the work to named subagents (e.g. `builder`, `verifier`) and keep the orchestrator itself out of file-editing. Single-thread all prod writes and other irreversible steps — issue one instruction, wait for it to complete, verify the result against the live system, then send the next; never queue instructions across an irreversible boundary. Maintain a rolling `_build-state.md` checkpoint in the project root: update it after each completed step with what shipped, what was verified, and what is next, so an interrupted build can resume cold.
+
+  Skip this section only for non-build handoffs (research, drafting, review).
 - **Suggested skills** — skills the next session should invoke, if any.
 
 End the file with these lines, with the real absolute path filled in:
 
-> This is a single-use handoff. Keep this file in place while you work — it is your reference for the task. Delete it (`<absolute path>`) only once the task described above is actually complete, not when you finish reading it. Deleting it on read means a deleted handoff cannot be recovered if the work is interrupted before it is done.
+> This is a single-use handoff. After you have successfully loaded it, move it (`<absolute path>`) into the `_handoffs\consumed\` subfolder next to it — that is the binding intake convention; the move marks it consumed while keeping it recoverable. Then keep working from what you loaded.
 
-Also generate the HTML companion at `handoff_html_path` from the script output, optimized for skim review:
+Generate the HTML companion only if Danny explicitly asks (see HTML Companion Policy above). When asked, write it to `handoff_html_path` from the script output, optimized for skim review:
 - summary cards (task, status, blockers),
 - next-step sequence view,
 - key files/artifacts table with quick links.
 
 ## Step 4: Report
 
-Print the bare absolute paths of both handoff files on their own lines, followed by a one-line command to open the HTML review artifact:
+Print the bare absolute path of the `.md` handoff on its own line. If an HTML companion was explicitly requested and built, also print its path and a one-line command to open it:
 
 ```
 ii "<absolute path to .html handoff>"
@@ -102,4 +130,19 @@ ii "<absolute path to .html handoff>"
 ## Step 5: Run the session audit
 
 After the handoff is written and reported, invoke the `dt-session-audit` skill to capture any uncaptured corrections, preferences, and decisions from the session.
+
+## Validate Mode
+
+Trigger: Danny says "validate the handoff X", "validate the build X", "was this handoff acted on?", or passes `-validate <handoff-path>`. In this mode, skip Steps 0-5 entirely — nothing new is written to `_handoffs\`; the job is to audit whether an existing handoff was actually acted on and built to spec.
+
+Procedure:
+
+1. **Read the handoff** and every design, plan, or roadmap document it references by path. These define the claims to check.
+2. **Gather deterministic evidence** — do not judge from memory or from the handoff's own prose:
+   - `git log --oneline --since=<handoff date>` in the relevant repo(s), plus targeted `git show`/diffs for commits that claim the work.
+   - Existence (and content spot-checks) of every artifact the handoff names — files, folders, scripts, docs.
+   - If the handoff or its referenced design names a verify command, test suite, or gate — run it and capture the result.
+3. **Produce a per-claim table**, one row per task, artifact, or requirement the handoff specifies: the claim, how it was checked (the specific command, file read, or test run), the concrete evidence, and a verdict of **PASS / FAIL / UNVERIFIED**. UNVERIFIED means you could not check it — say why and what would close it.
+4. **Never bucket a mismatch as out-of-scope or pre-existing.** Every discrepancy gets investigated and lands as a FAIL with a recommended fix, or is escalated explicitly with the specific reason. No silent buckets (global rule).
+5. **Close the loop:** if the verdict is that the handoff was fully acted on, move it to `_handoffs\consumed\` per the Consumption Convention (if it is not there already). If it was not, leave it OPEN and summarize the gap list as the next session's work.
 

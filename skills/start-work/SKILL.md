@@ -1,6 +1,8 @@
 ---
 name: start-work
 description: "Classify a unit of code work as light/medium/heavy and set up the right git surface: ship on main, a feat/ branch, or a worktree, with a name that matches the work. Trigger on /start-work, 'start a feature', 'set up a branch/worktree for X', or at the start of non-trivial code work. FAST-PATH: when the surface is already named in plain language — 'start a feat/feature named X' (-> feat branch, checked out) or 'make a new worktree/tree named X' (-> worktree, created and entered) — skip classification and just run it. Do NOT use for planning-only (dt-plan) or a trivial one-line edit you will ship immediately."
+metadata:
+  version: 0.1.0
 ---
 
 # start-work — Classify and Set Up the Git Surface for a Unit of Work

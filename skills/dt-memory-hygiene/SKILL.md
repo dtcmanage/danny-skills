@@ -1,6 +1,8 @@
 ---
 name: dt-memory-hygiene
 description: "Periodic maintenance pass for CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Runs when deterministic bloat thresholds are exceeded. Compacts verbose entries, removes duplicate drift, normalizes shape, and preserves current-state clarity without changing underlying decisions."
+metadata:
+  version: 0.2.0
 ---
 
 # Memory Hygiene
@@ -22,6 +24,8 @@ Baseline requirement:
 - Also emit a review-first `.html` artifact in the same artifact family/folder.
 - Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
 - Report both output paths in the final skill output.
+
+Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default.
 
 
 
@@ -81,12 +85,22 @@ Do not touch product code. Do not rewrite user intent.
 4. Keep sensitive data redacted or generalized.
 5. After edits, output exactly what changed and why.
 
+## Verification (mandatory)
+
+After the hygiene edits, re-run the detector on the same targets:
+
+```powershell
+pwsh -File skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1
+```
+
+Include the before/after detector metrics for every touched file in the report (`token_est`, `long_lines`, `duplicate_ratio`, `avg_bullet_words`, `bloat_score`). A pass that does not improve the failing metric is not done — keep compacting, or surface exactly why that metric cannot move without a semantic change.
+
 ## Output
 
 Produce:
 
-1. A short before/after summary per touched file.
+1. A short before/after summary per touched file, including the before/after detector metrics from the verification re-run.
 2. A "what was removed" list (duplicates, stale lines, excessive detail).
 3. A residual-risk list for anything not safely auto-cleaned.
-4. A companion `memory-hygiene-report.html` with summary cards, change table, and risk/status visualization.
+4. Only when Danny explicitly asks: a companion `memory-hygiene-report.html` with summary cards, change table, and risk/status visualization. Do NOT generate the HTML companion automatically; skipping it is the default.
 5. Bare absolute paths for any written report artifacts.
