@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.2.0
+  version: 0.3.0
 ---
 
 # Session Audit
@@ -307,6 +307,16 @@ After apply, run:
 `skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1`
 
 If `should_run_hygiene=true`, invoke `dt-memory-hygiene` automatically.
+
+## Workspace Upload (final step)
+
+Session audit is where CLAUDE.md, MEMORY.md, and the other scaffolding files are most likely to have just been edited. As the LAST step of every audit run, push those edits to GitHub immediately instead of waiting for the 4-hourly sync:
+
+```powershell
+pwsh -NoProfile -File "D:\Claude\_system-tools\workspace-sync\workspace-sync.ps1"
+```
+
+The script commits any workspace changes (area-grouped message), rebases onto origin, and pushes; it is a no-op when the tree is clean. On failure it writes `D:\Claude\SYNC-ALERT.md` and exits 1 — surface that in the audit report rather than retrying. Skip this step only when the audit ran on a machine where `D:\Claude` is not the workspace repo.
 
 ## Normative Terminology Contract
 
