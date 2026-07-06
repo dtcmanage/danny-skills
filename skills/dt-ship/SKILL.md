@@ -2,7 +2,7 @@
 name: dt-ship
 description: "One-command close-out for a finished feature: run the build/tests gate, rebase + ff-only merge to main via the shared merge machinery, push, deploy per the repo's .ship.json, PROVE the deploy is live (deployed commit hash must equal local main HEAD, plus browser-smoke on the configured routes), then purge the merged worktree and branch. Trigger on /dt-ship, 'ship it', 'push live', or 'ship and clean tree'. Do NOT use to create branches or worktrees (that is start-work), for design review (dt-review), or for build execution (dt-build)."
 metadata:
-  version: 0.1.0
+  version: 0.1.1
   changelog:
     - "0.1.0 - Initial: ship.ps1 drives gate -> merge (reusing git-merge-feature's merge-feature.ps1 with -PurgeWorktree) -> purge sweep -> push -> deploy -> live proof (commit-hash probe + browser-smoke) from a per-repo .ship.json; fail-closed JSON summary; optional chaining into dt-session-audit / dt-handoff."
 ---
@@ -34,6 +34,8 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
    pwsh -NoProfile -File skills/dt-ship/scripts/ship.ps1 -RepoRoot "<repo path>" -Branch "<name>" -Json
    ```
 
+   Run the driver with the shell located in the primary tree, never from inside the feature worktree — on Windows the purge cannot delete the directory the invoking shell occupies (the script fails fast at `preflight-cwd` if you do).
+
    The script, fail-closed (the first failing step stops everything and names itself in `failed_step`):
    - loads the repo's ship config at `<primary>\.ship.json` (schema: `references/ship-config.md`; override with `-ConfigPath`),
    - runs the config's `gateCommand` (build/tests) inside the feature worktree — a red gate means NOT merged, NOT shipped,
@@ -41,9 +43,9 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
    - sweeps for leftovers: any surviving worktree or branch for the merged feature is removed, but only when fully merged and clean,
    - pushes `main` to origin (pushing `main` IS the ship),
    - deploys via `deployCommand`, substituting `{HOST}` from `hostResolveCommand` output so a moved VM IP can never go stale in config,
-   - probes `prodCommitProbe` (url or command) for the deployed commit hash and compares it to the local `main` HEAD,
+   - probes `prodCommitProbe` (url or command) for the deployed commit hash and compares it to the local `main` HEAD (URL probes cache-bust and retry up to ~75 s to absorb CDN edge-cache lag; `probe_attempts` lands in the JSON),
    - runs the browser-smoke harness (`00_Resources\tools\browser-smoke\smoke.mjs`) against every `smokeRoutes` URL,
-   - emits one JSON summary: `status`, `failed_step`, `merged`, `pushed`, `deployed`, `hash_match`, `local_head`, `prod_commit`, `smoke [{route, pass}]`, `purged`, `skipped`, `rerere_enabled`.
+   - emits one JSON summary: `status`, `failed_step`, `merged`, `pushed`, `deployed`, `hash_match`, `local_head`, `prod_commit`, `probe_attempts`, `smoke [{route, pass}]`, `purged`, `skipped`, `rerere_enabled`.
 
    If no `gateCommand` is configured, run the repo's build/tests yourself in the feature worktree BEFORE invoking the script; only invoke it on green. Never invoke `-SkipGate` unless you just ran the gate by hand and it passed.
 

@@ -23,8 +23,8 @@
 # Fail closed: the first failing step stops the chain; the JSON reports
 # failed_step. JSON summary: status (shipped | merged_only | not_shipped |
 # failed), failed_step, branch, resolved_branch, merged, pushed, deployed,
-# hash_match, local_head, prod_commit, smoke [{route, pass}], purged [],
-# skipped [], rerere_enabled, error_message.
+# hash_match, local_head, prod_commit, probe_attempts, smoke [{route, pass}],
+# purged [], skipped [], rerere_enabled, error_message.
 
 param(
     [Parameter(Mandatory)]
@@ -55,6 +55,7 @@ $state = [ordered]@{
     hash_match = $null
     local_head = $null
     prod_commit = $null
+    probe_attempts = $null
     smoke = @()
     purged = @()
     skipped = @()
@@ -196,6 +197,22 @@ if (-not $resolvedBranch) {
     Fail-Step 'resolve-branch' "No local branch named '$Branch', 'feat/$Branch', or 'feature/$Branch'."
 }
 $state.resolved_branch = $resolvedBranch
+
+# --- Step: preflight-cwd -------------------------------------------------------
+
+# The merge step purges the feature worktree. On Windows that delete fails when
+# the invoking shell's cwd sits inside the worktree -- and by then the merge has
+# already landed, stranding the chain mid-state. Refuse before any mutation.
+$featureTree = $wtMap.byBranch["refs/heads/$resolvedBranch"]
+if ($featureTree) {
+    $featureTreeFull = [System.IO.Path]::GetFullPath($featureTree).TrimEnd('\') + '\'
+    foreach ($cwdCandidate in @((Get-Location).Path, [System.IO.Directory]::GetCurrentDirectory())) {
+        $cwdFull = [System.IO.Path]::GetFullPath($cwdCandidate).TrimEnd('\') + '\'
+        if ($cwdFull.StartsWith($featureTreeFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Fail-Step 'preflight-cwd' "You are invoking dt-ship from inside the worktree that will be purged ('$featureTree'). Re-run from the primary tree: Set-Location '$primary'"
+        }
+    }
+}
 
 # --- Step: config ------------------------------------------------------------
 
@@ -387,35 +404,52 @@ $probe = Get-Prop $config 'prodCommitProbe'
 $probeUrl = Expand-HostToken (Get-Prop $probe 'url') $hostValue
 $probeCommand = Expand-HostToken (Get-Prop $probe 'command') $hostValue
 
-$probeBody = $null
-if ($probeUrl) {
-    try {
-        $response = Invoke-WebRequest -Uri $probeUrl -TimeoutSec 30
-        $probeBody = [string]$response.Content
-    } catch {
-        Fail-Step 'verify-hash' "NOT SHIPPED: commit probe URL '$probeUrl' failed: $($_.Exception.Message)" 'not_shipped'
+# A CDN edge (Cloudflare) can serve a stale probe body for a short window after
+# the deploy returns. URL probes retry with cache-busting before failing; only a
+# stable mismatch across the full window is a real NOT SHIPPED. Command probes
+# stay single-shot (no cache in the path).
+$maxProbeAttempts = if ($probeUrl) { 5 } else { 1 }
+$probeRetryDelaySec = 15
+$prodCommit = $null
+$probeAttempt = 0
+while ($probeAttempt -lt $maxProbeAttempts) {
+    $probeAttempt++
+    $probeBody = $null
+    if ($probeUrl) {
+        $sep = if ($probeUrl -like '*?*') { '&' } else { '?' }
+        $bustedUrl = "$probeUrl$sep" + "cb=$([guid]::NewGuid().ToString('N'))"
+        try {
+            $response = Invoke-WebRequest -Uri $bustedUrl -TimeoutSec 30 -Headers @{ 'Cache-Control' = 'no-cache' }
+            $probeBody = [string]$response.Content
+        } catch {
+            Fail-Step 'verify-hash' "NOT SHIPPED: commit probe URL '$bustedUrl' failed: $($_.Exception.Message)" 'not_shipped'
+        }
+    } elseif ($probeCommand) {
+        $probeOut = & pwsh -NoProfile -Command $probeCommand 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Fail-Step 'verify-hash' "NOT SHIPPED: commit probe command failed: $(Get-TailText (($probeOut | Out-String)))" 'not_shipped'
+        }
+        $probeBody = ($probeOut | Out-String)
     }
-} elseif ($probeCommand) {
-    $probeOut = & pwsh -NoProfile -Command $probeCommand 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Fail-Step 'verify-hash' "NOT SHIPPED: commit probe command failed: $(Get-TailText (($probeOut | Out-String)))" 'not_shipped'
+
+    $hashMatch = [regex]::Match($probeBody, '[0-9a-fA-F]{40}')
+    if (-not $hashMatch.Success) {
+        $hashMatch = [regex]::Match($probeBody, '\b[0-9a-fA-F]{7,40}\b')
     }
-    $probeBody = ($probeOut | Out-String)
+    if (-not $hashMatch.Success) {
+        Fail-Step 'verify-hash' "NOT SHIPPED: commit probe returned no commit hash. Probe output tail: $(Get-TailText $probeBody)" 'not_shipped'
+    }
+
+    $prodCommit = $hashMatch.Value.ToLowerInvariant()
+    if ($state.local_head.ToLowerInvariant().StartsWith($prodCommit)) { break }
+    if ($probeAttempt -lt $maxProbeAttempts) { Start-Sleep -Seconds $probeRetryDelaySec }
 }
 
-$hashMatch = [regex]::Match($probeBody, '[0-9a-fA-F]{40}')
-if (-not $hashMatch.Success) {
-    $hashMatch = [regex]::Match($probeBody, '\b[0-9a-fA-F]{7,40}\b')
-}
-if (-not $hashMatch.Success) {
-    Fail-Step 'verify-hash' "NOT SHIPPED: commit probe returned no commit hash. Probe output tail: $(Get-TailText $probeBody)" 'not_shipped'
-}
-
-$prodCommit = $hashMatch.Value.ToLowerInvariant()
 $state.prod_commit = $prodCommit
+$state.probe_attempts = $probeAttempt
 $state.hash_match = $state.local_head.ToLowerInvariant().StartsWith($prodCommit)
 if (-not $state.hash_match) {
-    Fail-Step 'verify-hash' "NOT SHIPPED: deployed commit '$prodCommit' does not match local main HEAD '$($state.local_head)'. The deploy did not take." 'not_shipped'
+    Fail-Step 'verify-hash' "NOT SHIPPED: deployed commit '$prodCommit' does not match local main HEAD '$($state.local_head)' after $probeAttempt probe attempts. The deploy did not take." 'not_shipped'
 }
 
 # --- Step: smoke ---------------------------------------------------------------
