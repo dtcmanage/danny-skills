@@ -21,3 +21,4 @@ Prior 2.4.0 behavior retained: Per-milestone acceptance gate now evaluates EVERY
 
 Previous 2.3.1 acceptance gate fixes (pytest -> python -m pytest, downgrade_approved_by parser + APPROVED_DOWNGRADE status) are retained unchanged.
 - 2.7.0 (2026-07-05): Per-milestone _build-state.md checkpoint (dt-pipeline template) with COMPLETE marking; build-run-review.html on request only; intake accepts design-final-*.md; frontmatter changelog relocated to CHANGELOG.md.
+- 2.7.1 (2026-07-06): verify-milestone-acceptance.ps1 spawns named commands via -EncodedCommand so embedded double quotes (e.g. quoted paths) no longer truncate the command

@@ -170,7 +170,10 @@ function Invoke-NamedCommand {
     try {
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
         $startInfo.FileName = "pwsh"
-        $startInfo.Arguments = "-NoProfile -Command `"$effectiveCommand`""
+        # -EncodedCommand survives embedded quotes and spaces (a -Command "..."
+        # wrapper truncates at the first inner double quote, e.g. quoted paths).
+        $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($effectiveCommand))
+        $startInfo.Arguments = "-NoProfile -EncodedCommand $encoded"
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
         $startInfo.UseShellExecute = $false
