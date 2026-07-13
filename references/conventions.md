@@ -59,11 +59,12 @@ Every SKILL.md carries YAML frontmatter. Fields used across the pipeline:
 | `user-invocable` | `true` when the skill is exposed as a `/<name>` slash command. |
 | `allowed-tools` | The tool allowlist the skill's orchestrator may use, constraining what it can spawn (e.g. `"Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"`). |
 | `compatibility` | Where the skill runs (e.g. `"Cowork or Claude Code CLI; requires danny-skills repo present."`). |
-| `metadata.version` | The skill's own semver, independent of the plugin manifest version. Bumped on any behavioral change to the skill. |
-| `metadata.changelog` | Per-skill change log. Tagged entries (e.g. `phase-4-dt-review`) record what changed at each release. |
+| `metadata.version` | The skill's own SemVer, independent of the plugin manifest version. Governed by `versioning-policy.md`. |
+| `metadata.changelog` | Optional one-line pointer or short latest summary; the authoritative history is `skills/<name>/CHANGELOG.md`. |
 
 The plugin manifest version (`.claude-plugin/plugin.json` + `marketplace.json`) is separate from any
-skill's `metadata.version`: the plugin bumps on milestone drops; a skill bumps when its own behavior changes.
+skill's `metadata.version`. The binding bump rules, changelog order, release transaction, and validation
+gate live only in `references/versioning-policy.md`.
 
 ## Output paths in skill final output
 

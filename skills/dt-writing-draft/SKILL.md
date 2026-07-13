@@ -2,7 +2,7 @@
 name: dt-writing-draft
 description: "Turn an idea or a pile of notes into a publishable draft: investor letters, white papers, case studies, marketing copy, decks, DDQ content. Builds a sourced corpus first (digests FT Unhedged and the Economist from Outlook, fetches article URLs, reads memos and prior pieces), surfaces what Danny would forget, shapes the draft section by section, then fact-checks it. Trigger on /dt-writing-draft, dt-writing-draft X, or any request to write, draft, or put together a substantial written piece. Do not use to edit a finished draft (that is dt-writing-edit) or for a single short email."
 metadata:
-  version: 0.1.1
+  version: 0.1.2
 ---
 
 # Writing-Draft — From Sources to Publishable Draft

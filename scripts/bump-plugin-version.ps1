@@ -46,6 +46,49 @@ function Fail([string]$Message, [hashtable]$Extra = @{}) {
     exit 1
 }
 
+function Get-PropertyValue($Object, [string]$Name) {
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
+function Get-RequiredJsonProperty(
+    [System.Text.Json.JsonElement]$Object,
+    [string]$Name,
+    [string]$Context
+) {
+    if ($Object.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+        Fail "$Context must be a JSON object."
+    }
+    $matches = [System.Collections.Generic.List[System.Text.Json.JsonElement]]::new()
+    foreach ($property in $Object.EnumerateObject()) {
+        if ($property.Name -ceq $Name) { $matches.Add($property.Value) }
+    }
+    if ($matches.Count -ne 1) {
+        Fail "$Context must contain exactly one '$Name' property; found $($matches.Count)."
+    }
+    return $matches[0]
+}
+
+function Assert-JsonKind(
+    [System.Text.Json.JsonElement]$Element,
+    [System.Text.Json.JsonValueKind]$Kind,
+    [string]$Context
+) {
+    if ($Element.ValueKind -ne $Kind) { Fail "$Context must be JSON $($Kind.ToString().ToLowerInvariant())." }
+}
+
+function Compare-SemVer([string]$Left, [string]$Right) {
+    $leftParts = @($Left -split '\.' | ForEach-Object { [System.Numerics.BigInteger]::Parse($_) })
+    $rightParts = @($Right -split '\.' | ForEach-Object { [System.Numerics.BigInteger]::Parse($_) })
+    for ($i = 0; $i -lt 3; $i++) {
+        $comparison = $leftParts[$i].CompareTo($rightParts[$i])
+        if ($comparison -ne 0) { return $comparison }
+    }
+    return 0
+}
+
 # --- Resolve paths -------------------------------------------------------------------
 if ([string]::IsNullOrWhiteSpace($PluginRoot)) {
     $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -62,24 +105,63 @@ foreach ($p in @($pluginJsonPath, $marketplaceJsonPath)) {
 # --- Read the three version fields ---------------------------------------------------
 $pluginRaw = [System.IO.File]::ReadAllText($pluginJsonPath)
 $marketplaceRaw = [System.IO.File]::ReadAllText($marketplaceJsonPath)
+try { $pluginDocument = [System.Text.Json.JsonDocument]::Parse($pluginRaw) }
+catch { Fail "plugin.json is not valid JSON: $($_.Exception.Message)" }
+try { $marketplaceDocument = [System.Text.Json.JsonDocument]::Parse($marketplaceRaw) }
+catch { $pluginDocument.Dispose(); Fail "marketplace.json is not valid JSON: $($_.Exception.Message)" }
+
+$pluginRootElement = $pluginDocument.RootElement
+$pluginVersionElement = Get-RequiredJsonProperty $pluginRootElement 'version' 'plugin.json root'
+Assert-JsonKind $pluginVersionElement ([System.Text.Json.JsonValueKind]::String) 'plugin.json version'
+$pluginMetadataElement = Get-RequiredJsonProperty $pluginRootElement 'metadata' 'plugin.json root'
+Assert-JsonKind $pluginMetadataElement ([System.Text.Json.JsonValueKind]::Object) 'plugin.json metadata'
+$pluginChangelogElement = Get-RequiredJsonProperty $pluginMetadataElement 'changelog' 'plugin.json metadata'
+Assert-JsonKind $pluginChangelogElement ([System.Text.Json.JsonValueKind]::Array) 'plugin.json metadata.changelog'
+
+$marketRootElement = $marketplaceDocument.RootElement
+$marketMetadataElement = Get-RequiredJsonProperty $marketRootElement 'metadata' 'marketplace.json root'
+Assert-JsonKind $marketMetadataElement ([System.Text.Json.JsonValueKind]::Object) 'marketplace.json metadata'
+$marketMetadataVersionElement = Get-RequiredJsonProperty $marketMetadataElement 'version' 'marketplace.json metadata'
+Assert-JsonKind $marketMetadataVersionElement ([System.Text.Json.JsonValueKind]::String) 'marketplace.json metadata.version'
+$marketPluginsElement = Get-RequiredJsonProperty $marketRootElement 'plugins' 'marketplace.json root'
+Assert-JsonKind $marketPluginsElement ([System.Text.Json.JsonValueKind]::Array) 'marketplace.json plugins'
+if ($marketPluginsElement.GetArrayLength() -lt 1) { Fail 'marketplace.json plugins must contain at least one object.' }
+$marketPluginElement = $marketPluginsElement[0]
+Assert-JsonKind $marketPluginElement ([System.Text.Json.JsonValueKind]::Object) 'marketplace.json plugins[0]'
+$marketPluginVersionElement = Get-RequiredJsonProperty $marketPluginElement 'version' 'marketplace.json plugins[0]'
+Assert-JsonKind $marketPluginVersionElement ([System.Text.Json.JsonValueKind]::String) 'marketplace.json plugins[0].version'
+$pluginDocument.Dispose()
+$marketplaceDocument.Dispose()
+
 try { $pluginObj = $pluginRaw | ConvertFrom-Json } catch { Fail "plugin.json is not valid JSON: $($_.Exception.Message)" }
 try { $marketplaceObj = $marketplaceRaw | ConvertFrom-Json } catch { Fail "marketplace.json is not valid JSON: $($_.Exception.Message)" }
 
-$v1 = [string]$pluginObj.version
-$v2 = [string]$marketplaceObj.metadata.version
-$v3 = [string]$marketplaceObj.plugins[0].version
+$pluginMetadata = Get-PropertyValue $pluginObj 'metadata'
+$marketplaceMetadata = Get-PropertyValue $marketplaceObj 'metadata'
+$marketplacePlugins = @(Get-PropertyValue $marketplaceObj 'plugins')
+$v1 = [string](Get-PropertyValue $pluginObj 'version')
+$v2 = [string](Get-PropertyValue $marketplaceMetadata 'version')
+$v3 = if ($marketplacePlugins.Count -gt 0) { [string](Get-PropertyValue $marketplacePlugins[0] 'version') } else { '' }
 $allMatch = ($v1 -eq $v2) -and ($v2 -eq $v3)
+$strictSemVerPattern = '^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$'
+$validSemVer = $v1 -match $strictSemVerPattern -and $v2 -match $strictSemVerPattern -and $v3 -match $strictSemVerPattern
+$changelogProperty = if ($pluginMetadata) { $pluginMetadata.PSObject.Properties['changelog'] } else { $null }
+$existingHistory = @()
+if ($changelogProperty -and $changelogProperty.Value -is [array]) { $existingHistory = @($changelogProperty.Value) }
+$changelogAligned = $existingHistory.Count -gt 0 -and [string]$existingHistory[0] -match ('^' + [regex]::Escape($v1) + '\s+\S')
 
 # --- Check mode ------------------------------------------------------------------------
 if ($Check) {
     $result = [ordered]@{
-        status                       = if ($allMatch) { 'ok' } else { 'mismatch' }
+        status                       = if ($allMatch -and $validSemVer -and $changelogAligned) { 'ok' } else { 'mismatch' }
         plugin_json_version          = $v1
         marketplace_metadata_version = $v2
         marketplace_plugin_version   = $v3
+        valid_semver                 = $validSemVer
+        changelog_aligned            = $changelogAligned
     }
     [pscustomobject]$result | ConvertTo-Json -Compress | Write-Output
-    exit $(if ($allMatch) { 0 } else { 1 })
+    exit $(if ($allMatch -and $validSemVer -and $changelogAligned) { 0 } else { 1 })
 }
 
 # --- Validate bump-mode parameters -------------------------------------------------------
@@ -88,11 +170,14 @@ $hasSet = -not [string]::IsNullOrWhiteSpace($Set)
 if ($hasBump -eq $hasSet) {
     Fail "Specify exactly one of -Bump patch|minor|major or -Set x.y.z (or use -Check)."
 }
-if ($hasSet -and $Set -notmatch '^\d+\.\d+\.\d+$') {
+if ($hasSet -and $Set -notmatch $strictSemVerPattern) {
     Fail "-Set value '$Set' is not a valid x.y.z semantic version."
 }
 if ([string]::IsNullOrWhiteSpace($Entry)) {
     Fail "-Entry is required in bump mode."
+}
+if ($Entry -match "`r|`n") {
+    Fail "-Entry must be a single line (no newlines)."
 }
 if (-not $allMatch) {
     Fail "The three plugin version fields disagree; fix them before bumping." @{
@@ -101,8 +186,11 @@ if (-not $allMatch) {
         marketplace_plugin_version   = $v3
     }
 }
-if ($v1 -notmatch '^\d+\.\d+\.\d+$') {
+if (-not $validSemVer) {
     Fail "Current version '$v1' is not a valid x.y.z semantic version."
+}
+if (-not $changelogAligned) {
+    Fail "plugin.json metadata.changelog must be a non-empty array whose first entry starts with current version $v1."
 }
 
 # --- Compute new version -------------------------------------------------------------------
@@ -112,16 +200,16 @@ if ($hasSet) {
 }
 else {
     $parts = $oldVersion -split '\.'
-    $major = [int]$parts[0]; $minor = [int]$parts[1]; $patch = [int]$parts[2]
+    $major = [System.Numerics.BigInteger]::Parse($parts[0]); $minor = [System.Numerics.BigInteger]::Parse($parts[1]); $patch = [System.Numerics.BigInteger]::Parse($parts[2])
     switch ($Bump) {
-        'major' { $major++; $minor = 0; $patch = 0 }
-        'minor' { $minor++; $patch = 0 }
-        'patch' { $patch++ }
+        'major' { $major += [System.Numerics.BigInteger]::One; $minor = 0; $patch = 0 }
+        'minor' { $minor += [System.Numerics.BigInteger]::One; $patch = 0 }
+        'patch' { $patch += [System.Numerics.BigInteger]::One }
     }
     $newVersion = "$major.$minor.$patch"
 }
-if ($newVersion -eq $oldVersion) {
-    Fail "New version $newVersion equals current version $oldVersion; nothing to do."
+if ((Compare-SemVer $newVersion $oldVersion) -le 0) {
+    Fail "New version $newVersion must be greater than current version $oldVersion."
 }
 
 # --- Rewrite version fields via targeted text replacement (preserves file formatting) --------
@@ -143,7 +231,7 @@ if ($marketplaceHits -ne 2) {
 # --- Append changelog entry to plugin.json's metadata.changelog array (newest-first) ---------
 # Existing shape: "changelog": [ "<version> <text>", ... ] with entries indented 6 spaces.
 $changelogAppended = $false
-$hasChangelog = ($null -ne ($pluginObj.metadata.PSObject.Properties['changelog'])) -and ($pluginObj.metadata.changelog -is [array])
+$hasChangelog = $changelogProperty -and $changelogProperty.Value -is [array]
 if ($hasChangelog) {
     $entryJson = ("$newVersion $Entry" | ConvertTo-Json)  # produces a correctly escaped quoted JSON string
     $arrayOpenPattern = '("changelog"\s*:\s*\[)(\s*\r?\n)(\s*)'
@@ -166,6 +254,9 @@ if ($hasChangelog) {
         }
     }
 }
+if (-not $changelogAppended) {
+    Fail "plugin.json metadata.changelog is missing or could not accept a newest-first entry. Aborting without writes."
+}
 
 # --- Validate rewritten JSON before any write --------------------------------------------------
 try { $checkPlugin = $newPluginRaw | ConvertFrom-Json } catch { Fail "Internal error: rewritten plugin.json is invalid JSON. Aborting without writes." }
@@ -175,15 +266,31 @@ if ([string]$checkPlugin.version -ne $newVersion -or
     [string]$checkMarketplace.plugins[0].version -ne $newVersion) {
     Fail "Internal error: rewritten files do not all carry $newVersion. Aborting without writes."
 }
+if (@($checkPlugin.metadata.changelog).Count -eq 0 -or [string]$checkPlugin.metadata.changelog[0] -notmatch ('^' + [regex]::Escape($newVersion) + '(?:\s|$)')) {
+    Fail "Internal error: plugin changelog was not prepended with $newVersion. Aborting without writes."
+}
 
 # --- Atomic write: both temp files first, then both moves --------------------------------------
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 $pluginTmp = "$pluginJsonPath.tmp.$PID"
 $marketplaceTmp = "$marketplaceJsonPath.tmp.$PID"
-[System.IO.File]::WriteAllText($pluginTmp, $newPluginRaw, $utf8)
-[System.IO.File]::WriteAllText($marketplaceTmp, $newMarketplaceRaw, $utf8)
-Move-Item -LiteralPath $pluginTmp -Destination $pluginJsonPath -Force
-Move-Item -LiteralPath $marketplaceTmp -Destination $marketplaceJsonPath -Force
+$originalPlugin = [System.IO.File]::ReadAllBytes($pluginJsonPath)
+$originalMarketplace = [System.IO.File]::ReadAllBytes($marketplaceJsonPath)
+try {
+    [System.IO.File]::WriteAllText($pluginTmp, $newPluginRaw, $utf8)
+    [System.IO.File]::WriteAllText($marketplaceTmp, $newMarketplaceRaw, $utf8)
+    Move-Item -LiteralPath $pluginTmp -Destination $pluginJsonPath -Force
+    Move-Item -LiteralPath $marketplaceTmp -Destination $marketplaceJsonPath -Force
+}
+catch {
+    try { [System.IO.File]::WriteAllBytes($pluginJsonPath, $originalPlugin) } catch { }
+    try { [System.IO.File]::WriteAllBytes($marketplaceJsonPath, $originalMarketplace) } catch { }
+    Remove-Item -LiteralPath $pluginTmp, $marketplaceTmp -Force -ErrorAction SilentlyContinue
+    Fail "Atomic plugin version update failed and original files were restored: $($_.Exception.Message)"
+}
+finally {
+    Remove-Item -LiteralPath $pluginTmp, $marketplaceTmp -Force -ErrorAction SilentlyContinue
+}
 
 [pscustomobject]@{
     status              = 'ok'

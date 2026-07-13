@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.0
+  version: 1.1.1
   changelog: "Added paired repo-plus-workstation-root writes with deterministic companion shade derivation, while preserving single-target local `.vscode/settings.json` terminal palette updates."
 ---
 

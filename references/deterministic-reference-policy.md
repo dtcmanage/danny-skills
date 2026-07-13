@@ -19,6 +19,12 @@ Shared baseline policy for all skills in this repo. Skill-local logic still owns
 4. If a required reference path is missing/unreadable, surface the exact path and stop that dependent branch instead of guessing.
 5. Repository shared references are read-only by default during execution unless the task explicitly requests changing them.
 
+## Versioning Contract
+
+When authoring, editing, validating, or releasing any skill, apply `references/versioning-policy.md`.
+Behavioral changes require the affected skill version and newest-first changelog entry; distributable pack
+changes require one plugin release bump. Run the deterministic version-policy validator before finalization.
+
 ## Conflict Handling
 
 - Skill-local explicit rules win for domain behavior if they intentionally narrow this baseline.

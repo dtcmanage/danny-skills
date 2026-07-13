@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 2.8.1
+  version: 2.8.2
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -223,6 +223,9 @@ cache timestamp, effort, and duration.
   - any entry in `orphans` introduced by this run.
 - Append the full propagation JSON to the build-final summary (the always-on record); when Danny has asked for the `build-run-review.html` companion (step 6.5), also surface a "Skill Propagation" panel in it listing per-(skill, location) status, any setup gaps, and any orphans.
 - The same script is callable ad-hoc for retroactive sweeps with no `-NewSkills` (scans all skills in the repo) and without `-Create` (report-only).
+- Before COMPLETE, run repo-level `scripts/verify-versioning-policy.ps1 -BaseRef <merge_target> -Json`.
+  Any error in skill SemVer, current-first changelogs, manifest agreement, changed-skill bumps, or the plugin
+  release bump blocks finalization. Persist the validator JSON beside the propagation evidence.
 
 ## Required verification
 
@@ -247,6 +250,7 @@ cache timestamp, effort, and duration.
 - Branch contract: `references/branch-contract.md`
 - Codex assembly byte contract: `references/codex-assembly-contract.md`
 - Skill propagation gate (one-shot / build-final): repo-level `scripts/verify-skill-junctions.ps1`
+- Version release gate (danny-skills only): repo-level `scripts/verify-versioning-policy.ps1`
 - Pipeline checkpoint template (canonical `_build-state.md` shape, step 6.h): `skills/dt-pipeline/templates/build-state-template.md`
 - Acceptance gate scripts (called by procedure step 6):
   - `scripts/verify-milestone-acceptance.ps1` — per-milestone artifact + command check

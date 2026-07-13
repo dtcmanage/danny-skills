@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.10.5 pack-wide version policy + validator; dt-app-launcher 0.3.1, dt-build 2.8.2, dt-handoff 0.2.1, dt-image-gen 0.1.2, dt-memory-hygiene 0.2.1, dt-pipeline 0.1.1, dt-plan 1.1.1, dt-prototype 1.1.1, dt-review 1.6.2, dt-roadmap 1.2.1, dt-session-audit 0.3.2, dt-ship 0.1.2, dt-terminal-format-profile 1.1.1, dt-tune 0.2.1, dt-visualize-design 1.1.1, dt-visualize-plan 1.1.1, dt-writing-draft 0.1.2, dt-writing-edit 0.2.1, git-merge-feature 1.2.1, git-sync-features 0.1.1, start-work 0.1.1",
       "0.10.4 dt-build 2.8.1 reliability/model refresh and dt-review 1.6.1 GPT-5.6 routing",
       "0.10.3 dt-ship 0.1.1 (verify-hash cache-bust retry + preflight-cwd guard), dt-build 2.7.1 (-EncodedCommand spawn fix)",
       "0.10.2 dt-session-audit 0.3.1: audit upload step works on the Mac too.",

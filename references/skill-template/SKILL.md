@@ -7,7 +7,7 @@ allowed-tools: "Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
   version: 0.1.0
-  changelog: "Initial scaffold."
+  changelog: "Release history: CHANGELOG.md (newest first)."
 ---
 
 # Skill Title Here

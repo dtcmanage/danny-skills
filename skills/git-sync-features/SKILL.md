@@ -2,7 +2,7 @@
 name: git-sync-features
 description: "Rebase all active feature branches onto main at the start of a session. Use when there are multiple feature branches in a repo and you need to sync them before starting work. Trigger on /git-sync-features or 'sync feature branches' or 'sync all features'."
 metadata:
-  version: 0.1.0
+  version: 0.1.1
 ---
 
 # git-sync-features — Sync All Feature Branches onto main

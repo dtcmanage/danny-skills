@@ -3,7 +3,7 @@ name: dt-handoff
 description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Also owns handoff validation: trigger on 'validate the handoff X', 'validate the build X', 'was this handoff acted on?', or '-validate <handoff-path>' to audit a handoff against deterministic evidence. Do not use for capturing memory or preferences mid-session - that is dt-session-audit's job."
 argument-hint: "What should the next session focus on?"
 metadata:
-  version: 0.2.0
+  version: 0.2.1
 ---
 
 # Handoff

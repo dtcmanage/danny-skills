@@ -1,0 +1,69 @@
+{
+  "references/conventions.md": {
+    "consumers": [
+      "dt-app-launcher", "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
+      "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
+      "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
+      "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
+    ],
+    "summary_token": "version policy"
+  },
+  "references/deterministic-reference-policy.md": {
+    "consumers": [
+      "dt-app-launcher", "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
+      "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
+      "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
+      "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
+    ],
+    "summary_token": "version policy"
+  },
+  "references/shared-component-owners.json": {
+    "consumers": [],
+    "summary_token": "version policy"
+  },
+  "references/skill-template/CHANGELOG.md": {
+    "consumers": [],
+    "summary_token": "version policy"
+  },
+  "references/skill-template/SKILL.md": {
+    "consumers": [],
+    "summary_token": "version policy"
+  },
+  "references/versioning-policy.md": {
+    "consumers": [
+      "dt-app-launcher", "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
+      "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
+      "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
+      "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
+    ],
+    "summary_token": "version policy"
+  },
+  "scripts/bump-plugin-version.ps1": {
+    "consumers": [],
+    "summary_token": "version policy"
+  },
+  "scripts/bump-skill-version.ps1": {
+    "consumers": [],
+    "summary_token": "version policy"
+  },
+  "scripts/extract-named-artifacts.ps1": {
+    "consumers": ["dt-build", "dt-roadmap"],
+    "summary_token": ""
+  },
+  "scripts/resolve-codex-model.ps1": {
+    "consumers": ["dt-build", "dt-review"],
+    "summary_token": ""
+  },
+  "scripts/test-versioning-policy.ps1": {
+    "consumers": [],
+    "summary_token": "version policy"
+  },
+  "scripts/verify-versioning-policy.ps1": {
+    "consumers": [],
+    "summary_token": "version policy"
+  },
+  "tools/build-plugin.ps1": {
+    "consumers": [],
+    "summary_token": "version policy"
+  }
+}

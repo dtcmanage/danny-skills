@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.0
+  version: 1.1.1
   changelog: "Hardened shared Mermaid rendering so design-view.html verifies real SVG diagrams instead of raw graph text."
 ---
 

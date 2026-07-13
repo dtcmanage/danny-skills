@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.2.0
+  version: 1.2.1
   changelog: "Full changelog relocated to skills/dt-roadmap/CHANGELOG.md (newest first)."
 ---
 

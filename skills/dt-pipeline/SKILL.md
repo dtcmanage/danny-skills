@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 0.1.0
+  version: 0.1.1
   changelog: "0.1.0 initial release: one-command plan -> dt-review -> dt-build orchestration. Stage-aware intake (objective / plan-draft.md / handoff / existing design-final enters the pipeline at the right stage), subagent-run review and build phases, ~10-minute one-line status cadence while subagents run (default on), rolling _build-state.md crash-resume checkpoint written from templates/build-state-template.md at every phase boundary and milestone completion, prod-write single-threading restated as binding, and the end-of-run 'ready to merge to main?' prompt."
 ---
 

@@ -2,7 +2,7 @@
 name: dt-ship
 description: "One-command close-out for a finished feature: run the build/tests gate, rebase + ff-only merge to main via the shared merge machinery, push, deploy per the repo's .ship.json, PROVE the deploy is live (deployed commit hash must equal local main HEAD, plus browser-smoke on the configured routes), then purge the merged worktree and branch. Trigger on /dt-ship, 'ship it', 'push live', or 'ship and clean tree'. Do NOT use to create branches or worktrees (that is start-work), for design review (dt-review), or for build execution (dt-build)."
 metadata:
-  version: 0.1.1
+  version: 0.1.2
   changelog:
     - "0.1.0 - Initial: ship.ps1 drives gate -> merge (reusing git-merge-feature's merge-feature.ps1 with -PurgeWorktree) -> purge sweep -> push -> deploy -> live proof (commit-hash probe + browser-smoke) from a per-repo .ship.json; fail-closed JSON summary; optional chaining into dt-session-audit / dt-handoff."
 ---

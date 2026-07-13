@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.3.1
+  version: 0.3.2
 ---
 
 # Session Audit

@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI on Windows; requires danny-skills repo present."
 metadata:
-  version: 0.3.0
+  version: 0.3.1
   changelog: "Extracted launcher verification to scripts/verify-launcher.ps1: deterministic pass/fail report on manifest files, shortcut .lnk targets (edge_static vs python_gui), TCP listener, and Edge hardening-flag presence. SKILL.md step 4 now invokes the script instead of asking the AI to interpret process command lines and shortcut targets by hand."
 ---
 

@@ -2,7 +2,7 @@
 name: dt-memory-hygiene
 description: "Periodic maintenance pass for CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Runs when deterministic bloat thresholds are exceeded. Compacts verbose entries, removes duplicate drift, normalizes shape, and preserves current-state clarity without changing underlying decisions."
 metadata:
-  version: 0.2.0
+  version: 0.2.1
 ---
 
 # Memory Hygiene

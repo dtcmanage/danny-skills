@@ -6,11 +6,19 @@ user-invocable: true
 allowed-tools: "Bash Read Write Edit"
 compatibility: "Windows with Codex CLI authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Node required for helpers/gallery. Requires the danny-skills repo present."
 metadata:
-  version: 0.1.1
-  changelog: "Initial release (dt-review complex, converged in 3 rounds). Thin orchestration layer over Codex's built-in image_gen engine (gpt-image-2). gen-image.sh drives Codex headless and owns collection under a race-safe contract: before/after UUID-directory set-diff (not mtime -newer), a stale-aware per-run lock, fail-closed counts, and a prompt data-envelope. Helpers: make-grid-prompt, crop-grid-cell (dependency-free PNG crop), resolve-assets-dir, brand-preamble, convert-ref, make-gallery. Modes: single, batch, 5x5 grid-variation with composition-preserving cell refinement. Brand styling opt-in."
+  version: 0.1.2
+  changelog: "Release history: CHANGELOG.md (newest first)."
 ---
 
 # Image Generation
+
+## Shared Policy Baseline
+
+Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+
+Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+
+If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
 
 Generate bitmap images and visual assets on demand. This skill is a thin, reliable wrapper around
 **Codex's built-in `image_gen` tool** (the `gpt-image-2` engine). It runs on Danny's ChatGPT
