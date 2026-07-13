@@ -50,6 +50,10 @@
     "consumers": ["dt-build", "dt-roadmap"],
     "summary_token": ""
   },
+  "scripts/invoke-codex-process.ps1": {
+    "consumers": ["dt-review"],
+    "summary_token": "process wrapper"
+  },
   "scripts/resolve-codex-model.ps1": {
     "consumers": ["dt-build", "dt-review"],
     "summary_token": ""

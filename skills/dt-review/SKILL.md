@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.6.2
+  version: 1.7.0
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -56,7 +56,7 @@ ChatGPT auth, explicit model/effort, and structured output.
 The shared resolver validates pins against the account catalog. Fallbacks are:
 
 - Complex: Sol -> Terra -> 5.5 -> 5.4.
-- Light: Terra -> Luna -> 5.4-mini -> 5.4.
+- Light: Terra -> Luna -> 5.4 -> 5.4-mini -> 5.5 -> Sol.
 - Never select `gpt-5.3-codex-spark`.
 
 When the catalog changes, refresh with `codex debug models`, verify official OpenAI model guidance,

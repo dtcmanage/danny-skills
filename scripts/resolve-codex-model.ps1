@@ -35,7 +35,7 @@ function Resolve-CodexModel {
     $fallbacks = @{
         complex  = @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5', 'gpt-5.4')
         standard = @('gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4')
-        light    = @('gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.4-mini', 'gpt-5.4')
+        light    = @('gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-5.6-sol')
     }
 
     # Candidate order: preferred pin first, then the tier allowlist (de-duped).

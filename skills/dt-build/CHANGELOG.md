@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.8.3
+
+- Aligned light-tier Codex fallbacks with the canonical GPT-5.6 matrix while retaining strict cache validation.
+
 ## 2.8.2
 
 - Added the pack-wide version-policy gate to danny-skills finalization.

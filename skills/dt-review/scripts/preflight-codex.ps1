@@ -36,8 +36,18 @@ if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SkillRoot = Split-Path -Parent $ScriptDir
-$resolved = (Get-Item -LiteralPath $SkillRoot).ResolveLinkTarget($true)
-if ($resolved) { $SkillRoot = $resolved.FullName }
+$original = (Resolve-Path -LiteralPath $SkillRoot).Path
+$cursor = Get-Item -LiteralPath $original
+while ($null -ne $cursor) {
+    $resolved = $null
+    try { $resolved = $cursor.ResolveLinkTarget($true) } catch { }
+    if ($resolved) {
+        $suffix = [System.IO.Path]::GetRelativePath($cursor.FullName, $original)
+        $SkillRoot = if ($suffix -eq '.') { $resolved.FullName } else { Join-Path $resolved.FullName $suffix }
+        break
+    }
+    $cursor = $cursor.Parent
+}
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 . (Join-Path $RepoRoot 'scripts\resolve-codex-model.ps1')
 . (Join-Path $RepoRoot 'scripts\invoke-codex-process.ps1')

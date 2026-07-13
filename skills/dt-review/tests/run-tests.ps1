@@ -100,7 +100,8 @@ try {
     } | ConvertTo-Json -Depth 4
     Write-Utf8 $cachePath $cache
     Assert-True ((Resolve-CodexModel -Tier complex -PreferredModel 'dead' -CachePath $cachePath) -eq 'gpt-5.6-sol') 'complex resolver did not select Sol'
-    Assert-True ((Resolve-CodexModel -Tier light -PreferredModel 'dead' -CachePath $cachePath) -eq 'gpt-5.6-terra') 'light resolver did not select Terra'
+    Assert-True ((Resolve-CodexModel -Tier light -PreferredModel 'gpt-5.6-terra' -CachePath $cachePath) -eq 'gpt-5.6-terra') 'dt-review light pin did not select Terra'
+    Assert-True ((Resolve-CodexModel -Tier light -PreferredModel 'dead' -CachePath $cachePath) -eq 'gpt-5.6-luna') 'shared light fallback did not select Luna'
 
     # The shared process runner must kill a timed-out child.
     . (Join-Path $RepoRoot 'scripts\invoke-codex-process.ps1')
