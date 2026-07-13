@@ -1,41 +1,50 @@
-# Input Modes (Round 0)
+# Input Modes and Round 0
 
-`dt-review` supports three scratch `draft-v1` inputs:
+## Mode A - plan path
 
-## Mode A — Plan file path provided
+1. Read the supplied Markdown end to end.
+2. Infer project and workstation from the path when the routing map makes them unambiguous.
+3. Validate `shape_version` and required sections against repo-level `references/plan-shape.md`.
+   Missing sections or an unknown major version are genuine user decisions; do not silently adapt.
+4. Copy the source verbatim to `design\_review\draft-v1.md`.
 
-1. Read the provided markdown file end-to-end.
-2. Infer project/workstation from path only as an optimization.
-3. Validate inference:
-- Workstation must match a Routing Map row.
-- Project name cannot be a utility/tooling folder (`skills`, `plugins`, `prompts`, `commands`, `cache`) and
-  cannot traverse `00_Resources` or `.claude` between workspace root and plan.
-4. Copy plan verbatim into `design\_review\draft-v1.md`.
+## Mode B - substantive brief
 
-If inference validation fails, still use the supplied plan file content, but ask project/workstation
-explicitly (same as Mode B/C intake).
+Treat the trigger prompt as the plan and write it verbatim to `design\_review\draft-v1.md`. Add
+`shape_version: 1` and the minimum plan-shape sections only when they are missing; do not invent
+decisions.
 
-## Mode B — Substantive brief in trigger prompt
+## Mode C - interactive drafting
 
-1. Treat the user's prompt body as the draft plan.
-2. Write it verbatim to `design\_review\draft-v1.md`.
+Use only when neither a plan nor a substantive brief exists. Gather the smallest missing set of
+objectives, scope, constraints, architecture choices, and open questions, then write `draft-v1.md`.
 
-## Mode C — Interactive drafting
+## Tier and model selection
 
-Use only when neither Mode A nor B applies:
-1. Gather objectives, scope, architecture choices, constraints, open questions.
-2. Write resulting draft to `design\_review\draft-v1.md`.
+Infer rather than routinely asking:
 
-## Intake fields
+- `light`: bounded component or contract with limited blast radius; cap 3.
+- `complex`: cross-system, security-sensitive, production-critical, or hard-to-reverse design; cap 6.
 
-Use one combined `AskUserQuestion` call.
+Use the pinned model for the inferred tier. Ask only when the scope truly straddles tiers or Danny
+explicitly requests a model choice. Pipeline/subagent invocation is noninteractive unless a genuine
+fork appears.
 
-When Mode A inference validation passes, ask only:
-- tier (`light`/`complex`)
-- optional model override
+## Evidence map
 
-Otherwise ask all:
-- project name
-- workstation
-- tier
-- optional model override
+For a code-backed design or a design with current external/data assumptions, inspect the actual
+code/data/docs once before Round 1 and write `design\_review\review-context.md`:
+
+```markdown
+# Review context
+
+## Canonical constraints
+- <absolute path + SHA256 + relevant rule>
+
+## Build-intake revalidation
+| Claim | Evidence/source | Checked at | Recheck gate |
+| --- | --- | --- | --- |
+```
+
+Use file/symbol or query evidence. Mark anything not directly checked as `UNVERIFIED`. The final
+design carries the `Build-intake revalidation` table so `dt-build` can recheck named assumptions.

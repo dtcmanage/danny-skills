@@ -1,60 +1,66 @@
 # Finalization and Glossary Reconciliation
 
-Finalization starts when termination criteria are met.
+## 1. Prepare the accepted draft
 
-## 1) Final draft
+Derive a 2-4 word kebab-case slug. `FINALIZE_CURRENT` uses the receipt-verified `draft-vN.md`
+directly. Never hand-edit an unreviewed `draft-vN+1.md` for either other terminal action.
 
-Derive the design slug: 2-4 kebab-case words from the plan/project name (lowercase, hyphens, no
-stop-word padding). Example: plan "LP Statement Linking" -> slug `lp-statement-linking`.
+For `APPLY_POLISH_AND_FINALIZE`, create a JSON array with exactly one entry for every current
+`ACCEPT` or `COUNTER` finding and no entry for `REJECT` findings. (`DEFER` prevents this action.) Each
+entry carries the current `id`, `finding_hash`, `disposition`, and exact `old_text`/`new_text`. Each
+`old_text` must occur exactly once in the receipt-verified source and replacements may not overlap.
 
-Copy the accepted scratch draft to `design\design-final-<slug>.md` (e.g.
-`design\design-final-lp-statement-linking.md`). Never write a bare `design-final.md`.
+For an explicitly approved `USER_DECISION`, create a JSON array covering exactly every current
+finding where `blocks_design` is true or disposition is `DEFER`. Each entry carries `id`, `rationale`,
+`owner`, and `recheck_gate`; all values are trimmed single lines. Then run:
 
-This is the only point in the run where a design document is written. `design-final-<slug>.md` is
-the only retained review artifact. Do not append round summaries, dialogue logs, or review
-provenance.
-
-## 2) Reconcile terminology
-
-Locate `CONTEXT.md` using this precedence:
-1. `D:\Claude\_Claude-Workspace\<workstation>\<project>\CONTEXT.md` (project root)
-2. For Mode A arbitrary plan path: adjacent `CONTEXT.md` only if it matches project/workstation context
-3. If unresolved: stop and ask Danny
-
-For each glossary term:
-- Drifted meaning -> update entry
-- New load-bearing term -> add entry
-- Stable term -> keep
-
-Meaning-change conflicts require Danny A/B/C decision:
-- A Keep existing
-- B Replace with new definition
-- C Split into two terms
-
-## 3) Clean scratch state (explicit scripted step)
-
-After `design-final-<slug>.md` is written successfully, run the cleanup command (via the Bash tool,
-substituting the project's absolute `design` folder):
-
-```
-pwsh -NoProfile -Command "Remove-Item -LiteralPath '<project>\design\_review' -Recurse -Force"
+```powershell
+pwsh -NoProfile -File <skill>\scripts\prepare-final-draft.ps1 `
+  -ProjectPath <project> -Round <N> -Tier <light|complex> `
+  -InstructionsPath <scratch-json> [-ApprovedResidualRisk]
 ```
 
-Then confirm completion against this checklist:
+`-ApprovedResidualRisk` is valid only after Danny explicitly accepts that `USER_DECISION` outcome.
+The preparer verifies the round receipt and current dispositions, writes only `draft-vN+1.md`, and
+writes `finalization-manifest-vN+1.json` binding the action and SHA256 hashes of state, source draft,
+source receipt, instructions, and prepared draft. Existing outputs must be byte-identical for an
+idempotent resume. The residual path performs only this deterministic append:
 
-- [ ] `design\_review\` no longer exists (prompts, `review-v<N>.md`, `codex-stream-v<N>.log`,
-      `draft-v<N>.md`, and `verdicts.json` are all gone with it)
-- [ ] `design\design-final-<slug>.md` exists and is the only retained review artifact
+```markdown
+## Accepted residual risks
 
-If finalization fails, do NOT run the cleanup — leave scratch state intact for recovery.
+### R3-F01 - Concise risk name
 
-## 4) Output paths
+- Rationale: Why accepting this risk is justified.
+- Owner: Role accountable for the risk.
+- Recheck gate: Concrete event or validation that revisits it.
+```
 
-Print bare absolute paths for:
-- `design-final-<slug>.md`
-- `CONTEXT.md` when changed/created
+## 2. Reconcile terminology before writing the final
 
-## 5) Stop and handoff
+Read repo-level `references/glossary-contract.md` and apply A1-A8. Resolve/create the project
+`CONTEXT.md`, update drifted/new load-bearing terms, and surface meaning conflicts as A/B/C. Surface
+promotion candidates under A6; never promote automatically. Record the resolved context path for
+the finalization receipt.
 
-Ask Danny whether to proceed to implementation now or scope a new session. Do NOT generate an HTML
-companion automatically. Build it only when Danny explicitly asks (that is `dt-visualize-design`).
+## 3. Commit and clean atomically
+
+Run the deterministic finalizer only after `evaluate-termination.ps1` returns a finalizable action:
+
+```powershell
+pwsh -NoProfile -File <skill>\scripts\finalize-review.ps1 `
+  -ProjectPath <project> -DraftPath <accepted-draft> -Slug <slug> `
+  -Round <N> -Tier <light|complex> -ContextPath <CONTEXT.md> -GlossaryReconciled
+```
+
+Add `-ApprovedResidualRisk` only after Danny explicitly chose that cap outcome. For every N+1 path,
+the finalizer requires the preparation manifest, validates every bound hash, and replays deterministic
+preparation to reject arbitrary post-preparation mutation. It also validates latest contiguous state,
+terminal reviewed-draft SHA256, shape/title, forbidden review archaeology, exact residual-risk
+coverage, canonical project `CONTEXT.md` receipt, existing-final identity, and reparse-aware scratch
+containment. It writes atomically and deletes only the verified
+`<project>\design\_review` folder.
+
+## 4. Report
+
+Report the bare absolute final path and changed context path. When invoked by a pipeline/subagent, return to the caller without an implementation question. Otherwise stop after the artifact handoff; Danny decides the next stage.

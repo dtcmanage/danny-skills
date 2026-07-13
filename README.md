@@ -87,12 +87,13 @@ Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the desig
 
 **What it does:**
 
-- Reads the plan (from `dt-plan`, a file path, or a substantive trigger prompt) into `draft-v1.md` verbatim. Plan structure is the author's call; the skill is structure-agnostic from Round 1 onward.
-- Pre-flight: cheap sanity check that Codex responds, before burning reasoning tokens.
-- Each round: Codex critiques the current draft (edge cases, security, robustness, consistency, engagement with prior reasoning) and emits a structured verdict (`NOTHING_TO_ADD` / `MINOR_POLISH_ONLY` / `MATERIAL_CHANGES_NEEDED`) + confidence.
-- Claude reconciles per item — ACCEPT / REJECT / DEFER / COUNTER with real reasoning. Repeat-rejects (Codex raises, Claude rejects, Codex raises again) pause for the user to adjudicate.
-- All artifacts (prompts, feedback, responses, drafts) live in `design/` with SHA-256 provenance — every decision is reconstructible.
-- Terminates on `NOTHING_TO_ADD`, polish convergence, or round cap (3 for light tier, 6 for complex). Outputs a single `design-final.md` with embedded round summary.
+- Reads the plan (from `dt-plan`, a file path, or a substantive trigger prompt), validates/normalizes its Round 0 shape, then treats the resulting `draft-v1.md` as the immutable review input.
+- Preflight verifies current CLI capabilities/auth on GPT-5.6 Luna before spending review tokens.
+- Light reviews use GPT-5.6 Terra; complex reviews use GPT-5.6 Sol. Every review round pins medium reasoning rather than inheriting the user's global effort.
+- Each round uses a JSON schema with stable finding IDs, prior-commitment checks, and a separate `blocks_design` materiality axis; scripts reject inconsistent verdicts.
+- Claude reconciles each finding as ACCEPT / REJECT / DEFER / COUNTER against canonical constraints and evidence. Reopened rejections pause for user adjudication.
+- Scratch prompts, reviews, streams, dispositions, and drafts live in `design/_review/` only while active. Successful finalization deletes them.
+- Terminates immediately on `NOTHING_TO_ADD`, after polish convergence, or at a decision gate (3 light / 6 complex). Outputs only `design/design-final-<slug>.md`; a material last verdict can never finalize silently.
 
 **Skip it for:** bug fixes, single-file changes, exploratory throwaway code.
 

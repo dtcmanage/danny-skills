@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "headline",
+    "dimension_assessments",
+    "prior_finding_checks",
+    "findings",
+    "engagement_with_prior_reasoning",
+    "verdict",
+    "confidence",
+    "confidence_reason"
+  ],
+  "properties": {
+    "headline": {
+      "type": "string"
+    },
+    "dimension_assessments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intent",
+        "completeness",
+        "coherence",
+        "resilience",
+        "economy",
+        "feasibility"
+      ],
+      "properties": {
+        "intent": { "type": "string" },
+        "completeness": { "type": "string" },
+        "coherence": { "type": "string" },
+        "resilience": { "type": "string" },
+        "economy": { "type": "string" },
+        "feasibility": { "type": "string" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "status",
+          "title",
+          "dimension",
+          "severity",
+          "blocks_design",
+          "root_cause",
+          "remediation",
+          "validation_check",
+          "ambiguous_root_cause",
+          "candidate_dimensions",
+          "missing_evidence",
+          "owner_role"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^R[1-9][0-9]*-F[0-9]{2}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["NEW", "PERSISTING", "REOPENED", "REGRESSION"]
+          },
+          "title": { "type": "string" },
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "Intent",
+              "Completeness",
+              "Coherence",
+              "Resilience",
+              "Economy",
+              "Feasibility"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "blocks_design": { "type": "boolean" },
+          "root_cause": { "type": "string" },
+          "remediation": { "type": "string" },
+          "validation_check": { "type": "string" },
+          "ambiguous_root_cause": { "type": "boolean" },
+          "candidate_dimensions": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {
+              "type": "string",
+              "enum": [
+                "Intent",
+                "Completeness",
+                "Coherence",
+                "Resilience",
+                "Economy",
+                "Feasibility"
+              ]
+            }
+          },
+          "missing_evidence": { "type": "string" },
+          "owner_role": { "type": "string" }
+        }
+      }
+    },
+    "prior_finding_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "result", "note"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^R[1-9][0-9]*-F[0-9]{2}$"
+          },
+          "result": {
+            "type": "string",
+            "enum": ["SATISFIED", "PERSISTS", "REGRESSED", "SUPERSEDED"]
+          },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "engagement_with_prior_reasoning": {
+      "type": "string"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "NOTHING_TO_ADD",
+        "MINOR_POLISH_ONLY",
+        "MATERIAL_CHANGES_NEEDED"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "confidence_reason": {
+      "type": "string"
+    }
+  }
+}

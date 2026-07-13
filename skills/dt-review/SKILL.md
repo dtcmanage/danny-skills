@@ -1,6 +1,6 @@
 ---
 name: dt-review
-description: "Adversarial Claude-vs-Codex design dialogue on a plan. Trigger on /dt-review or 'dt-review [plan-path]'. Do NOT use for small bug fixes or single-file edits."
+description: "Run an adversarial Claude-vs-Codex architecture/design review on a substantive plan until it converges or reaches an explicit cap decision. Trigger on /dt-review, 'dt-review [plan-path]', or requests to pressure-test a non-trivial design. Do NOT use for small bug fixes, single-file edits, initial planning, or build execution."
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
@@ -10,210 +10,187 @@ metadata:
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
-# Review — Claude x Codex Coworker Dialogue
+# dt-review - Adversarial design convergence
 
-## Shared Policy Baseline
+## Shared baseline
 
-Apply the shared deterministic and referencing baseline at `../../references/deterministic-reference-policy.md`.
+Apply `../../references/deterministic-reference-policy.md` and resolve paths per
+`../../references/conventions.md`. Skill-local rules below are stricter where stated.
 
-Path resolution is governed by `../../references/conventions.md` (resolve from this `SKILL.md` location, never from `pwd`).
+`dt-review` pressure-tests a plan through independent Codex critique and evidence-based orchestrator
+reconciliation. It reviews logic and named evidence; it never treats an unverified current-system claim
+as fact.
 
-If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
+Retain only:
 
-`dt-review` is adversarial design critique for a plan. Two engineers debate the design as equals across
-rounds until it converges or the cap is reached.
+- `design\design-final-<slug>.md`
 
-Persistent output:
-- `design/design-final-<slug>.md` — the single retained design document, written ONCE at convergence.
-  Rounds never write a design document; per-round output lives in scratch only. `<slug>` is 2-4
-  kebab-case words derived from the plan/project name (e.g. a plan named "LP Statement Linking"
-  finalizes as `design-final-lp-statement-linking.md`). Never write a bare `design-final.md` — that
-  name survives only as a legacy input accepted by downstream consumers (`dt-roadmap`, `dt-build`,
-  `dt-visualize-design`).
+Active scratch lives under `design\_review\` and is deleted only by deterministic finalization:
 
-Scratch-only review state during an active run:
-- `design\_review\draft-v<N>.md`
-- `design\_review\review-v<N>.md`
-- `design\_review\verdicts.json` (per-round parsed verdicts + finding dispositions)
-- `design\_review\codex-stream-v<N>.log`
-- `design\_review\prompts\codex-critique-prompt-v<N>.md`
+- `draft-v<N>.md`, optional `review-context.md`
+- `prompts\codex-critique-prompt-v<N>.md`
+- `review-v<N>.json`, rendered/annotated `review-v<N>.md`, redacted stream log, `round-meta-v<N>.json`
+- `verdicts.json`, `dispositions-v<N>.json`, optional `round-authorizations.json`
+- optional preparation instructions JSON and `finalization-manifest-v<N+1>.json`
 
-Scratch state exists only to support an interrupted in-progress review. Delete it after successful
-finalization (Finalization step 3 is the explicit checklisted cleanup). If Danny wants a retained
-HTML view after finalization, that is `dt-visualize-design`, not `dt-review` — and only when Danny
-explicitly asks for it.
+## Trigger boundary
 
-## When this fires
+Use for a new system/component, a contract-changing refactor, a security/operability-sensitive external
+integration, or another hard-to-reverse design. Do not use for bug fixes, copy edits, throwaway
+experiments, `dt-plan`, `dt-prototype`, or `dt-build` execution.
 
-Trigger when at least one is true:
-- New system/service/major component with hard-to-reverse architectural commitments.
-- Non-trivial refactor (touches >3 modules or changes a contract).
-- New external integration where failure/security/operability paths must be pressure-tested.
+## Models, effort, and caps
 
-Do NOT fire for:
-- Bug fixes, copy edits, single-file tweaks, throwaway experiments.
-- Build execution from a finalized plan (`dt-build`).
-- Initial planning (`dt-plan`) or behavior/UI prototyping (`dt-prototype`).
+Use explicit pins; never inherit `~/.codex/config.toml` (currently Sol/ultra):
 
-## Operating constants
+| Role | Model | Effort | Limit |
+| --- | --- | --- | --- |
+| Light review | `gpt-5.6-terra` | `medium` | 3 rounds |
+| Complex review | `gpt-5.6-sol` | `medium` | 6 rounds |
+| Preflight | `gpt-5.6-luna` | `low` | 30 seconds |
 
-These constants are the single source of truth for which Codex model and reasoning effort each tier uses.
-Always pass the matching `-Model`, `-Tier`, and `-ReasoningEffort` to every script — the script defaults are a
-fallback, not the contract. Use them unless Danny explicitly overrides:
-- `STANDARD_MODEL = gpt-5.6-terra` (`-Tier standard`) — balanced everyday review tier.
-- `STANDARD_EFFORT = medium`
-- `COMPLEX_MODEL = gpt-5.6-sol` (`-Tier complex`) — frontier tier for hard architectural rounds.
-- `COMPLEX_EFFORT = medium` — bump to `high` only for the hardest architectural rounds; `high` is
-  materially slower and burns far more subscription quota.
-- `PREFLIGHT_MODEL = gpt-5.6-terra`
-- `PREFLIGHT_EFFORT = medium`
-- `PREFLIGHT_TIMEOUT_MS = 30000`
-- `HANG_GUARD_MS = 1800000`
+Each review round has an enforced 300,000 ms (5-minute) process timeout. The scripts also use
+`--ephemeral`, a hermetic temporary working directory, ignored user config, read-only sandbox, explicit
+ChatGPT auth, explicit model/effort, and structured output.
 
-Reasoning effort matters: the global Codex effort can change independently of this skill, so without an
-explicit `-ReasoningEffort` even a preflight can inherit unnecessarily expensive compute. The scripts pass
-`-c model_reasoning_effort=<effort>` to override the global default per invocation.
+The shared resolver validates pins against the account catalog. Fallbacks are:
 
-Self-healing model resolution: the scripts do NOT trust these pins blindly. Both `preflight-codex.ps1` and
-`invoke-codex-round.ps1` call the shared `scripts/resolve-codex-model.ps1` (`Resolve-CodexModel -Tier
-<standard|complex> -PreferredModel <pin>`), which reads Codex's live per-account model cache
-(`~/.codex/models_cache.json`), prefers the pin when it is still selectable, and otherwise falls back
-through a curated per-tier candidate list. If the pin has gone API-only (the historical `gpt-5.1-codex-max`
-failure), the round still runs on a live model and a warning names the dead pin. If nothing in the
-candidate list resolves, the script throws an actionable error listing what IS selectable — instead of
-writing a failure log that looks like a critique. This makes the skill immune to both pin rot and the
-config-default drift that bites any hand-rolled `codex exec` call that omits `--model`.
+- Complex: Sol -> Terra -> 5.5 -> 5.4.
+- Light: Terra -> Luna -> 5.4-mini -> 5.4.
+- Never select `gpt-5.3-codex-spark`.
 
-Model freshness: when OpenAI ships a new Codex model, re-probe availability on Danny's auth per the
-workspace Codex matrix (`_Claude-Workspace\00_Resources\codex-cli-usage.md`) with a read-only "reply OK"
-probe, then update the pins above, the candidate lists in `scripts/resolve-codex-model.ps1`, and that
-matrix in the same pass. Pin explicitly; never rely on Codex's auto-migrated config default, which can
-drift silently.
+When the catalog changes, refresh with `codex debug models`, verify official OpenAI model guidance,
+probe each proposed pin read-only, then update this table, both script defaults, and
+`scripts/resolve-codex-model.ps1` together.
 
-## Canonical contracts and references
+## References
 
-Read these files on demand from this skill folder and repo root:
-- `references/input-modes.md` — intake and Round 0 mode selection (A/B/C).
-- `references/codex-prompt-template.md` — codex critique template and required verdict format.
-- `references/recovery.md` — interrupted-round resume rules and malformed feedback handling.
-- `references/finalization.md` — finalization, glossary reconciliation, promotion-gate workflow.
-- `references/design-shape.md` — `shape_version` policy + output schema for `design-final-<slug>.md`.
-- `../../references/canonical-dimension-contract.md` — single canonical Dimension Contract source.
+Read only the branch needed:
 
-Never inline-copy the Canonical Dimension Contract into this SKILL.md. Pointer-swap is mandatory.
+- `references/input-modes.md` - Mode A/B/C intake, tier inference, evidence map.
+- `references/codex-prompt-template.md` - deterministic assembly and structured-output contract.
+- `references/termination.md` - caps and exact state transitions.
+- `references/recovery.md` - artifact-state resume rules.
+- `references/finalization.md` - glossary reconciliation and safe final commit.
+- `references/design-shape.md` - final artifact shape.
+- `../../references/canonical-dimension-contract.md` - normative review dimensions.
+- `../../references/plan-shape.md` - plan input shape.
+- `../../references/glossary-contract.md` - A1-A8 terminology rules at finalization.
 
-## Execution model — how to run the scripts
+## Execution rule
 
-This is load-bearing. Get it wrong and a round hangs for over an hour or silently produces no output.
-
-1. **Run every dt-review script through the Bash tool, never the PowerShell tool.** Codex hangs
-   indefinitely when launched from Claude's PowerShell tool (its host has redirected stdio and no real
-   console); a stuck round can sit for 70+ minutes. Launched from the Bash tool, Codex gets clean stdio
-   and returns normally. Invocation shape:
-
-   ```
-   pwsh -NoProfile -File "<abs path>/skills/dt-review/scripts/<script>.ps1" -ProjectPath "<abs>" ...
-   ```
-
-2. **`-NoProfile` is mandatory.** Danny's PowerShell profile dot-sources helpers under ConstrainedLanguage
-   and crashes the script ("Cannot dot-source ... defined in a different language mode") if the profile loads.
-3. **Wrap the Bash call in a timeout** — `PREFLIGHT_TIMEOUT_MS` for preflight, `HANG_GUARD_MS` for a round.
-4. **The prompt goes to Codex over stdin, handled inside the scripts.** Never pass a round prompt as a
-   command-line argument: it is ~30KB+ and overruns the OS arg-length limit, so the round output is lost.
-5. **Pass `-Model`, `-Tier`, and `-ReasoningEffort`** from the operating constants for the active tier.
-   `-Tier` (`standard` or `complex`) drives the self-healing fallback chain when the pinned `-Model` is no
-   longer selectable on the current auth (see the operating-constants "Self-healing model resolution" note).
-
-The pure-PowerShell scripts (`parse-verdict.ps1`, `capture-provenance.ps1`) do no Codex I/O and may run
-either way, but run them via Bash too for consistency.
+Run every script with `pwsh -NoProfile -File`. On Claude surfaces, call through the Bash tool; on
+Codex, use the shell command tool. Set the outer tool timeout slightly above the script's own timeout.
+Never hand-roll `codex exec`, assemble prompts in chat, or pass a prompt through argv.
 
 ## Procedure
 
-### Step 1 — Combined intake
+### 1. Round 0
 
-Run one `AskUserQuestion` that captures:
-- Project name (when not inferable from a provided plan path)
-- Workstation (when not inferable)
-- Tier (`standard` or `complex`)
-- Optional model override
+Follow `references/input-modes.md`:
 
-Then apply Mode A/B/C from `references/input-modes.md` and write scratch `draft-v1.md` verbatim from the
-selected source.
+1. Infer project/workstation/tier from the supplied path and scope. Do not routinely ask for tier or a
+   model override; ask only at a genuine fork.
+2. Validate plan shape and write `design\_review\draft-v1.md`.
+3. Load current canonical constraints. For code-backed/current-data claims, inspect the actual source once
+   and write `review-context.md` with paths/queries, hashes or timestamps, and build recheck gates.
+4. On resume, switch to `references/recovery.md` instead of restarting.
 
-### Step 2 — Pre-flight
+### 2. Capability preflight
 
-Run `scripts/preflight-codex.ps1` before Round 1, via Bash per the Execution model section:
-`pwsh -NoProfile -File <...>/preflight-codex.ps1 -ProjectPath <abs> -Model PREFLIGHT_MODEL -Tier standard -ReasoningEffort PREFLIGHT_EFFORT`,
-wrapped in a `PREFLIGHT_TIMEOUT_MS` timeout. If it does not return `OK` in 30 seconds, stop and surface the
-error. A model-resolution throw here means every candidate model for the tier is unavailable on the current
-auth — the error lists what IS selectable; update the pins.
+Run with a 75-second outer timeout. The script has four sequential internal
+budgets (10 + 10 + 15 + 30 seconds) plus bounded cleanup:
 
-### Step 3 — Round N loop
+```powershell
+pwsh -NoProfile -File <skill>\scripts\preflight-codex.ps1 `
+  -ProjectPath <abs> -Model gpt-5.6-luna -Tier light -ReasoningEffort low -TimeoutMs 30000
+```
 
-For each round N:
-1. Announce round start in chat with model.
-2. Assemble the codex prompt using `references/codex-prompt-template.md` and the canonical dimension
-   contract from `../../references/canonical-dimension-contract.md`.
-3. Execute `scripts/invoke-codex-round.ps1` via Bash per the Execution model section
-   (`pwsh -NoProfile -File <...>/invoke-codex-round.ps1 -ProjectPath <abs> -Round <N> -PromptPath <abs>
-   -Model <tier model> -Tier <standard|complex> -ReasoningEffort <tier effort>`, wrapped in a `HANG_GUARD_MS`
-   timeout) to run codex and write scratch `review-v<N>.md` plus scratch stream log atomically under
-   `design\_review\`. The script pipes the prompt to codex over stdin and reports the actually-resolved
-   model in its JSON output (`model` field) — announce that model, not just the requested pin.
-4. Parse verdict via `scripts/parse-verdict.ps1 -FeedbackPath <review-v<N>.md> -Round <N>
-   -StatePath <project>\design\_review\verdicts.json`. The script persists the parsed verdict and
-   confidence for round N into `verdicts.json` (one entry per round, replace-on-rerun).
-5. Reconcile each finding (ACCEPT / REJECT / DEFER / COUNTER), appending a `## Claude Response`
-   section to the same scratch `review-v<N>.md` artifact. Then record each finding's disposition in
-   round N's `findings` array in `verdicts.json`: `{ "finding": "<short stable title>",
-   "disposition": "ACCEPT|REJECT|DEFER|COUNTER", "note": "<one line>" }`.
-6. Re-raise detection is deterministic, never from conversation memory: before reconciling round N,
-   read `verdicts.json` and diff round N's findings against round N-1's recorded dispositions. If a
-   finding REJECTed in round N-1 is raised again in round N, pause and ask Danny using A/B/C
-   adjudication:
-   - A = accept Codex's point now
-   - B = keep rejection with new rationale
-   - C = defer to open question
-7. Write scratch `draft-v<N+1>.md` only when termination rules indicate continuation or one final polish
-   pass. This is a scratch working draft, not a design document — no round ever emits a retained design
-   artifact.
+This verifies CLI features (`--output-schema`, `--ephemeral`, `--ignore-user-config`), auth, model
+resolution, and response. Stop on failure.
 
-### Step 4 — Output-shape obligations (Phase 4 addition)
+### 3. Round N
 
-All retained final outputs use `shape_version: 1` frontmatter per `references/design-shape.md`.
+1. Assemble the prompt deterministically:
 
-`design-final-<slug>.md` is the accepted design body only. Do not copy round-by-round archaeology,
-stream-log references, or review summaries into the retained final artifact.
+   ```powershell
+   pwsh -NoProfile -File <skill>\scripts\assemble-review-prompt.ps1 `
+     -ProjectPath <abs> -Round <N> -Tier <light|complex>
+   ```
 
-### Step 5 — Finalization
+2. Invoke the tier model with a 320-second outer timeout. The script has
+   sequential 10-second CLI-version and 300-second review budgets plus bounded cleanup:
 
-Run the finalization workflow from `references/finalization.md`:
-- derive the slug (2-4 kebab-case words from the plan/project name) and copy the accepted draft to
-  `design-final-<slug>.md` — the ONLY point in the whole run where a design document is written
-- reconcile `CONTEXT.md` glossary against `design-final-<slug>.md`
-- delete `design\_review\` scratch state after successful finalization via the explicit scripted
-  cleanup step in `references/finalization.md` (run the command, then confirm the folder is gone)
-- list retained output paths as bare absolute paths
+   ```powershell
+   pwsh -NoProfile -File <skill>\scripts\invoke-codex-round.ps1 `
+     -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> `
+     -Model <tier-model> -Tier <light|complex> -ReasoningEffort medium -TimeoutMs 300000
+   ```
 
-## Deterministic scripts
+   Invocation reassembles the canonical prompt and binds prompt, draft, state, tier, and any required
+   authorization hashes before and after the model call. A stale or noncanonical `PromptPath` cannot run.
 
-This skill uses extracted deterministic scripts:
-- `scripts/preflight-codex.ps1`
-- `scripts/invoke-codex-round.ps1`
-- `scripts/parse-verdict.ps1`
-- `scripts/capture-provenance.ps1`
+3. Parse and persist state:
 
-All external-text prompt assembly goes through repo-level `scripts/wrap-prompt-envelope.ps1`.
-All stream/log redaction goes through repo-level `scripts/security/redact-secrets.ps1`.
-All Codex model selection goes through repo-level `scripts/resolve-codex-model.ps1` (self-healing pin
-resolution against the live model cache, shared with `dt-build`).
+   ```powershell
+   pwsh -NoProfile -File <skill>\scripts\parse-verdict.ps1 `
+     -FeedbackPath <review-vN.md> -Round <N> -StatePath <verdicts.json> -Tier <light|complex>
+   ```
 
-## Guardrails
+   Every numbered parse requires `round-meta-v<N>.json` and verifies that its round and tier match
+   the caller before persisting the receipt's tier. Keep that tier for every later parse, assembly,
+   invocation, termination check, authorization, and finalization in the review. Identical recovery
+   reparses reverify the metadata receipt.
 
-- Do not edit scratch `draft-v<N>.md` after codex reviews it; only write a new version.
-- Use `--sandbox read-only` for codex rounds; no codebase writes from codex in this skill.
-- Keep round-state reconstructible only while the review is active; do not preserve scratch review
-  artifacts after a successful freeze unless Danny explicitly asks.
-- Verdict parsing is line-contract based (`VERDICT:` + `Confidence:`), not heading-based.
-- If feedback is malformed during recovery, archive to `.partial.<timestamp>.md` and re-run round invoke.
-- Keep SKILL.md under 5,000 words; long procedural detail belongs in `references/` and scripts.
+4. If `adjudication_required=true`, pause for Danny's A/B/C decision before reconciliation:
+   A accept now; B keep rejection with new rationale; C defer as an open question.
+5. Independently assess every finding against canonical constraints, actual evidence, reversibility, and
+   economy. There is no accept/reject quota. Do not reflexively assimilate the reviewer recommendation.
+6. Write `dispositions-v<N>.json` with exact ID coverage and one of ACCEPT/REJECT/DEFER/COUNTER plus an
+   evidence-based note. Include `ambiguity_resolution` when flagged and `user_adjudication` for a re-raised
+   rejection. Append the same reasoning under `## Orchestrator Response` in `review-v<N>.md`.
+7. Record dispositions:
+
+   ```powershell
+   pwsh -NoProfile -File <skill>\scripts\record-dispositions.ps1 `
+     -StatePath <verdicts.json> -Round <N> -DispositionsPath <dispositions-vN.json>
+   ```
+
+8. Run `evaluate-termination.ps1 -StatePath <verdicts.json> -Round <N> -Tier <tier>` and obey its action.
+
+For `CONTINUE` or `APPLY_POLISH_AND_VERIFY`, write immutable `draft-v<N+1>.md` with reconciled changes.
+For `APPLY_POLISH_AND_FINALIZE`, follow `references/finalization.md` and use
+`prepare-final-draft.ps1`; never hand-write the unreviewed `draft-v<N+1>.md`.
+Never edit a reviewed draft in place.
+
+### 4. Cap decision
+
+On `USER_DECISION`, present exactly: extend one round; stop unfinalized; or explicitly accept residual
+risk. Residual-risk finalization requires `prepare-final-draft.ps1 -ApprovedResidualRisk` plus the same
+switch on the finalizer. Never silently convert a material last verdict into a final design.
+
+If Danny selects an extension, persist it before assembling the next prompt:
+
+- At a cap `USER_DECISION`, first write the reconciled immutable `draft-v<N+1>.md`.
+- After `FINALIZE_CURRENT`, the authorizer creates/verifies a byte-identical N+1 confirmation copy.
+- After `APPLY_POLISH_AND_FINALIZE`, run `prepare-final-draft.ps1` first; the authorizer replays its
+  manifest before allowing the confirmation review.
+
+```powershell
+pwsh -NoProfile -File <skill>\scripts\authorize-next-round.ps1 `
+  -ProjectPath <abs> -Round <N+1> -Tier <light|complex> `
+  -AuthorizedBy Danny -Reason '<explicit decision>'
+```
+
+Use the same command for a user-requested confirmation after `FINALIZE_CURRENT` or
+`APPLY_POLISH_AND_FINALIZE`. Ordinary `CONTINUE` and `APPLY_POLISH_AND_VERIFY` transitions remain
+automatic. The scripts reject skipped, noncontiguous, stale-authorized, or nonlatest rounds.
+
+### 5. Finalize
+
+Follow `references/finalization.md`: carry the build-intake revalidation table, reconcile CONTEXT/glossary
+under A1-A8, then run `scripts/finalize-review.ps1`. Only that script may write the final artifact and
+delete scratch. Do not generate HTML; that is `dt-visualize-design` on explicit request.
+
+When called by `dt-pipeline` or a subagent, return the final paths to the caller without asking whether to
+implement. Otherwise hand off the final path and stop.

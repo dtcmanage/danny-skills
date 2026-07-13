@@ -1,51 +1,42 @@
-# Codex Critique Prompt Template
+# Codex Review Prompt and Output Contract
 
-Use this template body for each round prompt file `design\_review\prompts\codex-critique-prompt-v<N>.md`.
+`scripts/assemble-review-prompt.ps1` is the only prompt producer. Do not assemble a round prompt
+freehand.
 
-## Assembly order
+Its JSON receipt binds round/tier plus canonical prompt, draft, state, and required-authorization
+paths/hashes. `invoke-codex-round.ps1` runs the assembler again, requires the supplied `PromptPath` to
+resolve to that canonical prompt, and rechecks the receipt immediately before and after Codex runs.
+This prevents a prompt for draft A from producing a review receipt for later draft B.
 
-1. Procedure preamble (round-specific instructions)
-2. `=== BEGIN CANONICAL DIMENSION CONTRACT ===`
-3. Verbatim content of repo-level `references/canonical-dimension-contract.md`
-4. `=== END CANONICAL DIMENSION CONTRACT ===`
-5. Envelope-wrapped scratch prior artifacts (`draft-v<N>.md`, optional `review-v<N-1>.md`)
-6. Structured output template below
+## Assembly
 
-All external artifact text must be wrapped via repo-level `scripts/wrap-prompt-envelope.ps1`.
+The script writes `design\_review\prompts\codex-critique-prompt-v<N>.md` in this order:
 
-## Structured output template
+1. Round instructions and verdict calibration.
+2. The trusted canonical dimension contract.
+3. Envelope-wrapped current draft.
+4. Optional envelope-wrapped `review-context.md` evidence map.
+5. For Round 2+, envelope-wrapped prior review/response and cumulative `verdicts.json` state.
 
-```markdown
-## Headline
-<~80 words maximum.>
+Only external/LLM-produced artifacts are wrapped with the shared
+`scripts/wrap-prompt-envelope.ps1` primitive. Never wrap the whole assembled prompt; doing so marks
+the procedure itself as untrusted data.
 
-## Intent
-- ...
+## Structured output
 
-## Completeness
-- ...
+`scripts/invoke-codex-round.ps1` passes
+`references/review-output-schema.json` through `codex exec --output-schema`, validates the semantic
+contracts, and renders `review-v<N>.json` to human-readable `review-v<N>.md`.
 
-## Coherence
-- ...
+Verdict calibration is mechanical:
 
-## Resilience
-- ...
+- No findings: `NOTHING_TO_ADD`.
+- Findings exist, none has `blocks_design: true`: `MINOR_POLISH_ONLY`.
+- Any finding has `blocks_design: true`: `MATERIAL_CHANGES_NEEDED`.
 
-## Economy
-- ...
+Severity and finalization blocking are separate axes. Severity follows impact/reversibility; a
+medium build-spec clarification can be non-blocking.
 
-## Feasibility
-- ...
-
-## Engagement with Claude's prior reasoning
-- ...
-
-## Verdict
-VERDICT: NOTHING_TO_ADD | MINOR_POLISH_ONLY | MATERIAL_CHANGES_NEEDED
-Confidence: high | medium | low -- <one-sentence reason>
-```
-
-## Verdict line contract
-
-Parser authority is the explicit `VERDICT:` line above.
-Headings are advisory; they are never used as the parser source of truth.
+Finding IDs are stable across rounds. A new finding uses `R<N>-F<NN>`; a known root cause reuses its
+original ID as `PERSISTING`, `REOPENED`, or `REGRESSION`. `prior_finding_checks` must cover every
+finding in cumulative state so accepted commitments cannot silently disappear.
