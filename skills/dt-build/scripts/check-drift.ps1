@@ -48,3 +48,5 @@ else {
         Write-Output ("PASS: no drift (ahead={0}, behind={1})" -f $ahead, $behind)
     }
 }
+
+if ($result.drift) { exit 1 }

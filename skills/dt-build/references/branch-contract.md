@@ -1,9 +1,10 @@
 # Branch Contract
 
 Run branch:
-- Authoritative state branch: `dt-build/<RUN_ID>`.
-- Integration branch default: `build/<RUN_ID>`, cut from `main` at intake.
-- Optional alias may exist but is not the state carrier.
+- The authoritative state carrier is the integration branch: `build/<RUN_ID>` by default.
+- Cut it from the merge target (`main` by default) at intake.
+- Never create a parent `dt-build/<RUN_ID>` ref. Git cannot store that leaf ref and child
+  refs beneath `dt-build/<RUN_ID>/...` at the same time.
 
 Chunk branches (multi-chunk milestones):
 - `dt-build/<RUN_ID>/<milestone>-<chunk>`.

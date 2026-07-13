@@ -4,7 +4,7 @@ param(
 
     [string]$ExpectedRunId = "",
     [string]$ExpectedChunkId = "",
-    [Nullable[int]]$ExpectedAttempt = $null,
+    [ValidateRange(1, 2)][Nullable[int]]$ExpectedAttempt = $null,
 
     [switch]$Json
 )
@@ -19,14 +19,19 @@ function Resolve-SkillRepoRoot {
     }
     $scriptDir = Split-Path -Parent $scriptPath
     $skillRoot = Split-Path -Parent $scriptDir
-    $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
-    $resolved = (Get-Item -LiteralPath $repoRoot).ResolveLinkTarget($true)
-    if ($null -ne $resolved) {
-        if ($resolved -is [string]) { return $resolved }
-        if ($resolved.PSObject.Properties.Name -contains "FullName") { return [string]$resolved.FullName }
-        return [string]$resolved
+    $original = (Resolve-Path -LiteralPath $skillRoot).Path
+    $cursor = Get-Item -LiteralPath $original
+    while ($null -ne $cursor) {
+        $resolved = $null
+        try { $resolved = $cursor.ResolveLinkTarget($true) } catch { }
+        if ($null -ne $resolved) {
+            $suffix = [System.IO.Path]::GetRelativePath($cursor.FullName, $original)
+            $skillRoot = if ($suffix -eq '.') { $resolved.FullName } else { Join-Path $resolved.FullName $suffix }
+            break
+        }
+        $cursor = $cursor.Parent
     }
-    return $repoRoot
+    return (Split-Path -Parent (Split-Path -Parent $skillRoot))
 }
 
 function Find-ByteSequence {
@@ -95,6 +100,9 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedChunkId) -and $chunkId -ne $Expec
 }
 if ($null -ne $ExpectedAttempt -and $attempt -ne [int]$ExpectedAttempt) {
     $errors.Add(("identity: attempt mismatch expected={0} actual={1}" -f [int]$ExpectedAttempt, $attempt))
+}
+if ($attemptMatch.Success -and $attempt -notin @(1, 2)) {
+    $errors.Add(("identity: attempt outside allowed automatic budget (1..2): {0}" -f $attempt))
 }
 
 # Check 2: allowed character scan.

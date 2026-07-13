@@ -46,7 +46,11 @@ function Extract-NamedArtifacts {
     }
 
     # Inline (no-backtick) `pytest <path>` and `python <script>` invocations.
-    $inlineCmd = [regex]::Matches($Text, '(?i)(?:^|\s)(pytest\s+[A-Za-z0-9_./\-\s]+|python\s+(?:scripts|backend|workers|tests)/[A-Za-z0-9_./-]+\.py(?:\s+[A-Za-z0-9_.\-\/=]+)*)')
+    # Remove fenced inline-code spans first. Otherwise `python -m pytest ...`
+    # inside backticks is captured once as the full command and a second time as
+    # the inner `pytest ...`, causing the same test suite to run twice.
+    $inlineText = [regex]::Replace($Text, '`[^`]*`', ' ')
+    $inlineCmd = [regex]::Matches($inlineText, '(?i)(?:^|\s)(pytest\s+[A-Za-z0-9_./\-\s]+|python\s+(?:scripts|backend|workers|tests)/[A-Za-z0-9_./-]+\.py(?:\s+[A-Za-z0-9_.\-\/=]+)*)')
     foreach ($m in $inlineCmd) {
         $cmd = $m.Groups[1].Value.Trim()
         if (-not ($commands -contains $cmd)) { $commands.Add($cmd) | Out-Null }

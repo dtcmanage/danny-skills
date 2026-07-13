@@ -5,6 +5,35 @@ Historical `metadata.changelog` entries, relocated verbatim from the SKILL.md fr
 entries go at the top. The connective lead-ins ("Prior ...", "Previous ...") are preserved exactly
 as they appeared in the original single frontmatter string.
 
+## 2.8.1
+
+- Added deterministic GPT-5.6 routing and invocation provenance: Terra/medium for standard chunks,
+  Sol/medium for load-bearing or second attempts, and Luna only for light preflight/routine work.
+- Fixed the impossible parent/child Git ref contract by making `build/<RUN_ID>` the sole state carrier.
+- Final ledgers now render append-only acceptance rows by default, require commit-backed implementation
+  evidence, preserve semantic downgrade approvals, and avoid rerunning disposable-environment tests.
+- Acceptance commands no longer duplicate inner pytest calls, use bounded file-redirected execution to
+  avoid stdout/stderr deadlocks, and cannot PASS final acceptance without an executed command.
+- Fixed fresh-process intake, stale `dev` defaults, junction root resolution, multi-check load-bearing
+  detection, and non-blocking drift exits. Added dependency-preflight and attempt-category semantics.
+- Hardened the canonical Codex wrapper with an internal process-tree timeout, structured report validation,
+  effort/model compatibility checks, failure provenance, and redaction of both streams and retained output.
+- Final ledger evidence now resolves the recorded commit in live Git history, rejects compound pseudo-PASS
+  statuses and unapproved per-check downgrades, and blocks protected-branch intake/CAS mutations.
+- Added a hermetic regression suite covering historical false-PASS cases, noisy/deadlocked commands, model
+  fallback, malformed/hanging Codex processes, branch preparation/CAS, resume safety, and the two-attempt cap.
+
+## 2.7.1
+
+- `verify-milestone-acceptance.ps1` spawns named commands via `-EncodedCommand` so embedded double quotes
+  (for example, quoted paths) no longer truncate the command.
+
+## 2.7.0
+
+- Added per-milestone `_build-state.md` checkpoints using the dt-pipeline template and COMPLETE marking.
+- Made `build-run-review.html` on-request only and accepted `design-final-*.md` intake.
+- Relocated frontmatter changelog history to this file.
+
 ## 2.6.0
 
 2.6.0 roadmap-preferred-not-required intake: dt-build now accepts a finalized design (design-final.md / plan-draft.md) as input, not only a dt-roadmap roadmap.md. New procedure steps 2 (detect roadmap vs design), 2.5 (auto-generate the roadmap from a design via the canonical skills/dt-roadmap/scripts/build-roadmap.ps1 — no re-implemented milestone parsing, no schema duplication), and 2.6 (validate, formerly step 2). A roadmap is preferred for heavier builds (many milestones or any load-bearing/gate milestone, which dt-build now recommends a reviewed dt-roadmap pass for) but is never a hard requirement; when a design lacks an Implementation Sequence / Validation Gates surface the build STOPS with the producer's graceful explanatory message instead of crashing. 'When this fires' and references/shared-input-routing.md updated to document design-or-roadmap intake.
@@ -20,5 +49,3 @@ Prior 2.4.0 behavior retained: Per-milestone acceptance gate now evaluates EVERY
 ## 2.3.1
 
 Previous 2.3.1 acceptance gate fixes (pytest -> python -m pytest, downgrade_approved_by parser + APPROVED_DOWNGRADE status) are retained unchanged.
-- 2.7.0 (2026-07-05): Per-milestone _build-state.md checkpoint (dt-pipeline template) with COMPLETE marking; build-run-review.html on request only; intake accepts design-final-*.md; frontmatter changelog relocated to CHANGELOG.md.
-- 2.7.1 (2026-07-06): verify-milestone-acceptance.ps1 spawns named commands via -EncodedCommand so embedded double quotes (e.g. quoted paths) no longer truncate the command

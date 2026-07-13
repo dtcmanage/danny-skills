@@ -6,8 +6,8 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.5.0
-  changelog: "Light/preflight model pin moved gpt-5.3-codex -> gpt-5.4 (Danny, 2026-06-02). The dead gpt-5.3-codex pin had been self-healing to gpt-5.3-codex-spark; Danny directed the fast tier to ride gpt-5.4 instead and never spark. resolve-codex-model.ps1 light candidate list reordered to (gpt-5.4, gpt-5.4-mini, gpt-5.5, gpt-5.3-codex-spark) — spark demoted to last-ditch backstop only; dead gpt-5.3-codex removed. SKILL operating constants (LIGHT_MODEL/PREFLIGHT_MODEL) and both script -Model defaults updated to gpt-5.4; codex-cli-usage.md matrix refreshed against the live 2026-06-02 cache (selectable: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex-spark). Prior 1.3.0: Self-healing model resolution: preflight and round scripts now call shared `scripts/resolve-codex-model.ps1`, which validates the pinned model against Codex's live per-account cache and falls back through a per-tier candidate list (throwing an actionable error if nothing resolves) — kills the `gpt-5.1-codex-max`-class failure where a dead pin or a config-default-drift produced a failure log that looked like a critique. Added `-Tier light|complex` to both scripts; round output now reports the actually-resolved model. Prior: 1.2.1 effort tuning (all tiers default `medium`); 1.2.0 execution-model fix — codex rounds run via the Bash tool as `pwsh -NoProfile -File` with the prompt on stdin, fixing the 70-min PowerShell-tool host hang, the ConstrainedLanguage profile crash, and the ~30KB arg-length failure that dropped round output."
+  version: 1.6.1
+  changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
 # Review — Claude x Codex Coworker Dialogue
@@ -60,27 +60,23 @@ Do NOT fire for:
 These constants are the single source of truth for which Codex model and reasoning effort each tier uses.
 Always pass the matching `-Model`, `-Tier`, and `-ReasoningEffort` to every script — the script defaults are a
 fallback, not the contract. Use them unless Danny explicitly overrides:
-- `LIGHT_MODEL = gpt-5.4` (`-Tier light`) — fast tier (light rounds + preflight). The codex-tuned fast
-  slugs (`gpt-5.3-codex`, `gpt-5.5-codex`) are gone/blocked on ChatGPT-subscription auth, so the fast tier
-  rides general `gpt-5.4`. Do NOT resolve to `gpt-5.3-codex-spark` (Danny, 2026-06-02); spark remains only
-  as the resolver's last-ditch backstop and should never actually be selected.
-- `LIGHT_EFFORT = medium`
-- `COMPLEX_MODEL = gpt-5.5` (`-Tier complex`) — deep-reasoning tier for hard architectural rounds. Supersedes `gpt-5.4`.
+- `STANDARD_MODEL = gpt-5.6-terra` (`-Tier standard`) — balanced everyday review tier.
+- `STANDARD_EFFORT = medium`
+- `COMPLEX_MODEL = gpt-5.6-sol` (`-Tier complex`) — frontier tier for hard architectural rounds.
 - `COMPLEX_EFFORT = medium` — bump to `high` only for the hardest architectural rounds; `high` is
   materially slower and burns far more subscription quota.
-- `PREFLIGHT_MODEL = gpt-5.4`
+- `PREFLIGHT_MODEL = gpt-5.6-terra`
 - `PREFLIGHT_EFFORT = medium`
 - `PREFLIGHT_TIMEOUT_MS = 30000`
 - `HANG_GUARD_MS = 1800000`
 
-Reasoning effort matters: Danny's `~/.codex/config.toml` sets `model_reasoning_effort = "high"` globally,
-so without an explicit `-ReasoningEffort` every round — even the preflight "reply OK" — runs a full
-deep-reasoning pass (tens of thousands of tokens, minutes of wall time). The scripts pass
+Reasoning effort matters: the global Codex effort can change independently of this skill, so without an
+explicit `-ReasoningEffort` even a preflight can inherit unnecessarily expensive compute. The scripts pass
 `-c model_reasoning_effort=<effort>` to override the global default per invocation.
 
 Self-healing model resolution: the scripts do NOT trust these pins blindly. Both `preflight-codex.ps1` and
 `invoke-codex-round.ps1` call the shared `scripts/resolve-codex-model.ps1` (`Resolve-CodexModel -Tier
-<light|complex> -PreferredModel <pin>`), which reads Codex's live per-account model cache
+<standard|complex> -PreferredModel <pin>`), which reads Codex's live per-account model cache
 (`~/.codex/models_cache.json`), prefers the pin when it is still selectable, and otherwise falls back
 through a curated per-tier candidate list. If the pin has gone API-only (the historical `gpt-5.1-codex-max`
 failure), the round still runs on a live model and a warning names the dead pin. If nothing in the
@@ -125,7 +121,7 @@ This is load-bearing. Get it wrong and a round hangs for over an hour or silentl
 4. **The prompt goes to Codex over stdin, handled inside the scripts.** Never pass a round prompt as a
    command-line argument: it is ~30KB+ and overruns the OS arg-length limit, so the round output is lost.
 5. **Pass `-Model`, `-Tier`, and `-ReasoningEffort`** from the operating constants for the active tier.
-   `-Tier` (`light` or `complex`) drives the self-healing fallback chain when the pinned `-Model` is no
+   `-Tier` (`standard` or `complex`) drives the self-healing fallback chain when the pinned `-Model` is no
    longer selectable on the current auth (see the operating-constants "Self-healing model resolution" note).
 
 The pure-PowerShell scripts (`parse-verdict.ps1`, `capture-provenance.ps1`) do no Codex I/O and may run
@@ -138,7 +134,7 @@ either way, but run them via Bash too for consistency.
 Run one `AskUserQuestion` that captures:
 - Project name (when not inferable from a provided plan path)
 - Workstation (when not inferable)
-- Tier (`light` or `complex`)
+- Tier (`standard` or `complex`)
 - Optional model override
 
 Then apply Mode A/B/C from `references/input-modes.md` and write scratch `draft-v1.md` verbatim from the
@@ -147,7 +143,7 @@ selected source.
 ### Step 2 — Pre-flight
 
 Run `scripts/preflight-codex.ps1` before Round 1, via Bash per the Execution model section:
-`pwsh -NoProfile -File <...>/preflight-codex.ps1 -ProjectPath <abs> -Model PREFLIGHT_MODEL -Tier light -ReasoningEffort PREFLIGHT_EFFORT`,
+`pwsh -NoProfile -File <...>/preflight-codex.ps1 -ProjectPath <abs> -Model PREFLIGHT_MODEL -Tier standard -ReasoningEffort PREFLIGHT_EFFORT`,
 wrapped in a `PREFLIGHT_TIMEOUT_MS` timeout. If it does not return `OK` in 30 seconds, stop and surface the
 error. A model-resolution throw here means every candidate model for the tier is unavailable on the current
 auth — the error lists what IS selectable; update the pins.
@@ -160,7 +156,7 @@ For each round N:
    contract from `../../references/canonical-dimension-contract.md`.
 3. Execute `scripts/invoke-codex-round.ps1` via Bash per the Execution model section
    (`pwsh -NoProfile -File <...>/invoke-codex-round.ps1 -ProjectPath <abs> -Round <N> -PromptPath <abs>
-   -Model <tier model> -Tier <light|complex> -ReasoningEffort <tier effort>`, wrapped in a `HANG_GUARD_MS`
+   -Model <tier model> -Tier <standard|complex> -ReasoningEffort <tier effort>`, wrapped in a `HANG_GUARD_MS`
    timeout) to run codex and write scratch `review-v<N>.md` plus scratch stream log atomically under
    `design\_review\`. The script pipes the prompt to codex over stdin and reports the actually-resolved
    model in its JSON output (`model` field) — announce that model, not just the requested pin.
@@ -210,7 +206,7 @@ This skill uses extracted deterministic scripts:
 All external-text prompt assembly goes through repo-level `scripts/wrap-prompt-envelope.ps1`.
 All stream/log redaction goes through repo-level `scripts/security/redact-secrets.ps1`.
 All Codex model selection goes through repo-level `scripts/resolve-codex-model.ps1` (self-healing pin
-resolution against the live model cache, shared so `dt-build` can adopt it).
+resolution against the live model cache, shared with `dt-build`).
 
 ## Guardrails
 

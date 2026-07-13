@@ -18,7 +18,7 @@ For each milestone in the roadmap, in DAG order with load-bearing milestones fir
    - `scripts/verify-milestone-acceptance.ps1` — pools **every** verification-manifest row whose `milestone-id` matches the requested milestone, confirms every artifact named across all of those checks exists in the working tree, and (with `-RunTests`) runs every named test command and folds every exit code into the verdict. JSON output exposes a `verification_checks` array with per-check `check_id`, `procedure_text`, `artifacts_named`, `artifacts_missing`, `commands_named`, `command_results`, and `blockers`; top-level `status` is the rolled-up view and is `PASS` only when every check's blockers are empty.
    - `scripts/check-downgrade-language.ps1` — scans the milestone's commit message, build-decision-log entry, and any per-chunk Codex output for banned phrases (see below).
 6. **Mark the milestone status** using the four-axis split:
-   - `implemented` — code changed for this milestone's chunks (chunk files touched between merge-base and HEAD).
+   - `implemented` — the append-only acceptance row records a non-empty milestone commit SHA. The verifier never guesses this value.
    - `tested` — the verification command ran and exited 0.
    - `accepted` — every named artifact exists, every named command passed, no downgrade phrase fired.
    - `status` — `PASS` only when all three are true; otherwise `BLOCKED` with a list of named blockers.
@@ -28,6 +28,15 @@ For each milestone in the roadmap, in DAG order with load-bearing milestones fir
 ## Final ledger (replaces the build summary)
 
 Every dt-build run produces a milestone acceptance ledger as both `.md` and `.html` artifacts (`build-acceptance-ledger.{md,html}` in the run folder), one row per milestone, with the four-axis split above plus a blockers column. The ledger is the final answer. A build that ships a freeform summary instead of a ledger has not honored this contract.
+
+The normal final ledger renders `acceptance-rows.jsonl`; it does not rerun every milestone test. Each row is
+written immediately after acceptance and carries the milestone commit plus test/artifact/model provenance.
+Finalize while the integration repository and accepted commits are still reachable; the retained ledger then
+preserves the original verdict when a disposable environment is removed. A later re-render fails closed when
+it cannot resolve the recorded commit. `-RunTests` is an explicit current-state revalidation mode that writes
+`build-acceptance-revalidation.{md,html}`, not the normal finalization path. Missing rows or missing
+commit SHAs are `BLOCKED`, never inferred as implemented. Only the exact stored status `PASS` is a clean
+pass; compound labels such as `PASS_WITH_RUN_STOP` remain `BLOCKED` until a fresh acceptance row supersedes them.
 
 ## Downgrade language ban
 
@@ -53,7 +62,9 @@ These phrases were calibrated against the file-sorter learning-loop post-mortem;
 
 ## Downgrade approval (and spec-relaxation approval)
 
-When a milestone is genuinely BLOCKED but the blocker is a spec the operator chooses to relax — a latency threshold that's tight for the target box, a stress-test concurrency level that's environment-bound, etc. — Danny can approve the downgrade without faking the implementation.
+When a milestone is genuinely BLOCKED but the blocker is a spec the operator chooses to relax — or when a
+semantic limitation exists that the machine verifier cannot encode — Danny can approve the downgrade without
+faking the implementation.
 
 **Mechanism (wired in `scripts/build-acceptance-ledger.ps1`):**
 
@@ -63,7 +74,10 @@ When a milestone is genuinely BLOCKED but the blocker is a spec the operator cho
    downgrade_approved_by: danny
    rationale: <one-line plain-language explanation>
    ```
-3. Re-run `scripts/build-acceptance-ledger.ps1`. The ledger flips that milestone's status from `BLOCKED` to `APPROVED_DOWNGRADE` and surfaces the original blockers as annotations in the Notes column alongside the approver and rationale.
+3. Re-run `scripts/build-acceptance-ledger.ps1`. With a valid acceptance row and commit SHA, the ledger marks
+   the milestone `APPROVED_DOWNGRADE` and surfaces the approver/rationale plus any machine blockers. The marker
+   must name `danny` exactly and include a non-empty rationale. An approval never waives missing implementation
+   evidence.
 
 **`APPROVED_DOWNGRADE` is not `PASS`.** It is a third status that says "the gate caught a genuine spec violation and the operator owns the exception in writing." The build summary breaks it out separately so it stays visible in audit. A build with all milestones at `PASS` is the clean outcome; a build with one `APPROVED_DOWNGRADE` row is shipped-with-receipts. A build with even one `BLOCKED` row is not shipped.
 
@@ -80,6 +94,10 @@ Milestones flagged by `scripts/identify-load-bearing.ps1` get their verification
 - `runtime flip`
 - `end-to-end` / `E2E` / `e2e`
 - `critical path`
+- `production acceptance`
+- `cut over` / `cutover`
+- `rollback`
+- `security boundary`
 
 The DAG still governs build order; this rule applies **within a DAG layer**: when multiple milestones become unblocked at the same time, the load-bearing one is built first. Its `accepted` status must be `YES` before any dependent non-load-bearing milestone's chunk is assembled.
 
@@ -104,6 +122,11 @@ dt-build's "Execute milestones" step calls the deterministic gates in this order
 7. Move to next milestone (DAG order, load-bearing first within a layer).
 
 When the build completes (or stops at the verify/fix budget cap), `scripts/build-acceptance-ledger.ps1` produces the final ledger. `build-run-review.html` is generated only when Danny explicitly asks (SKILL.md step 6.5); when built, it surfaces the ledger as the headline panel above the milestone status cards.
+
+The two-attempt cap limits automatic implementation churn. Count only failures caused by the produced code.
+Do not count environment outages, tool/sandbox failures, or an approved contract revision. After explicit
+human/root remediation, a fresh independent PASS may resume dependent milestones without pretending the
+automatic agent earned a third attempt; record the remediation and category in the decision log.
 
 ## What this gate does not prevent
 

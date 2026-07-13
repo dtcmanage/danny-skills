@@ -2,7 +2,7 @@
 
 ## Run
 RUN_ID: __RUN_ID__
-build_branch: dt-build/__RUN_ID__
+integration_branch: __INTEGRATION_BRANCH__
 base_sha: __BASE_SHA__
 merge_target: __MERGE_TARGET__
 intake_contract: roadmap-v1
@@ -16,6 +16,10 @@ verification_item_count: __VERIFICATION_COUNT__
 - Source of truth schema: `skills/dt-roadmap/references/roadmap-schema.md`
 - Validator: `skills/dt-roadmap/scripts/roadmap-validator.ps1`
 - Outcome: roadmap validator pass required before execution stages.
+
+## Branch contract
+- Integration branch is the authoritative run state carrier.
+- Chunk refs use `dt-build/__RUN_ID__/<milestone>-<chunk>`; no parent `dt-build/__RUN_ID__` ref exists.
 
 ## Decision ledger (intake ambiguity)
 - If roadmap validation passes, no additional intake ambiguity is open.

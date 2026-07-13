@@ -14,6 +14,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+if ($TargetBranch -in @('main', 'master')) {
+    throw "CAS_FAIL: refusing to mutate protected branch '$TargetBranch'."
+}
+
 function Invoke-Git {
     param(
         [Parameter(Mandatory)][string[]]$Args,

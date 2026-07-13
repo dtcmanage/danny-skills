@@ -1,12 +1,17 @@
 param(
     [Parameter(Mandatory)]
+    [string]$RepoPath,
+
+    [Parameter(Mandatory)]
     [string]$RoadmapPath,
 
     [Parameter(Mandatory)]
     [string]$OutputDirectory,
 
     [string]$RunId = "phase7a-dryrun",
-    [string]$MergeTarget = "dev",
+    [string]$IntegrationBranch = "",
+    [switch]$UseExistingIntegrationBranch,
+    [string]$MergeTarget = "main",
     [string]$ResumeRunId = "",
     [string]$DeterministicTimestampUtc = "2026-01-01T00:00:00Z",
     [switch]$Json
@@ -22,14 +27,19 @@ function Resolve-SkillRepoRoot {
     }
     $scriptDir = Split-Path -Parent $scriptPath
     $skillRoot = Split-Path -Parent $scriptDir
-    $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
-    $resolved = (Get-Item -LiteralPath $repoRoot).ResolveLinkTarget($true)
-    if ($null -ne $resolved) {
-        if ($resolved -is [string]) { return $resolved }
-        if ($resolved.PSObject.Properties.Name -contains "FullName") { return [string]$resolved.FullName }
-        return [string]$resolved
+    $original = (Resolve-Path -LiteralPath $skillRoot).Path
+    $cursor = Get-Item -LiteralPath $original
+    while ($null -ne $cursor) {
+        $resolved = $null
+        try { $resolved = $cursor.ResolveLinkTarget($true) } catch { }
+        if ($null -ne $resolved) {
+            $suffix = [System.IO.Path]::GetRelativePath($cursor.FullName, $original)
+            $skillRoot = if ($suffix -eq '.') { $resolved.FullName } else { Join-Path $resolved.FullName $suffix }
+            break
+        }
+        $cursor = $cursor.Parent
     }
-    return $repoRoot
+    return (Split-Path -Parent (Split-Path -Parent $skillRoot))
 }
 
 function Expand-Template {
@@ -48,6 +58,41 @@ $repoRoot = Resolve-SkillRepoRoot
 $skillRoot = Join-Path $repoRoot "skills\dt-build"
 $roadmapValidatorPath = Join-Path $repoRoot "skills\dt-roadmap\scripts\roadmap-validator.ps1"
 $schemaPath = Join-Path $repoRoot "skills\dt-roadmap\references\roadmap-schema.md"
+$targetRepo = if (Test-Path -LiteralPath $RepoPath -PathType Container) { (Resolve-Path -LiteralPath $RepoPath).Path } else { "" }
+
+if ([string]::IsNullOrWhiteSpace($targetRepo)) {
+    throw "INTAKE_FAIL: repo not found: $RepoPath"
+}
+$gitRoot = (& git -C $targetRepo rev-parse --show-toplevel 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "INTAKE_FAIL: target is not a git repo: $targetRepo`n$($gitRoot -join "`n")"
+}
+$targetRepo = ([string]($gitRoot | Select-Object -Last 1)).Trim()
+if ([string]::IsNullOrWhiteSpace($IntegrationBranch)) {
+    $IntegrationBranch = "build/$RunId"
+}
+foreach ($ref in @($IntegrationBranch, $MergeTarget)) {
+    & git -C $targetRepo check-ref-format --branch $ref *> $null
+    if ($LASTEXITCODE -ne 0) { throw "INTAKE_FAIL: invalid branch name: $ref" }
+}
+if ($IntegrationBranch -eq $MergeTarget) {
+    throw "INTAKE_FAIL: integration branch must differ from protected merge target '$MergeTarget'."
+}
+& git -C $targetRepo show-ref --verify --quiet "refs/heads/$MergeTarget"
+if ($LASTEXITCODE -ne 0) {
+    throw "INTAKE_FAIL: merge target branch not found: $MergeTarget"
+}
+& git -C $targetRepo show-ref --verify --quiet "refs/heads/$IntegrationBranch"
+$integrationExists = ($LASTEXITCODE -eq 0)
+if ($UseExistingIntegrationBranch -and -not $integrationExists) {
+    throw "INTAKE_FAIL: requested existing integration branch not found: $IntegrationBranch"
+}
+if (-not $UseExistingIntegrationBranch -and $integrationExists -and [string]::IsNullOrWhiteSpace($ResumeRunId)) {
+    throw "INTAKE_FAIL: integration branch already exists; use -UseExistingIntegrationBranch or provide a resume RUN_ID: $IntegrationBranch"
+}
+if (-not [string]::IsNullOrWhiteSpace($ResumeRunId) -and -not $integrationExists) {
+    throw "INTAKE_FAIL: resume requires the existing integration branch state carrier: $IntegrationBranch"
+}
 
 if (-not (Test-Path -LiteralPath $RoadmapPath)) {
     throw "INTAKE_FAIL: roadmap not found: $RoadmapPath"
@@ -60,7 +105,7 @@ if (-not (Test-Path -LiteralPath $schemaPath)) {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ResumeRunId)) {
-    $resumePath = Join-Path (Join-Path $repoRoot ".dt-build") $ResumeRunId
+    $resumePath = Join-Path (Join-Path $targetRepo ".dt-build") $ResumeRunId
     if (Test-Path -LiteralPath $resumePath) {
         $legacyBuildPlan = Join-Path $resumePath "build-plan.md"
         $isLegacy = $true
@@ -78,15 +123,17 @@ if (-not [string]::IsNullOrWhiteSpace($ResumeRunId)) {
     }
 }
 
-$validatorJson = & $roadmapValidatorPath -RoadmapPath $RoadmapPath -SchemaPath $schemaPath -Json 2>&1
-if ($LASTEXITCODE -ne 0) {
+$validatorJson = & pwsh -NoProfile -File $roadmapValidatorPath -RoadmapPath $RoadmapPath -SchemaPath $schemaPath -Json 2>&1
+$validatorExitCode = $LASTEXITCODE
+if ($validatorExitCode -ne 0) {
     throw ($validatorJson -join "`n")
 }
 $validation = ($validatorJson -join "`n") | ConvertFrom-Json
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
-$baseSha = (& git rev-parse HEAD).Trim()
+$baseRef = if ($UseExistingIntegrationBranch -or $integrationExists) { $IntegrationBranch } else { $MergeTarget }
+$baseSha = (& git -C $targetRepo rev-parse $baseRef).Trim()
 $runDir = Join-Path $OutputDirectory $RunId
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 
@@ -97,6 +144,7 @@ $planTemplate = Join-Path $skillRoot "assets\build-plan.md.template"
 $repl = @{
     "__RUN_ID__" = $RunId
     "__BASE_SHA__" = $baseSha
+    "__INTEGRATION_BRANCH__" = $IntegrationBranch
     "__MERGE_TARGET__" = $MergeTarget
     "__ROADMAP_PATH__" = (Resolve-Path -LiteralPath $RoadmapPath).Path
     "__SCHEMA_MAJOR__" = [string]$validation.schema_version_major

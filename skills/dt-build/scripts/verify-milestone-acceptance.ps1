@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory)][string]$MilestoneId,
     [Parameter(Mandatory)][string]$WorkingTree,
     [switch]$RunTests,
+    [ValidateRange(1000, 3600000)][int]$CommandTimeoutMs = 600000,
     [switch]$Json
 )
 
@@ -20,15 +21,25 @@ $ErrorActionPreference = "Stop"
 # Returns JSON shaped to feed scripts/build-acceptance-ledger.ps1.
 #
 # Exit codes:
-#   0 -- accepted (status == PASS)
+#   0 -- accepted (status == PASS) or artifact-only inspection completed
 #   1 -- blocked (status == BLOCKED) -- either artifacts missing or tests failed
 #   2 -- usage/contract error (roadmap unparseable, milestone not found, etc.)
 
 function Resolve-SkillRepoRoot {
     $scriptDir = Split-Path -Parent $PSCommandPath
     $skillRoot = Split-Path -Parent $scriptDir
-    $resolved = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
-    if ($resolved) { $skillRoot = $resolved.FullName }
+    $original = (Resolve-Path -LiteralPath $skillRoot).Path
+    $cursor = Get-Item -LiteralPath $original
+    while ($null -ne $cursor) {
+        $resolved = $null
+        try { $resolved = $cursor.ResolveLinkTarget($true) } catch { }
+        if ($resolved) {
+            $suffix = [System.IO.Path]::GetRelativePath($cursor.FullName, $original)
+            $skillRoot = if ($suffix -eq '.') { $resolved.FullName } else { Join-Path $resolved.FullName $suffix }
+            break
+        }
+        $cursor = $cursor.Parent
+    }
     return (Split-Path -Parent (Split-Path -Parent $skillRoot))
 }
 
@@ -107,7 +118,11 @@ function Extract-NamedArtifacts {
     }
 
     # Inline (no-backtick) `pytest <path>` and `python <script>` invocations.
-    $inlineCmd = [regex]::Matches($Text, '(?i)(?:^|\s)(pytest\s+[A-Za-z0-9_./\-\s]+|python\s+(?:scripts|backend|workers|tests)/[A-Za-z0-9_./-]+\.py(?:\s+[A-Za-z0-9_.\-\/=]+)*)')
+    # Remove fenced inline-code spans first. Otherwise `python -m pytest ...`
+    # inside backticks is captured once as the full command and a second time as
+    # the inner `pytest ...`, causing the same test suite to run twice.
+    $inlineText = [regex]::Replace($Text, '`[^`]*`', ' ')
+    $inlineCmd = [regex]::Matches($inlineText, '(?i)(?:^|\s)(pytest\s+[A-Za-z0-9_./\-\s]+|python\s+(?:scripts|backend|workers|tests)/[A-Za-z0-9_./-]+\.py(?:\s+[A-Za-z0-9_.\-\/=]+)*)')
     foreach ($m in $inlineCmd) {
         $cmd = $m.Groups[1].Value.Trim()
         if (-not ($commands -contains $cmd)) { $commands.Add($cmd) | Out-Null }
@@ -161,37 +176,52 @@ function Normalize-Command {
 }
 
 function Invoke-NamedCommand {
-    param([string]$WorkingTree, [string]$Command)
-    # Run with cwd = WorkingTree, capture stdout/stderr + exit code.
-    # Keep it simple: rely on the shell to parse the command string.
+    param([string]$WorkingTree, [string]$Command, [int]$TimeoutMs)
+    # Redirect to files instead of synchronously draining stdout and then stderr.
+    # Sequential pipe reads can deadlock when both buffers fill (observed with a
+    # high-volume Vitest run). File redirection also keeps the retained JSON small.
     $effectiveCommand = Normalize-Command -Command $Command
     $stdoutFile = [System.IO.Path]::GetTempFileName()
     $stderrFile = [System.IO.Path]::GetTempFileName()
+    $started = Get-Date
+    $proc = $null
     try {
-        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $startInfo.FileName = "pwsh"
         # -EncodedCommand survives embedded quotes and spaces (a -Command "..."
         # wrapper truncates at the first inner double quote, e.g. quoted paths).
         $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($effectiveCommand))
-        $startInfo.Arguments = "-NoProfile -EncodedCommand $encoded"
-        $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError = $true
-        $startInfo.UseShellExecute = $false
-        $startInfo.WorkingDirectory = $WorkingTree
-        $proc = [System.Diagnostics.Process]::Start($startInfo)
-        $stdout = $proc.StandardOutput.ReadToEnd()
-        $stderr = $proc.StandardError.ReadToEnd()
-        $proc.WaitForExit()
+        $proc = Start-Process -FilePath "pwsh" `
+            -ArgumentList @("-NoProfile", "-EncodedCommand", $encoded) `
+            -WorkingDirectory $WorkingTree `
+            -RedirectStandardOutput $stdoutFile `
+            -RedirectStandardError $stderrFile `
+            -NoNewWindow -PassThru
+
+        $completed = $proc.WaitForExit($TimeoutMs)
+        $timedOut = -not $completed
+        if ($timedOut) {
+            try { $proc.Kill($true) } catch { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            [void]$proc.WaitForExit(5000)
+        }
+
+        $stdout = if (Test-Path -LiteralPath $stdoutFile) { Get-Content -Raw -LiteralPath $stdoutFile } else { "" }
+        $stderr = if (Test-Path -LiteralPath $stderrFile) { Get-Content -Raw -LiteralPath $stderrFile } else { "" }
+        $exitCode = if ($timedOut) { 124 } else { $proc.ExitCode }
+        $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         return [pscustomobject]@{
             command            = $Command
             effective_command  = $effectiveCommand
-            exit_code          = $proc.ExitCode
+            exit_code          = $exitCode
+            timed_out          = $timedOut
+            timeout_ms         = $TimeoutMs
+            duration_ms        = $durationMs
+            termination_reason = if ($timedOut) { "command_timeout" } else { "process_exit" }
             stdout_tail        = ($stdout -split "`n" | Select-Object -Last 20) -join "`n"
             stderr_tail        = ($stderr -split "`n" | Select-Object -Last 20) -join "`n"
         }
     } finally {
-        if (Test-Path $stdoutFile) { Remove-Item $stdoutFile -Force }
-        if (Test-Path $stderrFile) { Remove-Item $stderrFile -Force }
+        if ($proc) { $proc.Dispose() }
+        if (Test-Path -LiteralPath $stdoutFile) { Remove-Item -LiteralPath $stdoutFile -Force }
+        if (Test-Path -LiteralPath $stderrFile) { Remove-Item -LiteralPath $stderrFile -Force }
     }
 }
 
@@ -288,7 +318,7 @@ foreach ($vRow in $matchingVerificationRows) {
         } else {
             $anyFailedHere = $false
             foreach ($cmd in $checkCommands) {
-                $r = Invoke-NamedCommand -WorkingTree $WorkingTree -Command $cmd
+                $r = Invoke-NamedCommand -WorkingTree $WorkingTree -Command $cmd -TimeoutMs $CommandTimeoutMs
                 $r | Add-Member -NotePropertyName "check_id" -NotePropertyValue $checkId -Force
                 $checkCommandResults += $r
                 $allCommandResults.Add($r) | Out-Null
@@ -308,7 +338,12 @@ foreach ($vRow in $matchingVerificationRows) {
     }
     if ($checkTestStatus -eq "FAIL") {
         foreach ($r in $checkCommandResults | Where-Object { $_.exit_code -ne 0 }) {
-            $msg = "verification command failed (exit=$($r.exit_code)): $($r.command)"
+            $msg = if ($r.timed_out) {
+                "verification command timed out after $($r.timeout_ms)ms: $($r.command)"
+            }
+            else {
+                "verification command failed (exit=$($r.exit_code)): $($r.command)"
+            }
             $checkBlockers.Add($msg) | Out-Null
             $tagged = "[$checkId] $msg"
             if (-not $topBlockers.Contains($tagged)) { $topBlockers.Add($tagged) | Out-Null }
@@ -352,17 +387,17 @@ if ($RunTests) {
     }
 }
 
-# Milestone-wide "no command named anywhere AND no artifact named anywhere"
-# blocker (separate from per-check NO_COMMAND blockers above).
-if ($testStatus -eq "NO_COMMAND_NAMED" -and $allArtifacts.Count -eq 0) {
-    $msg = "roadmap names no concrete test file or command across any verification check for $mid"
+# A final acceptance run must execute at least one command. Artifact presence is
+# evidence, but it is not a test and cannot satisfy the four-axis PASS contract.
+if ($RunTests -and $testStatus -eq "NO_COMMAND_NAMED") {
+    $msg = "roadmap names no executable verification command across any check for $mid"
     if (-not $topBlockers.Contains($msg)) { $topBlockers.Add($msg) | Out-Null }
 }
 
 $blockers = $topBlockers.ToArray()
 
-$accepted = ($blockers.Count -eq 0) -and ($presence.missing.Count -eq 0) -and ($testStatus -in @("PASS", "NOT_RUN", "NO_COMMAND_NAMED"))
-$status = if ($accepted) { "PASS" } else { "BLOCKED" }
+$accepted = $RunTests -and ($blockers.Count -eq 0) -and ($presence.missing.Count -eq 0) -and ($testStatus -eq "PASS")
+$status = if (-not $RunTests) { "INSPECT_ONLY" } elseif ($accepted) { "PASS" } else { "BLOCKED" }
 
 $result = [pscustomobject]@{
     milestone_id              = $mid
@@ -375,7 +410,7 @@ $result = [pscustomobject]@{
     commands_named            = $allCommands
     command_results           = $commandResults
     test_status               = $testStatus
-    implemented_hint          = $true   # caller decides via git diff; this script only proves the acceptance side
+    implemented_hint          = $false  # final ledger derives this from persisted milestone commit evidence
     tested                    = ($testStatus -eq "PASS")
     accepted                  = $accepted
     status                    = $status
@@ -403,4 +438,4 @@ else {
     }
 }
 
-if ($status -eq "PASS") { exit 0 } else { exit 1 }
+if ($status -in @("PASS", "INSPECT_ONLY")) { exit 0 } else { exit 1 }

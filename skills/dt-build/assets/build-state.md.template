@@ -2,7 +2,7 @@
 
 ## Run
 RUN_ID: __RUN_ID__
-build_branch: dt-build/__RUN_ID__
+integration_branch: __INTEGRATION_BRANCH__
 base_sha: __BASE_SHA__
 merge_target: __MERGE_TARGET__
 spec_revision: r0
@@ -15,5 +15,5 @@ roadmap_schema_major: __SCHEMA_MAJOR__
 |----|------|-------------------|--------|------------|
 
 ## Chunks (current milestone)
-| chunk-slug | milestone | model | worktree | branch | status |
-|------------|-----------|-------|----------|--------|--------|
+| chunk-slug | milestone | lane | attempt | failure-category | requested-model | resolved-model | effort | provenance | worktree | branch | status |
+|------------|-----------|------|---------|------------------|-----------------|----------------|--------|------------|----------|--------|--------|

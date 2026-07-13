@@ -12,6 +12,7 @@ param(
     [string]$ChunkId,
 
     [Parameter(Mandatory)]
+    [ValidateRange(1, 2)]
     [int]$Attempt,
 
     [string]$PreamblePath = "",
@@ -35,14 +36,19 @@ function Resolve-SkillRepoRoot {
     }
     $scriptDir = Split-Path -Parent $scriptPath
     $skillRoot = Split-Path -Parent $scriptDir
-    $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
-    $resolved = (Get-Item -LiteralPath $repoRoot).ResolveLinkTarget($true)
-    if ($null -ne $resolved) {
-        if ($resolved -is [string]) { return $resolved }
-        if ($resolved.PSObject.Properties.Name -contains "FullName") { return [string]$resolved.FullName }
-        return [string]$resolved
+    $original = (Resolve-Path -LiteralPath $skillRoot).Path
+    $cursor = Get-Item -LiteralPath $original
+    while ($null -ne $cursor) {
+        $resolved = $null
+        try { $resolved = $cursor.ResolveLinkTarget($true) } catch { }
+        if ($null -ne $resolved) {
+            $suffix = [System.IO.Path]::GetRelativePath($cursor.FullName, $original)
+            $skillRoot = if ($suffix -eq '.') { $resolved.FullName } else { Join-Path $resolved.FullName $suffix }
+            break
+        }
+        $cursor = $cursor.Parent
     }
-    return $repoRoot
+    return (Split-Path -Parent (Split-Path -Parent $skillRoot))
 }
 
 function Find-ByteSequence {
@@ -224,6 +230,20 @@ $assembled = @(
     $envelope
     ""
     $brief
+    ""
+    @"
+Return exactly one structured report with these fields and echo values exactly:
+DT_BUILD_REPORT_VERSION: 1
+RUN_ID: $RunId
+chunk_id: $ChunkId
+attempt: $Attempt
+CHANGED_FILES:
+<one path per line, or NONE>
+COMMANDS_AND_RESULTS:
+<exact command and result per line, or NONE>
+UNRESOLVED_BLOCKERS:
+<one blocker per line, or NONE>
+"@
 ) -join "`n"
 
 $outputDir = Split-Path -Parent $OutputPath

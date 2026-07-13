@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.10.4 dt-build 2.8.1 reliability/model refresh and dt-review 1.6.1 GPT-5.6 routing",
       "0.10.3 dt-ship 0.1.1 (verify-hash cache-bust retry + preflight-cwd guard), dt-build 2.7.1 (-EncodedCommand spawn fix)",
       "0.10.2 dt-session-audit 0.3.1: audit upload step works on the Mac too.",
       "0.10.1 dt-session-audit 0.3.0: audits now end with an immediate workspace-sync push of scaffolding edits.",

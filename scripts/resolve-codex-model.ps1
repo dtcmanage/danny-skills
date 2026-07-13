@@ -1,6 +1,6 @@
 # Shared Codex model resolver. Dot-source this file, then call Resolve-CodexModel.
 #
-# Why this exists: dt-review (and any other Codex consumer) pins explicit model
+# Why this exists: dt-review, dt-build, and other Codex consumers pin explicit model
 # slugs per tier. Those pins rot every time OpenAI rotates models on the ChatGPT
 # subscription, and a hand-rolled codex call that omits --model silently inherits
 # whatever ~/.codex/config.toml defaults to -- which has, in the past, been a model
@@ -14,28 +14,28 @@
 function Resolve-CodexModel {
     param(
         [Parameter(Mandatory)]
-        [ValidateSet('complex', 'light')]
+        [ValidateSet('complex', 'standard', 'light')]
         [string]$Tier,
         # The caller's preferred pin (from the skill's operating constants). Always
         # wins when it is selectable on the current auth.
         [string]$PreferredModel,
         # Override the cache location (tests). Defaults to the live Codex cache.
-        [string]$CachePath
+        [string]$CachePath,
+        # Automation should fail closed when the live account cache cannot verify
+        # the requested tier. Interactive callers may omit this and rely on their
+        # own downstream capability probe.
+        [switch]$Strict
     )
 
-    # Curated, ordered allowlists per tier. Frontier/codex-tuned first; both lists
-    # end on general deep-reasoning models so resolution never hard-fails while any
-    # gpt-5.x model is alive. Update these (and the SKILL.md operating constants)
-    # when OpenAI rotates the model line -- the matrix in
-    # _Claude-Workspace\00_Resources\codex-cli-usage.md is the human-readable mirror.
-    # light: gpt-5.4 is the deliberate pin (Danny, 2026-06-02 — do NOT resolve to
-    # gpt-5.3-codex-spark). The codex-tuned fast slugs (gpt-5.3-codex, gpt-5.5-codex)
-    # are gone/blocked on ChatGPT-subscription auth, so the fast tier rides general
-    # gpt-5.4. spark stays ONLY as the last-ditch backstop so resolution never hard-
-    # fails while any gpt-5.4/5.5 is alive; it should never actually be selected.
+    # Curated, ordered allowlists per tier. The live per-account cache remains the
+    # runtime authority; these lists express capability preference, not entitlement.
+    # gpt-5.3-codex-spark is deliberately excluded from every fallback tier per
+    # Danny's no-Spark direction. Update these lists and consumer operating constants
+    # together when OpenAI rotates the model line.
     $fallbacks = @{
-        complex = @('gpt-5.5', 'gpt-5.4', 'gpt-5.2')
-        light   = @('gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'gpt-5.3-codex-spark')
+        complex  = @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.5', 'gpt-5.4')
+        standard = @('gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4')
+        light    = @('gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.4-mini', 'gpt-5.4')
     }
 
     # Candidate order: preferred pin first, then the tier allowlist (de-duped).
@@ -50,10 +50,13 @@ function Resolve-CodexModel {
         $CachePath = Join-Path $codexHome 'models_cache.json'
     }
 
-    # No cache or unparseable cache: trust the first candidate (the pin) unverified.
-    # The downstream preflight still actually exercises the model, so a dead pin is
-    # caught there with a loud throw -- this is a soft degrade, not a silent pass.
+    # No cache or unparseable cache: strict automation fails closed. Interactive
+    # callers may soft-degrade to the first candidate only when they run a real
+    # downstream capability probe before substantive work.
     if (-not (Test-Path -LiteralPath $CachePath)) {
+        if ($Strict) {
+            throw "Codex model cache not found at $CachePath; cannot verify tier '$Tier' in strict mode."
+        }
         Write-Warning "Codex model cache not found at $CachePath; using unverified model '$($candidates[0])'."
         return $candidates[0]
     }
@@ -70,11 +73,17 @@ function Resolve-CodexModel {
         )
     }
     catch {
+        if ($Strict) {
+            throw "Could not parse Codex model cache in strict mode: $($_.Exception.Message)"
+        }
         Write-Warning "Could not parse Codex model cache ($($_.Exception.Message)); using unverified model '$($candidates[0])'."
         return $candidates[0]
     }
 
     if ($selectable.Count -eq 0) {
+        if ($Strict) {
+            throw "Codex model cache listed no selectable models; cannot verify tier '$Tier' in strict mode."
+        }
         Write-Warning "Codex model cache listed no selectable models; using unverified model '$($candidates[0])'."
         return $candidates[0]
     }
@@ -82,11 +91,40 @@ function Resolve-CodexModel {
     foreach ($cand in $candidates) {
         if ($selectable -contains $cand) {
             if ($PreferredModel -and $cand -ne $PreferredModel) {
-                Write-Warning "Preferred Codex model '$PreferredModel' is not selectable on this auth; falling back to '$cand'. Update the dt-review pins (SKILL.md operating constants + script defaults) and the codex-cli-usage.md matrix."
+                Write-Warning "Preferred Codex model '$PreferredModel' is not selectable on this auth; falling back to '$cand'. Update the consumer's operating constants and shared resolver candidates."
             }
             return $cand
         }
     }
 
-    throw "No usable Codex model for tier '$Tier'. Tried: $($candidates -join ', '). Selectable on this auth: $($selectable -join ', '). Update the dt-review model pins (SKILL.md operating constants + script defaults) and the codex-cli-usage.md matrix."
+    throw "No usable Codex model for tier '$Tier'. Tried: $($candidates -join ', '). Selectable on this auth: $($selectable -join ', '). Update the consumer's operating constants and shared resolver candidates."
+}
+
+function Assert-CodexReasoningEffort {
+    param(
+        [Parameter(Mandatory)][string]$Model,
+        [Parameter(Mandatory)][string]$Effort,
+        [string]$CachePath,
+        [switch]$Strict
+    )
+    if (-not $CachePath) {
+        $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+        $CachePath = Join-Path $codexHome 'models_cache.json'
+    }
+    try {
+        $cache = Get-Content -LiteralPath $CachePath -Raw | ConvertFrom-Json
+        $row = @($cache.models | Where-Object { [string]$_.slug -eq $Model }) | Select-Object -First 1
+        if (-not $row) { throw "model '$Model' is absent from the cache" }
+        $supported = @($row.supported_reasoning_levels | ForEach-Object { [string]$_.effort })
+        if ($supported.Count -eq 0) { throw "model '$Model' has no advertised reasoning levels" }
+        if ($supported -notcontains $Effort) {
+            throw "reasoning effort '$Effort' is unsupported by '$Model'; supported: $($supported -join ', ')"
+        }
+        return $true
+    }
+    catch {
+        if ($Strict) { throw "Codex reasoning compatibility check failed: $($_.Exception.Message)" }
+        Write-Warning "Codex reasoning compatibility was not verified: $($_.Exception.Message)"
+        return $false
+    }
 }

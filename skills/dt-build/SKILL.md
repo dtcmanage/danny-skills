@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 2.7.1
+  version: 2.8.1
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -74,6 +74,26 @@ Do NOT fire for:
 
 A milestone in any non-PASS state blocks every dependent milestone from starting, regardless of the verify/fix loop budget.
 
+## Model and lane routing
+
+Never inherit Codex's user-config model or reasoning effort. Resolve every Codex lane through
+`scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and persist the
+returned provenance JSON beside the chunk output.
+
+- Standard build/fix chunk: `gpt-5.6-terra`, tier `standard`, effort `medium`.
+- Load-bearing, security-sensitive, ambiguous, or second-attempt chunk: `gpt-5.6-sol`, tier `complex`, effort
+  `medium`; raise to `high` only with a recorded reason.
+- Routine preflight only: `gpt-5.6-luna`, tier `light`, effort `low` or `medium`. Do not route implementation
+  to Luna merely to save quota.
+- Claude lane: use a fresh host-native Agent for repo-wide, UI, workspace-memory, or semantic-verification
+  work. Record the actual surface/model when the host exposes it; never invent a model slug.
+
+Before the first substantive invocation of each distinct Codex tier, run
+`scripts/invoke-codex-chunk.ps1 -Preflight -TimeoutMs 30000` under a 30-second outer timeout. Every
+substantive call sets `-TimeoutMs 600000` plus a 10-minute outer timeout. The wrapper passes the prompt over stdin, pins model and effort explicitly, uses
+the correct sandbox, redacts the stream log, and records requested/resolved model, CLI version, auth surface,
+cache timestamp, effort, and duration.
+
 ## Procedure (7A intake + 7B execution + 7C acceptance gate)
 
 1. Intake in one question:
@@ -83,6 +103,8 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
   `<project>/design/design-final.md` and then the newest `<project>/design/design-final-*.md`.
 - Optional RUN_ID for resume check.
 - Optional integration branch (default `build/<RUN_ID>`, cut from `main`).
+- Optional merge target (default `main`); use an existing feature branch only when the build is explicitly
+  continuing that isolated feature surface.
 
 2. Resolve the input to a roadmap contract:
 - If the input file already parses as a roadmap (frontmatter `schema_version` + a `## Milestones`
@@ -105,6 +127,14 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 - Run `skills/dt-roadmap/scripts/roadmap-validator.ps1 -RoadmapPath <roadmap> -SchemaPath <repo>/skills/dt-roadmap/references/roadmap-schema.md`.
 - Fail closed on validator error.
 
+2.7 Preflight named dependencies before consuming any implementation attempt:
+- Run the roadmap's environment, API, database, browser, credential-source, and toolchain probes against the
+  actual target environment whenever the design depends on them.
+- Classify failures as `environment`, `tooling`, `contract_revision`, or `implementation`. Only an
+  `implementation` failure consumes the two-attempt automatic-agent budget. Persist the category and evidence.
+- A design-required live database/browser/API replay is build acceptance unless the roadmap explicitly labels
+  it as a later ship gate. Mock/unit parity alone cannot mark the build COMPLETE.
+
 3. Enforce legacy hard-cutover (Contract Freeze Gate):
 - If a resume RUN_ID points to a pre-refactor `.dt-build/<RUN_ID>/` folder, reject intake.
 - Pre-refactor is detected when run artifacts do not carry the intake marker (`intake_contract: roadmap-v1` in build-plan).
@@ -115,10 +145,17 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 - `build-decision-log.md` scaffold.
 - `build-plan.md` scaffold (roadmap-driven intake contract).
 - Reference-pack files + `reference-manifest.md` via `scripts/build-reference-pack.ps1`.
+- The integration branch is the only run state carrier. Never create `dt-build/<RUN_ID>` as a leaf ref;
+  chunk refs live below that namespace as `dt-build/<RUN_ID>/<milestone>-<chunk>`.
+- Create or validate that carrier with `scripts/prepare-integration-branch.ps1 -RepoPath <repo>
+  -IntegrationBranch <integration-branch> -MergeTarget <merge-target>` before any chunk worktree is created.
+  On resume, pair intake's `-UseExistingIntegrationBranch` with this script's `-UseExisting`; a missing
+  carrier is not resumable.
 
 5. Spawn preflight contract check:
 - Resolve each chunk entitlement through `scripts/spawn-preflight.ps1`.
 - Abort if any manifest mismatch or missing entitlement.
+- Capability-probe each distinct Codex tier selected by the run and record the result before chunk dispatch.
 
 5.5 Identify load-bearing milestones:
 - Run `scripts/identify-load-bearing.ps1 -RoadmapPath <roadmap> -Json`.
@@ -128,15 +165,31 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 6. Execute milestones with deterministic execution-side procedures, **per-milestone in this order**:
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
 - b. **Assemble and verify the Codex prompt.** `scripts/assemble-codex-prompt.ps1` (single canonical implementation; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`), then the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every Codex invocation.
-- c. **Run the chunk** under the hard two-attempt verify/fix budget. If still failing, escalate and STOP advancing to dependent milestones.
-- d. **Run the acceptance gate.** `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
-- e. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
-- f. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`.
-- g. **Update the integration branch** (`build/<RUN_ID>`) via compare-and-swap through `scripts/branch-cas-update.ps1` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
-- h. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (d–f) and the integration branch is updated (g), rewrite `_build-state.md` in the project's planning folder (the folder holding `plan-draft.md` / `design-final*.md` / `roadmap.md`, typically `<project>/design/`) as an atomic full-file rewrite from the canonical template `skills/dt-pipeline/templates/build-state-template.md` — reference that template, never duplicate its shape here. Record phase, current milestone, completed list (this milestone appended with its commit SHA), in-flight work, last commit SHA, uncommitted artifacts, and next step. This file is distinct from the run-folder `build-state.md` (dt-build's internal run scaffold from step 4): `_build-state.md` is the crash-resume checkpoint dt-pipeline and Danny read.
+- c. **Run the chunk through the canonical lane.** For Codex, call `scripts/invoke-codex-chunk.ps1`
+  with the routed tier and explicit effort. For Claude, dispatch a fresh Agent with the same brief and scoped
+  worktree. Do not hand-roll `codex exec`. Automatic implementation failures consume at most two attempts;
+  environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
+  restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
+- d. **Run independent semantic verification.** A fresh non-builder Agent reviews every load-bearing,
+  security-sensitive, live-write, or agent-verification milestone before acceptance. Record findings and the
+  verifier surface/model. The builder never self-approves.
+- e. **Run the acceptance gate.** `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
+- f. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
+- g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and
+  resolved model, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
+  and downgrade status. This append-only row is the final ledger's source of truth.
+- h. **Update the integration branch** (`<integration-branch>` from `build-plan.md`) via compare-and-swap through `scripts/branch-cas-update.ps1` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
+- i. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (e–g) and the integration branch is updated (h), rewrite `_build-state.md` in the project's planning folder (the folder holding `plan-draft.md` / `design-final*.md` / `roadmap.md`, typically `<project>/design/`) as an atomic full-file rewrite from the canonical template `skills/dt-pipeline/templates/build-state-template.md` — reference that template, never duplicate its shape here. Record phase, current milestone, completed list (this milestone appended with its commit SHA), in-flight work, last commit SHA, uncommitted artifacts, and next step. This file is distinct from the run-folder `build-state.md` (dt-build's internal run scaffold from step 4): `_build-state.md` is the crash-resume checkpoint dt-pipeline and Danny read.
 
 6.5 Emit acceptance ledger; review artifact on request only:
-- Run `scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder> -RunTests`.
+- Run one final integrated baseline/E2E rehearsal against the exact integration-branch SHA, including every
+  design-required live environment check. Have a fresh non-builder Agent review the combined diff. Persist
+  `final-integration.json` with branch SHA, commands, environment, verifier provenance, and PASS/BLOCKED.
+  Do not mark COMPLETE if this gate is missing or BLOCKED.
+- Run `scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder>`.
+  - Omit `-RunTests` for the normal final ledger. It renders persisted `acceptance-rows.jsonl` evidence and
+    does not rerun lifecycle-sensitive milestone tests. Use `-RunTests` only for an explicitly requested
+    revalidation; it emits `build-acceptance-revalidation.{md,html}` and never overwrites original acceptance.
   - Emits `build-acceptance-ledger.md` and `build-acceptance-ledger.html`.
   - The ledger is the final answer for the build run — not a freeform summary.
 - Mark the run complete in the pipeline checkpoint: rewrite `_build-state.md` (same template and location as step 6.h) with `status: COMPLETE`, the final commit SHA, and no in-flight work.
@@ -149,7 +202,7 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
   - downgrade-language matches panel (per-milestone, with approved/blocker badge).
 
 7. Guardrails:
-- Branch drift detection via `scripts/check-drift.ps1`.
+- Branch drift detection via `scripts/check-drift.ps1`; drift returns nonzero and blocks progress.
 - Worktree containment hard-block via `scripts/check-worktree-containment.ps1`.
 - Subagent prompt envelope boundaries are mandatory via repo-level `scripts/wrap-prompt-envelope.ps1`.
 - Run-log writes route through repo-level `scripts/security/redact-secrets.ps1`.
@@ -164,7 +217,7 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 - For each new skill name, invoke the repo-level propagator:
   `pwsh -NoProfile -File <repo>/scripts/verify-skill-junctions.ps1 -RepoRoot <repo> -NewSkills <names...> -Create -Json`
   Targets reconciled by the script: `$CODEX_HOME\skills`, `~\.agents\skills`, `D:\Claude\skills`, `_Claude-Workspace\.claude\skills`. Cowork is auto-propagated by its whole-folder junction and is not touched here.
-- Hard fail the build (block the integration-branch compare-and-swap; mark the run failed) when any of these surface in the script output:
+- Run this before marking the final checkpoint COMPLETE. Hard fail finalization when any of these surface in the script output:
   - any row with status `missing`, `wrong_target`, `create_failed`, or `collision_not_junction`,
   - any entry in `setup_gaps` (a target parent directory does not exist; never auto-create it),
   - any entry in `orphans` introduced by this run.

@@ -5,12 +5,11 @@ param(
     [int]$Round,
     [Parameter(Mandatory)]
     [string]$PromptPath,
-    [string]$Model = "gpt-5.4",
-    [ValidateSet('complex', 'light')]
-    [string]$Tier = "light",
-    [ValidateSet('minimal', 'low', 'medium', 'high')]
-    [string]$ReasoningEffort,
-    [int]$TimeoutMs = 1800000
+    [string]$Model = "gpt-5.6-terra",
+    [ValidateSet('complex', 'standard', 'light')]
+    [string]$Tier = "standard",
+    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')]
+    [string]$ReasoningEffort = "medium"
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,7 +23,7 @@ if (-not (Test-Path -LiteralPath $PromptPath)) {
 }
 
 function Get-CodexCliPath {
-    $candidates = Get-Command codex.cmd, codex.exe, codex.ps1 -ErrorAction SilentlyContinue
+    $candidates = Get-Command codex.ps1, codex.cmd, codex.exe -ErrorAction SilentlyContinue
     foreach ($cmd in $candidates) {
         if ($cmd -and $cmd.CommandType -in @('Application', 'ExternalScript')) {
             return $cmd.Source
@@ -35,8 +34,18 @@ function Get-CodexCliPath {
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SkillRoot = Split-Path -Parent $ScriptDir
-$resolved = (Get-Item -LiteralPath $SkillRoot).ResolveLinkTarget($true)
-if ($resolved) { $SkillRoot = $resolved.FullName }
+$original = (Resolve-Path -LiteralPath $SkillRoot).Path
+$cursor = Get-Item -LiteralPath $original
+while ($null -ne $cursor) {
+    $resolved = $null
+    try { $resolved = $cursor.ResolveLinkTarget($true) } catch { }
+    if ($resolved) {
+        $suffix = [System.IO.Path]::GetRelativePath($cursor.FullName, $original)
+        $SkillRoot = if ($suffix -eq '.') { $resolved.FullName } else { Join-Path $resolved.FullName $suffix }
+        break
+    }
+    $cursor = $cursor.Parent
+}
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 
 . (Join-Path $RepoRoot 'scripts\security\redact-secrets.ps1')
@@ -47,7 +56,8 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 # model gone API-only) falls back through the tier candidate list; if nothing
 # resolves this throws before the round runs, instead of writing a failure log that
 # looks like a critique.
-$Model = Resolve-CodexModel -Tier $Tier -PreferredModel $Model
+$Model = Resolve-CodexModel -Tier $Tier -PreferredModel $Model -Strict
+[void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Strict)
 
 $designDir = Join-Path $ProjectPath 'design'
 $scratchDir = Join-Path $ProjectPath 'design\_review'
@@ -72,9 +82,18 @@ try {
     # so codex never receives it and review-v<N>.md is never written. codex exec reads the
     # prompt from stdin when no positional PROMPT arg is given.
     $rawLines = Get-Content -LiteralPath $tmpPrompt -Raw | & $codexCli exec --sandbox read-only --skip-git-repo-check --model $Model @effortArgs --output-last-message $reviewPath 2>&1
+    $nativeExitCode = $LASTEXITCODE
     $rawText = ($rawLines -join "`n")
     $redacted = Invoke-SecretRedaction -Text $rawText
     Set-Content -LiteralPath $streamPath -Value $redacted -Encoding utf8
+    if ($nativeExitCode -ne 0) {
+        throw "Codex review exited $nativeExitCode. Redacted stream: $streamPath"
+    }
+    if (-not (Test-Path -LiteralPath $reviewPath -PathType Leaf) -or (Get-Item -LiteralPath $reviewPath).Length -eq 0) {
+        throw "Codex review returned no final review artifact. Redacted stream: $streamPath"
+    }
+    $reviewText = Invoke-SecretRedaction -Text (Get-Content -Raw -LiteralPath $reviewPath)
+    Set-Content -LiteralPath $reviewPath -Value $reviewText -Encoding utf8
 
     $provJson = & (Join-Path $ScriptDir 'capture-provenance.ps1') -PromptPath $PromptPath -CanonicalPath (Resolve-Path -LiteralPath $ProjectPath).Path
     [pscustomobject]@{

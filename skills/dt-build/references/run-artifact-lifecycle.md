@@ -3,6 +3,8 @@
 Artifact classes:
 - Ephemeral scratch: per-invocation prompt assembly files; delete after consume/verify.
 - Retained audit record: reference-pack files, `reference-manifest.md`, `build-log-<RUN_ID>.md`.
+- Retained execution provenance: redacted chunk output, model/effort/CLI provenance JSON, acceptance rows,
+  and prompt/reference hashes. Full assembled prompts remain ephemeral.
 - Retained decision record: `build-plan.md`, `build-state.md`, `build-decision-log.md`.
 
 Lifecycle controls:

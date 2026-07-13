@@ -1,5 +1,8 @@
 param(
     [Parameter(Mandatory)]
+    [string]$RepoPath,
+
+    [Parameter(Mandatory)]
     [string]$RoadmapPath,
 
     [Parameter(Mandatory)]
@@ -75,8 +78,8 @@ try {
     $runA = Join-Path $scratch "run-a"
     $runB = Join-Path $scratch "run-b"
 
-    & $dryRunScript -RoadmapPath $RoadmapPath -OutputDirectory $runA -RunId "phase7a-dryrun" | Out-Null
-    & $dryRunScript -RoadmapPath $RoadmapPath -OutputDirectory $runB -RunId "phase7a-dryrun" | Out-Null
+    & $dryRunScript -RepoPath $RepoPath -RoadmapPath $RoadmapPath -OutputDirectory $runA -RunId "phase7a-dryrun" | Out-Null
+    & $dryRunScript -RepoPath $RepoPath -RoadmapPath $RoadmapPath -OutputDirectory $runB -RunId "phase7a-dryrun" | Out-Null
 
     $aDir = Join-Path $runA "phase7a-dryrun"
     $bDir = Join-Path $runB "phase7a-dryrun"

@@ -25,6 +25,11 @@ $Triggers = @(
     'end-to-end',
     'e2e',
     'critical path',
+    'production acceptance',
+    'cut over',
+    'cutover',
+    'rollback',
+    'security boundary',
     'persistence',
     'persists',
     'publish gate',
@@ -112,7 +117,14 @@ $verificationRows = Parse-MarkdownTableRows -SectionText $verificationSection
 $verificationByMid = @{}
 foreach ($v in $verificationRows) {
     $mid = [string]$v.'milestone-id'
-    $verificationByMid[$mid.ToUpperInvariant().Trim()] = $v
+    $key = $mid.ToUpperInvariant().Trim()
+    $procedure = [string]$v.procedure
+    if ($verificationByMid.ContainsKey($key)) {
+        $verificationByMid[$key] = "$($verificationByMid[$key])`n$procedure"
+    }
+    else {
+        $verificationByMid[$key] = $procedure
+    }
 }
 
 $loadBearing = New-Object System.Collections.Generic.List[string]
@@ -125,7 +137,7 @@ foreach ($m in $milestonesRows) {
     $acceptance = [string]$m.'acceptance-checks'
     $verification = ""
     if ($verificationByMid.ContainsKey($key)) {
-        $verification = [string]$verificationByMid[$key].procedure
+        $verification = [string]$verificationByMid[$key]
     }
     $combined = "$name`n$acceptance`n$verification"
     $hits = @(Find-Triggers -Text $combined)
