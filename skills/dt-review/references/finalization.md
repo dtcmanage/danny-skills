@@ -5,6 +5,18 @@
 Derive a 2-4 word kebab-case slug. `FINALIZE_CURRENT` uses the receipt-verified `draft-vN.md`
 directly. Never hand-edit an unreviewed `draft-vN+1.md` for either other terminal action.
 
+For a legacy converged review where `review-context.md` exists but the receipt-verified
+`FINALIZE_CURRENT` draft predates deterministic table carry-forward, recover only through:
+
+```powershell
+pwsh -NoProfile -File <skill>\scripts\prepare-final-draft.ps1 `
+  -ProjectPath <project> -Round <N> -Tier <light|complex> -CarryBuildIntake
+```
+
+This appends only the exact normalized Build-intake revalidation section already supplied to the
+reviewer in `review-context.md`, binds it to the reviewed source/state/receipt in the manifest, and
+produces `draft-v<N+1>.md`. It is invalid when the reviewed draft already contains that section.
+
 For `APPLY_POLISH_AND_FINALIZE`, create a JSON array with exactly one entry for every current
 `ACCEPT` or `COUNTER` finding and no entry for `REJECT` findings. (`DEFER` prevents this action.) Each
 entry carries the current `id`, `finding_hash`, `disposition`, and exact `old_text`/`new_text`. Each

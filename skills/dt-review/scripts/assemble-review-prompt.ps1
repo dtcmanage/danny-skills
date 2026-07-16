@@ -37,6 +37,7 @@ if ($resolved) { $SkillRoot = $resolved.FullName }
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 
 . (Join-Path $RepoRoot 'scripts\wrap-prompt-envelope.ps1')
+. (Join-Path $ScriptDir 'build-intake-revalidation.ps1')
 
 $scratchDir = Join-Path $projectRoot 'design\_review'
 $promptDir = Join-Path $scratchDir 'prompts'
@@ -70,7 +71,21 @@ if ($Round -gt 1) {
     }
 }
 
+$contextPath = Join-Path $scratchDir 'review-context.md'
 $draft = Get-Content -LiteralPath $draftPath -Raw
+if (Test-Path -LiteralPath $contextPath -PathType Leaf) {
+    $roundReceiptPath = Join-Path $scratchDir ("round-meta-v{0}.json" -f $Round)
+    if ($Round -eq 1 -and -not (Test-Path -LiteralPath $roundReceiptPath -PathType Leaf)) {
+        $synchronizedDraft = Add-DtReviewBuildIntakeSection -DraftBody $draft -ReviewContextPath $contextPath
+        if ($synchronizedDraft -cne $draft) {
+            Write-Atomic -Path $draftPath -Content $synchronizedDraft
+            $draft = $synchronizedDraft
+        }
+    }
+    else {
+        Assert-DtReviewBuildIntakeSection -DraftBody $draft -ReviewContextPath $contextPath -Label "Draft v$Round"
+    }
+}
 $dimensions = Get-Content -LiteralPath $dimensionPath -Raw
 $draftEnvelope = New-PromptEnvelope -Label "CURRENT DRAFT V$Round" -Content $draft
 
@@ -107,7 +122,6 @@ Return only the JSON object required by the supplied output schema.
 $parts.Add("=== BEGIN CANONICAL DIMENSION CONTRACT ===`n$dimensions`n=== END CANONICAL DIMENSION CONTRACT ===")
 $parts.Add($draftEnvelope)
 
-$contextPath = Join-Path $scratchDir 'review-context.md'
 if (Test-Path -LiteralPath $contextPath -PathType Leaf) {
     $context = Get-Content -LiteralPath $contextPath -Raw
     $parts.Add((New-PromptEnvelope -Label 'CODE AND CONSTRAINT EVIDENCE MAP' -Content $context))

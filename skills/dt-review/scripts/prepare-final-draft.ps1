@@ -11,10 +11,11 @@ param(
     [ValidateSet('light', 'complex')]
     [string]$Tier,
 
-    [Parameter(Mandatory)]
     [string]$InstructionsPath,
 
-    [switch]$ApprovedResidualRisk
+    [switch]$ApprovedResidualRisk,
+
+    [switch]$CarryBuildIntake
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,13 +80,14 @@ function Assert-SingleLine([string]$Value, [string]$Label) {
     }
 }
 
-foreach ($required in @($ProjectPath, $InstructionsPath)) {
-    if (-not (Test-Path -LiteralPath $required)) { throw "Required preparation input not found: $required" }
+if (-not (Test-Path -LiteralPath $ProjectPath)) { throw "Required preparation input not found: $ProjectPath" }
+if (-not $CarryBuildIntake -and (-not $InstructionsPath -or -not (Test-Path -LiteralPath $InstructionsPath))) {
+    throw "Required preparation input not found: $InstructionsPath"
 }
 if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
     throw "Project path is not a directory: $ProjectPath"
 }
-if (-not (Test-Path -LiteralPath $InstructionsPath -PathType Leaf)) {
+if (-not $CarryBuildIntake -and -not (Test-Path -LiteralPath $InstructionsPath -PathType Leaf)) {
     throw "Instructions path is not a file: $InstructionsPath"
 }
 
@@ -94,7 +96,16 @@ $scratchDir = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'design\_rev
 $statePath = Join-Path $scratchDir 'verdicts.json'
 $sourceDraftPath = Join-Path $scratchDir ("draft-v{0}.md" -f $Round)
 $receiptPath = Join-Path $scratchDir ("round-meta-v{0}.json" -f $Round)
-$instructions = (Resolve-Path -LiteralPath $InstructionsPath).Path
+$reviewContextPath = Join-Path $scratchDir 'review-context.md'
+if ($CarryBuildIntake) {
+    if (-not (Test-Path -LiteralPath $reviewContextPath -PathType Leaf)) {
+        throw "Build-intake carry requires review-context.md: $reviewContextPath"
+    }
+    $instructions = (Resolve-Path -LiteralPath $reviewContextPath).Path
+}
+else {
+    $instructions = (Resolve-Path -LiteralPath $InstructionsPath).Path
+}
 foreach ($requiredFile in @($statePath, $sourceDraftPath, $receiptPath)) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Required preparation input not found: $requiredFile"
@@ -105,7 +116,7 @@ foreach ($check in @(
     @{ Path=$statePath; Label='State path' },
     @{ Path=$sourceDraftPath; Label='Source draft path' },
     @{ Path=$receiptPath; Label='Source receipt path' },
-    @{ Path=$instructions; Label='Instructions path' }
+    @{ Path=$instructions; Label=if ($CarryBuildIntake) { 'Review-context path' } else { 'Instructions path' } }
 )) {
     Assert-NoDescendantReparsePoint -Path $check.Path -Root $projectRoot -Label $check.Label
 }
@@ -132,28 +143,44 @@ if ($sourceSha256 -cne ([string]$receipt.draft_sha256).ToUpperInvariant()) {
 
 $termination = (& (Join-Path $PSScriptRoot 'evaluate-termination.ps1') `
     -StatePath $statePath -Round $Round -Tier $Tier) | ConvertFrom-Json
-if ($termination.action -notin @('APPLY_POLISH_AND_FINALIZE', 'USER_DECISION')) {
+if ($CarryBuildIntake -and $termination.action -ne 'FINALIZE_CURRENT') {
+    throw "Build-intake carry is valid only for FINALIZE_CURRENT, not '$($termination.action)'."
+}
+if (-not $CarryBuildIntake -and $termination.action -notin @('APPLY_POLISH_AND_FINALIZE', 'USER_DECISION')) {
     throw "Termination action '$($termination.action)' does not permit an unreviewed N+1 final draft."
 }
-if ($termination.action -eq 'USER_DECISION' -and -not $ApprovedResidualRisk) {
+if (-not $CarryBuildIntake -and $termination.action -eq 'USER_DECISION' -and -not $ApprovedResidualRisk) {
     throw 'Residual-risk preparation requires explicit -ApprovedResidualRisk confirmation.'
 }
-if ($termination.action -ne 'USER_DECISION' -and $ApprovedResidualRisk) {
+if (($CarryBuildIntake -or $termination.action -ne 'USER_DECISION') -and $ApprovedResidualRisk) {
     throw '-ApprovedResidualRisk is valid only for a USER_DECISION terminal state.'
 }
 
 try {
     $stateEntries = @(Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json)
-    $items = @(Get-Content -LiteralPath $instructions -Raw | ConvertFrom-Json)
 }
 catch { throw "Preparation JSON is invalid. $($_.Exception.Message)" }
+if ($CarryBuildIntake) {
+    . (Join-Path $PSScriptRoot 'build-intake-revalidation.ps1')
+    $items = @()
+}
+else {
+    try { $items = @(Get-Content -LiteralPath $instructions -Raw | ConvertFrom-Json) }
+    catch { throw "Preparation JSON is invalid. $($_.Exception.Message)" }
+}
 $current = @($stateEntries | Where-Object { [int]$_.round -eq $Round })
 if ($current.Count -ne 1) { throw "Review state must contain exactly one round $Round entry." }
 $current = $current[0]
 $sourceBody = [System.IO.File]::ReadAllText($sourceDraftPath)
 $preparedBody = ''
 
-if ($termination.action -eq 'APPLY_POLISH_AND_FINALIZE') {
+if ($CarryBuildIntake) {
+    $preparedBody = Add-DtReviewBuildIntakeSection -DraftBody $sourceBody -ReviewContextPath $reviewContextPath
+    if ($preparedBody -ceq $sourceBody) {
+        throw 'Build-intake carry requires a reviewed draft that does not already contain the evidence-map section.'
+    }
+}
+elseif ($termination.action -eq 'APPLY_POLISH_AND_FINALIZE') {
     $eligible = @($current.findings | Where-Object { [string]$_.disposition -in @('ACCEPT', 'COUNTER') })
     $deferred = @($current.findings | Where-Object { [string]$_.disposition -eq 'DEFER' })
     if ($deferred.Count -gt 0) { throw 'Polish finalization cannot prepare a draft while DEFER findings remain.' }
@@ -268,6 +295,7 @@ $preparedSha256 = Get-Sha256 $preparedPath
 $manifest = [ordered]@{
     schema_version = 1
     action = [string]$termination.action
+    preparation_kind = if ($CarryBuildIntake) { 'build_intake_sync' } elseif ($termination.action -eq 'APPLY_POLISH_AND_FINALIZE') { 'polish' } else { 'accepted_residual_risk' }
     round = $Round
     tier = $Tier
     state_path = $statePath

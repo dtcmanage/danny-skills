@@ -30,6 +30,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+. (Join-Path $PSScriptRoot 'build-intake-revalidation.ps1')
+
 function Test-IsWithin([string]$Child, [string]$Parent) {
     $parentPrefix = $Parent.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
     return $Child.StartsWith($parentPrefix, [System.StringComparison]::OrdinalIgnoreCase)
@@ -146,12 +148,17 @@ $expectedDraftName = switch ($termination.action) {
     'APPLY_POLISH_AND_FINALIZE' { "draft-v$($Round + 1).md" }
     'USER_DECISION' { "draft-v$($Round + 1).md" }
 }
-if ((Split-Path -Leaf $draft) -ne $expectedDraftName) {
-    throw "Termination action '$($termination.action)' requires $expectedDraftName, not $(Split-Path -Leaf $draft)."
+$draftLeaf = Split-Path -Leaf $draft
+$carryBuildIntake = $false
+if ($termination.action -eq 'FINALIZE_CURRENT' -and $draftLeaf -eq "draft-v$($Round + 1).md") {
+    $carryBuildIntake = $true
+}
+elseif ($draftLeaf -ne $expectedDraftName) {
+    throw "Termination action '$($termination.action)' requires $expectedDraftName, not $draftLeaf."
 }
 
 $preparationManifestSha256 = $null
-if ($termination.action -ne 'FINALIZE_CURRENT') {
+if ($termination.action -ne 'FINALIZE_CURRENT' -or $carryBuildIntake) {
     $manifestPath = Join-Path $resolvedScratch ("finalization-manifest-v{0}.json" -f ($Round + 1))
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw "An unreviewed N+1 final draft requires a deterministic preparation manifest: $manifestPath"
@@ -171,6 +178,10 @@ if ($termination.action -ne 'FINALIZE_CURRENT') {
     if ([int]$manifest.schema_version -ne 1 -or [int]$manifest.round -ne $Round -or
         [string]$manifest.action -cne [string]$termination.action -or [string]$manifest.tier -cne $Tier) {
         throw 'Finalization manifest action, round, tier, or schema does not match current terminal state.'
+    }
+    if ($carryBuildIntake -and (-not $manifest.PSObject.Properties['preparation_kind'] -or
+        [string]$manifest.preparation_kind -cne 'build_intake_sync')) {
+        throw 'FINALIZE_CURRENT N+1 finalization requires a build_intake_sync preparation manifest.'
     }
     $manifestPaths = @{
         state_path = $statePath
@@ -216,6 +227,7 @@ if ($termination.action -ne 'FINALIZE_CURRENT') {
         InstructionsPath = $instructionsPath
     }
     if ($termination.action -eq 'USER_DECISION') { $prepareArgs.ApprovedResidualRisk = $true }
+    if ($carryBuildIntake) { $prepareArgs.CarryBuildIntake = $true }
     [void](& (Join-Path $PSScriptRoot 'prepare-final-draft.ps1') @prepareArgs)
     $preparationManifestSha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToUpperInvariant()
 }
@@ -262,8 +274,8 @@ if ($termination.action -eq 'USER_DECISION') {
 }
 
 $reviewContextPath = Join-Path $resolvedScratch 'review-context.md'
-if ((Test-Path -LiteralPath $reviewContextPath -PathType Leaf) -and $body -notmatch '(?mi)^## Build-intake revalidation\s*$') {
-    throw 'A review-context.md evidence map exists, so the final design must include a Build-intake revalidation section.'
+if (Test-Path -LiteralPath $reviewContextPath -PathType Leaf) {
+    Assert-DtReviewBuildIntakeSection -DraftBody $body -ReviewContextPath $reviewContextPath -Label 'Final design'
 }
 
 if ($body -match '(?s)^---\s*\r?\n.*?\r?\n---\s*\r?\n') {

@@ -176,7 +176,43 @@ try {
         -GlossaryReconciled -ApprovedResidualRisk) | ConvertFrom-Json
     Assert-True (Test-Path -LiteralPath $residualFinal.final_path -PathType Leaf) 'valid residual preparation did not finalize'
 
-    [pscustomobject]@{ status='ok'; assertions=8 } | ConvertTo-Json -Compress
+    # A legacy FINALIZE_CURRENT review may recover only by hash-bound carry-forward of the supplied evidence map.
+    $carryProject = Join-Path $testRoot 'carry-project'
+    $carryScratch = Join-Path $carryProject 'design\_review'
+    New-Item -ItemType Directory -Path $carryScratch -Force | Out-Null
+    Write-Utf8 (Join-Path $carryProject 'CONTEXT.md') "# Context`n"
+    $carrySource = "---`nshape_version: 1`n---`n`n# Carry Fixture`n`nThe reviewed body is unchanged.`n"
+    Write-Utf8 (Join-Path $carryScratch 'draft-v1.md') $carrySource
+    Write-Utf8 (Join-Path $carryScratch 'review-context.md') @"
+# Review context
+
+## Build-intake revalidation
+| Claim | Evidence/source | Checked at | Recheck gate |
+| --- | --- | --- | --- |
+| Fixture claim | Fixture source | 2026-07-16 | Before build |
+"@
+    $carryReview = [ordered]@{
+        headline='No remaining issue.'; dimension_assessments=[ordered]@{intent='ok';completeness='ok';coherence='ok';resilience='ok';economy='ok';feasibility='ok'}
+        prior_finding_checks=@(); findings=@(); engagement_with_prior_reasoning='Fixture is complete.'
+        verdict='NOTHING_TO_ADD'; confidence='high'; confidence_reason='No findings remain.'
+    }
+    $carryStatePath = Join-Path $carryScratch 'verdicts.json'
+    Add-ReceivedRound -Scratch $carryScratch -StatePath $carryStatePath -Round 1 -Tier complex -Review $carryReview -SkillRoot $SkillRoot
+    Assert-Throws { & (Join-Path $SkillRoot 'scripts\finalize-review.ps1') `
+        -ProjectPath $carryProject -DraftPath (Join-Path $carryScratch 'draft-v1.md') -Slug 'carry-fixture' `
+        -Round 1 -Tier complex -ContextPath (Join-Path $carryProject 'CONTEXT.md') -GlossaryReconciled | Out-Null
+    } 'must include the Build-intake' 'legacy finalization without the required evidence map was accepted'
+    $preparedCarry = (& (Join-Path $SkillRoot 'scripts\prepare-final-draft.ps1') `
+        -ProjectPath $carryProject -Round 1 -Tier complex -CarryBuildIntake) | ConvertFrom-Json
+    $carryBody = Get-Content -LiteralPath $preparedCarry.draft_path -Raw
+    Assert-True $carryBody.StartsWith($carrySource.TrimEnd(), [System.StringComparison]::Ordinal) 'build-intake carry mutated the reviewed body'
+    Assert-True ($carryBody -match '(?m)^## Build-intake revalidation$') 'build-intake carry did not append the evidence-map section'
+    $carryFinal = (& (Join-Path $SkillRoot 'scripts\finalize-review.ps1') `
+        -ProjectPath $carryProject -DraftPath $preparedCarry.draft_path -Slug 'carry-fixture' `
+        -Round 1 -Tier complex -ContextPath (Join-Path $carryProject 'CONTEXT.md') -GlossaryReconciled) | ConvertFrom-Json
+    Assert-True (Test-Path -LiteralPath $carryFinal.final_path -PathType Leaf) 'valid build-intake carry did not finalize'
+
+    [pscustomobject]@{ status='ok'; assertions=12 } | ConvertTo-Json -Compress
 }
 finally {
     if (Test-Path -LiteralPath $testRoot) {

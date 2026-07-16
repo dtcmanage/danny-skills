@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.7.0
+  version: 1.7.1
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -93,7 +93,9 @@ Follow `references/input-modes.md`:
    model override; ask only at a genuine fork.
 2. Validate plan shape and write `design\_review\draft-v1.md`.
 3. Load current canonical constraints. For code-backed/current-data claims, inspect the actual source once
-   and write `review-context.md` with paths/queries, hashes or timestamps, and build recheck gates.
+   and write `review-context.md` with paths/queries, hashes or timestamps, and build recheck gates. Round-1
+   prompt assembly deterministically carries its exact Build-intake revalidation table into the unreviewed
+   draft; later rounds and finalization fail closed if that table drifts.
 4. On resume, switch to `references/recovery.md` instead of restarting.
 
 ### 2. Capability preflight
@@ -188,7 +190,7 @@ automatic. The scripts reject skipped, noncontiguous, stale-authorized, or nonla
 
 ### 5. Finalize
 
-Follow `references/finalization.md`: carry the build-intake revalidation table, reconcile CONTEXT/glossary
+Follow `references/finalization.md`: verify the carried build-intake revalidation table, reconcile CONTEXT/glossary
 under A1-A8, then run `scripts/finalize-review.ps1`. Only that script may write the final artifact and
 delete scratch. Do not generate HTML; that is `dt-visualize-design` on explicit request.
 

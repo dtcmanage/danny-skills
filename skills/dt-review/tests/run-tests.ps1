@@ -357,6 +357,28 @@ Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNe
     $term2 = (& (Join-Path $SkillRoot 'scripts\evaluate-termination.ps1') -StatePath $statePath -Round 2 -Tier complex) | ConvertFrom-Json
     Assert-True ($term2.action -eq 'FINALIZE_CURRENT') 'NOTHING_TO_ADD did not finalize immediately'
 
+    # Round 1 deterministically carries a review-context evidence map before it can be receipted.
+    $intakeProject = Join-Path $testRoot 'intake-project'
+    $intakeScratch = Join-Path $intakeProject 'design\_review'
+    New-Item -ItemType Directory -Path $intakeScratch -Force | Out-Null
+    Write-Utf8 (Join-Path $intakeScratch 'draft-v1.md') "# Intake Fixture`n"
+    Write-Utf8 (Join-Path $intakeScratch 'review-context.md') @"
+# Review context
+
+## Build-intake revalidation
+| Claim | Evidence/source | Checked at | Recheck gate |
+| --- | --- | --- | --- |
+| Intake claim | Fixture source | 2026-07-16 | Before build |
+"@
+    $intakeAssembly = (& (Join-Path $SkillRoot 'scripts\assemble-review-prompt.ps1') -ProjectPath $intakeProject -Round 1 -Tier complex) | ConvertFrom-Json
+    $intakeDraft = Get-Content -LiteralPath (Join-Path $intakeScratch 'draft-v1.md') -Raw
+    Assert-True ($intakeAssembly.round -eq 1 -and $intakeDraft -match '(?m)^## Build-intake revalidation$') 'round-one assembly did not carry the evidence map into the draft'
+    Write-RoundMeta -Directory $intakeScratch -Round 1 -Tier complex
+    Write-Utf8 (Join-Path $intakeScratch 'draft-v1.md') ($intakeDraft -replace 'Before build', 'After build')
+    Assert-Throws {
+        & (Join-Path $SkillRoot 'scripts\assemble-review-prompt.ps1') -ProjectPath $intakeProject -Round 1 -Tier complex | Out-Null
+    } 'does not exactly carry' 'receipted evidence-map drift was accepted'
+
     # Only the latest contiguous state may drive termination.
     Assert-Throws {
         & (Join-Path $SkillRoot 'scripts\evaluate-termination.ps1') -StatePath $statePath -Round 1 -Tier complex | Out-Null

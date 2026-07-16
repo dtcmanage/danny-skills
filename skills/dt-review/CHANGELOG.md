@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.7.1 (2026-07-15): Carry review-context build-intake evidence into Round 1 deterministically, reject drift after receipt, and recover legacy converged reviews only through a hash-bound exact-table preparation path.
+
 - 1.7.0 (2026-07-13): Structured review engine with deterministic finding lifecycle, authorization and termination state, hard process timeouts, integrity-bound prompt/finalization receipts, and fail-closed recovery.
 
 - 1.6.2 (2026-07-12): Inherited the established pack-wide versioning policy and release gate.

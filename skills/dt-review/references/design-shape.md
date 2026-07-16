@@ -34,9 +34,11 @@ per round.
 
 `FINALIZE_CURRENT` copies only receipt-verified `draft-vN.md`. An unreviewed `draft-vN+1.md` is
 eligible only when `prepare-final-draft.ps1` deterministically derived it from that reviewed source:
-exact, non-overlapping replacements for all current `ACCEPT`/`COUNTER` polish findings, or the exact
-residual-risk section append for every current blocking/deferred finding. `finalize-review.ps1` must
-validate and replay the state/source/final hash-bound manifest before retaining it.
+exact, non-overlapping replacements for all current `ACCEPT`/`COUNTER` polish findings; the exact
+residual-risk section append for every current blocking/deferred finding; or, only for a legacy
+`FINALIZE_CURRENT` recovery, the exact Build-intake revalidation section already supplied in
+`review-context.md`. `finalize-review.ps1` must validate and replay the state/source/final hash-bound
+manifest before retaining it.
 
 Do not copy any of the following into the final file:
 - per-round review text

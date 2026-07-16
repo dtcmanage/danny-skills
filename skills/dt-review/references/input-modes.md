@@ -46,5 +46,7 @@ code/data/docs once before Round 1 and write `design\_review\review-context.md`:
 | --- | --- | --- | --- |
 ```
 
-Use file/symbol or query evidence. Mark anything not directly checked as `UNVERIFIED`. The final
-design carries the `Build-intake revalidation` table so `dt-build` can recheck named assumptions.
+Use file/symbol or query evidence. Mark anything not directly checked as `UNVERIFIED`. Before Round 1
+is receipted, prompt assembly deterministically appends this exact section to `draft-v1.md` when it is
+absent; if it is already present it must match. Every later draft and the final design must carry the
+same normalized table so `dt-build` can recheck named assumptions.
