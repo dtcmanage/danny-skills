@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.10.8",
+  "version": "0.11.0",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.11.0 dt-review 1.8.0: configurable prompt budget with an 80% warning, replacing the fixed 250000-byte assembly limit.",
       "0.10.8 dt-review 1.7.2: early warning when a draft omits the Build-intake revalidation section the finalizer requires.",
       "0.10.7 dt-review 1.7.1: ambiguity-only field contract stated in the prompt template and output schema, so a normal evidence gap no longer fails semantic validation.",
       "0.10.6 dt-build 2.8.3 light-fallback alignment and dt-review 1.7.0 structured convergence engine; shared process wrapper; version policy ownership registry",

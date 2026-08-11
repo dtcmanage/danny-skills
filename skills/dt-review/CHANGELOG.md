@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.8.0 (2026-08-11): Make the prompt-size guard a configurable budget (default 900000 bytes, -MaxPromptBytes or DT_REVIEW_MAX_PROMPT_BYTES) that warns at 80% instead of hard-failing a long review at a fixed 250000.
+
 - 1.7.2 (2026-08-11): Warn at every prompt assembly when review-context.md exists but the draft has no Build-intake revalidation section, so the finalizer's requirement surfaces while the draft is still editable.
 
 - 1.7.1 (2026-08-11): State the ambiguity-only field contract: missing_evidence and candidate_dimensions must be empty unless AMBIGUOUS_ROOT_CAUSE, so an ordinary evidence gap no longer trips semantic validation.

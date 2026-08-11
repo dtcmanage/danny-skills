@@ -9,7 +9,15 @@ param(
 
     [Parameter(Mandatory)]
     [ValidateSet('light', 'complex')]
-    [string]$Tier
+    [string]$Tier,
+
+    # Prompt budget in UTF-8 bytes. The binding constraint is the model's context window, not a
+    # fixed byte count: cumulative state (verdicts.json) and the draft both grow every round, so a
+    # long review legitimately produces a large prompt. The default is a runaway guard set well
+    # below the pinned models' capacity - roughly 225k tokens at ~4 bytes/token - not a target.
+    # Override per call, or globally with DT_REVIEW_MAX_PROMPT_BYTES.
+    [ValidateRange(50000, 4000000)]
+    [int]$MaxPromptBytes = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -131,8 +139,30 @@ if ($previousReviewPath) {
 
 $prompt = ($parts -join "`n`n") + "`n"
 $promptBytes = [System.Text.Encoding]::UTF8.GetByteCount($prompt)
-if ($promptBytes -gt 250000) {
-    throw "Review prompt is $promptBytes bytes (limit 250000). Compact review-context/prior notes before invoking another round."
+
+$promptBudget = 900000
+if ($MaxPromptBytes -gt 0) {
+    $promptBudget = $MaxPromptBytes
+}
+elseif (-not [string]::IsNullOrWhiteSpace($env:DT_REVIEW_MAX_PROMPT_BYTES)) {
+    $parsedBudget = 0
+    if (-not [int]::TryParse($env:DT_REVIEW_MAX_PROMPT_BYTES, [ref]$parsedBudget) -or
+        $parsedBudget -lt 50000 -or $parsedBudget -gt 4000000) {
+        throw "DT_REVIEW_MAX_PROMPT_BYTES must be an integer between 50000 and 4000000; got '$($env:DT_REVIEW_MAX_PROMPT_BYTES)'."
+    }
+    $promptBudget = $parsedBudget
+}
+
+# Warn before the wall, not at it. Cumulative state grows every round, so a review that crosses
+# the warning line will usually exceed the budget a round or two later - and by then the only
+# compactable input (review-context.md) may not be large enough to recover the difference.
+$promptBudgetWarning = ''
+if ($promptBytes -gt $promptBudget) {
+    throw "Review prompt is $promptBytes bytes against a $promptBudget budget. Compact review-context.md, or raise the budget with -MaxPromptBytes / DT_REVIEW_MAX_PROMPT_BYTES once you have confirmed the pinned model can carry it."
+}
+elseif ($promptBytes -gt [int]($promptBudget * 0.8)) {
+    $promptBudgetWarning = "Review prompt is $promptBytes bytes, over 80% of the $promptBudget budget. Cumulative state grows each round; compact review-context.md or raise the budget before it becomes blocking."
+    Write-Warning $promptBudgetWarning
 }
 Write-Atomic -Path $promptPath -Content $prompt
 
@@ -157,4 +187,6 @@ $authorizationRequired = [bool]$transition.authorization_required
     authorization_path = [System.IO.Path]::GetFullPath($authorizationPath)
     authorization_sha256 = if ($authorizationRequired) { (Get-FileHash -LiteralPath $authorizationPath -Algorithm SHA256).Hash.ToUpperInvariant() } else { '' }
     build_intake_warning = $buildIntakeWarning
+    prompt_budget_bytes = $promptBudget
+    prompt_budget_warning = $promptBudgetWarning
 } | ConvertTo-Json -Compress
