@@ -48,3 +48,9 @@ code/data/docs once before Round 1 and write `design\_review\review-context.md`:
 
 Use file/symbol or query evidence. Mark anything not directly checked as `UNVERIFIED`. The final
 design carries the `Build-intake revalidation` table so `dt-build` can recheck named assumptions.
+
+Once `review-context.md` exists, `finalize-review.ps1` **refuses** a final design without a section headed
+exactly `## Build-intake revalidation` — and by finalization the reviewed draft is hash-bound, so the
+omission cannot be repaired in flow. Carry the table into the draft itself, not only into
+`review-context.md`. `assemble-review-prompt.ps1` warns every round while this is still fixable, emitting
+`build_intake_warning` in its JSON; treat that warning as work to do before authoring the next draft.

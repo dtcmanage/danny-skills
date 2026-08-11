@@ -108,9 +108,18 @@ $parts.Add("=== BEGIN CANONICAL DIMENSION CONTRACT ===`n$dimensions`n=== END CAN
 $parts.Add($draftEnvelope)
 
 $contextPath = Join-Path $scratchDir 'review-context.md'
+$buildIntakeWarning = ''
 if (Test-Path -LiteralPath $contextPath -PathType Leaf) {
     $context = Get-Content -LiteralPath $contextPath -Raw
     $parts.Add((New-PromptEnvelope -Label 'CODE AND CONSTRAINT EVIDENCE MAP' -Content $context))
+
+    # finalize-review.ps1 refuses a final design that omits this heading whenever an evidence
+    # map exists, and by then the reviewed draft is hash-bound and cannot be repaired in-flow.
+    # Surface it every round while the next draft is still being authored.
+    if ($draft -notmatch '(?mi)^## Build-intake revalidation\s*$') {
+        $buildIntakeWarning = "draft-v$Round.md has no '## Build-intake revalidation' section, but review-context.md exists. finalize-review.ps1 will refuse the final design without it, and the terminal reviewed draft cannot be edited. Carry the table into the next draft."
+        Write-Warning $buildIntakeWarning
+    }
 }
 
 if ($previousReviewPath) {
@@ -147,4 +156,5 @@ $authorizationRequired = [bool]$transition.authorization_required
     authorization_required = $authorizationRequired
     authorization_path = [System.IO.Path]::GetFullPath($authorizationPath)
     authorization_sha256 = if ($authorizationRequired) { (Get-FileHash -LiteralPath $authorizationPath -Algorithm SHA256).Hash.ToUpperInvariant() } else { '' }
+    build_intake_warning = $buildIntakeWarning
 } | ConvertTo-Json -Compress
