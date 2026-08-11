@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.7.1 (2026-08-11): State the ambiguity-only field contract: missing_evidence and candidate_dimensions must be empty unless AMBIGUOUS_ROOT_CAUSE, so an ordinary evidence gap no longer trips semantic validation.
+
 - 1.7.0 (2026-07-13): Structured review engine with deterministic finding lifecycle, authorization and termination state, hard process timeouts, integrity-bound prompt/finalization receipts, and fail-closed recovery.
 
 - 1.6.2 (2026-07-12): Inherited the established pack-wide versioning policy and release gate.

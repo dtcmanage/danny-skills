@@ -40,3 +40,10 @@ medium build-spec clarification can be non-blocking.
 Finding IDs are stable across rounds. A new finding uses `R<N>-F<NN>`; a known root cause reuses its
 original ID as `PERSISTING`, `REOPENED`, or `REGRESSION`. `prior_finding_checks` must cover every
 finding in cumulative state so accepted commitments cannot silently disappear.
+
+`candidate_dimensions` and `missing_evidence` are **ambiguity-only fields**. They describe which single
+dimension a finding belongs to, never what the design is missing. When `ambiguous_root_cause` is `false`,
+`candidate_dimensions` MUST be `[]` and `missing_evidence` MUST be `""`; when it is `true`, supply exactly
+two candidate dimensions plus the evidence that would disambiguate them. Semantic validation rejects the
+round otherwise. An evidence gap in the design is a normal finding — state it in `root_cause` and
+`remediation`, not in `missing_evidence`.

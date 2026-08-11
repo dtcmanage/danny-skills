@@ -85,7 +85,10 @@
           "root_cause": { "type": "string" },
           "remediation": { "type": "string" },
           "validation_check": { "type": "string" },
-          "ambiguous_root_cause": { "type": "boolean" },
+          "ambiguous_root_cause": {
+            "type": "boolean",
+            "description": "True only when the canonical tie-break cannot reduce the finding to one dimension. When true, candidate_dimensions must list exactly two dimensions and missing_evidence must name the evidence that would disambiguate them. When false, both of those fields must be empty."
+          },
           "candidate_dimensions": {
             "type": "array",
             "maxItems": 2,
@@ -99,9 +102,13 @@
                 "Economy",
                 "Feasibility"
               ]
-            }
+            },
+            "description": "Ambiguity-only field. The two dimensions the root cause could belong to. MUST be [] whenever ambiguous_root_cause is false."
           },
-          "missing_evidence": { "type": "string" },
+          "missing_evidence": {
+            "type": "string",
+            "description": "Ambiguity-only field. The evidence that would resolve WHICH DIMENSION this finding belongs to. MUST be \"\" whenever ambiguous_root_cause is false. This is not a place to record evidence the design is missing - state that in root_cause and remediation as an ordinary finding."
+          },
           "owner_role": { "type": "string" }
         }
       }
