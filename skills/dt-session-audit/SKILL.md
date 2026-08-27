@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.3.2
+  version: 0.4.0
 ---
 
 # Session Audit
@@ -66,10 +66,33 @@ Classify every finding on two axes.
 
 ### Axis A: Content Class
 
-- `rule` -> `CLAUDE.md`
+- `rule` -> `CLAUDE.md` **only if it passes the Residency Test below**; otherwise a reference file
 - `fact` -> `MEMORY.md`
 - `terminology` -> `CONTEXT.md` or `glossary.md` (per terminology contract)
 - `skill amendment` -> target skill `SKILL.md` via `dt-tune`
+
+### Residency Test (mandatory for every `rule`)
+
+`CLAUDE.md` is a router, not a rulebook. A rule earns a place in it only when a session
+could not know to look the rule up before needing it.
+
+Ask: **is there a recognizable trigger — a task boundary, a phrase Danny says, a tool about
+to be used — at which a session would open a reference file and find this rule?**
+
+- **No trigger** -> resident. Write it to `CLAUDE.md` at the narrowest true scope. This is the
+  narrow case: rules that constrain default behavior, decide whether to act at all, govern how
+  every response is formatted, or are safety boundaries.
+- **Trigger exists** -> routed. Write it to the reference file that owns that activity, NOT to
+  `CLAUDE.md`. If no such file exists, propose creating one under the owning Resources folder
+  rather than defaulting to `CLAUDE.md`.
+
+When a rule is routed, confirm the owning file has a `References` row in the governing
+`CLAUDE.md` whose trigger names **the words Danny would actually say** ("draft an email",
+"ship it", "clean up the tree"), not the topic. Add or tighten that row when it is missing or
+too narrow; adding the row is part of applying the finding, not a follow-up.
+
+Never restate a routed rule in `CLAUDE.md` as a summary. A rule lives in exactly one file.
+Duplication is drift waiting to happen, and the routed copy is the one that gets updated.
 
 ### Axis B: Scope Tier
 
@@ -143,7 +166,7 @@ Discover workspace dynamically. Read relevant files if present:
 5. Any reference files used in-session.
 6. Workspace `CLAUDE.md` routing map as topology data only.
 
-Before routing any finding, enumerate which destination files actually exist for the in-play scopes with a single deterministic pass — one `Get-ChildItem` (or Glob) sweep over the root, in-play workstation, and in-play project folders for `CLAUDE.md`, `MEMORY.md`, `CONTEXT.md`, and `glossary.md`. Route only to files confirmed present in that sweep; if a routing decision points at a file that does not exist, propose creating it explicitly rather than assuming it is there.
+Before routing any finding, enumerate which destination files actually exist for the in-play scopes with a single deterministic pass — one `Get-ChildItem` (or Glob) sweep over the root, in-play workstation, and in-play project folders for `CLAUDE.md`, `MEMORY.md`, `CONTEXT.md`, and `glossary.md`, **plus the reference files in the governing `References` tables** (root `00_Resources\` and the in-play workstation's Resources folder) — routed rules land in those, so a sweep that omits them will misfile every routed finding into `CLAUDE.md`. Route only to files confirmed present in that sweep; if a routing decision points at a file that does not exist, propose creating it explicitly rather than assuming it is there.
 
 ## Scan Targets
 
@@ -213,6 +236,24 @@ Atomic apply for approved deterministic fan-out:
 
 - Validate every target file and compute every edit before writing any target.
 - If any target fails, write none and downgrade to `Your call` with failing scope named.
+
+### Root `CLAUDE.md` Write Gate
+
+Root is the most expensive tier: every word is read at the start of every session on every
+surface. Before writing a rule there, all four must hold.
+
+1. It passed the **Residency Test** — no trigger exists at which it could be looked up.
+2. It is true at root scope, not merely convenient there. A rule true only for one workstation
+   or repo belongs to that tier.
+3. It is not already stated in a reference file. If it is, tighten that file and, when needed,
+   the `References` trigger row instead.
+4. Root stays under its stated word ceiling. If the addition would cross it, trim or relocate
+   an existing entry in the same run — never raise the ceiling, and never let the write silently
+   push root over it.
+
+If any of the four fails, downgrade the finding to the reference file that owns it, or to
+`Your call` with the reason named. Report root additions explicitly in the run summary with
+the before/after word count.
 
 ### Rule Conflicts (`CLAUDE.md`)
 
