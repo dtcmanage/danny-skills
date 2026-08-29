@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.9.1
+
+- Dual-harness wording pass from the Codex harness review: harness contract + CLAUDE_DISPATCH abstraction used in steps 6.b/6.c/6.d/6.5, lane-neutral prompt assembly, Claude-tier preflight on codex-host, compatibility/invocation wording, ScheduleWakeup dropped from allowed-tools, approval posture recorded in Codex wrapper provenance. Codex orchestration remains unverified end-to-end.
+
 ## 2.9.0
 
 - Two-lane model tiering: Claude-lane tier map (haiku/sonnet/opus), light-tier implementation allowed with escalate-on-retry, cross-model dispatch via new invoke-claude-chunk.ps1, milestone scope lock with DISCOVERED_ENHANCEMENTS report field (report contract v2), orchestrator-owned enhancement triage, deferred-findings section in the final ledger.

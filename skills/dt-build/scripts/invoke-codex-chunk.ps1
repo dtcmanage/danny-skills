@@ -295,6 +295,10 @@ try {
         reasoning_effort       = $ReasoningEffort
         attempt                = $Attempt
         sandbox                = $sandbox
+        # codex exec has no interactive approval surface (verified: no
+        # --ask-for-approval flag in exec mode); the sandbox flag is the whole
+        # permission contract. Recorded so provenance states this explicitly.
+        approval_mode          = 'exec-noninteractive'
         codex_cli_version      = $cliVersion
         auth_surface           = $authSurface
         forced_login_method    = $forcedLoginMethod

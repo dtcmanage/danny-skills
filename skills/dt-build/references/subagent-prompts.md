@@ -15,10 +15,13 @@ Required templates:
 Lane routing:
 - Route crisp, scoped implementation to the Codex lane through
   `scripts/invoke-codex-chunk.ps1`; never invoke `codex exec` directly.
+- **CLAUDE_DISPATCH** (defined once, used in every template below): a fresh
+  host-native Agent with an explicit tier-matched `model` when the orchestrator
+  has the Agent tool (Claude Code / Cowork); otherwise
+  `scripts/invoke-claude-chunk.ps1` with the same tier — the cross-model bridge
+  for a codex-host orchestrator.
 - Route repo-wide navigation, UI judgment, workspace-memory work, and semantic
-  verification to a Claude subagent — a fresh host-native Agent when the
-  orchestrator is a Claude Code session, or `scripts/invoke-claude-chunk.ps1`
-  when it is not (the cross-model bridge for a Codex orchestrator).
+  verification to a Claude subagent via CLAUDE_DISPATCH.
 - Tier every chunk by difficulty, on either lane: `light` (Codex `gpt-5.6-luna`
   / Claude `haiku`) for routine mechanical work including light implementation
   — boilerplate, config, renames, straightforward tests, preflight; `standard`
@@ -27,7 +30,8 @@ Lane routing:
   work. Load-bearing chunks start at `complex`, never light.
 - The orchestrator owns quality: a failed attempt escalates one tier on the
   retry (light → standard → complex), inside the two-attempt budget. A fresh
-  non-builder Agent performs semantic verification before acceptance for every
+  non-builder Claude subagent (via CLAUDE_DISPATCH) performs semantic verification
+  before acceptance for every
   load-bearing, security-sensitive, live-write, or agent-verification milestone.
 
 Every build/fix prompt ends with:

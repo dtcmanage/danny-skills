@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.12.2 dt-build 2.9.1: dual-harness wording pass (harness contract + CLAUDE_DISPATCH, lane-neutral prompt assembly, Claude-tier preflight on codex-host, compatibility/invocation wording, approval posture in Codex provenance).",
       "0.12.1 dt-build 2.9.0: two-lane model tiering (Claude haiku/sonnet/opus map, light-tier implementation with escalate-on-retry), cross-model dispatch via new invoke-claude-chunk.ps1, milestone scope lock + DISCOVERED_ENHANCEMENTS (report contract v2), orchestrator-owned enhancement triage, deferred-findings ledger section.",
       "0.12.0 dt-session-audit 0.4.0 - Residency Test and root CLAUDE.md write gate: rules with a recognizable trigger route to the owning reference file instead of CLAUDE.md.",
       "0.11.0 dt-review 1.8.0: configurable prompt budget with an 80% warning, replacing the fixed 250000-byte assembly limit.",

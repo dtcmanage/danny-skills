@@ -3,10 +3,10 @@ name: dt-build
 description: "Execute a finalized build end-to-end. Trigger on /dt-build or 'dt-build [roadmap-or-design-path]'. Prefers a dt-roadmap roadmap.md for heavier builds but accepts a finalized design directly (design-final-<slug>.md, legacy design-final.md) and auto-generates the roadmap; a missing roadmap is never required or a crash."
 disable-model-invocation: false
 user-invocable: true
-allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
-compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
+allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
+compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex orchestration unverified end-to-end); requires danny-skills repo present."
 metadata:
-  version: 2.9.0
+  version: 2.9.1
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -50,6 +50,8 @@ Trigger when all are true:
   (step 2.5) — a missing roadmap is never a crash or a refusal.
 - Repository is a git repo.
 - Danny is asking to run the build stage, not planning/review.
+
+Invocation syntax: `/dt-build` on Claude surfaces (Claude Code CLI, Cowork); `$dt-build` from Codex.
 
 Do NOT fire for:
 - Plan authoring or redesign (`dt-plan`, `dt-review`).
@@ -99,15 +101,26 @@ two-attempt budget. Start load-bearing chunks at `complex` directly; never start
 through `scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and
 persist the returned provenance JSON beside the chunk output.
 
-**Claude lane.** When the orchestrator is a Claude Code session, dispatch a fresh host-native Agent with an
-explicit `model` matching the tier above; record the surface/model actually used, never invent a slug.
-Repo-wide navigation, UI judgment, workspace-memory work, and semantic verification stay on this lane.
+**Claude lane.** Repo-wide navigation, UI judgment, workspace-memory work, and semantic verification stay
+on this lane. Dispatch it via CLAUDE_DISPATCH (harness contract below); record the surface/model actually
+used, never invent a slug.
+
+**Harness contract.** At intake, note which harness is orchestrating: `claude-host` (a Claude Code / Cowork
+session with the host-native Agent tool) or `codex-host` (any orchestrator without it). Define
+**CLAUDE_DISPATCH** once for the run — on claude-host, a fresh host-native Agent with an explicit `model`
+matching the tier map; on codex-host, `scripts/invoke-claude-chunk.ps1` with the same tier — and use
+CLAUDE_DISPATCH everywhere this skill dispatches a Claude subagent: build/fix chunks, independent semantic
+verification (step 6.d), and the final combined-diff review (step 6.5). On codex-host, run
+`scripts/invoke-claude-chunk.ps1 -Preflight -TimeoutMs 30000` once per selected Claude tier before its
+first substantive use, same rules as the Codex tier preflights. Claude frontmatter (`allowed-tools`) binds
+only Claude surfaces; Codex permissions come from its launch-time sandbox, not this file.
 
 **Cross-model dispatch.** Both orchestrators use both lanes: a Claude orchestrator routes Codex chunks
-through `scripts/invoke-codex-chunk.ps1` (existing), and a non-Claude orchestrator (Codex) routes Claude
-chunks through `scripts/invoke-claude-chunk.ps1` — same contract: prompt over stdin, pinned model,
+through `scripts/invoke-codex-chunk.ps1` (existing), and a codex-host orchestrator routes Claude chunks
+through `scripts/invoke-claude-chunk.ps1` — same contract: prompt over stdin, pinned model,
 provenance JSON, structured-report shape check. A fully Codex-orchestrated dt-build run is currently
-unverified end-to-end; the wrapper is the supported bridge, not a parity claim.
+unverified end-to-end (sandbox, child-process network, and `.git`-write behavior under Codex's launch
+profile are unproven); the wrapper is the supported bridge, not a parity claim.
 
 Before the first substantive invocation of each distinct Codex tier, run
 `scripts/invoke-codex-chunk.ps1 -Preflight -TimeoutMs 30000` under a 30-second outer timeout. Every
@@ -185,10 +198,10 @@ cache timestamp, effort, and duration.
 
 6. Execute milestones with deterministic execution-side procedures, **per-milestone in this order**:
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
-- b. **Assemble and verify the Codex prompt.** `scripts/assemble-codex-prompt.ps1` (single canonical implementation; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`), then the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every Codex invocation.
+- b. **Assemble and verify the chunk prompt (both lanes).** `scripts/assemble-codex-prompt.ps1` (single canonical implementation — the name is historical; both lane wrappers consume its verified output, which carries the identity headers and report contract each wrapper enforces; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`), then the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every chunk invocation on either lane.
 - c. **Run the chunk through the canonical lane.** For Codex, call `scripts/invoke-codex-chunk.ps1`
-  with the routed tier and explicit effort. For Claude, dispatch a fresh Agent with the same brief and scoped
-  worktree. Do not hand-roll `codex exec`. Automatic implementation failures consume at most two attempts;
+  with the routed tier and explicit effort. For Claude, dispatch via CLAUDE_DISPATCH with the same brief and scoped
+  worktree. Do not hand-roll `codex exec` or `claude -p`. Automatic implementation failures consume at most two attempts;
   environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
   restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
 - c2. **Hold the milestone scope lock.** Every build/fix prompt carries the scope-lock block from
@@ -196,7 +209,7 @@ cache timestamp, effort, and duration.
   abstraction, no unrequested features, no extra files. Anything discovered mid-build (a missing feature,
   useful file, abstraction, or hardening) is reported in the chunk's `DISCOVERED_ENHANCEMENTS` field, never
   built into the diff.
-- d. **Run independent semantic verification.** A fresh non-builder Agent reviews every load-bearing,
+- d. **Run independent semantic verification.** A fresh non-builder Claude subagent (via CLAUDE_DISPATCH) reviews every load-bearing,
   security-sensitive, live-write, or agent-verification milestone before acceptance. Record findings and the
   verifier surface/model. The builder never self-approves. The verifier also flags any diff content beyond
   the milestone's named artifacts and stated scope as an out-of-scope finding — built-but-unrequested work is
@@ -220,8 +233,10 @@ cache timestamp, effort, and duration.
 
 6.5 Emit acceptance ledger; review artifact on request only:
 - Run one final integrated baseline/E2E rehearsal against the exact integration-branch SHA, including every
-  design-required live environment check. Have a fresh non-builder Agent review the combined diff. Persist
-  `final-integration.json` with branch SHA, commands, environment, verifier provenance, and PASS/BLOCKED.
+  design-required live environment check. Have a fresh non-builder Claude subagent (via CLAUDE_DISPATCH)
+  review the combined diff. Persist
+  `final-integration.json` with branch SHA, commands, environment, verifier provenance (on codex-host,
+  include the wrapper's provenance JSON path), and PASS/BLOCKED.
   Do not mark COMPLETE if this gate is missing or BLOCKED.
 - Run `scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder>`.
   - Omit `-RunTests` for the normal final ledger. It renders persisted `acceptance-rows.jsonl` evidence and
