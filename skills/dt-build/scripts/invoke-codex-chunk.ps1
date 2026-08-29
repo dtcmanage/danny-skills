@@ -146,6 +146,7 @@ else {
 }
 $sandbox = if ($Preflight) { 'read-only' } else { 'workspace-write' }
 $args = @(
+    '--ask-for-approval', 'never',
     'exec',
     '--ignore-user-config',
     '--sandbox', $sandbox,
@@ -295,10 +296,10 @@ try {
         reasoning_effort       = $ReasoningEffort
         attempt                = $Attempt
         sandbox                = $sandbox
-        # codex exec has no interactive approval surface (verified: no
-        # --ask-for-approval flag in exec mode); the sandbox flag is the whole
-        # permission contract. Recorded so provenance states this explicitly.
-        approval_mode          = 'exec-noninteractive'
+        # Approval policy and sandbox mode are separate controls: the global
+        # --ask-for-approval never pin makes non-interactive behavior part of
+        # the wrapper contract instead of an inherited default.
+        approval_mode          = 'never'
         codex_cli_version      = $cliVersion
         auth_surface           = $authSurface
         forced_login_method    = $forcedLoginMethod
@@ -332,6 +333,7 @@ catch {
             pass = $false; preflight = [bool]$Preflight; tier = $Tier
             requested_model = $preferred; resolved_model = $resolvedModel
             reasoning_effort = $ReasoningEffort; attempt = $Attempt; sandbox = $sandbox
+            approval_mode = 'never'
             duration_ms = $durationMs; timeout_ms = $TimeoutMs; prompt_sha256 = $promptSha256
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }
             failure_category = 'tooling'; termination_reason = (Invoke-SecretRedaction -Text $_.Exception.Message)
