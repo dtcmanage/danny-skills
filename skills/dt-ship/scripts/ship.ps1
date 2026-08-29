@@ -302,6 +302,10 @@ $state.rerere_enabled = Get-Prop $mergeParsed 'rerere_enabled'
 if (Get-Prop $mergeParsed 'worktree_removed' $false) {
     $state.purged += "worktree: $(Get-Prop $mergeParsed 'worktree_path')"
 }
+$wtDirLeftover = Get-Prop $mergeParsed 'worktree_dir_leftover' $null
+if ($wtDirLeftover) {
+    $state.purged += "worktree-dir-leftover: $wtDirLeftover (git-deregistered; delete the folder at leisure)"
+}
 if (Get-Prop $mergeParsed 'branch_deleted' $false) {
     $state.purged += "branch: $resolvedBranch"
 }

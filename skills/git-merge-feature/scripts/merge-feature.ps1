@@ -147,16 +147,46 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
     # Remove the worktree (clean after rebase) before deleting the branch -
     # git refuses to delete a branch still checked out in a worktree.
     $wtRemoved = $false
+    $wtDirLeftover = $null
     $wtRemove = Invoke-Git -GitArgs @('worktree', 'remove', $branchWorktree)
+    if ($wtRemove.ExitCode -ne 0) {
+        # Windows: the directory delete is often denied by a transient handle
+        # (a shell that recently sat in the directory, an AV scan) even though
+        # git has already deregistered the worktree. Retry briefly first.
+        foreach ($delayMs in 1500, 3000) {
+            Start-Sleep -Milliseconds $delayMs
+            $wtRemove = Invoke-Git -GitArgs @('worktree', 'remove', $branchWorktree)
+            if ($wtRemove.ExitCode -eq 0) { break }
+        }
+    }
     if ($wtRemove.ExitCode -eq 0) {
         $wtRemoved = $true
         if ($PurgeWorktree) {
             $null = Invoke-Git -GitArgs @('worktree', 'prune')
         }
-    } elseif ($PurgeWorktree) {
-        Fail "Merge landed (range $wtCommitRange) but worktree '$branchWorktree' could not be removed: $($wtRemove.Output). Purge is mandatory under -PurgeWorktree; remove the worktree by hand, then delete branch '$resolvedBranch'." @{ merge_status = 'ff-only'; commit_range = $wtCommitRange; worktree_path = $branchWorktree; worktree_removed = $false; rerere_enabled = $rerereEnabled }
     } else {
-        Write-Warning "Could not remove worktree '$branchWorktree': $($wtRemove.Output). Branch left in place."
+        # Distinguish "still registered" (real failure) from "deregistered but
+        # the directory would not delete" (cosmetic — observed twice 2026-08-29:
+        # the merge had landed and only the ship's push was lost to this).
+        $null = Invoke-Git -GitArgs @('worktree', 'prune')
+        $trackedLines = (Invoke-Git -GitArgs @('worktree', 'list', '--porcelain')).Output -split "`r?`n"
+        if ($trackedLines -contains "worktree $branchWorktree") {
+            if ($PurgeWorktree) {
+                Fail "Merge landed (range $wtCommitRange) but worktree '$branchWorktree' is still registered and could not be removed: $($wtRemove.Output). Remove it by hand, then delete branch '$resolvedBranch'." @{ merge_status = 'ff-only'; commit_range = $wtCommitRange; worktree_path = $branchWorktree; worktree_removed = $false; rerere_enabled = $rerereEnabled }
+            }
+            Write-Warning "Could not remove worktree '$branchWorktree': $($wtRemove.Output). Branch left in place."
+        } else {
+            # Git no longer tracks it; finish with a direct directory delete.
+            # A directory that still refuses to die is left behind as cosmetics
+            # so the merge/branch/push chain can complete.
+            try {
+                Remove-Item -LiteralPath $branchWorktree -Recurse -Force -ErrorAction Stop
+            } catch {
+                $wtDirLeftover = $branchWorktree
+                Write-Warning "Worktree '$branchWorktree' is deregistered but its directory could not be deleted: $($_.Exception.Message). Continuing; delete the folder at leisure."
+            }
+            $wtRemoved = $true
+        }
     }
 
     $wtBranchDeleted = $false
@@ -181,6 +211,7 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
         branch_deleted = $wtBranchDeleted
         worktree_path = $branchWorktree
         worktree_removed = $wtRemoved
+        worktree_dir_leftover = $wtDirLeftover
         rerere_enabled = $rerereEnabled
         status = 'success'
     }
@@ -191,7 +222,8 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
     }
 
     Write-Output "Merged '$resolvedBranch' (worktree) into main (ff-only). Range: $wtCommitRange."
-    if ($wtRemoved) { Write-Output "Removed worktree '$branchWorktree'." }
+    if ($wtRemoved -and -not $wtDirLeftover) { Write-Output "Removed worktree '$branchWorktree'." }
+    if ($wtDirLeftover) { Write-Output "Worktree deregistered; leftover directory to delete at leisure: $wtDirLeftover" }
     if ($wtBranchDeleted) {
         Write-Output "Deleted local branch '$resolvedBranch'."
     } else {
@@ -274,6 +306,7 @@ $summary = [pscustomobject]@{
     branch_deleted = $branchDeleted
     worktree_path = $null
     worktree_removed = $false
+    worktree_dir_leftover = $null
     rerere_enabled = $rerereEnabled
     status = 'success'
 }
