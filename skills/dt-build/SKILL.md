@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 2.8.3
+  version: 2.9.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -76,17 +76,38 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 
 ## Model and lane routing
 
-Never inherit Codex's user-config model or reasoning effort. Resolve every Codex lane through
-`scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and persist the
-returned provenance JSON beside the chunk output.
+**Orchestrator:** whatever session Danny launches IS the orchestrator — dt-build imposes no orchestrator
+model gate. The orchestrator's job is dividing the roadmap into chunks, routing each chunk to the cheapest
+model tier that can genuinely do it, judging failures, and escalating. The orchestrator never delegates its
+own model for implementation chunks.
 
-- Standard build/fix chunk: `gpt-5.6-terra`, tier `standard`, effort `medium`.
-- Load-bearing, security-sensitive, ambiguous, or second-attempt chunk: `gpt-5.6-sol`, tier `complex`, effort
-  `medium`; raise to `high` only with a recorded reason.
-- Routine preflight only: `gpt-5.6-luna`, tier `light`, effort `low` or `medium`. Do not route implementation
-  to Luna merely to save quota.
-- Claude lane: use a fresh host-native Agent for repo-wide, UI, workspace-memory, or semantic-verification
-  work. Record the actual surface/model when the host exposes it; never invent a model slug.
+**Per-chunk tier selection (both lanes).** Route every chunk to a tier by difficulty, not by habit —
+the goal is an optimized build, not maximum firepower:
+
+| Tier | When | Codex lane | Claude lane |
+| :-- | :-- | :-- | :-- |
+| `light` | Routine mechanical work: boilerplate, config, renames, straightforward tests, preflight | `gpt-5.6-luna`, effort `low`/`medium` | `haiku` |
+| `standard` | Ordinary implementation with real logic | `gpt-5.6-terra`, effort `medium` | `sonnet` |
+| `complex` | Load-bearing, security-sensitive, ambiguous, or escalated chunks | `gpt-5.6-sol`, effort `medium` (raise to `high` only with a recorded reason) | `opus` |
+
+Light-tier implementation is allowed — the orchestrator owns quality: it reviews each chunk's result, and
+when a light-tier model proves incapable, the retry escalates one tier (light → standard → complex; a
+standard failure escalates to complex, as before). Escalation IS the second attempt and stays inside the
+two-attempt budget. Start load-bearing chunks at `complex` directly; never start them light.
+
+**Codex lane.** Never inherit Codex's user-config model or reasoning effort. Resolve every Codex chunk
+through `scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and
+persist the returned provenance JSON beside the chunk output.
+
+**Claude lane.** When the orchestrator is a Claude Code session, dispatch a fresh host-native Agent with an
+explicit `model` matching the tier above; record the surface/model actually used, never invent a slug.
+Repo-wide navigation, UI judgment, workspace-memory work, and semantic verification stay on this lane.
+
+**Cross-model dispatch.** Both orchestrators use both lanes: a Claude orchestrator routes Codex chunks
+through `scripts/invoke-codex-chunk.ps1` (existing), and a non-Claude orchestrator (Codex) routes Claude
+chunks through `scripts/invoke-claude-chunk.ps1` — same contract: prompt over stdin, pinned model,
+provenance JSON, structured-report shape check. A fully Codex-orchestrated dt-build run is currently
+unverified end-to-end; the wrapper is the supported bridge, not a parity claim.
 
 Before the first substantive invocation of each distinct Codex tier, run
 `scripts/invoke-codex-chunk.ps1 -Preflight -TimeoutMs 30000` under a 30-second outer timeout. Every
@@ -170,9 +191,16 @@ cache timestamp, effort, and duration.
   worktree. Do not hand-roll `codex exec`. Automatic implementation failures consume at most two attempts;
   environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
   restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
+- c2. **Hold the milestone scope lock.** Every build/fix prompt carries the scope-lock block from
+  `references/subagent-prompts.md`: the chunk builds exactly what the milestone specifies — no speculative
+  abstraction, no unrequested features, no extra files. Anything discovered mid-build (a missing feature,
+  useful file, abstraction, or hardening) is reported in the chunk's `DISCOVERED_ENHANCEMENTS` field, never
+  built into the diff.
 - d. **Run independent semantic verification.** A fresh non-builder Agent reviews every load-bearing,
   security-sensitive, live-write, or agent-verification milestone before acceptance. Record findings and the
-  verifier surface/model. The builder never self-approves.
+  verifier surface/model. The builder never self-approves. The verifier also flags any diff content beyond
+  the milestone's named artifacts and stated scope as an out-of-scope finding — built-but-unrequested work is
+  a defect, not a bonus.
 - e. **Run the acceptance gate.** `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
 - f. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
 - g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and
@@ -180,6 +208,15 @@ cache timestamp, effort, and duration.
   and downgrade status. This append-only row is the final ledger's source of truth.
 - h. **Update the integration branch** (`<integration-branch>` from `build-plan.md`) via compare-and-swap through `scripts/branch-cas-update.ps1` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
 - i. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (e–g) and the integration branch is updated (h), rewrite `_build-state.md` in the project's planning folder (the folder holding `plan-draft.md` / `design-final*.md` / `roadmap.md`, typically `<project>/design/`) as an atomic full-file rewrite from the canonical template `skills/dt-pipeline/templates/build-state-template.md` — reference that template, never duplicate its shape here. Record phase, current milestone, completed list (this milestone appended with its commit SHA), in-flight work, last commit SHA, uncommitted artifacts, and next step. This file is distinct from the run-folder `build-state.md` (dt-build's internal run scaffold from step 4): `_build-state.md` is the crash-resume checkpoint dt-pipeline and Danny read.
+
+- j. **Triage discovered enhancements.** The orchestrator collects every `DISCOVERED_ENHANCEMENTS` entry
+  from the milestone's chunk reports plus any out-of-scope findings from the verifier, and decides each one
+  itself — Danny is not consulted per item. The criterion is operational necessity vs. time: an item the
+  built system cannot operate correctly without is dispatched as an addendum chunk (normal prompt/verify
+  chain, its own acceptance evidence) before the next milestone starts; everything else — improvements,
+  hardening, bells and whistles that can wait for a next version — goes to `<run-folder>/deferred-findings.md`
+  with a one-line reason. Every add/defer call and its reason is recorded in the milestone's
+  `build-decision-log` entry.
 
 6.5 Emit acceptance ledger; review artifact on request only:
 - Run one final integrated baseline/E2E rehearsal against the exact integration-branch SHA, including every
@@ -192,6 +229,9 @@ cache timestamp, effort, and duration.
     revalidation; it emits `build-acceptance-revalidation.{md,html}` and never overwrites original acceptance.
   - Emits `build-acceptance-ledger.md` and `build-acceptance-ledger.html`.
   - The ledger is the final answer for the build run — not a freeform summary.
+  - When `<run-folder>/deferred-findings.md` exists, the ledger appends its content as a
+    "Deferred / Next Version" section in both outputs — the record of what the orchestrator chose not to
+    build and why. It is informational, never a blocker, and requires no review by Danny.
 - Mark the run complete in the pipeline checkpoint: rewrite `_build-state.md` (same template and location as step 6.h) with `status: COMPLETE`, the final commit SHA, and no in-flight work.
 - `build-run-review.html`: Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks for it, generate `build-run-review.html` in the run artifact folder with:
   - the acceptance ledger as the headline panel (above the milestone status cards),
@@ -256,4 +296,6 @@ cache timestamp, effort, and duration.
   - `scripts/verify-milestone-acceptance.ps1` — per-milestone artifact + command check
   - `scripts/check-downgrade-language.ps1` — banned-phrase scanner
   - `scripts/identify-load-bearing.ps1` — load-bearing-first ordering input
-  - `scripts/build-acceptance-ledger.ps1` — final four-axis ledger (.md + .html)
+  - `scripts/build-acceptance-ledger.ps1` — final four-axis ledger (.md + .html), plus the
+    deferred-findings section when present
+- Claude-lane invocation wrapper for non-Claude orchestrators: `scripts/invoke-claude-chunk.ps1`

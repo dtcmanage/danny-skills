@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.9.0
+
+- Two-lane model tiering: Claude-lane tier map (haiku/sonnet/opus), light-tier implementation allowed with escalate-on-retry, cross-model dispatch via new invoke-claude-chunk.ps1, milestone scope lock with DISCOVERED_ENHANCEMENTS report field (report contract v2), orchestrator-owned enhancement triage, deferred-findings section in the final ledger.
+
 ## 2.8.3
 
 - Aligned light-tier Codex fallbacks with the canonical GPT-5.6 matrix while retaining strict cache validation.

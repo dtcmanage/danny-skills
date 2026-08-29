@@ -269,7 +269,7 @@ if ($mode -eq 'hang') { Start-Sleep -Seconds 10; exit 0 }
 [void][Console]::In.ReadToEnd()
 if ($mode -eq 'malformed') { [System.IO.File]::WriteAllText($outPath, 'I cannot do that.'); exit 0 }
 $report = @"
-DT_BUILD_REPORT_VERSION: 1
+DT_BUILD_REPORT_VERSION: 2
 RUN_ID: fixture-run
 chunk_id: fixture-chunk
 attempt: 1
@@ -278,6 +278,8 @@ NONE
 COMMANDS_AND_RESULTS:
 NONE
 UNRESOLVED_BLOCKERS:
+NONE
+DISCOVERED_ENHANCEMENTS:
 NONE
 credential: ghp_abcdefghijklmnopqrstuvwxyz123456
 "@
@@ -317,6 +319,55 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     Assert-True (-not [bool]$hangProv.pass) "timeout failure provenance claimed PASS"
     Assert-True ([string]$hangProv.termination_reason -match 'TIMEOUT') "timeout failure provenance lacked termination reason"
     Remove-Item Env:DT_FAKE_CODEX_MODE -ErrorAction SilentlyContinue
+
+    # Claude-lane wrapper mirrors the Codex wrapper contract: attempt cap,
+    # report-shape validation, and redaction of retained output.
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+        -ProjectPath $workingTree -Preflight -Attempt 3 *> $null
+    Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper accepted automatic attempt 3"
+
+    $fakeClaude = Join-Path $tempRoot 'fake-claude.ps1'
+    Write-Utf8 -Path $fakeClaude -Content @'
+if ($args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
+[void][Console]::In.ReadToEnd()
+$mode = [string]$env:DT_FAKE_CLAUDE_MODE
+if ($mode -eq 'malformed') { Write-Output 'I cannot do that.'; exit 0 }
+$report = @"
+DT_BUILD_REPORT_VERSION: 2
+RUN_ID: fixture-run
+chunk_id: fixture-chunk
+attempt: 1
+CHANGED_FILES:
+NONE
+COMMANDS_AND_RESULTS:
+NONE
+UNRESOLVED_BLOCKERS:
+NONE
+DISCOVERED_ENHANCEMENTS:
+NONE
+credential: ghp_abcdefghijklmnopqrstuvwxyz123456
+"@
+Write-Output $report
+'@
+    $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
+    $env:DT_FAKE_CLAUDE_MODE = 'success'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeOutput `
+        -ClaudeCliPath $fakeClaude -Tier standard -Attempt 1 -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0) "mock Claude success path failed"
+    $claudeRetained = Get-Content -Raw -LiteralPath $claudeOutput
+    Assert-True ($claudeRetained -notmatch 'ghp_') "retained Claude chunk output leaked a credential"
+    Assert-True ($claudeRetained -match '\[REDACTED-SECRET\]') "retained Claude chunk output was not redacted"
+
+    $env:DT_FAKE_CLAUDE_MODE = 'malformed'
+    $claudeMalformed = Join-Path $tempRoot 'claude-wrapper-malformed.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMalformed `
+        -ClaudeCliPath $fakeClaude -Tier standard -Attempt 1 -Json *> $null
+    Assert-True ($LASTEXITCODE -ne 0) "malformed Claude output was accepted"
+    $claudeMalformedProv = Get-Content -Raw -LiteralPath "$claudeMalformed.provenance.json" | ConvertFrom-Json
+    Assert-True (-not [bool]$claudeMalformedProv.pass) "malformed Claude-output failure provenance claimed PASS"
+    Remove-Item Env:DT_FAKE_CLAUDE_MODE -ErrorAction SilentlyContinue
 
     Write-Output 'PASS: dt-build regression suite'
 }

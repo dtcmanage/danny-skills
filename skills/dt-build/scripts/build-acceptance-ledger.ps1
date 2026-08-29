@@ -433,6 +433,18 @@ if ($RunTests -and $RunFolder -and (Test-Path -LiteralPath $RunFolder)) {
     }
 }
 
+# Informational deferred-findings section: the orchestrator's record of
+# discovered enhancements it chose not to build (SKILL.md step 6.j). Never a
+# blocker and never affects exit codes.
+$deferredText = $null
+if ($RunFolder) {
+    $deferredPath = Join-Path $RunFolder "deferred-findings.md"
+    if (Test-Path -LiteralPath $deferredPath) {
+        $deferredText = [System.IO.File]::ReadAllText($deferredPath).Trim()
+        if ([string]::IsNullOrWhiteSpace($deferredText)) { $deferredText = $null }
+    }
+}
+
 # Emit the immutable final ledger, or a separately named current-state
 # revalidation so original acceptance evidence is never overwritten.
 $artifactStem = if ($RunTests) { "build-acceptance-revalidation" } else { "build-acceptance-ledger" }
@@ -477,6 +489,14 @@ $summaryParts = @("$totalPass PASS")
 if ($totalApproved -gt 0) { $summaryParts += "$totalApproved APPROVED_DOWNGRADE" }
 $summaryParts += "$totalBlocked BLOCKED"
 $mdLines += "**Summary:** $($summaryParts -join ', ') (of $($ledgerRows.Count) total)."
+if ($deferredText) {
+    $mdLines += ""
+    $mdLines += "## Deferred / Next Version"
+    $mdLines += ""
+    $mdLines += "Informational — enhancements the orchestrator triaged out of this run."
+    $mdLines += ""
+    $mdLines += $deferredText
+}
 [System.IO.File]::WriteAllText($mdPath, ($mdLines -join "`n"))
 
 $htmlPath = Join-Path $OutDir "$artifactStem.html"
@@ -576,6 +596,15 @@ $($detailSections -join "`n")
 "@
 } else { "" }
 
+$deferredHtml = if ($deferredText) {
+    $encodedDeferred = [System.Web.HttpUtility]::HtmlEncode($deferredText)
+    @"
+<h2 style="margin-top:32px;font-size:16px;">Deferred / Next Version</h2>
+<div class="meta">Informational &mdash; enhancements the orchestrator triaged out of this run.</div>
+<pre style="white-space:pre-wrap;font-family:'Cascadia Code',Consolas,monospace;font-size:12px;background:#f8f8f8;border:1px solid #e0e0e0;border-radius:6px;padding:12px;">$encodedDeferred</pre>
+"@
+} else { "" }
+
 $html = @"
 <!doctype html>
 <html><head><meta charset="utf-8"><title>$artifactTitle</title>
@@ -603,6 +632,7 @@ $($htmlRows -join "`n")
 </tbody></table>
 <div class="summary">$summaryHtml</div>
 $detailHtml
+$deferredHtml
 </body></html>
 "@
 [System.IO.File]::WriteAllText($htmlPath, $html)

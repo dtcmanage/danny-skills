@@ -38,6 +38,23 @@ it cannot resolve the recorded commit. `-RunTests` is an explicit current-state 
 commit SHAs are `BLOCKED`, never inferred as implemented. Only the exact stored status `PASS` is a clean
 pass; compound labels such as `PASS_WITH_RUN_STOP` remain `BLOCKED` until a fresh acceptance row supersedes them.
 
+## Milestone scope lock and discovered enhancements
+
+The scope contract is symmetric: a milestone must produce everything the roadmap names (the gate above) and
+nothing the roadmap does not. Builder prompts forbid speculative abstraction, unrequested features, and extra
+files; the semantic verifier flags diff content beyond the milestone's named artifacts and stated scope as an
+out-of-scope finding. Overbuilding is a defect, not a bonus — it is the overengineering the tiered-model
+routing exists to prevent.
+
+Discoveries are not suppressed, they are rerouted: each chunk report carries a `DISCOVERED_ENHANCEMENTS`
+field for anything noticed but not built. At each milestone boundary (SKILL.md step 6.j) the orchestrator
+triages these on operational necessity vs. time: an item the built system cannot operate correctly without
+becomes an addendum chunk — run through the normal prompt/verify/acceptance chain — before the next
+milestone; everything that can wait for a next version lands in `<run-folder>/deferred-findings.md` with a
+one-line reason. The final ledger surfaces that file as an informational "Deferred / Next Version" section.
+The orchestrator owns these calls and records each one in the build-decision-log; Danny is not consulted
+per item.
+
 ## Downgrade language ban
 
 The following phrases trigger an automatic `BLOCKED` status when found in milestone notes, commit messages, build review files, or per-chunk Codex output (case-insensitive substring match, run by `scripts/check-downgrade-language.ps1`):

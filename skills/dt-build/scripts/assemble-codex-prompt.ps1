@@ -233,7 +233,7 @@ $assembled = @(
     ""
     @"
 Return exactly one structured report with these fields and echo values exactly:
-DT_BUILD_REPORT_VERSION: 1
+DT_BUILD_REPORT_VERSION: 2
 RUN_ID: $RunId
 chunk_id: $ChunkId
 attempt: $Attempt
@@ -243,6 +243,8 @@ COMMANDS_AND_RESULTS:
 <exact command and result per line, or NONE>
 UNRESOLVED_BLOCKERS:
 <one blocker per line, or NONE>
+DISCOVERED_ENHANCEMENTS:
+<one per line — a feature, file, abstraction, or hardening you noticed but did NOT build because it is outside the milestone scope; or NONE>
 "@
 ) -join "`n"
 

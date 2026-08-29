@@ -4,13 +4,27 @@ param(
     [string]$OutputPath = "",
     [ValidateSet('complex', 'standard', 'light')][string]$Tier = "standard",
     [string]$Model = "",
-    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$ReasoningEffort = "medium",
     [ValidateRange(1, 2)][int]$Attempt = 1,
     [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
-    [string]$CodexCliPath = "",
+    [string]$ClaudeCliPath = "",
     [switch]$Json
 )
+
+# invoke-claude-chunk.ps1
+# -----------------------
+# Claude-lane twin of invoke-codex-chunk.ps1, for orchestrators that cannot use a
+# host-native Agent tool (a Codex-orchestrated dt-build run). When the orchestrator
+# IS a Claude Code session, dispatch Claude subagents through the Agent tool with an
+# explicit model instead — this wrapper is the cross-model bridge, not the default.
+#
+# Tier -> model uses CLI aliases, not dated slugs, so the pin self-heals when
+# Anthropic rotates model versions:
+#   complex  -> opus
+#   standard -> sonnet
+#   light    -> haiku
+# There is no reasoning-effort knob on the claude CLI; effort is a session-level
+# setting, so provenance records the alias and resolved CLI version only.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -52,76 +66,70 @@ function Get-ReportShapeErrors {
     return @($errors)
 }
 
-function Get-CodexCliPath {
-    if (-not [string]::IsNullOrWhiteSpace($CodexCliPath)) {
-        if (-not (Test-Path -LiteralPath $CodexCliPath)) {
-            throw "CODEX_INVOKE_FAIL: codex CLI override not found: $CodexCliPath"
+function Get-ClaudeCliPath {
+    if (-not [string]::IsNullOrWhiteSpace($ClaudeCliPath)) {
+        if (-not (Test-Path -LiteralPath $ClaudeCliPath)) {
+            throw "CLAUDE_INVOKE_FAIL: claude CLI override not found: $ClaudeCliPath"
         }
-        return (Resolve-Path -LiteralPath $CodexCliPath).Path
+        return (Resolve-Path -LiteralPath $ClaudeCliPath).Path
     }
-
-    # Prefer the npm shim because it is the actively updated CLI on this host;
-    # a separately installed native codex.exe may lag several releases.
-    $candidates = Get-Command codex.ps1, codex.cmd, codex, codex.exe -ErrorAction SilentlyContinue
+    $candidates = Get-Command claude.ps1, claude.cmd, claude, claude.exe -ErrorAction SilentlyContinue
     foreach ($cmd in $candidates) {
         if ($cmd -and $cmd.CommandType -in @('Application', 'ExternalScript')) {
             return $cmd.Source
         }
     }
-    throw "CODEX_INVOKE_FAIL: unable to locate codex CLI executable."
+    throw "CLAUDE_INVOKE_FAIL: unable to locate claude CLI executable."
 }
 
 if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
-    throw "CODEX_INVOKE_FAIL: project path not found: $ProjectPath"
+    throw "CLAUDE_INVOKE_FAIL: project path not found: $ProjectPath"
 }
 $projectRoot = (Resolve-Path -LiteralPath $ProjectPath).Path
 $gitProbe = & git -C $projectRoot rev-parse --show-toplevel 2>&1
 if ($LASTEXITCODE -ne 0) {
-    throw "CODEX_INVOKE_FAIL: project path is not a git repo: $projectRoot`n$($gitProbe -join "`n")"
+    throw "CLAUDE_INVOKE_FAIL: project path is not a git repo: $projectRoot`n$($gitProbe -join "`n")"
 }
 
 if (-not $Preflight) {
     if ([string]::IsNullOrWhiteSpace($PromptPath) -or -not (Test-Path -LiteralPath $PromptPath -PathType Leaf)) {
-        throw "CODEX_INVOKE_FAIL: substantive invocation requires an existing -PromptPath."
+        throw "CLAUDE_INVOKE_FAIL: substantive invocation requires an existing -PromptPath."
     }
     if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-        throw "CODEX_INVOKE_FAIL: substantive invocation requires -OutputPath."
+        throw "CLAUDE_INVOKE_FAIL: substantive invocation requires -OutputPath."
     }
     $PromptPath = (Resolve-Path -LiteralPath $PromptPath).Path
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
     $promptText = Get-Content -Raw -LiteralPath $PromptPath
     $attemptMatch = [regex]::Match($promptText, '(?m)^attempt:\s*(\d+)\s*$')
     if (-not $attemptMatch.Success -or [int]$attemptMatch.Groups[1].Value -ne $Attempt) {
-        throw "CODEX_INVOKE_FAIL: prompt attempt header must equal -Attempt $Attempt."
+        throw "CLAUDE_INVOKE_FAIL: prompt attempt header must equal -Attempt $Attempt."
     }
     $runMatch = [regex]::Match($promptText, '(?m)^RUN_ID:\s*(.+?)\s*$')
     $chunkMatch = [regex]::Match($promptText, '(?m)^chunk_id:\s*(.+?)\s*$')
     if (-not $runMatch.Success -or -not $chunkMatch.Success) {
-        throw "CODEX_INVOKE_FAIL: prompt must contain RUN_ID and chunk_id identity headers."
+        throw "CLAUDE_INVOKE_FAIL: prompt must contain RUN_ID and chunk_id identity headers."
     }
     $promptRunId = $runMatch.Groups[1].Value.Trim()
     $promptChunkId = $chunkMatch.Groups[1].Value.Trim()
 }
 
 $repoRoot = Resolve-SkillRepoRoot
-. (Join-Path $repoRoot "scripts\resolve-codex-model.ps1")
 . (Join-Path $repoRoot "scripts\security\redact-secrets.ps1")
 
-$preferred = $Model
-if ([string]::IsNullOrWhiteSpace($preferred)) {
-    $preferred = switch ($Tier) {
-        'complex'  { 'gpt-5.6-sol' }
-        'standard' { 'gpt-5.6-terra' }
-        'light'    { 'gpt-5.6-luna' }
+$resolvedModel = $Model
+if ([string]::IsNullOrWhiteSpace($resolvedModel)) {
+    $resolvedModel = switch ($Tier) {
+        'complex'  { 'opus' }
+        'standard' { 'sonnet' }
+        'light'    { 'haiku' }
     }
 }
-$resolvedModel = Resolve-CodexModel -Tier $Tier -PreferredModel $preferred -Strict
-[void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $ReasoningEffort -Strict)
-$codexCli = Get-CodexCliPath
+$claudeCli = Get-ClaudeCliPath
 
 $temporaryOutput = $false
 if ($Preflight -and [string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-codex-preflight-{0}.md" -f ([guid]::NewGuid().ToString('N')))
+    $OutputPath = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-claude-preflight-{0}.md" -f ([guid]::NewGuid().ToString('N')))
     $temporaryOutput = $true
 }
 $outputDir = Split-Path -Parent $OutputPath
@@ -144,41 +152,38 @@ $promptSha256 = if ($Preflight) {
 else {
     (Get-FileHash -LiteralPath $PromptPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-$sandbox = if ($Preflight) { 'read-only' } else { 'workspace-write' }
+# Preflight needs no tool access; a build chunk needs file writes and test
+# commands without interactive prompts, mirroring Codex's workspace-write sandbox.
+$permissionMode = if ($Preflight) { 'default' } else { 'bypassPermissions' }
 $args = @(
-    'exec',
-    '--ignore-user-config',
-    '--sandbox', $sandbox,
-    '--cd', $projectRoot,
+    '-p',
     '--model', $resolvedModel,
-    '-c', ('model_reasoning_effort="{0}"' -f $ReasoningEffort),
-    '--output-last-message', $OutputPath,
-    '-'
+    '--permission-mode', $permissionMode,
+    '--output-format', 'text'
 )
 
 $started = Get-Date
 $proc = $null
-$completedSuccessfully = $false
 $streamPath = "$OutputPath.stream.log"
 $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
 try {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $cliExtension = [System.IO.Path]::GetExtension($codexCli).ToLowerInvariant()
+    $cliExtension = [System.IO.Path]::GetExtension($claudeCli).ToLowerInvariant()
     $prefixArgs = @()
     if ($cliExtension -in @('.cmd', '.bat')) {
         $startInfo.FileName = $env:ComSpec
-        $quotedCli = '"' + $codexCli.Replace('"', '""') + '"'
+        $quotedCli = '"' + $claudeCli.Replace('"', '""') + '"'
         $quotedArgs = @($args | ForEach-Object { '"' + ([string]$_).Replace('"', '\"') + '"' })
         $prefixArgs = @('/d', '/s', '/c', ($quotedCli + ' ' + ($quotedArgs -join ' ')))
         $args = @()
     }
     elseif ($cliExtension -eq '.ps1') {
         $startInfo.FileName = 'pwsh'
-        $prefixArgs = @('-NoProfile', '-File', $codexCli)
+        $prefixArgs = @('-NoProfile', '-File', $claudeCli)
     }
     else {
-        $startInfo.FileName = $codexCli
+        $startInfo.FileName = $claudeCli
     }
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardInput = $true
@@ -190,10 +195,10 @@ try {
 
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $startInfo
-    if (-not $proc.Start()) { throw "CODEX_INVOKE_FAIL: failed to start codex CLI." }
+    if (-not $proc.Start()) { throw "CLAUDE_INVOKE_FAIL: failed to start claude CLI." }
 
     # Start both drains before writing stdin so neither native pipe can fill and
-    # deadlock the process. The same pattern protects high-volume verifier runs.
+    # deadlock the process.
     $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
     $stderrTask = $proc.StandardError.ReadToEndAsync()
     $stdinTask = $proc.StandardInput.WriteAsync($prompt)
@@ -219,95 +224,63 @@ try {
     $stderr = $stderrTask.GetAwaiter().GetResult()
     $exitCode = if ($timedOut) { 124 } else { $proc.ExitCode }
     $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
-    $streamText = Invoke-SecretRedaction -Text (($stdout, $stderr) -join "`n")
 
+    # claude -p returns the final message on stdout; stderr is the stream log.
+    $lastMessage = Invoke-SecretRedaction -Text $stdout
+    $streamText = Invoke-SecretRedaction -Text $stderr
     [System.IO.File]::WriteAllText($streamPath, $streamText)
-
-    $lastMessage = if (Test-Path -LiteralPath $OutputPath) {
-        Get-Content -Raw -LiteralPath $OutputPath
-    }
-    else { "" }
-
-    # The retained final message is evidence too: redact it before hashing or
-    # writing provenance, not only the process stream.
-    if (-not [string]::IsNullOrEmpty($lastMessage)) {
-        $lastMessage = Invoke-SecretRedaction -Text $lastMessage
-        [System.IO.File]::WriteAllText($OutputPath, $lastMessage)
-    }
+    [System.IO.File]::WriteAllText($OutputPath, $lastMessage)
 
     $failureReason = ''
     $failureCategory = $null
     $shapeErrors = @()
     if ($timedOut) {
-        $failureReason = "CODEX_INVOKE_TIMEOUT: codex exec exceeded ${TimeoutMs}ms and its process tree was terminated. Redacted stream: $streamPath"
+        $failureReason = "CLAUDE_INVOKE_TIMEOUT: claude -p exceeded ${TimeoutMs}ms and its process tree was terminated. Redacted stream: $streamPath"
         $failureCategory = 'tooling'
     }
     elseif ($exitCode -ne 0) {
-        $failureReason = "CODEX_INVOKE_FAIL: codex exec exited $exitCode. Redacted stream: $streamPath"
+        $failureReason = "CLAUDE_INVOKE_FAIL: claude -p exited $exitCode. Redacted stream: $streamPath"
         $failureCategory = 'tooling'
     }
     elseif ([string]::IsNullOrWhiteSpace($lastMessage)) {
-        $failureReason = "CODEX_INVOKE_FAIL: codex exec returned no final message. Redacted stream: $streamPath"
+        $failureReason = "CLAUDE_INVOKE_FAIL: claude -p returned no final message. Redacted stream: $streamPath"
         $failureCategory = 'model-output'
     }
     elseif ($Preflight -and $lastMessage.Trim() -ne 'OK') {
-        $failureReason = "CODEX_PREFLIGHT_FAIL: expected OK, received '$($lastMessage.Trim())'. Redacted stream: $streamPath"
+        $failureReason = "CLAUDE_PREFLIGHT_FAIL: expected OK, received '$($lastMessage.Trim())'. Redacted stream: $streamPath"
         $failureCategory = 'model-output'
     }
     elseif (-not $Preflight) {
         $shapeErrors = @(Get-ReportShapeErrors -Text $lastMessage -RunId $promptRunId -ChunkId $promptChunkId -ExpectedAttempt $Attempt)
         if ($shapeErrors.Count -gt 0) {
-            $failureReason = "CODEX_OUTPUT_INVALID: $($shapeErrors -join '; '). Redacted output: $OutputPath"
+            $failureReason = "CLAUDE_OUTPUT_INVALID: $($shapeErrors -join '; '). Redacted output: $OutputPath"
             $failureCategory = 'model-output'
         }
     }
 
-    $cliVersion = if ([System.IO.Path]::GetExtension($codexCli).ToLowerInvariant() -eq '.ps1') {
-        (& pwsh -NoProfile -File $codexCli --version 2>&1) -join ' '
-    } else { (& $codexCli --version 2>&1) -join ' ' }
-    $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
-    $cachePath = Join-Path $codexHome 'models_cache.json'
-    $cacheFetchedAt = $null
-    if (Test-Path -LiteralPath $cachePath) {
-        try { $cacheFetchedAt = (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json).fetched_at } catch { }
-    }
-    $authSurface = 'unknown'
-    $authPath = Join-Path $codexHome 'auth.json'
-    if (Test-Path -LiteralPath $authPath) {
-        try {
-            $auth = Get-Content -Raw -LiteralPath $authPath | ConvertFrom-Json
-            if ($auth.PSObject.Properties.Name -contains 'auth_mode') { $authSurface = [string]$auth.auth_mode }
-        } catch { }
-    }
-    $forcedLoginMethod = $null
-    $configPath = Join-Path $codexHome 'config.toml'
-    if (Test-Path -LiteralPath $configPath) {
-        $authMatch = [regex]::Match((Get-Content -Raw -LiteralPath $configPath), '(?m)^forced_login_method\s*=\s*"([^"]+)"')
-        if ($authMatch.Success) { $forcedLoginMethod = $authMatch.Groups[1].Value }
-    }
+    $cliVersion = if ([System.IO.Path]::GetExtension($claudeCli).ToLowerInvariant() -eq '.ps1') {
+        (& pwsh -NoProfile -File $claudeCli --version 2>&1) -join ' '
+    } else { (& $claudeCli --version 2>&1) -join ' ' }
 
     $result = [pscustomobject]@{
-        pass                   = [string]::IsNullOrWhiteSpace($failureReason)
-        preflight              = [bool]$Preflight
-        tier                   = $Tier
-        requested_model        = $preferred
-        resolved_model         = $resolvedModel
-        reasoning_effort       = $ReasoningEffort
-        attempt                = $Attempt
-        sandbox                = $sandbox
-        codex_cli_version      = $cliVersion
-        auth_surface           = $authSurface
-        forced_login_method    = $forcedLoginMethod
-        model_cache_fetched_at = $cacheFetchedAt
-        duration_ms            = $durationMs
-        timeout_ms             = $TimeoutMs
-        prompt_sha256          = $promptSha256
-        output_sha256          = if (Test-Path -LiteralPath $OutputPath) { (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
-        output_path            = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
-        stream_log_path        = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }
-        failure_category       = $failureCategory
-        termination_reason     = $failureReason
-        output_shape_errors    = @($shapeErrors)
+        pass                = [string]::IsNullOrWhiteSpace($failureReason)
+        preflight           = [bool]$Preflight
+        lane                = 'claude'
+        tier                = $Tier
+        requested_model     = $resolvedModel
+        resolved_model      = $resolvedModel
+        permission_mode     = $permissionMode
+        attempt             = $Attempt
+        claude_cli_version  = $cliVersion
+        duration_ms         = $durationMs
+        timeout_ms          = $TimeoutMs
+        prompt_sha256       = $promptSha256
+        output_sha256       = if (Test-Path -LiteralPath $OutputPath) { (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+        output_path         = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
+        stream_log_path     = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }
+        failure_category    = $failureCategory
+        termination_reason  = $failureReason
+        output_shape_errors = @($shapeErrors)
     }
 
     if (-not $temporaryOutput) {
@@ -319,16 +292,15 @@ try {
     if (-not $result.pass) { throw $failureReason }
     if ($Json) { $result | ConvertTo-Json -Depth 5 }
     else { $result }
-    $completedSuccessfully = $true
 }
 catch {
     if (-not $temporaryOutput -and -not $provenanceWritten) {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
-            pass = $false; preflight = [bool]$Preflight; tier = $Tier
-            requested_model = $preferred; resolved_model = $resolvedModel
-            reasoning_effort = $ReasoningEffort; attempt = $Attempt; sandbox = $sandbox
-            duration_ms = $durationMs; timeout_ms = $TimeoutMs; prompt_sha256 = $promptSha256
+            pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier
+            requested_model = $resolvedModel; resolved_model = $resolvedModel
+            attempt = $Attempt; duration_ms = $durationMs; timeout_ms = $TimeoutMs
+            prompt_sha256 = $promptSha256
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }
             failure_category = 'tooling'; termination_reason = (Invoke-SecretRedaction -Text $_.Exception.Message)
         }
