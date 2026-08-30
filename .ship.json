@@ -1,0 +1,8 @@
+{
+  "gateCommand": "pwsh -NoProfile -File scripts/verify-versioning-policy.ps1 -BaseRef main; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File scripts/test-versioning-policy.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File skills/dt-review/tests/run-tests.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File skills/dt-review/tests/run-final-draft-tests.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File tools/build-plugin.ps1 -BaseRef main -ValidateOnly; if ($LASTEXITCODE -ne 0) { exit 1 }; exit 0",
+  "deployCommand": "pwsh -NoProfile -File tools/build-plugin.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File scripts/verify-skill-junctions.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; exit 0",
+  "deployCwd": ".",
+  "prodCommitProbe": {
+    "command": "gh api repos/dtcmanage/danny-skills/commits/main --jq .sha"
+  }
+}
