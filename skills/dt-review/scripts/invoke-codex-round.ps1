@@ -21,6 +21,10 @@ param(
     [ValidateRange(1000, 3600000)]
     [int]$TimeoutMs = 300000,
 
+    # Required whenever the effort deviates from the tier default (complex=high, light=medium):
+    # a one-line recorded reason, persisted in round metadata.
+    [string]$EffortReason = '',
+
     [string]$CodexCliPath = ''
 )
 
@@ -49,84 +53,8 @@ function Write-Atomic([string]$Path, [string]$Content) {
     Move-Item -LiteralPath $tmp -Destination $Path -Force
 }
 
-function Convert-ReviewToMarkdown([object]$Review) {
-    $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.Add('## Headline')
-    $lines.Add('')
-    $lines.Add([string]$Review.headline)
-    $lines.Add('')
-    $lines.Add('## Dimension Assessments')
+. (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'render-review-markdown.ps1')
 
-    foreach ($pair in @(
-        @('Intent', 'intent'),
-        @('Completeness', 'completeness'),
-        @('Coherence', 'coherence'),
-        @('Resilience', 'resilience'),
-        @('Economy', 'economy'),
-        @('Feasibility', 'feasibility')
-    )) {
-        $lines.Add('')
-        $lines.Add("### $($pair[0])")
-        $lines.Add('')
-        $lines.Add([string]$Review.dimension_assessments.($pair[1]))
-    }
-
-    $lines.Add('')
-    $lines.Add('## Prior Finding Checks')
-    if (@($Review.prior_finding_checks).Count -eq 0) {
-        $lines.Add('')
-        $lines.Add('- None (first round).')
-    }
-    else {
-        foreach ($check in @($Review.prior_finding_checks)) {
-            $lines.Add('')
-            $lines.Add("- $($check.id): $($check.result) - $($check.note)")
-        }
-    }
-
-    $lines.Add('')
-    $lines.Add('## Findings')
-    if (@($Review.findings).Count -eq 0) {
-        $lines.Add('')
-        $lines.Add('- None.')
-    }
-    else {
-        foreach ($finding in @($Review.findings)) {
-            $lines.Add('')
-            $lines.Add("### $($finding.id) - $($finding.title)")
-            $lines.Add('')
-            $lines.Add("- Status: $($finding.status)")
-            $lines.Add("- Dimension: $($finding.dimension)")
-            $lines.Add("- Severity: $($finding.severity)")
-            $lines.Add("- Blocks design: $(([string]$finding.blocks_design).ToLowerInvariant())")
-            $lines.Add("- Root cause: $($finding.root_cause)")
-            $lines.Add("- Remediation: $($finding.remediation)")
-            $lines.Add("- Validation check: $($finding.validation_check)")
-            $lines.Add("- AMBIGUOUS_ROOT_CAUSE: $(([string]$finding.ambiguous_root_cause).ToLowerInvariant())")
-            if (@($finding.candidate_dimensions).Count -gt 0) {
-                $lines.Add("- Candidate dimensions: $(@($finding.candidate_dimensions) -join ', ')")
-            }
-            if (-not [string]::IsNullOrWhiteSpace([string]$finding.missing_evidence)) {
-                $lines.Add("- Missing evidence: $($finding.missing_evidence)")
-            }
-            if (-not [string]::IsNullOrWhiteSpace([string]$finding.owner_role)) {
-                $lines.Add("- Owner role: $($finding.owner_role)")
-            }
-        }
-    }
-
-    $lines.Add('')
-    $lines.Add("## Engagement with Prior Reasoning")
-    $lines.Add('')
-    $lines.Add([string]$Review.engagement_with_prior_reasoning)
-    $lines.Add('')
-    $lines.Add('## Verdict')
-    $lines.Add('')
-    $lines.Add("VERDICT: $($Review.verdict)")
-    $lines.Add("Confidence: $($Review.confidence) -- $($Review.confidence_reason)")
-    $lines.Add('')
-    return ($lines -join "`n")
-}
 
 if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
     throw "Project path not found: $ProjectPath"
@@ -177,6 +105,10 @@ if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) {
 $RequestedModel = $Model
 $Model = Resolve-CodexModel -Tier $Tier -PreferredModel $Model -Strict
 [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Strict)
+$tierDefaultEffort = if ($Tier -eq 'complex') { 'high' } else { 'medium' }
+if ($ReasoningEffort -cne $tierDefaultEffort -and [string]::IsNullOrWhiteSpace($EffortReason)) {
+    throw "Effort '$ReasoningEffort' deviates from the $Tier-tier default '$tierDefaultEffort'. Record the reason with -EffortReason."
+}
 $projectRoot = (Resolve-Path -LiteralPath $ProjectPath).Path
 $scratchDir = Join-Path $projectRoot 'design\_review'
 New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
@@ -291,6 +223,8 @@ try {
         requested_model = $RequestedModel
         resolved_model = $Model
         reasoning_effort = $ReasoningEffort
+        effort_reason = $EffortReason
+        lane = 'codex'
         cli_version = $cliVersion
         duration_ms = $processResult.duration_ms
         token_usage = $tokenUsage

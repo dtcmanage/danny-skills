@@ -286,7 +286,7 @@ if ($firstContentLine.Count -ne 1 -or $firstContentLine[0] -notmatch '^#\s+\S') 
 }
 if ($finalBody -match '(?mi)^\s*VERDICT\s*:' -or
     $finalBody -match '(?mi)^##\s+(Dialogue Log|Claude Response|Prior Finding Checks|Round\s+\d+)\s*$' -or
-    $finalBody -match '(?i)codex-stream-v\d+|review-v\d+\.md') {
+    $finalBody -match '(?i)codex-stream-v\d+|claude-stream-v\d+|review-v\d+\.md') {
     throw 'Final design contains forbidden review archaeology.'
 }
 

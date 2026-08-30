@@ -19,16 +19,20 @@ decisions.
 Use only when neither a plan nor a substantive brief exists. Gather the smallest missing set of
 objectives, scope, constraints, architecture choices, and open questions, then write `draft-v1.md`.
 
-## Tier and model selection
+## Tier, lane, and model selection
 
 Infer rather than routinely asking:
 
 - `light`: bounded component or contract with limited blast radius; cap 3.
 - `complex`: cross-system, security-sensitive, production-critical, or hard-to-reverse design; cap 6.
 
-Use the pinned model for the inferred tier. Ask only when the scope truly straddles tiers or Danny
-explicitly requests a model choice. Pipeline/subagent invocation is noninteractive unless a genuine
-fork appears.
+Record the draft's primary author family at Round 0 and fix the reviewer lane to the opposite family
+(Claude-authored -> Codex lane; Codex-authored -> Claude lane; mixed/unclear -> Codex lane). Tier and
+lane are both immutable for the review.
+
+Use the pinned model for the inferred tier and lane. Ask only when the scope truly straddles tiers or
+Danny explicitly requests a model choice. Pipeline/subagent invocation is noninteractive unless a
+genuine fork appears.
 
 ## Evidence map
 
@@ -52,5 +56,7 @@ design carries the `Build-intake revalidation` table so `dt-build` can recheck n
 Once `review-context.md` exists, `finalize-review.ps1` **refuses** a final design without a section headed
 exactly `## Build-intake revalidation` — and by finalization the reviewed draft is hash-bound, so the
 omission cannot be repaired in flow. Carry the table into the draft itself, not only into
-`review-context.md`. `assemble-review-prompt.ps1` warns every round while this is still fixable, emitting
+`review-context.md`. `assemble-review-prompt.ps1` enforces this as a **hard gate at Round 1**
+(`BUILD_INTAKE_GATE`): a `draft-v1.md` without the section cannot start the review. For an evidence map
+created mid-review (Round 2+), the assembler warns every round while this is still fixable, emitting
 `build_intake_warning` in its JSON; treat that warning as work to do before authoring the next draft.

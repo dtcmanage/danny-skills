@@ -72,7 +72,7 @@ rather than stalling a gate.
 The canonical implementation lives at `scripts/security/redact-secrets.ps1` — a single function
 (`Invoke-SecretRedaction <text>`) that runs all secret-pattern matching from one place. Every consumer
 dot-sources only this module; no consumer reimplements the regex set. Consumers: dt-review's
-invoke-codex-round (filters the Codex stream before tee), dt-build's run-log tee, both visualize skills'
+invoke-codex-round and invoke-claude-round (filter each lane's stream before tee), dt-build's run-log tee, both visualize skills'
 html-builder (filters injected content before HTML escape). Patterns covered: GitHub PAT (`ghp_*`), generic
 `pat_*`, Slack bot token (`xoxb-*`), JWT-shaped tokens (`eyJ....`), and Azure SAS query strings
 (`?sv=*&sig=*`). New patterns are added to the single module. The acceptance corpus and pass criteria live in

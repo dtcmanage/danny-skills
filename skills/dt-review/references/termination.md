@@ -2,15 +2,18 @@
 
 ## Prompt budget on long reviews
 
-Cumulative state (`verdicts.json`) and the draft both grow every round, so a review that runs many rounds
-produces a large prompt. `assemble-review-prompt.ps1` enforces a runaway guard, default 900,000 UTF-8
-bytes (roughly 225k tokens), overridable per call with `-MaxPromptBytes` or globally with
-`DT_REVIEW_MAX_PROMPT_BYTES`. It warns at 80% and returns `prompt_budget_bytes` /
-`prompt_budget_warning` in its JSON.
+Prompt growth is bounded structurally: Round N embeds only the previous round's review/response in
+full, and everything older is condensed into the cumulative finding ledger (one row per finding ID,
+one line per round). The draft and `review-context.md` still grow with the design itself, so
+`assemble-review-prompt.ps1` keeps a runaway guard, default 900,000 UTF-8 bytes (roughly 225k tokens),
+overridable per call with `-MaxPromptBytes` or globally with `DT_REVIEW_MAX_PROMPT_BYTES`. It warns at
+80% and returns `prompt_budget_bytes` / `prompt_budget_warning` in its JSON.
 
 Treat the warning as a prompt to act while action is still possible: `review-context.md` is the only
 input the orchestrator can compact, and past a certain point it is too small to recover the difference.
-Raise the budget only after confirming the pinned model can carry it. Contract
+Raise the budget only after confirming the pinned model can carry it.
+
+## Contract
 
 `scripts/evaluate-termination.ps1` is authoritative. Run it after every finding has a recorded
 disposition and any re-raised rejection has user adjudication.

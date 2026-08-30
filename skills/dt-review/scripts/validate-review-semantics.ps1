@@ -128,6 +128,7 @@ function Assert-DtReviewSemantics {
 
     $latestPriorById = @{}
     $latestPriorCheckById = @{}
+    $settledById = @{}
     foreach ($entry in $orderedPrior) {
         Assert-DtReviewProperty -Object $entry -Name 'findings' -Context "Round $($entry.round) state"
         $entryIds = @{}
@@ -139,6 +140,12 @@ function Assert-DtReviewSemantics {
             }
             $entryIds[$id] = $true
             $latestPriorById[$id] = $prior
+            if ($prior.PSObject.Properties['user_adjudication'] -and
+                [string]$prior.user_adjudication -in @('A', 'B', 'C')) {
+                # Danny has personally adjudicated this finding. Later re-raises of it are
+                # settled: they never demand a fresh adjudication round-trip.
+                $settledById[$id] = [string]$prior.user_adjudication
+            }
         }
         if ($entry.PSObject.Properties['prior_finding_checks']) {
             foreach ($priorCheck in @($entry.prior_finding_checks)) {
@@ -232,6 +239,7 @@ function Assert-DtReviewSemantics {
     }
 
     $reRaisedRejections = [System.Collections.Generic.List[string]]::new()
+    $settledReRaises = [System.Collections.Generic.List[string]]::new()
     foreach ($id in $expectedPriorIds) {
         $prior = $latestPriorById[$id]
         $check = $checkById[$id]
@@ -251,7 +259,17 @@ function Assert-DtReviewSemantics {
                 if ([string]$current.status -ne $requiredStatus) {
                     throw "Persistent prior finding '$id' with prior disposition '$priorDisposition' must be labeled $requiredStatus."
                 }
-                if ($priorDisposition -eq 'REJECT') { $reRaisedRejections.Add($id) }
+                if ($priorDisposition -eq 'REJECT') {
+                    if ($settledById.ContainsKey($id)) {
+                        # Already adjudicated by Danny in an earlier round. The re-raise is
+                        # settled: the orchestrator auto-disposes it citing the recorded
+                        # adjudication instead of asking again.
+                        $settledReRaises.Add($id)
+                    }
+                    else {
+                        $reRaisedRejections.Add($id)
+                    }
+                }
             }
             'REGRESSED' {
                 if ($priorDisposition -notin @('ACCEPT', 'COUNTER')) {
@@ -309,6 +327,7 @@ function Assert-DtReviewSemantics {
         expected_verdict = $expectedVerdict
         finding_count = $findings.Count
         re_raised_rejections = @($reRaisedRejections | Sort-Object -Unique)
+        settled_re_raises = @($settledReRaises | Sort-Object -Unique)
     }
 }
 

@@ -84,7 +84,8 @@ $draftEnvelope = New-PromptEnvelope -Label "CURRENT DRAFT V$Round" -Content $dra
 
 $parts = [System.Collections.Generic.List[string]]::new()
 $parts.Add(@"
-You are the independent Codex reviewer in an adversarial architecture review.
+You are the independent reviewer in an adversarial architecture review, running as the opposite
+model family from the draft's author.
 Review the embedded current draft; do not edit files or attempt to read the workspace.
 
 Round: $Round
@@ -95,8 +96,9 @@ Review rules:
 - Surface every issue you can establish from the current evidence now; do not knowingly serialize findings across later rounds.
 - For a new finding, assign the next ID in this round as R$Round-F01, R$Round-F02, and so on, with status NEW.
 - Reuse the original finding ID when the same root cause persists or is raised again. Use PERSISTING when it remains unresolved, REOPENED after a prior rejection, and REGRESSION when a previously satisfied commitment later disappeared. Do not mint a new ID for rewording.
-- Compare the current draft against every prior ACCEPT/COUNTER disposition in the cumulative state, not only the immediately prior review.
-- Emit one prior_finding_checks row for every finding ID in cumulative state (empty in Round 1): SATISFIED, PERSISTS, REGRESSED, or SUPERSEDED, with evidence in note.
+- Compare the current draft against every prior ACCEPT/COUNTER commitment in the cumulative finding ledger, not only the immediately prior review.
+- Emit one prior_finding_checks row for every finding ID in the cumulative finding ledger (empty in Round 1): SATISFIED, PERSISTS, REGRESSED, or SUPERSEDED, with evidence in note.
+- IDs in the SETTLED USER DECISIONS envelope were personally adjudicated by the user; that decision is final. Do not re-litigate one unless you hold specific new evidence the adjudication did not consider. Without such evidence, emit its prior_finding_checks row as SUPERSEDED with note 'Settled by user adjudication' and do not emit it as a finding; a re-raise without new evidence is auto-rejected citing the adjudication.
 - If a prior REJECTed issue still persists, reuse its ID with status REOPENED. If an ACCEPT/COUNTER commitment disappeared, reuse its ID with status REGRESSION.
 - Set ambiguous_root_cause only when the canonical tie-break genuinely cannot reduce the issue to one dimension.
 - High severity requires both large impact and hard reversibility. Medium requires either. Low is limited and reversible.
@@ -123,18 +125,111 @@ if (Test-Path -LiteralPath $contextPath -PathType Leaf) {
 
     # finalize-review.ps1 refuses a final design that omits this heading whenever an evidence
     # map exists, and by then the reviewed draft is hash-bound and cannot be repaired in-flow.
-    # Surface it every round while the next draft is still being authored.
+    # Round 1 is the hard gate: the table is cheap to add before any review has run, and a
+    # converged review can never be restarted just to import its own evidence. Later rounds
+    # (a mid-review evidence map) warn while the next draft is still being authored.
     if ($draft -notmatch '(?mi)^## Build-intake revalidation\s*$') {
         $buildIntakeWarning = "draft-v$Round.md has no '## Build-intake revalidation' section, but review-context.md exists. finalize-review.ps1 will refuse the final design without it, and the terminal reviewed draft cannot be edited. Carry the table into the next draft."
+        if ($Round -eq 1) {
+            throw "BUILD_INTAKE_GATE: draft-v1.md must contain a '## Build-intake revalidation' section because review-context.md exists. Author the table into the draft (every live-data assumption with its verification query, observed value, and check date) before Round 1."
+        }
         Write-Warning $buildIntakeWarning
     }
 }
 
 if ($previousReviewPath) {
     $priorReview = Get-Content -LiteralPath $previousReviewPath -Raw
-    $state = Get-Content -LiteralPath $statePath -Raw
+    try {
+        $stateEntries = @(Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json)
+    }
+    catch {
+        throw "Review state is not valid JSON: $statePath. $($_.Exception.Message)"
+    }
+
+    # Rolling context: the full prior review/response is embedded verbatim, but older rounds
+    # contribute only a condensed per-finding ledger. Cumulative state re-embedded whole grows
+    # the prompt every round (observed 81KB -> 274KB over nine rounds) while adding no new
+    # information; the ledger keeps every finding ID, lifecycle position, and open commitment
+    # while dropping repeated prose.
+    $latestById = [ordered]@{}
+    $latestCheckById = @{}
+    $settledMap = @{}
+    $roundSummaries = [System.Collections.Generic.List[object]]::new()
+    foreach ($stateEntry in @($stateEntries | Sort-Object { [int]$_.round })) {
+        foreach ($stateFinding in @($stateEntry.findings)) {
+            $latestById[[string]$stateFinding.id] = [pscustomobject]@{
+                round = [int]$stateEntry.round
+                finding = $stateFinding
+            }
+            if ($stateFinding.PSObject.Properties['user_adjudication'] -and
+                [string]$stateFinding.user_adjudication -in @('B', 'C')) {
+                $settledMap[[string]$stateFinding.id] = [pscustomobject]@{
+                    adjudication = [string]$stateFinding.user_adjudication
+                    rationale = if ($stateFinding.PSObject.Properties['note']) { [string]$stateFinding.note } else { '' }
+                }
+            }
+        }
+        if ($stateEntry.PSObject.Properties['prior_finding_checks']) {
+            foreach ($stateCheck in @($stateEntry.prior_finding_checks)) {
+                if ($stateCheck.PSObject.Properties['id']) {
+                    $latestCheckById[[string]$stateCheck.id] = [string]$stateCheck.result
+                }
+            }
+        }
+        $roundSummaries.Add([ordered]@{
+            round = [int]$stateEntry.round
+            verdict = [string]$stateEntry.verdict
+            findings = @($stateEntry.findings).Count
+        })
+    }
+
+    $ledgerRows = [System.Collections.Generic.List[object]]::new()
+    $settledRows = [System.Collections.Generic.List[object]]::new()
+    foreach ($ledgerId in @($latestById.Keys)) {
+        $record = $latestById[$ledgerId]
+        $ledgerFinding = $record.finding
+        $disposition = if ($ledgerFinding.PSObject.Properties['disposition']) { [string]$ledgerFinding.disposition } else { '' }
+        $note = if ($ledgerFinding.PSObject.Properties['note']) { [string]$ledgerFinding.note } else { '' }
+        $row = [ordered]@{
+            id = $ledgerId
+            title = [string]$ledgerFinding.title
+            dimension = [string]$ledgerFinding.dimension
+            severity = [string]$ledgerFinding.severity
+            blocks_design = [bool]$ledgerFinding.blocks_design
+            last_seen_round = [int]$record.round
+            last_status = [string]$ledgerFinding.status
+            latest_check = if ($latestCheckById.ContainsKey($ledgerId)) { $latestCheckById[$ledgerId] } else { '' }
+            disposition = $disposition
+            disposition_note = $note
+        }
+        if ($disposition -in @('ACCEPT', 'COUNTER')) {
+            # Open or applied commitments stay regression-checkable: keep the text the
+            # reviewer must verify against the draft.
+            $row['remediation'] = [string]$ledgerFinding.remediation
+            $row['validation_check'] = [string]$ledgerFinding.validation_check
+        }
+        $ledgerRows.Add([pscustomobject]$row)
+        if ($settledMap.ContainsKey($ledgerId)) {
+            $settled = $settledMap[$ledgerId]
+            $settledRows.Add([pscustomobject][ordered]@{
+                id = $ledgerId
+                title = [string]$ledgerFinding.title
+                adjudication = [string]$settled.adjudication
+                decision = if ([string]$settled.adjudication -eq 'B') { 'rejection upheld by user' } else { 'deferred as an open question by user' }
+                rationale = [string]$settled.rationale
+            })
+        }
+    }
+
+    $ledgerPayload = [ordered]@{
+        rounds = @($roundSummaries)
+        findings = @($ledgerRows)
+    }
     $parts.Add((New-PromptEnvelope -Label "PRIOR ROUND REVIEW AND ORCHESTRATOR RESPONSE" -Content $priorReview))
-    $parts.Add((New-PromptEnvelope -Label "PRIOR FINDING DISPOSITIONS" -Content $state))
+    $parts.Add((New-PromptEnvelope -Label "CUMULATIVE FINDING LEDGER" -Content (ConvertTo-Json -InputObject $ledgerPayload -Depth 6)))
+    if ($settledRows.Count -gt 0) {
+        $parts.Add((New-PromptEnvelope -Label "SETTLED USER DECISIONS" -Content (ConvertTo-Json -InputObject @($settledRows) -Depth 4)))
+    }
 }
 
 $prompt = ($parts -join "`n`n") + "`n"

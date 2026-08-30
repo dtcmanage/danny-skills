@@ -17,6 +17,10 @@
     ],
     "summary_token": "version policy"
   },
+  "references/security-posture.md": {
+    "consumers": ["dt-review"],
+    "summary_token": "security posture"
+  },
   "references/shared-component-owners.json": {
     "consumers": [],
     "summary_token": "version policy"

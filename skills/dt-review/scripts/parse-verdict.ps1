@@ -65,6 +65,7 @@ $isRecognized = $allowed -contains $verdict
 $statePersisted = $false
 $reparsedIdentical = $false
 $reRaisedRejections = @()
+$settledReRaises = @()
 
 if ($Round -gt 0) {
     if ([string]::IsNullOrWhiteSpace($StatePath)) {
@@ -139,6 +140,7 @@ if ($Round -gt 0) {
     Assert-DtReviewSemanticHistory -Entries $priorEntries
     $semanticResult = Assert-DtReviewSemantics -Review $structured -Round $Round -PriorEntries $priorEntries
     $reRaisedRejections = @($semanticResult.re_raised_rejections)
+    $settledReRaises = @($semanticResult.settled_re_raises)
 
     $structuredHash = (Get-FileHash -LiteralPath $structuredPath -Algorithm SHA256).Hash.ToUpperInvariant()
     if ($sameRoundEntries.Count -eq 1) {
@@ -195,6 +197,7 @@ if ($Round -gt 0) {
             prior_finding_checks = @($structured.prior_finding_checks)
             adjudication_required = $reRaisedRejections.Count -gt 0
             re_raised_rejections = $reRaisedRejections
+            settled_re_raises = $settledReRaises
             adjudication_resolved = $false
             findings = @($normalizedFindings)
         }
@@ -214,4 +217,5 @@ if ($Round -gt 0) {
     reparsed_identical = $reparsedIdentical
     adjudication_required = $reRaisedRejections.Count -gt 0
     re_raised_rejections = $reRaisedRejections
+    settled_re_raises = $settledReRaises
 } | ConvertTo-Json -Depth 4 -Compress

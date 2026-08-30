@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 0.1.1
+  version: 0.1.2
   changelog: "0.1.0 initial release: one-command plan -> dt-review -> dt-build orchestration. Stage-aware intake (objective / plan-draft.md / handoff / existing design-final enters the pipeline at the right stage), subagent-run review and build phases, ~10-minute one-line status cadence while subagents run (default on), rolling _build-state.md crash-resume checkpoint written from templates/build-state-template.md at every phase boundary and milestone completion, prod-write single-threading restated as binding, and the end-of-run 'ready to merge to main?' prompt."
 ---
 
@@ -79,8 +79,12 @@ Rules:
 
 2. **Review.** Spawn a subagent to run `dt-review` on the plan to convergence. The subagent runs the full
    adversarial loop and returns the finalized design doc — `design-final-<slug>.md` (slug describing what
-   is being built) in the planning folder. Relay each round's verdict in the status pulse; surface
-   A/B/C adjudication questions to Danny immediately (that is a genuine fork, not a pause-for-approval).
+   is being built) in the planning folder. The spawn prompt MUST state dt-review's subagent contract
+   explicitly: on any `USER_DECISION` cap gate or A/B/C adjudication, the agent immediately sends the
+   full decision package (options, unresolved findings, state, recommendation) via SendMessage to this
+   session and stays responsive for the relayed decision — never idles waiting for Danny directly.
+   Relay each round's verdict in the status pulse; surface A/B/C adjudication questions to Danny
+   immediately (that is a genuine fork, not a pause-for-approval).
    Rewrite `_build-state.md` (`phase: review` complete, design path recorded, next: build).
 
 3. **Build.** Spawn a subagent to run `dt-build` from the design (or `roadmap.md` when one exists —

@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.9.0 (2026-08-30): Cross-family reviewer lane (invoke-claude-round.ps1: a Claude critic for Codex-authored drafts), complex-tier effort parity (Sol at high effort, 600s budget, recorded-reason deviations), settled-decision ledger (adjudicated findings auto-dispose on re-raise instead of re-asking Danny), rolling prompt context (condensed cumulative finding ledger replaces the full verdicts.json embed), Round-1 hard gate for the Build-intake revalidation table, and an explicit subagent cap-gate SendMessage contract.
+
 - 1.8.0 (2026-08-11): Make the prompt-size guard a configurable budget (default 900000 bytes, -MaxPromptBytes or DT_REVIEW_MAX_PROMPT_BYTES) that warns at 80% instead of hard-failing a long review at a fixed 250000.
 
 - 1.7.2 (2026-08-11): Warn at every prompt assembly when review-context.md exists but the draft has no Build-intake revalidation section, so the finalizer's requirement surfaces while the draft is still editable.

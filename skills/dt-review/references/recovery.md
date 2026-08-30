@@ -5,7 +5,7 @@ matching branch in steps 7-9 and resume at the first missing/invalid transition:
 
 1. `draft-v<N>.md`
 2. `prompts\codex-critique-prompt-v<N>.md`
-3. `review-v<N>.json`, rendered `review-v<N>.md`, `codex-stream-v<N>.log`, and `round-meta-v<N>.json`
+3. `review-v<N>.json`, rendered `review-v<N>.md`, the lane stream log (`codex-stream-v<N>.log` or `claude-stream-v<N>.log`), and `round-meta-v<N>.json`
 4. Round N entry in `verdicts.json`
 5. `dispositions-v<N>.json` plus a `## Orchestrator Response` appended to `review-v<N>.md`
 6. Every finding in round state has a disposition; required adjudication is resolved

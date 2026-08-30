@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.12.4 dt-review 1.9.0 (cross-family reviewer lane via invoke-claude-round.ps1, complex-tier effort parity at high/600s, settled-decision ledger with auto-disposition of adjudicated re-raises, rolling condensed prompt context, Round-1 build-intake hard gate, subagent cap-gate SendMessage contract) and dt-pipeline 0.1.2 (review-phase spawn prompt states the subagent cap-gate contract); shared security posture doc notes the claude-lane redaction consumer; version policy owners registry gains the security-posture entry.",
       "0.12.3 git-merge-feature 1.2.2 + dt-ship 0.1.3: Windows worktree purge resilience (retry, deregistered-leftover soft-continue, leftover surfaced in ship summary).",
       "0.12.2 dt-build 2.9.1: dual-harness wording pass (harness contract + CLAUDE_DISPATCH, lane-neutral prompt assembly, Claude-tier preflight on codex-host, compatibility/invocation wording, approval posture in Codex provenance).",
       "0.12.1 dt-build 2.9.0: two-lane model tiering (Claude haiku/sonnet/opus map, light-tier implementation with escalate-on-retry), cross-model dispatch via new invoke-claude-chunk.ps1, milestone scope lock + DISCOVERED_ENHANCEMENTS (report contract v2), orchestrator-owned enhancement triage, deferred-findings ledger section.",
