@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.12.8",
+  "version": "0.12.9",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.12.9 dt-build 2.10.1: restore the Codex implementation lane on Windows (unsandboxed substantive chunks with worktree + verification containment; Codex removed its Windows sandbox).",
       "0.12.8 Model-selection disclosure for subagent model tiering: dt-build 2.10.0 (state selected model + one-sentence reason per dispatch), dt-review 1.10.0 (state lane/tier model + reason at Round 0 and on deviation).",
       "0.12.7 residency-gate hardening: dt-session-audit 0.5.0 (gate covers refine ops, deterministic word_count measurement incl. References rows, workstation CLAUDE.md gate), dt-memory-hygiene 0.3.0 (advisory Residency Sweep with residency:keep no-re-nag marker; detector word_count metric + 4000-word CLAUDE.md word_max, empty-file fix)",
       "0.12.6 Repo ship config (.ship.json) so dt-ship runs a real gate, deploy, and live proof for danny-skills instead of stopping at merged_only. Also closes the 0.12.5 release-boundary gap: references/shared-component-owners.json (version policy) landed in a commit after the 0.12.5 bump, leaving clean main failing RELEASE_COMMIT_NOT_HEAD; this bump makes HEAD the release commit again. No skill behavior changes.",

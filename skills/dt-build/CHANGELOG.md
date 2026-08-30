@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.10.1
+
+- Restore the Codex implementation lane on Windows: invoke-codex-chunk.ps1 runs substantive chunks unsandboxed via explicit default_permissions (Codex removed its Windows sandbox; workspace-write failed closed and blocked every command); provenance records the effective mode.
+
 ## 2.10.0
 
 - Model-selection disclosure: every subagent dispatch states the selected model and a one-sentence reason in chat for tier-routing tracking.

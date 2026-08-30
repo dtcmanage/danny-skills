@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex orchestration unverified end-to-end); requires danny-skills repo present."
 metadata:
-  version: 2.10.0
+  version: 2.10.1
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -104,7 +104,10 @@ records the same facts but does not replace saying it.
 
 **Codex lane.** Never inherit Codex's user-config model or reasoning effort. Resolve every Codex chunk
 through `scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and
-persist the returned provenance JSON beside the chunk output.
+persist the returned provenance JSON beside the chunk output. On Windows the wrapper runs substantive
+chunks unsandboxed (Codex removed its Windows sandbox; a `workspace-write` request fails closed and
+blocks every command): containment there is the scoped worktree plus independent verification, and the
+provenance JSON records the effective mode. Never treat that Windows block as a dead Codex lane.
 
 **Claude lane.** Repo-wide navigation, UI judgment, workspace-memory work, and semantic verification stay
 on this lane. Dispatch it via CLAUDE_DISPATCH (harness contract below); record the surface/model actually

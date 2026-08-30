@@ -145,11 +145,25 @@ else {
     (Get-FileHash -LiteralPath $PromptPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 $sandbox = if ($Preflight) { 'read-only' } else { 'workspace-write' }
+# Codex removed its Windows sandbox (features experimental_windows_sandbox /
+# elevated_windows_sandbox report "removed"), so under --ignore-user-config a
+# workspace-write request fails closed to read-only and blocks every command
+# before process launch. On Windows, substantive chunks therefore run
+# unsandboxed via explicit default_permissions; containment is the scoped
+# worktree plus the orchestrator's independent verification. Preflight and
+# non-Windows hosts keep the real sandbox. Verified 2026-08-30, codex-cli 0.151.0.
+$windowsUnsandboxed = (-not $Preflight) -and ($env:OS -eq 'Windows_NT')
+if ($windowsUnsandboxed) { $sandbox = 'danger-full-access (windows: codex sandbox removed upstream)' }
+$sandboxArgs = if ($windowsUnsandboxed) {
+    @('-c', 'default_permissions=":danger-full-access"')
+} else {
+    @('--sandbox', $sandbox)
+}
 $args = @(
     '--ask-for-approval', 'never',
     'exec',
-    '--ignore-user-config',
-    '--sandbox', $sandbox,
+    '--ignore-user-config'
+) + $sandboxArgs + @(
     '--cd', $projectRoot,
     '--model', $resolvedModel,
     '-c', ('model_reasoning_effort="{0}"' -f $ReasoningEffort),
