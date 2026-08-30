@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.4.0
+  version: 0.5.0
 ---
 
 # Session Audit
@@ -93,6 +93,13 @@ too narrow; adding the row is part of applying the finding, not a follow-up.
 
 Never restate a routed rule in `CLAUDE.md` as a summary. A rule lives in exactly one file.
 Duplication is drift waiting to happen, and the routed copy is the one that gets updated.
+
+The test applies to **every operation that writes a rule into a `CLAUDE.md`**, `refine`
+included — not just `new` findings. Before refining a resident rule in place, re-run the test
+on the rule as it would read after the refinement: if a recognizable trigger now exists (for
+example, an owning reference file has appeared since the rule became resident), the correct
+operation is relocation to that file, not an in-place refine. A refine must never be the path
+by which a rule that would fail residency today keeps growing in `CLAUDE.md`.
 
 ### Axis B: Scope Tier
 
@@ -194,7 +201,8 @@ If same-scope candidates are already contradictory -> `CONFLICT-CLEANUP`.
 ### Classification
 
 - `identical`: already captured. Silent skip; list in `Auto-handled`.
-- `refine`: sharper wording, same meaning. Queue in-place refinement.
+- `refine`: sharper wording, same meaning. Queue in-place refinement. A `rule` refine targeting
+  a `CLAUDE.md` still runs the Residency Test and the write gate — it may resolve to relocation.
 - `new`: not covered. Queue add.
 - `contradiction`: policy conflict. Escalate.
 
@@ -240,20 +248,38 @@ Atomic apply for approved deterministic fan-out:
 ### Root `CLAUDE.md` Write Gate
 
 Root is the most expensive tier: every word is read at the start of every session on every
-surface. Before writing a rule there, all four must hold.
+surface. The gate applies to **every root rule write — `new` and `refine` alike**. Before
+writing, all four must hold.
 
-1. It passed the **Residency Test** — no trigger exists at which it could be looked up.
+1. It passed the **Residency Test** — no trigger exists at which it could be looked up. For a
+   `refine`, re-run the test on the post-refinement wording; a rule that would fail today
+   relocates instead of refining in place.
 2. It is true at root scope, not merely convenient there. A rule true only for one workstation
    or repo belongs to that tier.
 3. It is not already stated in a reference file. If it is, tighten that file and, when needed,
    the `References` trigger row instead.
-4. Root stays under its stated word ceiling. If the addition would cross it, trim or relocate
+4. Root stays under its stated word ceiling. If the write would cross it, trim or relocate
    an existing entry in the same run — never raise the ceiling, and never let the write silently
    push root over it.
 
+Measure condition 4 deterministically: run
+`skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1` before and after the write and use
+its `word_count` for root `CLAUDE.md` — never an eyeball count. The after count includes
+**everything the run added to root, `References` trigger rows from routed findings included**;
+routing a rule out is not free if its pointer row eats the savings.
+
 If any of the four fails, downgrade the finding to the reference file that owns it, or to
 `Your call` with the reason named. Report root additions explicitly in the run summary with
-the before/after word count.
+the before/after `word_count`.
+
+### Workstation `CLAUDE.md` Write Gate
+
+A workstation `CLAUDE.md` loads at the start of every session routed to that workstation — the
+same economics as root, one tier down. Every workstation rule write (`new` and `refine`) runs
+the same gate minus the root-scope condition: Residency Test passed (workstation Resources
+reference files count as lookup destinations), not already stated in a reference file, and the
+file stays within the detector's `word_max` for CLAUDE.md files — verify with the same
+before/after `word_count` when a write lands near or over it.
 
 ### Rule Conflicts (`CLAUDE.md`)
 

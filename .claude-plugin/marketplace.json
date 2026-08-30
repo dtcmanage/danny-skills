@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Single-plugin marketplace exposing Danny's personal skill pack to Cowork and Claude Code.",
-    "version": "0.12.6"
+    "version": "0.12.7"
   },
   "plugins": [
     {
       "name": "danny-skills",
       "source": "./",
-      "version": "0.12.6",
+      "version": "0.12.7",
       "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
       "keywords": [
         "planning",

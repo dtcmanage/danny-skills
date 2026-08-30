@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.5.0 (2026-08-30): Residency Test and root write gate cover refine operations (a refine that would fail residency today relocates instead of growing root); condition 4 measured deterministically via detect-memory-bloat.ps1 word_count with References rows counted in the after-total; same gate extended to workstation CLAUDE.md writes minus the root-scope condition.
+
 - 0.4.0 (2026-08-27): Residency Test for every rule finding: CLAUDE.md is a router, so a rule with a recognizable trigger routes to the owning reference file (and its References trigger row) instead of CLAUDE.md; only trigger-less rules stay resident. Added a four-condition root CLAUDE.md write gate (residency, true-at-root scope, no duplicate of a reference file, word ceiling respected by trimming not raising) with before/after word count reported. Destination-file sweep now enumerates Resources reference files alongside CLAUDE.md/MEMORY.md/CONTEXT.md/glossary.md, so routed findings cannot silently misfile into CLAUDE.md.
 
 - 0.3.2 (2026-07-12): Inherited the established pack-wide versioning policy and release gate.

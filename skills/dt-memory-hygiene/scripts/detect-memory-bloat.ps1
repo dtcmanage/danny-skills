@@ -30,11 +30,15 @@ function Get-BloatThresholds {
     # long-line flagging is disabled (the mandated entry format is paragraph
     # prose). Duplication remains the live signal for them - duplicate entries
     # breed drift regardless of loading model. (Danny, 2026-06-12.)
+    # word_max applies only to CLAUDE.md files: root CLAUDE.md states its own
+    # ~4,000-word ceiling, and dt-session-audit's root write gate uses this
+    # script's word_count as the single deterministic measurement of it.
+    # word_max = 0 disables the check for a kind.
     return @{
-        claude = @{ token_max = 7000; long_lines_max = 24; duplicate_ratio_max = 0.12; avg_bullet_words_max = 42; min_bullets_for_density = 8 }
-        memory = @{ token_max = 5000; long_lines_max = 18; duplicate_ratio_max = 0.10; avg_bullet_words_max = 36; min_bullets_for_density = 8 }
-        context = @{ token_max = 20000; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
-        glossary = @{ token_max = 20000; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
+        claude = @{ token_max = 7000; word_max = 4000; long_lines_max = 24; duplicate_ratio_max = 0.12; avg_bullet_words_max = 42; min_bullets_for_density = 8 }
+        memory = @{ token_max = 5000; word_max = 0; long_lines_max = 18; duplicate_ratio_max = 0.10; avg_bullet_words_max = 36; min_bullets_for_density = 8 }
+        context = @{ token_max = 20000; word_max = 0; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
+        glossary = @{ token_max = 20000; word_max = 0; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
     }
 }
 
@@ -61,7 +65,8 @@ foreach ($f in $targets) {
 
     $t = $thresholds[$kind]
     $raw = Get-Content -LiteralPath $f.FullName -Raw
-    $lines = Get-Content -LiteralPath $f.FullName
+    if ($null -eq $raw) { $raw = "" }
+    $lines = @(Get-Content -LiteralPath $f.FullName)
 
     $nonEmpty = @($lines | Where-Object { $_.Trim().Length -gt 0 })
     $normalized = @($nonEmpty | ForEach-Object { ($_ -replace '\s+', ' ').Trim().ToLowerInvariant() })
@@ -84,25 +89,29 @@ foreach ($f in $targets) {
     $avgBulletWords = if ($bulletWordCounts.Count -gt 0) { [double](($bulletWordCounts | Measure-Object -Average).Average) } else { 0.0 }
 
     $tokenEst = Get-TokenEstimate -Text $raw
+    $wordCount = ([regex]::Matches($raw, "\b[\w'-]+\b")).Count
 
     $hitToken = $tokenEst -gt $t.token_max
+    $hitWords = ($t.word_max -gt 0) -and ($wordCount -gt $t.word_max)
     $hitLong = $longLines -gt $t.long_lines_max
     $hitDup = $dupRatio -gt $t.duplicate_ratio_max
     $hitDensity = (@($bulletLines).Count -ge $t.min_bullets_for_density) -and ($avgBulletWords -gt $t.avg_bullet_words_max)
 
     $score = 0
     if ($hitToken) { $score += 2 }
+    if ($hitWords) { $score += 2 }
     if ($hitLong) { $score += 1 }
     if ($hitDup) { $score += 1 }
     if ($hitDensity) { $score += 1 }
 
-    $shouldRun = $hitToken -or $hitLong -or $hitDup -or $hitDensity -or ($score -ge 3)
+    $shouldRun = $hitToken -or $hitWords -or $hitLong -or $hitDup -or $hitDensity -or ($score -ge 3)
 
     $results += [pscustomobject]@{
         file = $f.FullName
         kind = $kind
         line_count = @($lines).Count
         token_est = $tokenEst
+        word_count = $wordCount
         long_lines = $longLines
         duplicate_ratio = [math]::Round($dupRatio, 4)
         bullet_count = @($bulletLines).Count
@@ -111,6 +120,7 @@ foreach ($f in $targets) {
         thresholds = $t
         trigger_flags = [pscustomobject]@{
             token = $hitToken
+            words = $hitWords
             long_lines = $hitLong
             duplicate_ratio = $hitDup
             bullet_density = $hitDensity
@@ -142,7 +152,7 @@ if ($overall.flagged_files -gt 0) {
     $results |
         Where-Object { $_.should_run_hygiene } |
         Sort-Object bloat_score -Descending |
-        Select-Object file, kind, token_est, line_count, long_lines, duplicate_ratio, avg_bullet_words, bloat_score |
+        Select-Object file, kind, token_est, word_count, line_count, long_lines, duplicate_ratio, avg_bullet_words, bloat_score |
         Format-Table -AutoSize
 } else {
     Write-Output "No files exceeded bloat trigger thresholds."

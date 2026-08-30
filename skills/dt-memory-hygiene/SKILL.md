@@ -2,7 +2,7 @@
 name: dt-memory-hygiene
 description: "Periodic maintenance pass for CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Runs when deterministic bloat thresholds are exceeded. Compacts verbose entries, removes duplicate drift, normalizes shape, and preserves current-state clarity without changing underlying decisions."
 metadata:
-  version: 0.2.1
+  version: 0.3.0
 ---
 
 # Memory Hygiene
@@ -51,6 +51,7 @@ pwsh -File skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1
 Trigger hygiene automatically when any file hits:
 
 - `token_est` over file-type threshold, OR
+- `word_count` over `word_max` (CLAUDE.md files only — the detector's `word_count` is the single deterministic measurement of a CLAUDE.md word ceiling; never eyeball-count), OR
 - `long_lines` over threshold, OR
 - `duplicate_ratio` over threshold, OR
 - `avg_bullet_words` over threshold with enough bullets, OR
@@ -76,6 +77,29 @@ Do not touch product code. Do not rewrite user intent.
 3. **Normalize shape** for project entries in MEMORY.md.
 4. **Prune stale completion trails** that no longer help future sessions.
 5. **Preserve meaning**: no policy reversals, no silent decision changes.
+
+## Residency Sweep (CLAUDE.md files, advisory)
+
+When a hygiene pass touches a `CLAUDE.md` file, additionally re-test every resident rule in it
+against dt-session-audit's Residency Test: `CLAUDE.md` is a router, not a rulebook — a rule stays
+resident only when no recognizable trigger exists (a task boundary, a phrase Danny says, a tool
+about to be used) at which a session would open a reference file and find it.
+
+For each rule that fails the test today (a trigger exists, and an owning reference file exists or
+is cheap to create), surface a **relocation candidate**: the rule, its proposed destination
+reference file, and the `References` trigger row to add or tighten — phrased in the words Danny
+actually says. Existing References pointer rows are the router working as intended; never flag them.
+
+This sweep is advisory and fires once per new candidate — never a blocking gate:
+
+- Apply a relocation only on Danny's approval. Relocation moves the full rule text into the owning
+  reference file and leaves no summary behind; the rule lives in exactly one file.
+- When Danny declines a candidate, append an HTML comment marker on the rule's line in that
+  `CLAUDE.md` — `<!-- residency:keep YYYY-MM-DD -->` — and never flag that rule again. A marked
+  rule is skipped by every future sweep; the marker is the no-re-nag ledger and travels with the
+  rule.
+- If a candidate's destination file does not exist, propose creating it under the owning Resources
+  folder; never relocate into a file you have not confirmed exists or just created.
 
 ## Safety Rules
 
