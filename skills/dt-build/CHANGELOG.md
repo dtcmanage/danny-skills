@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.10.0
+
+- Model-selection disclosure: every subagent dispatch states the selected model and a one-sentence reason in chat for tier-routing tracking.
+
 ## 2.9.1
 
 - Dual-harness wording pass from the Codex harness review: harness contract + CLAUDE_DISPATCH abstraction used in steps 6.b/6.c/6.d/6.5, lane-neutral prompt assembly, Claude-tier preflight on codex-host, compatibility/invocation wording, ScheduleWakeup dropped from allowed-tools, approval posture recorded in Codex wrapper provenance. Codex orchestration remains unverified end-to-end.

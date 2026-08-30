@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.9.1
+  version: 1.10.0
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -61,6 +61,13 @@ authoring model:
 Any deviation from the tier-default effort (Codex) or model alias (Claude) requires a one-line
 recorded reason — the invokers refuse it otherwise (`-EffortReason` / `-ModelReason`) and persist it in
 round metadata.
+
+**Model-selection disclosure (tracking).** At Round 0, state in the chat output the selected lane and
+tier model with a one-sentence reason (authoring family + review class), e.g.
+`codex lane, gpt-5.6-sol @ high: Claude-authored draft, complex review`. Any mid-review deviation
+restates the new model and its recorded reason in chat. One sentence is enough; this visible line is how
+Danny tracks that model routing works as intended — round metadata records the same facts but does not
+replace saying it.
 
 Per-round process timeouts: light rounds keep the enforced 300,000 ms budget; complex rounds run high
 effort and get 600,000 ms (10 minutes), matching dt-build's substantive-call budget. The Codex scripts

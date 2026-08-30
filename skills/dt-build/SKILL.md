@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex orchestration unverified end-to-end); requires danny-skills repo present."
 metadata:
-  version: 2.9.1
+  version: 2.10.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -96,6 +96,11 @@ Light-tier implementation is allowed — the orchestrator owns quality: it revie
 when a light-tier model proves incapable, the retry escalates one tier (light → standard → complex; a
 standard failure escalates to complex, as before). Escalation IS the second attempt and stays inside the
 two-attempt budget. Start load-bearing chunks at `complex` directly; never start them light.
+**Model-selection disclosure (tracking).** Every subagent dispatch — initial or escalated, either lane —
+states in the chat output the model actually selected and a one-sentence reason for the selection, e.g.
+`chunk 3 -> sonnet: ordinary implementation logic, nothing load-bearing`. One sentence per dispatch is
+enough. This visible line is how Danny tracks that tier routing works as intended; the provenance JSON
+records the same facts but does not replace saying it.
 
 **Codex lane.** Never inherit Codex's user-config model or reasoning effort. Resolve every Codex chunk
 through `scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and

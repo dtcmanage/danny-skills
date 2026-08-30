@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.10.0 (2026-08-30): Model-selection disclosure: Round 0 states the selected lane/tier model and a one-sentence reason in chat; deviations restate model and reason.
+
 - 1.9.1 (2026-08-30): Shared references/plan-shape.md now specifies the required '## Build-intake revalidation' section and names skills/dt-plan/scripts/verify-plan-shape.ps1 as the producer-side gate; no change to this skill's own files.
 
 - 1.9.0 (2026-08-30): Cross-family reviewer lane (invoke-claude-round.ps1: a Claude critic for Codex-authored drafts), complex-tier effort parity (Sol at high effort, 600s budget, recorded-reason deviations), settled-decision ledger (adjudicated findings auto-dispose on re-raise instead of re-asking Danny), rolling prompt context (condensed cumulative finding ledger replaces the full verdicts.json embed), Round-1 hard gate for the Build-intake revalidation table, and an explicit subagent cap-gate SendMessage contract.
