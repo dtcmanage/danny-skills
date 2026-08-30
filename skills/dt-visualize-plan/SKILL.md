@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.1
+  version: 1.1.2
   changelog: "Pointer-swap to shared output-paths convention in references/conventions.md instead of restating the no-computer-link rule inline."
 ---
 

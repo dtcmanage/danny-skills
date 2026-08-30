@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.12.4",
+  "version": "0.12.5",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.12.5 dt-plan 1.2.0: producer-side alignment with dt-review 1.9.0 - plans now carry the required '## Build-intake revalidation' table the Round-1 gate demands, sections write to plan-draft.md as they lock, new verify-plan-shape.ps1 validates at save time, Scope tiers the drive, settled-decisions ledger added, forked reference copies removed. dt-review 1.9.1, dt-prototype 1.1.2, dt-visualize-plan 1.1.2: consumers of the updated plan shape contract. Shared: references/plan-shape.md (plan shape contract) and references/shared-component-owners.json (version policy).",
       "0.12.4 dt-review 1.9.0 (cross-family reviewer lane via invoke-claude-round.ps1, complex-tier effort parity at high/600s, settled-decision ledger with auto-disposition of adjudicated re-raises, rolling condensed prompt context, Round-1 build-intake hard gate, subagent cap-gate SendMessage contract) and dt-pipeline 0.1.2 (review-phase spawn prompt states the subagent cap-gate contract); shared security posture doc notes the claude-lane redaction consumer; version policy owners registry gains the security-posture entry.",
       "0.12.3 git-merge-feature 1.2.2 + dt-ship 0.1.3: Windows worktree purge resilience (retry, deregistered-leftover soft-continue, leftover surfaced in ship summary).",
       "0.12.2 dt-build 2.9.1: dual-harness wording pass (harness contract + CLAUDE_DISPATCH, lane-neutral prompt assembly, Claude-tier preflight on codex-host, compatibility/invocation wording, approval posture in Codex provenance).",

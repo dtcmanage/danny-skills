@@ -17,6 +17,10 @@
     ],
     "summary_token": "version policy"
   },
+  "references/plan-shape.md": {
+    "consumers": ["dt-plan", "dt-prototype", "dt-review", "dt-visualize-plan"],
+    "summary_token": "plan shape contract"
+  },
   "references/security-posture.md": {
     "consumers": ["dt-review"],
     "summary_token": "security posture"
@@ -32,6 +36,10 @@
   "references/skill-template/SKILL.md": {
     "consumers": [],
     "summary_token": "version policy"
+  },
+  "references/surface-templates.md": {
+    "consumers": ["dt-plan"],
+    "summary_token": "plan shape contract"
   },
   "references/versioning-policy.md": {
     "consumers": [
