@@ -1,0 +1,2 @@
+2026-07-14 start-work: heavy worktree creation left the branch behind after checkout failed because Git core.longpaths was unset; recovery required enabling long paths and manually attaching the branch.
+2026-08-06 start-work: heavy worktree creation was blocked by unrelated dirty files in the monorepo primary tree even though git can add an isolated worktree without touching them; live external-file repair continued in rollback-backed staging.
