@@ -1,4 +1,20 @@
 {
+  "assets/visualize/template.html": {
+    "consumers": ["dt-roadmap", "dt-visualize-design", "dt-visualize-plan"],
+    "summary_token": "visualize harness"
+  },
+  "assets/visualize/tokens.css": {
+    "consumers": ["dt-roadmap", "dt-visualize-design", "dt-visualize-plan"],
+    "summary_token": "visualize harness"
+  },
+  "assets/visualize/vendored/mermaid-10.9.3.min.js": {
+    "consumers": ["dt-roadmap", "dt-visualize-design", "dt-visualize-plan"],
+    "summary_token": "visualize harness"
+  },
+  "references/canonical-dimension-contract.md": {
+    "consumers": ["dt-build", "dt-plan", "dt-review"],
+    "summary_token": "dimension contract"
+  },
   "references/conventions.md": {
     "consumers": [
       "dt-app-launcher", "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
@@ -17,12 +33,24 @@
     ],
     "summary_token": "version policy"
   },
+  "references/glossary-contract.md": {
+    "consumers": ["dt-build", "dt-plan", "dt-review", "dt-session-audit"],
+    "summary_token": "glossary contract"
+  },
+  "references/html-artifact-policy.md": {
+    "consumers": ["dt-build", "dt-handoff", "dt-memory-hygiene", "dt-plan", "dt-prototype", "dt-roadmap", "dt-session-audit", "dt-tune", "dt-visualize-design", "dt-visualize-plan", "dt-writing-draft", "dt-writing-edit"],
+    "summary_token": "html artifact policy"
+  },
   "references/plan-shape.md": {
     "consumers": ["dt-plan", "dt-prototype", "dt-review", "dt-visualize-plan"],
     "summary_token": "plan shape contract"
   },
   "references/security-posture.md": {
     "consumers": ["dt-review"],
+    "summary_token": "security posture"
+  },
+  "references/security-redaction-tests.md": {
+    "consumers": [],
     "summary_token": "security posture"
   },
   "references/shared-component-owners.json": {
@@ -41,6 +69,10 @@
     "consumers": ["dt-plan"],
     "summary_token": "plan shape contract"
   },
+  "references/upstream-skill-dependencies.md": {
+    "consumers": [],
+    "summary_token": "version policy"
+  },
   "references/versioning-policy.md": {
     "consumers": [
       "dt-app-launcher", "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
@@ -48,6 +80,14 @@
       "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
       "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
     ],
+    "summary_token": "version policy"
+  },
+  "references/voice-load-order.md": {
+    "consumers": ["dt-writing-draft", "dt-writing-edit"],
+    "summary_token": "voice load order"
+  },
+  "scripts/audit-skills-metrics.ps1": {
+    "consumers": [],
     "summary_token": "version policy"
   },
   "scripts/bump-plugin-version.ps1": {
@@ -62,6 +102,10 @@
     "consumers": ["dt-build", "dt-roadmap"],
     "summary_token": ""
   },
+  "scripts/git/rebase-onto-main.ps1": {
+    "consumers": ["git-merge-feature", "git-sync-features"],
+    "summary_token": "git machinery"
+  },
   "scripts/invoke-codex-process.ps1": {
     "consumers": ["dt-review"],
     "summary_token": "process wrapper"
@@ -70,13 +114,45 @@
     "consumers": ["dt-build", "dt-review"],
     "summary_token": ""
   },
+  "scripts/security/redact-secrets.ps1": {
+    "consumers": ["dt-build", "dt-review", "dt-roadmap", "dt-visualize-design", "dt-visualize-plan"],
+    "summary_token": "security posture"
+  },
+  "scripts/security/test-redact-secrets.ps1": {
+    "consumers": [],
+    "summary_token": "security posture"
+  },
   "scripts/test-versioning-policy.ps1": {
     "consumers": [],
+    "summary_token": "version policy"
+  },
+  "scripts/verify-skill-junctions.ps1": {
+    "consumers": ["dt-build"],
     "summary_token": "version policy"
   },
   "scripts/verify-versioning-policy.ps1": {
     "consumers": [],
     "summary_token": "version policy"
+  },
+  "scripts/visualize/html-builder.ps1": {
+    "consumers": ["dt-roadmap", "dt-visualize-design", "dt-visualize-plan"],
+    "summary_token": "visualize harness"
+  },
+  "scripts/visualize/markdown-section-diff.ps1": {
+    "consumers": ["dt-visualize-design"],
+    "summary_token": "visualize harness"
+  },
+  "scripts/visualize/mermaid-wrap.ps1": {
+    "consumers": ["dt-roadmap", "dt-visualize-plan"],
+    "summary_token": "visualize harness"
+  },
+  "scripts/visualize/verify-html-artifact.ps1": {
+    "consumers": ["dt-roadmap", "dt-visualize-design", "dt-visualize-plan"],
+    "summary_token": "visualize harness"
+  },
+  "scripts/wrap-prompt-envelope.ps1": {
+    "consumers": ["dt-build", "dt-review", "dt-roadmap", "dt-visualize-design"],
+    "summary_token": "prompt envelope"
   },
   "tools/build-plugin.ps1": {
     "consumers": [],
