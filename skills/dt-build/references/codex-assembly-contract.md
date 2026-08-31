@@ -5,7 +5,8 @@ Execution parity contract:
 - Envelope boundaries are delegated to repo-level `scripts/wrap-prompt-envelope.ps1`; dt-build does not reimplement wrapper logic.
 - Codex prompt verification is executed only via `skills/dt-build/scripts/verify-codex-prompt.ps1`.
 - Verified prompts are executed only via `skills/dt-build/scripts/invoke-codex-chunk.ps1`; the wrapper
-  resolves the live model tier, pins effort, passes stdin, redacts logs, and writes provenance JSON.
+  requires a one-line selection reason, resolves the live model tier, pins effort, passes stdin, redacts
+  logs, and writes the reason plus canonical disclosure line to provenance JSON.
 
 Codex verify gate requires:
 - stable identity header

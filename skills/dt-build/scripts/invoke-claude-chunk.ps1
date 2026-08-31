@@ -4,6 +4,7 @@ param(
     [string]$OutputPath = "",
     [ValidateSet('complex', 'standard', 'light')][string]$Tier = "standard",
     [string]$Model = "",
+    [string]$SelectionReason = "",
     [ValidateRange(1, 2)][int]$Attempt = 1,
     [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
@@ -112,6 +113,16 @@ if (-not $Preflight) {
     }
     $promptRunId = $runMatch.Groups[1].Value.Trim()
     $promptChunkId = $chunkMatch.Groups[1].Value.Trim()
+    if ($SelectionReason -match '[\r\n]') {
+        throw "CLAUDE_INVOKE_FAIL: -SelectionReason must be one line."
+    }
+    $SelectionReason = $SelectionReason.Trim()
+    if ([string]::IsNullOrWhiteSpace($SelectionReason)) {
+        throw "CLAUDE_INVOKE_FAIL: substantive invocation requires -SelectionReason. Report the selected model and this reason in chat before dispatch."
+    }
+    if ($SelectionReason.Length -gt 240) {
+        throw "CLAUDE_INVOKE_FAIL: -SelectionReason must be 240 characters or fewer."
+    }
 }
 
 $repoRoot = Resolve-SkillRepoRoot
@@ -124,6 +135,9 @@ if ([string]::IsNullOrWhiteSpace($resolvedModel)) {
         'standard' { 'sonnet' }
         'light'    { 'haiku' }
     }
+}
+$disclosureLine = if ($Preflight) { $null } else {
+    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($Tier): $SelectionReason"
 }
 $claudeCli = Get-ClaudeCliPath
 
@@ -269,6 +283,8 @@ try {
         tier                = $Tier
         requested_model     = $resolvedModel
         resolved_model      = $resolvedModel
+        selection_reason    = if ($Preflight) { $null } else { $SelectionReason }
+        disclosure_line     = $disclosureLine
         permission_mode     = $permissionMode
         attempt             = $Attempt
         claude_cli_version  = $cliVersion
@@ -299,6 +315,8 @@ catch {
         $fallback = [pscustomobject]@{
             pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier
             requested_model = $resolvedModel; resolved_model = $resolvedModel
+            selection_reason = if ($Preflight) { $null } else { $SelectionReason }
+            disclosure_line = $disclosureLine
             attempt = $Attempt; duration_ms = $durationMs; timeout_ms = $TimeoutMs
             prompt_sha256 = $promptSha256
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }

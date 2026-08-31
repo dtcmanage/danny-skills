@@ -4,6 +4,7 @@ param(
     [string]$OutputPath = "",
     [ValidateSet('complex', 'standard', 'light')][string]$Tier = "standard",
     [string]$Model = "",
+    [string]$SelectionReason = "",
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$ReasoningEffort = "medium",
     [ValidateRange(1, 2)][int]$Attempt = 1,
     [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
@@ -101,6 +102,16 @@ if (-not $Preflight) {
     }
     $promptRunId = $runMatch.Groups[1].Value.Trim()
     $promptChunkId = $chunkMatch.Groups[1].Value.Trim()
+    if ($SelectionReason -match '[\r\n]') {
+        throw "CODEX_INVOKE_FAIL: -SelectionReason must be one line."
+    }
+    $SelectionReason = $SelectionReason.Trim()
+    if ([string]::IsNullOrWhiteSpace($SelectionReason)) {
+        throw "CODEX_INVOKE_FAIL: substantive invocation requires -SelectionReason. Report the selected model and this reason in chat before dispatch."
+    }
+    if ($SelectionReason.Length -gt 240) {
+        throw "CODEX_INVOKE_FAIL: -SelectionReason must be 240 characters or fewer."
+    }
 }
 
 $repoRoot = Resolve-SkillRepoRoot
@@ -117,6 +128,9 @@ if ([string]::IsNullOrWhiteSpace($preferred)) {
 }
 $resolvedModel = Resolve-CodexModel -Tier $Tier -PreferredModel $preferred -Strict
 [void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $ReasoningEffort -Strict)
+$disclosureLine = if ($Preflight) { $null } else {
+    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($Tier, effort $ReasoningEffort): $SelectionReason"
+}
 $codexCli = Get-CodexCliPath
 
 $temporaryOutput = $false
@@ -307,6 +321,8 @@ try {
         tier                   = $Tier
         requested_model        = $preferred
         resolved_model         = $resolvedModel
+        selection_reason       = if ($Preflight) { $null } else { $SelectionReason }
+        disclosure_line        = $disclosureLine
         reasoning_effort       = $ReasoningEffort
         attempt                = $Attempt
         sandbox                = $sandbox
@@ -346,6 +362,8 @@ catch {
         $fallback = [pscustomobject]@{
             pass = $false; preflight = [bool]$Preflight; tier = $Tier
             requested_model = $preferred; resolved_model = $resolvedModel
+            selection_reason = if ($Preflight) { $null } else { $SelectionReason }
+            disclosure_line = $disclosureLine
             reasoning_effort = $ReasoningEffort; attempt = $Attempt; sandbox = $sandbox
             approval_mode = 'never'
             duration_ms = $durationMs; timeout_ms = $TimeoutMs; prompt_sha256 = $promptSha256

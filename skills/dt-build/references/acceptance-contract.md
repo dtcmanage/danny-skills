@@ -30,7 +30,8 @@ For each milestone in the roadmap, in DAG order with load-bearing milestones fir
 Every dt-build run produces a milestone acceptance ledger as both `.md` and `.html` artifacts (`build-acceptance-ledger.{md,html}` in the run folder), one row per milestone, with the four-axis split above plus a blockers column. The ledger is the final answer. A build that ships a freeform summary instead of a ledger has not honored this contract.
 
 The normal final ledger renders `acceptance-rows.jsonl`; it does not rerun every milestone test. Each row is
-written immediately after acceptance and carries the milestone commit plus test/artifact/model provenance.
+written immediately after acceptance and carries the milestone commit plus test/artifact/model provenance,
+including the model-selection reason and canonical disclosure line for each accepted builder and verifier.
 Finalize while the integration repository and accepted commits are still reachable; the retained ledger then
 preserves the original verdict when a disposable environment is removed. A later re-render fails closed when
 it cannot resolve the recorded commit. `-RunTests` is an explicit current-state revalidation mode that writes

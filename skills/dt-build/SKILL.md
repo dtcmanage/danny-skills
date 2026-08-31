@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex orchestration unverified end-to-end); requires danny-skills repo present."
 metadata:
-  version: 2.10.1
+  version: 2.11.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -96,11 +96,23 @@ Light-tier implementation is allowed — the orchestrator owns quality: it revie
 when a light-tier model proves incapable, the retry escalates one tier (light → standard → complex; a
 standard failure escalates to complex, as before). Escalation IS the second attempt and stays inside the
 two-attempt budget. Start load-bearing chunks at `complex` directly; never start them light.
-**Model-selection disclosure (tracking).** Every subagent dispatch — initial or escalated, either lane —
-states in the chat output the model actually selected and a one-sentence reason for the selection, e.g.
-`chunk 3 -> sonnet: ordinary implementation logic, nothing load-bearing`. One sentence per dispatch is
-enough. This visible line is how Danny tracks that tier routing works as intended; the provenance JSON
-records the same facts but does not replace saying it.
+**Mandatory model-selection report (hard dispatch gate).** Immediately before every substantive subagent
+dispatch — initial build, same-attempt resume, retry/escalation, remediation, independent verifier, and
+final combined-diff review, on either lane — emit this standalone user-visible line:
+
+`MODEL_SELECTION: <dispatch_id> -> <resolved_model> (<tier>[, effort <effort>]): <one-sentence selection reason>`
+
+The reason must explain why that model tier fits the task; a status update, test count, or reason for
+dispatching does not qualify. Do not launch the subagent until the line is visible in chat. On a Claude
+host, put the disclosure text block and the host-native `Agent` tool call in the same assistant message,
+and set the Agent `model` explicitly; a bare Agent call or inherited model is prohibited. On a Codex host,
+send the disclosure as commentary immediately before invoking the wrapper. Parallel dispatches require
+one line per dispatch. Capability preflights are not substantive dispatches and are exempt.
+
+For either cross-model wrapper, pass the identical reason through `-SelectionReason`. Both wrappers hard
+fail a blank, multiline, or over-240-character reason and persist `selection_reason` plus the canonical
+`disclosure_line` in provenance. The orchestrator must print that exact canonical line; provenance is the
+durable audit record but does not replace the visible report.
 
 **Codex lane.** Never inherit Codex's user-config model or reasoning effort. Resolve every Codex chunk
 through `scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and
@@ -208,7 +220,7 @@ cache timestamp, effort, and duration.
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
 - b. **Assemble and verify the chunk prompt (both lanes).** `scripts/assemble-codex-prompt.ps1` (single canonical implementation — the name is historical; both lane wrappers consume its verified output, which carries the identity headers and report contract each wrapper enforces; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`), then the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every chunk invocation on either lane.
 - c. **Run the chunk through the canonical lane.** For Codex, call `scripts/invoke-codex-chunk.ps1`
-  with the routed tier and explicit effort. For Claude, dispatch via CLAUDE_DISPATCH with the same brief and scoped
+  with the routed tier, explicit effort, and `-SelectionReason`. For Claude, dispatch via CLAUDE_DISPATCH with the same brief and scoped
   worktree. Do not hand-roll `codex exec` or `claude -p`. Automatic implementation failures consume at most two attempts;
   environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
   restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
@@ -219,13 +231,13 @@ cache timestamp, effort, and duration.
   built into the diff.
 - d. **Run independent semantic verification.** A fresh non-builder Claude subagent (via CLAUDE_DISPATCH) reviews every load-bearing,
   security-sensitive, live-write, or agent-verification milestone before acceptance. Record findings and the
-  verifier surface/model. The builder never self-approves. The verifier also flags any diff content beyond
+  verifier surface/model, selection reason, and disclosure line. The builder never self-approves. The verifier also flags any diff content beyond
   the milestone's named artifacts and stated scope as an out-of-scope finding — built-but-unrequested work is
   a defect, not a bonus.
 - e. **Run the acceptance gate.** `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
 - f. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
 - g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and
-  resolved model, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
+  resolved model, selection reason, disclosure line, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
   and downgrade status. This append-only row is the final ledger's source of truth.
 - h. **Update the integration branch** (`<integration-branch>` from `build-plan.md`) via compare-and-swap through `scripts/branch-cas-update.ps1` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
 - i. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (e–g) and the integration branch is updated (h), rewrite `_build-state.md` in the project's planning folder (the folder holding `plan-draft.md` / `design-final*.md` / `roadmap.md`, typically `<project>/design/`) as an atomic full-file rewrite from the canonical template `skills/dt-pipeline/templates/build-state-template.md` — reference that template, never duplicate its shape here. Record phase, current milestone, completed list (this milestone appended with its commit SHA), in-flight work, last commit SHA, uncommitted artifacts, and next step. This file is distinct from the run-folder `build-state.md` (dt-build's internal run scaffold from step 4): `_build-state.md` is the crash-resume checkpoint dt-pipeline and Danny read.

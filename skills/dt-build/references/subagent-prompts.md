@@ -13,6 +13,10 @@ Required templates:
 - merge prompt
 
 Lane routing:
+- Before every substantive dispatch, emit the mandatory `MODEL_SELECTION:` line from `SKILL.md`. The
+  selection reason must explain the tier choice. Pass the identical reason to a cross-model wrapper through
+  `-SelectionReason`; for a host-native Agent, include the disclosure text and explicit-model Agent call in
+  the same assistant message. Bare or inherited-model Agent calls are prohibited.
 - Route crisp, scoped implementation to the Codex lane through
   `scripts/invoke-codex-chunk.ps1`; never invoke `codex exec` directly.
 - **CLAUDE_DISPATCH** (defined once, used in every template below): a fresh
@@ -64,5 +68,6 @@ Shared rules:
 - Run-log writes must pass through repo-level `scripts/security/redact-secrets.ps1`.
 - Chunk prompts on both lanes are assembled on disk and must pass `scripts/verify-codex-prompt.ps1` before dispatch.
 - Chunk prompts are then passed over stdin by the lane's wrapper (`scripts/invoke-codex-chunk.ps1`
-  or `scripts/invoke-claude-chunk.ps1`), which pins and records the model (plus effort and approval
-  policy on the Codex lane). Return only the structured report fields defined by dt-build.
+  or `scripts/invoke-claude-chunk.ps1`), which requires the selection reason and records it with the
+  canonical disclosure line and pinned model (plus effort and approval policy on the Codex lane). Return
+  only the structured report fields defined by dt-build.

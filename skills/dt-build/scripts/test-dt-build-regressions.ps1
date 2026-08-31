@@ -290,19 +290,31 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     Write-Utf8 -Path $wrapperPrompt -Content "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nfixture"
     $wrapperOutput = Join-Path $tempRoot 'wrapper-output.md'
     $env:DT_FAKE_CODEX_MODE = 'success'
+    $missingReasonOutput = Join-Path $tempRoot 'wrapper-missing-reason.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $missingReasonOutput `
+        -CodexCliPath $fakeCodex -Tier standard -Attempt 1 -Json *> $null
+    Assert-True ($LASTEXITCODE -ne 0) "Codex wrapper allowed a substantive dispatch without -SelectionReason"
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $missingReasonOutput `
+        -CodexCliPath $fakeCodex -Tier standard -SelectionReason "line one`nline two" -Attempt 1 -Json *> $null
+    Assert-True ($LASTEXITCODE -ne 0) "Codex wrapper allowed a multiline -SelectionReason"
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $wrapperOutput `
-        -CodexCliPath $fakeCodex -Tier standard -Attempt 1 -Json *> $null
+        -CodexCliPath $fakeCodex -Tier standard -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Codex success path failed"
     $retained = Get-Content -Raw -LiteralPath $wrapperOutput
     Assert-True ($retained -notmatch 'ghp_') "retained chunk output leaked a credential"
     Assert-True ($retained -match '\[REDACTED-SECRET\]') "retained chunk output was not redacted"
+    $wrapperProv = Get-Content -Raw -LiteralPath "$wrapperOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ([string]$wrapperProv.selection_reason -eq 'ordinary fixture implementation logic') "Codex provenance omitted selection reason"
+    Assert-True ([string]$wrapperProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> gpt-5\.6-terra \(standard, effort medium\): ordinary fixture implementation logic$') "Codex provenance omitted canonical disclosure line"
 
     $env:DT_FAKE_CODEX_MODE = 'malformed'
     $malformedOutput = Join-Path $tempRoot 'wrapper-malformed.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $malformedOutput `
-        -CodexCliPath $fakeCodex -Tier standard -Attempt 1 -Json *> $null
+        -CodexCliPath $fakeCodex -Tier standard -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "malformed Codex output was accepted"
     $malformedProv = Get-Content -Raw -LiteralPath "$malformedOutput.provenance.json" | ConvertFrom-Json
     Assert-True (-not [bool]$malformedProv.pass) "malformed-output failure provenance claimed PASS"
@@ -313,7 +325,7 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     $hangOutput = Join-Path $tempRoot 'wrapper-hang.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $hangPrompt -OutputPath $hangOutput `
-        -CodexCliPath $fakeCodex -Tier standard -Attempt 1 -TimeoutMs 1000 -Json *> $null
+        -CodexCliPath $fakeCodex -Tier standard -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -TimeoutMs 1000 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "non-reading Codex child escaped timeout"
     $hangProv = Get-Content -Raw -LiteralPath "$hangOutput.provenance.json" | ConvertFrom-Json
     Assert-True (-not [bool]$hangProv.pass) "timeout failure provenance claimed PASS"
@@ -351,19 +363,31 @@ Write-Output $report
 '@
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
+    $claudeMissingReason = Join-Path $tempRoot 'claude-wrapper-missing-reason.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMissingReason `
+        -ClaudeCliPath $fakeClaude -Tier standard -Attempt 1 -Json *> $null
+    Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper allowed a substantive dispatch without -SelectionReason"
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMissingReason `
+        -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason "line one`nline two" -Attempt 1 -Json *> $null
+    Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper allowed a multiline -SelectionReason"
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeOutput `
-        -ClaudeCliPath $fakeClaude -Tier standard -Attempt 1 -Json *> $null
+        -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Claude success path failed"
     $claudeRetained = Get-Content -Raw -LiteralPath $claudeOutput
     Assert-True ($claudeRetained -notmatch 'ghp_') "retained Claude chunk output leaked a credential"
     Assert-True ($claudeRetained -match '\[REDACTED-SECRET\]') "retained Claude chunk output was not redacted"
+    $claudeProv = Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ([string]$claudeProv.selection_reason -eq 'ordinary fixture verification logic') "Claude provenance omitted selection reason"
+    Assert-True ([string]$claudeProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> sonnet \(standard\): ordinary fixture verification logic$') "Claude provenance omitted canonical disclosure line"
 
     $env:DT_FAKE_CLAUDE_MODE = 'malformed'
     $claudeMalformed = Join-Path $tempRoot 'claude-wrapper-malformed.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMalformed `
-        -ClaudeCliPath $fakeClaude -Tier standard -Attempt 1 -Json *> $null
+        -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "malformed Claude output was accepted"
     $claudeMalformedProv = Get-Content -Raw -LiteralPath "$claudeMalformed.provenance.json" | ConvertFrom-Json
     Assert-True (-not [bool]$claudeMalformedProv.pass) "malformed Claude-output failure provenance claimed PASS"

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.11.0
+
+- Enforce a mandatory pre-dispatch model-selection report and persist its reason and canonical line in both lane wrappers.
+
 ## 2.10.1
 
 - Restore the Codex implementation lane on Windows: invoke-codex-chunk.ps1 runs substantive chunks unsandboxed via explicit default_permissions (Codex removed its Windows sandbox; workspace-write failed closed and blocked every command); provenance records the effective mode.
