@@ -38,6 +38,22 @@ function Invoke-Git {
     }
 }
 
+# Delete a feature branch that is already merged into main. 'git branch -d'
+# refuses when the branch tracks an upstream (e.g. created with
+# 'git worktree add -b X origin/main') that does not yet contain it, even
+# though it is fully merged into local main. Retry with -D only after proving
+# main contains the branch tip, so the force never deletes unmerged work.
+function Remove-MergedBranch {
+    param([string]$Repo, [string]$BranchName)
+    $gitArgs = @()
+    if ($Repo) { $gitArgs += @('-C', $Repo) }
+    $delete = Invoke-Git -GitArgs ($gitArgs + @('branch', '-d', $BranchName))
+    if ($delete.ExitCode -eq 0) { return $delete }
+    $ancestor = Invoke-Git -GitArgs ($gitArgs + @('merge-base', '--is-ancestor', $BranchName, 'main'))
+    if ($ancestor.ExitCode -ne 0) { return $delete }
+    return Invoke-Git -GitArgs ($gitArgs + @('branch', '-D', $BranchName))
+}
+
 function Fail {
     param([string]$Message, [hashtable]$Detail = @{})
     $obj = [ordered]@{
@@ -191,7 +207,7 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
 
     $wtBranchDeleted = $false
     if ($wtRemoved) {
-        $wtDelete = Invoke-Git -GitArgs @('-C', $mainWorktree, 'branch', '-d', $resolvedBranch)
+        $wtDelete = Remove-MergedBranch -Repo $mainWorktree -BranchName $resolvedBranch
         $wtBranchDeleted = ($wtDelete.ExitCode -eq 0)
         if (-not $wtBranchDeleted) {
             if ($PurgeWorktree) {
@@ -287,7 +303,7 @@ $mainShaAfter = (Invoke-Git -GitArgs @('rev-parse', 'main')).Output.Trim()
 $commitRange = if ($mainShaBefore -ne $mainShaAfter) { "$($mainShaBefore.Substring(0,7))..$($mainShaAfter.Substring(0,7))" } else { 'no-op' }
 
 # Delete the feature branch
-$delete = Invoke-Git -GitArgs @('branch', '-d', $resolvedBranch)
+$delete = Remove-MergedBranch -BranchName $resolvedBranch
 $branchDeleted = ($delete.ExitCode -eq 0)
 if (-not $branchDeleted) {
     if ($PurgeWorktree) {
