@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.1.4 (2026-09-03): verify-hash URL probe: fix the cache-buster separator (-like '*?*' treated ? as a wildcard, so every probe requested /version.json&cb=... and an SPA fallback answered with index.html whose first 40-hex run - the Cloudflare beacon token - was reported as the deployed commit); a URL probe now counts only when the body is JSON with a commit field, retries ~3 min on any other body, and records a per-attempt probe_log in the JSON summary.
+
 - 0.1.3 (2026-08-29): Surface merge-feature's worktree_dir_leftover in the ship summary's purged list so a git-deregistered leftover directory is reported instead of failing the ship before push.
 
 - 0.1.2 (2026-07-12): Inherited the established pack-wide versioning policy and release gate.

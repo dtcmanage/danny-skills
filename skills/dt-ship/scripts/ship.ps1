@@ -23,7 +23,7 @@
 # Fail closed: the first failing step stops the chain; the JSON reports
 # failed_step. JSON summary: status (shipped | merged_only | not_shipped |
 # failed), failed_step, branch, resolved_branch, merged, pushed, deployed,
-# hash_match, local_head, prod_commit, probe_attempts, smoke [{route, pass}],
+# hash_match, local_head, prod_commit, probe_attempts, probe_log, smoke [{route, pass}],
 # purged [], skipped [], rerere_enabled, error_message.
 
 param(
@@ -56,6 +56,7 @@ $state = [ordered]@{
     local_head = $null
     prod_commit = $null
     probe_attempts = $null
+    probe_log = @()
     smoke = @()
     purged = @()
     skipped = @()
@@ -408,25 +409,59 @@ $probe = Get-Prop $config 'prodCommitProbe'
 $probeUrl = Expand-HostToken (Get-Prop $probe 'url') $hostValue
 $probeCommand = Expand-HostToken (Get-Prop $probe 'command') $hostValue
 
-# A CDN edge (Cloudflare) can serve a stale probe body for a short window after
-# the deploy returns. URL probes retry with cache-busting before failing; only a
-# stable mismatch across the full window is a real NOT SHIPPED. Command probes
-# stay single-shot (no cache in the path).
-$maxProbeAttempts = if ($probeUrl) { 5 } else { 1 }
+# Root cause of every false NOT SHIPPED on a URL probe since 0.1.1 (found
+# 2026-09-03): the cache-buster separator was chosen with `-like '*?*'`, and
+# in a -like pattern '?' is a wildcard, so the test was true for every URL and
+# the probe requested `/version.json&cb=<guid>`. That path is not an asset, so
+# a single-page-application deploy answered with index.html (200), and the
+# first 40-hex run in that shell - the Cloudflare Web Analytics beacon token -
+# was reported as the deployed commit. Two guards now stand in front of that
+# class of failure:
+#   1. A URL probe is only a hash source when the body is JSON with a `commit`
+#      field. HTML or any other body is "not propagated yet" and is retried,
+#      never regex-mined for a hash, and the per-attempt outcome lands in
+#      probe_log so the next false negative names itself.
+#   2. URL probes retry with a fresh cache-buster for ~3 minutes to absorb real
+#      CDN edge lag. Only a stable JSON mismatch across the full window is a
+#      real NOT SHIPPED. Command probes stay single-shot (no cache in the path)
+#      and keep the loose 40-hex / 7-40-hex match on their output.
+$maxProbeAttempts = if ($probeUrl) { 12 } else { 1 }
 $probeRetryDelaySec = 15
 $prodCommit = $null
 $probeAttempt = 0
+$lastProbeNote = ''
 while ($probeAttempt -lt $maxProbeAttempts) {
     $probeAttempt++
     $probeBody = $null
+    $probeContentType = $null
+    $probeStatus = $null
+    $candidate = $null
+    $outcome = $null
     if ($probeUrl) {
-        $sep = if ($probeUrl -like '*?*') { '&' } else { '?' }
+        # String.Contains, never -like: in a -like pattern '?' is a one-character
+        # wildcard, so '*?*' matched every URL and the separator was always '&'.
+        $sep = if ($probeUrl.Contains('?')) { '&' } else { '?' }
         $bustedUrl = "$probeUrl$sep" + "cb=$([guid]::NewGuid().ToString('N'))"
         try {
             $response = Invoke-WebRequest -Uri $bustedUrl -TimeoutSec 30 -Headers @{ 'Cache-Control' = 'no-cache' }
             $probeBody = [string]$response.Content
+            $probeStatus = [int]$response.StatusCode
+            $probeContentType = [string]$response.Headers['Content-Type']
         } catch {
             Fail-Step 'verify-hash' "NOT SHIPPED: commit probe URL '$bustedUrl' failed: $($_.Exception.Message)" 'not_shipped'
+        }
+        $parsed = $null
+        try { $parsed = $probeBody | ConvertFrom-Json -ErrorAction Stop } catch { $parsed = $null }
+        $commitField = if ($null -ne $parsed) { [string](Get-Prop $parsed 'commit') } else { $null }
+        if ($commitField -and $commitField -match '^[0-9a-fA-F]{7,40}$') {
+            $candidate = $commitField.ToLowerInvariant()
+            $outcome = 'json'
+        } elseif ($null -ne $parsed) {
+            $outcome = 'json_without_commit'
+        } elseif ($probeContentType -like '*html*' -or $probeBody -match '(?i)<!doctype html|<html') {
+            $outcome = 'html_body'
+        } else {
+            $outcome = 'non_json_body'
         }
     } elseif ($probeCommand) {
         $probeOut = & pwsh -NoProfile -Command $probeCommand 2>&1
@@ -434,26 +469,44 @@ while ($probeAttempt -lt $maxProbeAttempts) {
             Fail-Step 'verify-hash' "NOT SHIPPED: commit probe command failed: $(Get-TailText (($probeOut | Out-String)))" 'not_shipped'
         }
         $probeBody = ($probeOut | Out-String)
+        $hashMatch = [regex]::Match($probeBody, '[0-9a-fA-F]{40}')
+        if (-not $hashMatch.Success) {
+            $hashMatch = [regex]::Match($probeBody, '\b[0-9a-fA-F]{7,40}\b')
+        }
+        if (-not $hashMatch.Success) {
+            Fail-Step 'verify-hash' "NOT SHIPPED: commit probe returned no commit hash. Probe output tail: $(Get-TailText $probeBody)" 'not_shipped'
+        }
+        $candidate = $hashMatch.Value.ToLowerInvariant()
+        $outcome = 'command'
     }
 
-    $hashMatch = [regex]::Match($probeBody, '[0-9a-fA-F]{40}')
-    if (-not $hashMatch.Success) {
-        $hashMatch = [regex]::Match($probeBody, '\b[0-9a-fA-F]{7,40}\b')
+    $matched = $false
+    if ($candidate) {
+        $prodCommit = $candidate
+        $matched = $state.local_head.ToLowerInvariant().StartsWith($candidate)
     }
-    if (-not $hashMatch.Success) {
-        Fail-Step 'verify-hash' "NOT SHIPPED: commit probe returned no commit hash. Probe output tail: $(Get-TailText $probeBody)" 'not_shipped'
+    $state.probe_log += [pscustomobject]@{
+        attempt = $probeAttempt
+        status = $probeStatus
+        content_type = $probeContentType
+        outcome = $outcome
+        commit = $candidate
+        match = $matched
     }
-
-    $prodCommit = $hashMatch.Value.ToLowerInvariant()
-    if ($state.local_head.ToLowerInvariant().StartsWith($prodCommit)) { break }
+    $lastProbeNote = "attempt ${probeAttempt}: outcome=$outcome status=$probeStatus content_type=$probeContentType"
+    if ($matched) { break }
     if ($probeAttempt -lt $maxProbeAttempts) { Start-Sleep -Seconds $probeRetryDelaySec }
 }
 
 $state.prod_commit = $prodCommit
 $state.probe_attempts = $probeAttempt
-$state.hash_match = $state.local_head.ToLowerInvariant().StartsWith($prodCommit)
+$state.hash_match = if ($prodCommit) { $state.local_head.ToLowerInvariant().StartsWith($prodCommit) } else { $false }
 if (-not $state.hash_match) {
-    Fail-Step 'verify-hash' "NOT SHIPPED: deployed commit '$prodCommit' does not match local main HEAD '$($state.local_head)' after $probeAttempt probe attempts. The deploy did not take." 'not_shipped'
+    if ($prodCommit) {
+        Fail-Step 'verify-hash' "NOT SHIPPED: deployed commit '$prodCommit' does not match local main HEAD '$($state.local_head)' after $probeAttempt probe attempts ($lastProbeNote). The deploy did not take." 'not_shipped'
+    } else {
+        Fail-Step 'verify-hash' "NOT SHIPPED: commit probe never returned JSON with a commit field in $probeAttempt attempts ($lastProbeNote). The live endpoint is still serving something other than version.json; the deploy has not propagated or the probe URL is wrong." 'not_shipped'
+    }
 }
 
 # --- Step: smoke ---------------------------------------------------------------
