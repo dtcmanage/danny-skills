@@ -46,10 +46,27 @@ if ($findings.Count -gt 0) {
     }
 }
 
-$cap = if ($Tier -eq 'light') { 3 } else { 6 }
+$cap = if ($Tier -eq 'light') { 3 } else { 4 }
 $hasDeferred = @($findings | Where-Object { $_.disposition -eq 'DEFER' }).Count -gt 0
 $previous = $entries | Where-Object { $_.round -eq ($Round - 1) } | Select-Object -First 1
 $previousWasMinor = $null -ne $previous -and $previous.verdict -eq 'MINOR_POLISH_ONLY'
+
+# Persist cap: a finding that has blocked in three rounds is no longer converging through the
+# reviewer loop; it goes to Danny (extend, stop, or accept as residual risk) instead of buying a
+# fourth round of re-litigation. Only fires when every blocking finding is at its third appearance;
+# a fresh blocking finding still continues normally.
+$persistCap = 3
+$appearances = @{}
+foreach ($stateEntry in $entries) {
+    foreach ($stateFinding in @($stateEntry.findings)) {
+        $fid = [string]$stateFinding.id
+        if (-not $appearances.ContainsKey($fid)) { $appearances[$fid] = 0 }
+        $appearances[$fid] = [int]$appearances[$fid] + 1
+    }
+}
+$blockingIds = @($findings | Where-Object { [bool]$_.blocks_design } | ForEach-Object { [string]$_.id })
+$persistCapped = @($blockingIds | Where-Object { $appearances[$_] -ge $persistCap })
+$allBlockingPersistCapped = $blockingIds.Count -gt 0 -and $persistCapped.Count -eq $blockingIds.Count
 
 $action = ''
 $reason = ''
@@ -82,6 +99,10 @@ switch ([string]$entry.verdict) {
             $action = 'USER_DECISION'
             $reason = 'Material findings remain at the round cap; automatic finalization is prohibited.'
         }
+        elseif ($allBlockingPersistCapped) {
+            $action = 'USER_DECISION'
+            $reason = "Persist cap: $($persistCapped -join ', ') has blocked in $persistCap rounds without converging. Extend one round, stop, or accept as residual risk; do not re-litigate."
+        }
         else {
             $action = 'CONTINUE'
             $reason = 'At least one finding still blocks finalization within the round budget.'
@@ -97,4 +118,5 @@ switch ([string]$entry.verdict) {
     verdict = [string]$entry.verdict
     action = $action
     reason = $reason
+    persist_capped = @($persistCapped)
 } | ConvertTo-Json -Compress

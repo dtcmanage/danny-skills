@@ -5,7 +5,7 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.2.1
+  version: 1.3.0
   changelog: "See skills/dt-plan/CHANGELOG.md."
 ---
 
@@ -185,6 +185,12 @@ Format — the same table `dt-review` expects, so it survives the verbatim copy 
 
 Rules:
 - One row per assumption the plan rests on about existing code, data, schema, or an external system.
+- **Premises first.** Before any dimension pass, name the two to five facts the plan's value depends on
+  (a data population exists, a quota is hard, a mechanism is remote, a vendor supports the call) and
+  check each one live: run the query, read the config, open the vendor page. Record each as a row. An
+  unverified premise blocks `dt-review`, not `dt-build`: the 2026-09-06 audit found three of five
+  reviews spent 6-9 rounds hardening a plan whose premise was false (streams that did not exist, a soft
+  quota treated as hard, a remote halt that was a local file). No review round catches a wrong premise.
 - Evidence is a file/symbol reference or an actual query, never a recollection. A claim you did not
   directly check is recorded with `UNVERIFIED` in the Evidence column — an honest gap beats a fabricated row,
   and it gives `dt-review` something concrete to attack.

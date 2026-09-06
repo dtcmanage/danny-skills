@@ -39,7 +39,8 @@ carries the table, not the reviewer.
 | --- | --- | --- | --- |
 ```
 
-One row per assumption about existing code, data, schema, or an external system. Evidence is a file/symbol
+One row per assumption about existing code, data, schema, or an external system, starting with the premises
+the plan's value depends on (checked live before the plan is reviewed). Evidence is a file/symbol
 reference or an executed query; a claim not directly checked is recorded `UNVERIFIED` rather than omitted.
 `dt-build` rechecks these rows at build intake.
 

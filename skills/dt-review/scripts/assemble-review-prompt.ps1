@@ -82,6 +82,15 @@ $draft = Get-Content -LiteralPath $draftPath -Raw
 $dimensions = Get-Content -LiteralPath $dimensionPath -Raw
 $draftEnvelope = New-PromptEnvelope -Label "CURRENT DRAFT V$Round" -Content $draft
 
+$verificationBlock = if ($Round -ge 3) { @"
+
+Verification round (round $Round): rounds 1-2 were the full critique. Your job now is to verify, not to re-critique.
+- First, check every prior commitment in the cumulative finding ledger and fill prior_finding_checks with evidence.
+- Emit a NEW finding only at high severity, or where a reconciled fix broke the design's stated purpose. Anything else you notice belongs in the dimension assessment text as an observation, not as a finding.
+- Do not re-raise an issue you have already raised in two rounds; mark it PERSISTS in prior_finding_checks with your evidence and let the orchestrator escalate it.
+- If the reconciled draft has grown mechanisms the stated stakes do not justify, say so in the economy assessment and, where a mechanism can be removed without breaking a prior commitment, file the removal as an Economy finding.
+"@ } else { "" }
+
 $parts = [System.Collections.Generic.List[string]]::new()
 $parts.Add(@"
 You are the independent reviewer in an adversarial architecture review, running as the opposite
@@ -102,8 +111,10 @@ Review rules:
 - If a prior REJECTed issue still persists, reuse its ID with status REOPENED. If an ACCEPT/COUNTER commitment disappeared, reuse its ID with status REGRESSION.
 - Set ambiguous_root_cause only when the canonical tie-break genuinely cannot reduce the issue to one dimension.
 - High severity requires both large impact and hard reversibility. Medium requires either. Low is limited and reversible.
-- Set blocks_design only when the finding, left unfixed, would make the built system fail its stated purpose or commit it to something hard to reverse. Severity and blocking are separate: a medium build-spec clarification is non-blocking, while a low contradiction in a required contract can still block finalization.
+- Set blocks_design only when the finding, left unfixed, would make the built system fail its stated purpose or commit it to something hard to reverse. Severity and blocking are separate: a medium build-spec clarification is non-blocking.
+- Blocking policy, enforced mechanically after your output: high severity may block in any round; medium may block only in rounds 1-2; low never blocks. A blocks_design=true you set outside that policy is reset to false and the verdict recomputed, so set severity honestly rather than inflating it to force a round.
 - Every high-severity finding must name the accountable owner_role; otherwise use an empty string.
+$verificationBlock
 
 Proportionality (governs every finding):
 - Hold the design to the stakes the draft states (purpose, scope, operator, blast radius, reversibility), not to a generic production standard. Unless the draft says otherwise, the operator is one person who is the only user, approver, and admin; the systems are personal or small-firm internal tools; there is no hostile insider, no untrusted user population, and no uptime SLA.

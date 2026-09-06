@@ -13,6 +13,15 @@ Treat the warning as a prompt to act while action is still possible: `review-con
 input the orchestrator can compact, and past a certain point it is too small to recover the difference.
 Raise the budget only after confirming the pinned model can carry it.
 
+## Blocking policy
+
+The reviewer's `blocks_design` bit was the only throttle on the loop, and the 2026-09-06 audit found it
+set on ~98% of findings including every low. Both invokers therefore apply a deterministic policy
+before validation: high may block in any round, medium only in rounds 1-2, low never. Downgrades are
+recorded in `round-meta-v<N>.json` (`blocking_downgrades`) and appended to `review-v<N>.md`; the
+verdict is recomputed from the normalized values. The validator itself is unchanged, so artifacts
+written before 1.12.0 still verify.
+
 ## Contract
 
 `scripts/evaluate-termination.ps1` is authoritative. Run it after every finding has a recorded
@@ -25,8 +34,10 @@ disposition and any re-raised rejection has user adjudication.
 | Consecutive `MINOR_POLISH_ONLY` or minor at cap | Apply non-blocking fixes and finalize without another round. |
 | `MATERIAL_CHANGES_NEEDED` below cap | Apply reconciled fixes and continue. |
 | Material/deferred finding at cap | Ask Danny: extend one round, stop unfinalized, or explicitly accept residual risk. |
+| `MATERIAL_CHANGES_NEEDED` below cap, every blocking finding at its third appearance (persist cap) | Same `USER_DECISION` package, with `persist_capped` naming the findings; recommend residual-risk finalization. |
 
-Caps are 3 rounds for `light` and 6 for `complex`. A terminal `NOTHING_TO_ADD` ends the loop even
+Caps are 3 rounds for `light` and 4 for `complex` (6 until 1.12.0; the audit of 2026-09-06 found no
+review that produced a new finding ID after round 5, only re-litigation). A terminal `NOTHING_TO_ADD` ends the loop even
 before the cap. A user may request a named confirmation round for unusually high-stakes work; record
 that exception with `scripts/authorize-next-round.ps1` rather than making confirmation the default.
 The same authorization record is mandatory when Danny selects a one-round extension at the cap. It

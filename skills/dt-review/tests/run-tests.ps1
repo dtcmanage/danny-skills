@@ -404,6 +404,14 @@ Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNe
     $capAssembly = (& (Join-Path $SkillRoot 'scripts\assemble-review-prompt.ps1') -ProjectPath $capProject -Round 4 -Tier light) | ConvertFrom-Json
     Assert-True ($capAssembly.round -eq 4) 'authorized cap extension did not assemble'
 
+    # Persist cap: a finding blocking in three rounds below the complex cap escalates instead of continuing.
+    $persistProject = Join-Path $testRoot 'persist-project'
+    $persistScratch = Join-Path $persistProject 'design\_review'
+    [void](New-MaterialReviewHistory -Directory $persistScratch -Tier complex -Rounds 3 -SkillRoot $SkillRoot)
+    $persistTerm = (& (Join-Path $SkillRoot 'scripts\evaluate-termination.ps1') -StatePath (Join-Path $persistScratch 'verdicts.json') -Round 3 -Tier complex) | ConvertFrom-Json
+    Assert-True ($persistTerm.cap -eq 4) 'complex cap is not 4'
+    Assert-True ($persistTerm.action -eq 'USER_DECISION' -and @($persistTerm.persist_capped) -contains 'R1-F01') 'third-round persisting finding did not trigger the persist cap'
+
     $contextPath = Join-Path $project 'CONTEXT.md'
     Write-Utf8 $contextPath "# Context`n"
     Write-Utf8 (Join-Path $scratch 'round-meta-v2.json') (([ordered]@{
@@ -498,7 +506,7 @@ Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNe
 
     [pscustomobject]@{
         status = 'ok'
-        assertions = 60
+        assertions = 62
         final_path = $final.final_path
     } | ConvertTo-Json -Compress
 }

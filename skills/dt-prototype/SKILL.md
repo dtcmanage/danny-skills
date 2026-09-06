@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.2
+  version: 1.1.3
   changelog: "Initial Anthropic-standard Phase 3 release. Adapted from Matt Pocock's prototype skill (MIT) with dt-pipeline routing and vendored starter templates for logic TUI (TypeScript/Python) and UI variant switcher."
 ---
 

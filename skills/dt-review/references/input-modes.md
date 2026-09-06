@@ -24,7 +24,10 @@ objectives, scope, constraints, architecture choices, and open questions, then w
 Infer rather than routinely asking:
 
 - `light`: bounded component or contract with limited blast radius; cap 3.
-- `complex`: cross-system, security-sensitive, production-critical, or hard-to-reverse design; cap 6.
+- `complex`: cross-system, security-sensitive, production-critical, or hard-to-reverse design; cap 4.
+
+Production-critical means a wrong design costs money, data, or an external relationship; a personal
+tool that happens to run on the production VM is `light`.
 
 Record the draft's primary author family at Round 0 and fix the reviewer lane to the opposite family
 (Claude-authored -> Codex lane; Codex-authored -> Claude lane; mixed/unclear -> Codex lane). Tier and

@@ -331,6 +331,64 @@ function Assert-DtReviewSemantics {
     }
 }
 
+function Set-DtReviewBlockingPolicy {
+    <#
+    .SYNOPSIS
+    Applies the deterministic blocking policy to a freshly parsed review, before validation.
+
+    .DESCRIPTION
+    Audit of eleven reviews (2026-08-10 to 2026-09-06) found ~98% of findings carried
+    blocks_design=true, including every low-severity row, so one medium or low finding bought a
+    full high-effort round and reviews serialized one finding per round. The reviewer's blocking
+    bit was the only throttle. This policy is the throttle:
+
+      high   -> blocks in every round
+      medium -> blocks only in rounds 1 and 2 (the full-critique rounds)
+      low    -> never blocks
+
+    The review object is mutated in place (blocks_design and the mechanically derived verdict) so
+    the persisted artifact, state, and rendered markdown all carry the normalized values. Returns
+    one record per downgraded finding for round metadata. Invokers call this before
+    Assert-DtReviewSemantics; the validator itself stays pure so historical artifacts written under
+    the earlier semantics still verify.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [object]$Review,
+
+        [Parameter(Mandatory)]
+        [int]$Round
+    )
+
+    $downgrades = [System.Collections.Generic.List[object]]::new()
+    foreach ($finding in @($Review.findings)) {
+        if (-not $finding.PSObject.Properties['blocks_design'] -or -not $finding.PSObject.Properties['severity']) { continue }
+        if ($finding.blocks_design -isnot [bool] -or -not [bool]$finding.blocks_design) { continue }
+        $severity = ([string]$finding.severity).ToLowerInvariant()
+        $reason = switch ($severity) {
+            'low' { 'Low-severity findings never block finalization; apply as polish.' }
+            'medium' { if ($Round -gt 2) { 'Medium-severity findings block only in rounds 1-2; from round 3 they are polish.' } else { '' } }
+            default { '' }
+        }
+        if ([string]::IsNullOrEmpty($reason)) { continue }
+        $finding.blocks_design = $false
+        $downgrades.Add([pscustomobject]@{
+            id = [string]$finding.id
+            severity = $severity
+            reason = $reason
+        })
+    }
+
+    $findings = @($Review.findings)
+    $normalizedVerdict = if ($findings.Count -eq 0) { 'NOTHING_TO_ADD' }
+    elseif (@($findings | Where-Object { [bool]$_.blocks_design }).Count -gt 0) { 'MATERIAL_CHANGES_NEEDED' }
+    else { 'MINOR_POLISH_ONLY' }
+    if ($Review.PSObject.Properties['verdict'] -and [string]$Review.verdict -cne $normalizedVerdict -and $downgrades.Count -gt 0) {
+        $Review.verdict = $normalizedVerdict
+    }
+    return @($downgrades)
+}
+
 function ConvertTo-DtReviewSemanticProjection {
     param(
         [Parameter(Mandatory)]

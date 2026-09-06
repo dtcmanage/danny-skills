@@ -53,6 +53,23 @@ try {
     $ownerlessHigh.findings[0].severity = 'high'
     Assert-Throws { Assert-DtReviewSemantics -Review $ownerlessHigh -Round 1 -PriorEntries @() | Out-Null } 'requires a non-empty owner_role' 'ownerless high-severity finding passed semantic validation'
 
+    # Blocking policy: high blocks in any round, medium only in rounds 1-2, low never.
+    $mediumRound1 = $validReview | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $downgrades = @(Set-DtReviewBlockingPolicy -Review $mediumRound1 -Round 1)
+    Assert-True ($downgrades.Count -eq 0 -and [bool]$mediumRound1.findings[0].blocks_design -and $mediumRound1.verdict -eq 'MATERIAL_CHANGES_NEEDED') 'medium finding in round 1 was downgraded'
+    $mediumRound3 = $validReview | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $downgrades = @(Set-DtReviewBlockingPolicy -Review $mediumRound3 -Round 3)
+    Assert-True ($downgrades.Count -eq 1 -and $downgrades[0].id -eq 'R1-F01' -and -not [bool]$mediumRound3.findings[0].blocks_design -and $mediumRound3.verdict -eq 'MINOR_POLISH_ONLY') 'medium finding in round 3 still blocked'
+    $lowRound1 = $validReview | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $lowRound1.findings[0].severity = 'low'
+    $downgrades = @(Set-DtReviewBlockingPolicy -Review $lowRound1 -Round 1)
+    Assert-True ($downgrades.Count -eq 1 -and $lowRound1.verdict -eq 'MINOR_POLISH_ONLY') 'low finding blocked in round 1'
+    $highRound4 = $validReview | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $highRound4.findings[0].severity = 'high'
+    $highRound4.findings[0].owner_role = 'operator'
+    $downgrades = @(Set-DtReviewBlockingPolicy -Review $highRound4 -Round 4)
+    Assert-True ($downgrades.Count -eq 0 -and [bool]$highRound4.findings[0].blocks_design -and $highRound4.verdict -eq 'MATERIAL_CHANGES_NEEDED') 'high finding in round 4 was downgraded'
+
     # Invocation must canonically refresh a stale prompt and bind every input hash.
     $receiptProject = Join-Path $testRoot 'receipt-project'
     $receiptScratch = Join-Path $receiptProject 'design\_review'

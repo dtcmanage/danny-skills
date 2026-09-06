@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.12.0 (2026-09-06): Convergence gates from the 2026-09-06 audit of eleven reviews: script-enforced blocking policy in both invokers (high blocks any round, medium only rounds 1-2, low never; downgrades recorded in round metadata and review markdown, verdict recomputed); persist cap in evaluate-termination (a finding blocking in three rounds escalates to USER_DECISION instead of CONTINUE); verification-round prompt block from round 3 (verify prior commitments, new findings only at high severity); complex tier drops Sol to medium effort from round 3; complex cap 6 -> 4; security minimum checks in the shared dimension contract now apply only to artifacts with external actors or untrusted input.
+
 - 1.11.0 (2026-09-06): Proportionality calibration: reviewer prompt binds blocking to the draft's stated stakes, requires smallest-change remediation with a stated reason for any new component, makes over-building an Economy finding, and makes the reviewer defend machinery it asked for; orchestrator defaults to the smallest fix (REJECT abstract possibilities, COUNTER mechanism-adding remediations), reconciles by minimal edit with a 1.5x accretion check, and recommends residual-risk finalization over cap extension for gaps inside review-added machinery.
 
 - 1.10.0 (2026-08-30): Model-selection disclosure: Round 0 states the selected lane/tier model and a one-sentence reason in chat; deviations restate model and reason.

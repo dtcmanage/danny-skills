@@ -13,7 +13,7 @@ This prevents a prompt for draft A from producing a review receipt for later dra
 The script writes `design\_review\prompts\codex-critique-prompt-v<N>.md` (the filename is historical;
 both lanes consume it) in this order:
 
-1. Round instructions, the proportionality rules (stakes-bound blocking, smallest-fix remediation, over-building as a finding), and verdict calibration.
+1. Round instructions, the blocking policy, the proportionality rules (stakes-bound blocking, smallest-fix remediation, over-building as a finding), a verification-round block from round 3 on (verify prior commitments; new findings only at high severity), and verdict calibration.
 2. The trusted canonical dimension contract.
 3. Envelope-wrapped current draft.
 4. Optional envelope-wrapped `review-context.md` evidence map.
@@ -42,7 +42,8 @@ canonical prompt file is untouched and stays receipt-bound; the deterministic su
 round metadata), parses the returned JSON, and runs the identical semantic validation, rendering, and
 redaction chain.
 
-Verdict calibration is mechanical:
+Verdict calibration is mechanical, computed from `blocks_design` after the invoker applies the blocking
+policy (high any round, medium rounds 1-2 only, low never):
 
 - No findings: `NOTHING_TO_ADD`.
 - Findings exist, none has `blocks_design: true`: `MINOR_POLISH_ONLY`.

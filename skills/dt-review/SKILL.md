@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.11.0
+  version: 1.12.0
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -55,10 +55,12 @@ authoring model:
 | Role | Codex lane | Claude lane | Limit |
 | --- | --- | --- | --- |
 | Light review | `gpt-5.6-terra`, effort `medium` | `sonnet` | 3 rounds |
-| Complex review | `gpt-5.6-sol`, effort `high` | `opus` | 6 rounds |
+| Complex review | `gpt-5.6-sol`, effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
 | Preflight | `gpt-5.6-luna`, effort `low` | tier model, echo check | 30 seconds |
 
-Any deviation from the tier-default effort (Codex) or model alias (Claude) requires a one-line
+Rounds 1-2 are the full critique; rounds 3+ are verification rounds (check prior commitments, new
+findings only at high severity), so the complex tier drops to medium effort there and the invoker's
+round-aware default already expects it. Any deviation from the tier-default effort (Codex) or model alias (Claude) requires a one-line
 recorded reason — the invokers refuse it otherwise (`-EffortReason` / `-ModelReason`) and persist it in
 round metadata.
 
@@ -163,7 +165,7 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
    pwsh -NoProfile -File <skill>\scripts\invoke-codex-round.ps1 `
      -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> `
      -Model <tier-model> -Tier <light|complex> `
-     -ReasoningEffort <medium|high per tier> -TimeoutMs <300000|600000>
+     -ReasoningEffort <light: medium | complex: high for rounds 1-2, medium from round 3> -TimeoutMs <300000|600000>
    ```
 
    Claude lane:
@@ -185,6 +187,11 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
    pwsh -NoProfile -File <skill>\scripts\parse-verdict.ps1 `
      -FeedbackPath <review-vN.md> -Round <N> -StatePath <verdicts.json> -Tier <light|complex>
    ```
+
+   **Blocking policy.** Both invokers normalize `blocks_design` before validation and record the
+   downgrades in `round-meta-v<N>.json` and a `## Blocking policy` section of `review-v<N>.md`: high
+   blocks in any round, medium only in rounds 1-2, low never. The verdict is recomputed from the
+   normalized values, so a late medium finding is polish, applied without a new round.
 
    Every numbered parse requires `round-meta-v<N>.json` and verifies that its round and tier match
    the caller before persisting the receipt's tier. Keep that tier for every later parse, assembly,
@@ -218,6 +225,9 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
    ```
 
 8. Run `evaluate-termination.ps1 -StatePath <verdicts.json> -Round <N> -Tier <tier>` and obey its action.
+   Besides the round cap it enforces a **persist cap**: when every still-blocking finding has appeared
+   in three rounds, the action is `USER_DECISION` (listed in `persist_capped`) instead of `CONTINUE`.
+   Present it exactly like a cap decision; the default recommendation is residual-risk finalization.
 
 For `CONTINUE` or `APPLY_POLISH_AND_VERIFY`, write immutable `draft-v<N+1>.md` with reconciled changes.
 Reconcile by the smallest edit that honors each disposition; do not restate, expand, or hedge sections

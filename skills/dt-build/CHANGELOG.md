@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.11.2
+
+- Shared canonical-dimension-contract.md: security minimum checks apply only to artifacts with external actors or untrusted input; no change to this skill's own files.
+
 ## 2.11.1
 
 - Shared canonical-dimension-contract.md: Resilience security-minimum N/A standard scales to stakes; no change to this skill's own files.

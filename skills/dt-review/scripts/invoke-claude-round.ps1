@@ -330,12 +330,19 @@ try {
         }
     }
     Assert-DtReviewSemanticHistory -Entries $priorEntries
+    # Blocking policy runs before validation so the persisted artifact carries normalized values.
+    $blockingDowngrades = @(Set-DtReviewBlockingPolicy -Review $review -Round $Round)
+    if ($blockingDowngrades.Count -gt 0) { $reviewRaw = ConvertTo-Json -InputObject $review -Depth 10 }
     [void](Assert-DtReviewSemantics -Review $review -Round $Round -PriorEntries $priorEntries)
     $findings = @($review.findings)
     Assert-DtReviewInvocationReceipt -Receipt $inputReceipt -Round $Round -Tier $Tier
 
     $safeJson = Invoke-SecretRedaction -Text $reviewRaw
     $safeMarkdown = Invoke-SecretRedaction -Text (Convert-ReviewToMarkdown -Review $review)
+    if ($blockingDowngrades.Count -gt 0) {
+        $safeMarkdown = $safeMarkdown.TrimEnd() + "`n`n## Blocking policy`n" +
+            (($blockingDowngrades | ForEach-Object { "- $($_.id) ($($_.severity)): blocks_design set to false. $($_.reason)" }) -join "`n") + "`n"
+    }
     Write-Atomic -Path $reviewJsonPath -Content ($safeJson.TrimEnd() + "`n")
     Write-Atomic -Path $reviewPath -Content $safeMarkdown
 
@@ -354,6 +361,7 @@ try {
         resolved_model = $RequestedModel
         reasoning_effort = 'cli-session-default'
         model_reason = $ModelReason
+        blocking_downgrades = @($blockingDowngrades)
         lane = 'claude'
         cli_version = $cliVersion
         duration_ms = $processResult.duration_ms

@@ -1,5 +1,7 @@
 # dt-plan changelog
 
+- 1.3.0 (2026-09-06): Premises-first rule for the Build-intake revalidation table: the two to five facts the plan's value depends on are checked live before the dimension passes and recorded as rows; an unverified premise blocks dt-review. Shared dimension contract: security minimum checks apply only with external actors or untrusted input.
+
 - 1.2.1 (2026-09-06): Shared canonical-dimension-contract.md: Resilience security-minimum N/A standard scales to stakes (one sentence satisfies all items for a single-operator artifact with no external actors); unjustified hardening is an Economy finding.
 
 - 1.2.0 (2026-08-30): Producer-side contract alignment with dt-review 1.9.0 and dt-build 2.9.x: plans now carry the required '## Build-intake revalidation' table that dt-review Round-1 hard-gates on; sections are written to plan-draft.md as they lock instead of one batched save; new scripts/verify-plan-shape.ps1 validates the plan at save time; Scope now tiers the Step 3 drive (light = one compressed pass, complex = full drive); added a settled-decisions ledger to stop re-litigating adjudicated calls; removed the forked references/{plan-shape,surface-templates}.md copies in favor of the repo-level originals; collapsed the self-cancelling HTML requirement block to a one-line dt-visualize-plan pointer.
