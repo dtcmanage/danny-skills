@@ -1,3 +1,5 @@
 2026-07-10 dt-ship: worktree purge removed Git registration but left the directory when Windows hit a long-path filename; manual extended-path removal was required before resuming.
 2026-07-10 dt-ship: commit-probe retries reused one cache-buster, so the first stale version.json response remained cached through all five attempts even after the deployment propagated; a fresh query key matched immediately.
 2026-08-18 dt-ship: purge used `git branch -d` before pushing main, so a feature branch tracking `origin/main` was rejected as not merged to its upstream after the local ff-only merge; recovery required unsetting the upstream and rerunning with the already-green gate skipped.
+2026-09-01 dt-ship: the release gate normalized a Books evidence file from CRLF to LF, making the verified feature tree appear dirty and blocking merge until `git add` proved there was no staged content diff.
+2026-09-01 dt-ship: deploy failed after merge/push because Azure VM run-command was occupied by a concurrent release; retry succeeded, and production advanced again before hash proof, requiring an ancestor check against the newer deployed main.
