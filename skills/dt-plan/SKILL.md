@@ -5,7 +5,7 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.2.0
+  version: 1.2.1
   changelog: "See skills/dt-plan/CHANGELOG.md."
 ---
 

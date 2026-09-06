@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.10.0
+  version: 1.11.0
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -200,6 +200,13 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
    voluntarily elevate it to Danny.
 5. Independently assess every finding against canonical constraints, actual evidence, reversibility, and
    economy. There is no accept/reject quota. Do not reflexively assimilate the reviewer recommendation.
+   **Default to the smallest fix.** Judge each finding against the stakes the draft states (for a
+   solo-operator internal tool: one user, no hostile actors, manual recovery is acceptable). A finding
+   that rests on an abstract possibility — a crash window between adjacent steps, a vendor behavior the
+   design does not depend on, an actor the stakes rule out — is REJECT, with the stakes named in the
+   note. A real finding whose remediation adds a component (table, state machine, retry layer,
+   recovery path) when a sentence, a stated constraint, or a narrowed scope closes it is COUNTER with
+   the smaller fix. ACCEPT a new mechanism only when the smaller fix demonstrably fails, and say why.
 6. Write `dispositions-v<N>.json` with exact ID coverage and one of ACCEPT/REJECT/DEFER/COUNTER plus an
    evidence-based note. Include `ambiguity_resolution` when flagged and `user_adjudication` for a re-raised
    rejection. Append the same reasoning under `## Orchestrator Response` in `review-v<N>.md`.
@@ -213,6 +220,11 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
 8. Run `evaluate-termination.ps1 -StatePath <verdicts.json> -Round <N> -Tier <tier>` and obey its action.
 
 For `CONTINUE` or `APPLY_POLISH_AND_VERIFY`, write immutable `draft-v<N+1>.md` with reconciled changes.
+Reconcile by the smallest edit that honors each disposition; do not restate, expand, or hedge sections
+the findings did not touch. A draft that has grown past roughly 1.5x its Round-1 length is accreting:
+before writing the next draft, re-read it for mechanisms the stakes do not justify, cut them, and note
+the cut in `## Orchestrator Response`. Removing machinery adopted for an earlier finding is a valid
+reconciliation when it closes the current finding more cheaply.
 For `APPLY_POLISH_AND_FINALIZE`, follow `references/finalization.md` and use
 `prepare-final-draft.ps1`; never hand-write the unreviewed `draft-v<N+1>.md`.
 Never edit a reviewed draft in place.
@@ -222,6 +234,10 @@ Never edit a reviewed draft in place.
 On `USER_DECISION`, present exactly: extend one round; stop unfinalized; or explicitly accept residual
 risk. Residual-risk finalization requires `prepare-final-draft.ps1 -ApprovedResidualRisk` plus the same
 switch on the finalizer. Never silently convert a material last verdict into a final design.
+Recommend extension only when an open finding would make the built system fail its stated purpose;
+when the open findings are coherence or completeness gaps inside machinery the review itself added,
+recommend residual-risk finalization (or cutting the machinery) instead — extension rounds are where
+light reviews accrete.
 
 **Subagent contract.** When this skill runs inside a subagent (dt-pipeline's review phase or any
 spawned agent), there is no direct channel to Danny: on `USER_DECISION` (and any A/B/C adjudication),

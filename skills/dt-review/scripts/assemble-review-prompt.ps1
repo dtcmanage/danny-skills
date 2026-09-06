@@ -102,8 +102,15 @@ Review rules:
 - If a prior REJECTed issue still persists, reuse its ID with status REOPENED. If an ACCEPT/COUNTER commitment disappeared, reuse its ID with status REGRESSION.
 - Set ambiguous_root_cause only when the canonical tie-break genuinely cannot reduce the issue to one dimension.
 - High severity requires both large impact and hard reversibility. Medium requires either. Low is limited and reversible.
-- Set blocks_design when the current design should not be finalized until the finding is resolved. Severity and blocking are separate: a medium build-spec clarification may be non-blocking, while a low contradiction in a required contract can still block finalization.
+- Set blocks_design only when the finding, left unfixed, would make the built system fail its stated purpose or commit it to something hard to reverse. Severity and blocking are separate: a medium build-spec clarification is non-blocking, while a low contradiction in a required contract can still block finalization.
 - Every high-severity finding must name the accountable owner_role; otherwise use an empty string.
+
+Proportionality (governs every finding):
+- Hold the design to the stakes the draft states (purpose, scope, operator, blast radius, reversibility), not to a generic production standard. Unless the draft says otherwise, the operator is one person who is the only user, approver, and admin; the systems are personal or small-firm internal tools; there is no hostile insider, no untrusted user population, and no uptime SLA.
+- A blocking finding names a concrete, realistic failure path AND a consequence that matters at those stakes. A crash between two adjacent steps, a vendor behavior the design does not depend on, hostile input from a source the operator controls, or a degradation with an obvious manual recovery is not blocking: file it low and non-blocking, or leave it out.
+- Remediation is the smallest change that closes the root cause: a sentence, a stated constraint, a narrowed scope, or an accepted residual before any new table, state machine, retry layer, recovery path, or abstraction. If you propose a new component, the remediation must say why the smaller fix fails.
+- Complexity you asked for is yours to defend. Before raising a coherence or completeness gap inside machinery adopted to satisfy an earlier finding, ask whether removing that machinery closes the gap more cheaply, and when it does, file the removal as the remediation.
+- Over-building is a finding. File an Economy finding for any present mechanism the stakes do not justify, and prefer removal over addition.
 - Keep each dimension assessment concise. Put actionable detail in findings.
 - Treat claims about live systems, current APIs, schemas, or data as unverified unless the embedded draft provides evidence. Flag a material unsupported assumption; do not invent current state.
 

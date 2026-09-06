@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.11.0 (2026-09-06): Proportionality calibration: reviewer prompt binds blocking to the draft's stated stakes, requires smallest-change remediation with a stated reason for any new component, makes over-building an Economy finding, and makes the reviewer defend machinery it asked for; orchestrator defaults to the smallest fix (REJECT abstract possibilities, COUNTER mechanism-adding remediations), reconciles by minimal edit with a 1.5x accretion check, and recommends residual-risk finalization over cap extension for gaps inside review-added machinery.
+
 - 1.10.0 (2026-08-30): Model-selection disclosure: Round 0 states the selected lane/tier model and a one-sentence reason in chat; deviations restate model and reason.
 
 - 1.9.1 (2026-08-30): Shared references/plan-shape.md now specifies the required '## Build-intake revalidation' section and names skills/dt-plan/scripts/verify-plan-shape.ps1 as the producer-side gate; no change to this skill's own files.

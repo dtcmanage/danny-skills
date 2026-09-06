@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.11.1
+
+- Shared canonical-dimension-contract.md: Resilience security-minimum N/A standard scales to stakes; no change to this skill's own files.
+
 ## 2.11.0
 
 - Enforce a mandatory pre-dispatch model-selection report and persist its reason and canonical line in both lane wrappers.
