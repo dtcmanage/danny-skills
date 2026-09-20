@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.12.0
+
+- Context discipline and lane default: standing no-nested-agents, quiet-output, and ~100-tool-call checkpoint rules in every assembled prompt with a CONTINUATION_STATE report field; fresh-session continuation replaces resuming a working builder; thin-orchestrator rules; standard tier is the default and complex must be earned; dispatches stay in the orchestrator's family (codex-host verifies on Codex, claude-host should build on Codex); invoke-claude-chunk.ps1 starts a slim session (no MCP, no Agent tool) with -ReadOnly for verifiers.
+
 ## 2.11.2
 
 - Shared canonical-dimension-contract.md: security minimum checks apply only to artifacts with external actors or untrusted input; no change to this skill's own files.

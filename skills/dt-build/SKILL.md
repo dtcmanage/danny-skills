@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex orchestration unverified end-to-end); requires danny-skills repo present."
 metadata:
-  version: 2.11.2
+  version: 2.12.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -96,8 +96,16 @@ Light-tier implementation is allowed — the orchestrator owns quality: it revie
 when a light-tier model proves incapable, the retry escalates one tier (light → standard → complex; a
 standard failure escalates to complex, as before). Escalation IS the second attempt and stays inside the
 two-attempt budget. Start load-bearing chunks at `complex` directly; never start them light.
+
+**`standard` is the default; `complex` must be earned.** A dispatch — builder, verifier, or final reviewer,
+on either lane — may use `complex` only when (a) `scripts/identify-load-bearing.ps1` flagged the milestone,
+(b) the milestone is security-sensitive or performs a live write, or (c) it is the escalation retry of a
+failed `standard` attempt. The selection reason must name which one. "Large", "important", or "to be safe"
+is not a reason. Verifiers of non-flagged milestones run `standard`. (Measured 2026-09-19: 9 of 10
+claude-host dispatches and 206 of 211 codex-host `claude -p` chunks ran on Opus.)
+
 **Mandatory model-selection report (hard dispatch gate).** Immediately before every substantive subagent
-dispatch — initial build, same-attempt resume, retry/escalation, remediation, independent verifier, and
+dispatch — initial build, checkpoint continuation, retry/escalation, remediation, independent verifier, and
 final combined-diff review, on either lane — emit this standalone user-visible line:
 
 `MODEL_SELECTION: <dispatch_id> -> <resolved_model> (<tier>[, effort <effort>]): <one-sentence selection reason>`
@@ -121,24 +129,37 @@ chunks unsandboxed (Codex removed its Windows sandbox; a `workspace-write` reque
 blocks every command): containment there is the scoped worktree plus independent verification, and the
 provenance JSON records the effective mode. Never treat that Windows block as a dead Codex lane.
 
-**Claude lane.** Repo-wide navigation, UI judgment, workspace-memory work, and semantic verification stay
-on this lane. Dispatch it via CLAUDE_DISPATCH (harness contract below); record the surface/model actually
+**Claude lane.** Repo-wide navigation, UI judgment, and workspace-memory work belong on this lane (on
+codex-host only under the opt-in exception in the lane default below). Dispatch it via CLAUDE_DISPATCH (harness contract below); record the surface/model actually
 used, never invent a slug.
 
 **Harness contract.** At intake, note which harness is orchestrating: `claude-host` (a Claude Code / Cowork
 session with the host-native Agent tool) or `codex-host` (any orchestrator without it). Define
 **CLAUDE_DISPATCH** once for the run — on claude-host, a fresh host-native Agent with an explicit `model`
 matching the tier map; on codex-host, `scripts/invoke-claude-chunk.ps1` with the same tier — and use
-CLAUDE_DISPATCH everywhere this skill dispatches a Claude subagent: build/fix chunks, independent semantic
-verification (step 6.d), and the final combined-diff review (step 6.5). On codex-host, run
+CLAUDE_DISPATCH everywhere this skill dispatches a Claude subagent. Define **VERIFY_DISPATCH** the same
+way for independent semantic verification (step 6.d) and the final combined-diff review (step 6.5): on
+claude-host it is CLAUDE_DISPATCH; on codex-host it is a fresh Codex session through
+`scripts/invoke-codex-chunk.ps1` that did not build the chunk under review. On codex-host, run
 `scripts/invoke-claude-chunk.ps1 -Preflight -TimeoutMs 30000` once per selected Claude tier before its
 first substantive use, same rules as the Codex tier preflights. Claude frontmatter (`allowed-tools`) binds
 only Claude surfaces; Codex permissions come from its launch-time sandbox, not this file.
 
-**Cross-model dispatch.** Both orchestrators use both lanes: a Claude orchestrator routes Codex chunks
-through `scripts/invoke-codex-chunk.ps1` (existing), and a codex-host orchestrator routes Claude chunks
-through `scripts/invoke-claude-chunk.ps1` — same contract: prompt over stdin, pinned model,
-provenance JSON, structured-report shape check. A fully Codex-orchestrated dt-build run is currently
+**Lane default: stay in the orchestrator's family.** Every dispatch goes to the host's own lane unless an
+exception below applies:
+
+- `codex-host`: build, fix, verify, and final review all run on the Codex lane. A Claude chunk through
+  `scripts/invoke-claude-chunk.ps1` is opt-in, only for work that needs the Claude lane's named strengths
+  (UI judgment, workspace-memory work), and the selection reason must say which. Independent verification
+  on codex-host means a fresh Codex session that did not build the chunk, not a Claude session.
+- `claude-host`: verification, review, navigation, and UI judgment run on the Claude lane. Crisp, scoped
+  implementation chunks SHOULD go to the Codex lane through `scripts/invoke-codex-chunk.ps1` — that spends
+  the ChatGPT subscription instead of Claude quota and was the cheapest measured configuration. Keep a
+  chunk on a Claude builder when it needs repo-wide navigation or judgment, or when Codex is unavailable.
+
+Both wrappers keep the same contract: prompt over stdin, pinned model, provenance JSON, structured-report
+shape check. `invoke-claude-chunk.ps1` starts a slim session (`--strict-mcp-config`, built-in file and
+shell tools only, no Agent tool); pass `-ReadOnly` for verifier and review chunks. A fully Codex-orchestrated dt-build run is currently
 unverified end-to-end (sandbox, child-process network, and `.git`-write behavior under Codex's launch
 profile are unproven); the wrapper is the supported bridge, not a parity claim.
 
@@ -147,6 +168,41 @@ Before the first substantive invocation of each distinct Codex tier, run
 substantive call sets `-TimeoutMs 600000` plus a 10-minute outer timeout. The wrapper passes the prompt over stdin, pins model and effort explicitly, uses
 the correct sandbox, redacts the stream log, and records requested/resolved model, CLI version, auth surface,
 cache timestamp, effort, and duration.
+
+## Context discipline (token budget)
+
+Measured 2026-09-19 (`Skill Creation/dt-build-token-efficiency/token-drain-review-2026-09-19.md`): prompt
+caching works (93-99% hits); the drain is context size multiplied by turn count. Builders kept alive by
+resume messages climbed to ~965K tokens and re-read it on every one of 600-1,300 turns; idle builders lost
+their 5-minute cache and re-wrote it 181 times; the orchestrator grew to 600K by reading whole designs and
+raw command output. These rules bind every run:
+
+- **No chunk-size limit.** Size chunks by coherence. One session may build a large component on a high
+  tier when splitting it would hurt the design. Cost is controlled by the rules below, not by chopping.
+- **Checkpoint, never bloat.** Every chunk prompt carries the standing execution rules appended by
+  `assemble-codex-prompt.ps1`: no nested agents, command output to a file and read the tail, no idle waits,
+  and a checkpoint after about 100 tool calls. Name the state-note path in the brief:
+  `<run-folder>/milestones/<mid>/continuation-<n>.md` (the one `.dt-build/` write a builder may make). On
+  claude-host, put the same standing rules in every host-native Agent prompt.
+- **Continue in a fresh session.** When a report returns `CONTINUATION_STATE` with a path, dispatch a fresh
+  builder on the same tier whose brief is the milestone contract plus that note. A continuation is the same
+  attempt — it consumes no attempt budget — and gets its own `MODEL_SELECTION` line. Never build the note's
+  content into your own context beyond confirming it exists.
+- **No resume of a working builder.** Do not send follow-up messages to a builder that has already done
+  substantive work (SendMessage on claude-host, session resume on codex-host). A correction, fix, or next
+  step is a fresh dispatch with a brief that states the current state. Resume is allowed only to answer a
+  question the builder asked before it started work.
+- **No nested agents.** Builders, verifiers, and reviewers never spawn agents. If a returned report or
+  transcript shows one did, record it as a finding in the decision log.
+- **Thin orchestrator.** Never read the whole design, roadmap, or a reference file into your context: read
+  the current milestone's section by line range, and read each reference once, only at the step that needs
+  it. Run dt-build scripts with `-Json` and keep the verdict fields; redirect any command that can print
+  more than ~40 lines to a file under the run folder and read the tail. Never print a full diff — hand the
+  verifier the commit range instead. Give subagents paths, not pasted content.
+- **Restart at milestone boundaries.** After step 6.i, if this session has run more than about 150 tool
+  calls since it started or last compacted, tell Danny in one line that `_build-state.md` is current and the
+  run can continue in a fresh session (`/dt-build` with the RUN_ID) or after `/compact`. Continue if he
+  does not respond; this is advice, not a gate.
 
 ## Procedure (7A intake + 7B execution + 7C acceptance gate)
 
@@ -224,12 +280,14 @@ cache timestamp, effort, and duration.
   worktree. Do not hand-roll `codex exec` or `claude -p`. Automatic implementation failures consume at most two attempts;
   environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
   restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
+- c1. **Handle a checkpoint return.** If the report's `CONTINUATION_STATE` names a path, follow "Continue
+  in a fresh session" above before any verification; verify only when a report returns `NONE`.
 - c2. **Hold the milestone scope lock.** Every build/fix prompt carries the scope-lock block from
   `references/subagent-prompts.md`: the chunk builds exactly what the milestone specifies — no speculative
   abstraction, no unrequested features, no extra files. Anything discovered mid-build (a missing feature,
   useful file, abstraction, or hardening) is reported in the chunk's `DISCOVERED_ENHANCEMENTS` field, never
   built into the diff.
-- d. **Run independent semantic verification.** A fresh non-builder Claude subagent (via CLAUDE_DISPATCH) reviews every load-bearing,
+- d. **Run independent semantic verification.** A fresh non-builder verifier (via VERIFY_DISPATCH) reviews every load-bearing,
   security-sensitive, live-write, or agent-verification milestone before acceptance. Record findings and the
   verifier surface/model, selection reason, and disclosure line. The builder never self-approves. The verifier also flags any diff content beyond
   the milestone's named artifacts and stated scope as an out-of-scope finding — built-but-unrequested work is
@@ -253,7 +311,7 @@ cache timestamp, effort, and duration.
 
 6.5 Emit acceptance ledger; review artifact on request only:
 - Run one final integrated baseline/E2E rehearsal against the exact integration-branch SHA, including every
-  design-required live environment check. Have a fresh non-builder Claude subagent (via CLAUDE_DISPATCH)
+  design-required live environment check. Have a fresh non-builder verifier (via VERIFY_DISPATCH)
   review the combined diff. Persist
   `final-integration.json` with branch SHA, commands, environment, verifier provenance (on codex-host,
   include the wrapper's provenance JSON path), and PASS/BLOCKED.

@@ -8,6 +8,7 @@ param(
     [ValidateRange(1, 2)][int]$Attempt = 1,
     [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
+    [switch]$ReadOnly,
     [string]$ClaudeCliPath = "",
     [switch]$Json
 )
@@ -169,11 +170,18 @@ else {
 # Preflight needs no tool access; a build chunk needs file writes and test
 # commands without interactive prompts, mirroring Codex's workspace-write sandbox.
 $permissionMode = if ($Preflight) { 'default' } else { 'bypassPermissions' }
+# Slim session: no MCP servers and only the built-in tools a chunk needs. This
+# cuts the cold-start context (measured 2026-09-19: 42K -> 25K tokens) and removes
+# the Agent tool, so a chunk cannot spawn nested agents outside the tier policy.
+# -ReadOnly (verifier/review chunks) also drops the file-writing tools.
+$toolList = if ($Preflight) { 'Read' } elseif ($ReadOnly) { 'Bash,Read,Glob,Grep' } else { 'Bash,Read,Edit,Write,Glob,Grep' }
 $args = @(
     '-p',
     '--model', $resolvedModel,
     '--permission-mode', $permissionMode,
-    '--output-format', 'text'
+    '--output-format', 'text',
+    '--strict-mcp-config',
+    '--tools', $toolList
 )
 
 $started = Get-Date
@@ -286,6 +294,8 @@ try {
         selection_reason    = if ($Preflight) { $null } else { $SelectionReason }
         disclosure_line     = $disclosureLine
         permission_mode     = $permissionMode
+        tools               = $toolList
+        mcp_servers         = 'none (--strict-mcp-config)'
         attempt             = $Attempt
         claude_cli_version  = $cliVersion
         duration_ms         = $durationMs

@@ -341,6 +341,7 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     $fakeClaude = Join-Path $tempRoot 'fake-claude.ps1'
     Write-Utf8 -Path $fakeClaude -Content @'
 if ($args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
+if ($env:DT_FAKE_CLAUDE_ARGS) { [System.IO.File]::WriteAllText($env:DT_FAKE_CLAUDE_ARGS, ($args -join '|')) }
 [void][Console]::In.ReadToEnd()
 $mode = [string]$env:DT_FAKE_CLAUDE_MODE
 if ($mode -eq 'malformed') { Write-Output 'I cannot do that.'; exit 0 }
@@ -382,6 +383,31 @@ Write-Output $report
     $claudeProv = Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json" | ConvertFrom-Json
     Assert-True ([string]$claudeProv.selection_reason -eq 'ordinary fixture verification logic') "Claude provenance omitted selection reason"
     Assert-True ([string]$claudeProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> sonnet \(standard\): ordinary fixture verification logic$') "Claude provenance omitted canonical disclosure line"
+
+    # Slim-session contract: no MCP servers, no Agent tool (blocks nested agents),
+    # and -ReadOnly drops the file-writing tools for verifier/review chunks.
+    $claudeArgsLog = Join-Path $tempRoot 'claude-args.txt'
+    $env:DT_FAKE_CLAUDE_ARGS = $claudeArgsLog
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-args-build.md') `
+        -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
+    $buildArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
+    Assert-True ($buildArgs -match '--strict-mcp-config') "Claude wrapper did not disable MCP servers"
+    Assert-True ($buildArgs -match '--tools\|Bash,Read,Edit,Write,Glob,Grep(\||$)') "Claude wrapper build tool list drifted"
+    Assert-True ($buildArgs -notmatch 'Agent') "Claude wrapper exposed the Agent tool to a chunk"
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-args-verify.md') `
+        -ClaudeCliPath $fakeClaude -Tier standard -ReadOnly -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
+    $verifyArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
+    Assert-True ($verifyArgs -match '--tools\|Bash,Read,Glob,Grep(\||$)') "Claude wrapper -ReadOnly still exposed write tools"
+    Remove-Item Env:DT_FAKE_CLAUDE_ARGS -ErrorAction SilentlyContinue
+
+    # Every assembled prompt carries the standing context-discipline rules and
+    # the checkpoint field; removing either silently restores unbounded builders.
+    $assembler = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'assemble-codex-prompt.ps1')
+    Assert-True ($assembler -match 'Do not spawn subagents') "assembled prompt lost the nested-agent ban"
+    Assert-True ($assembler -match 'after about 100 tool calls') "assembled prompt lost the checkpoint rule"
+    Assert-True ($assembler -match '(?m)^CONTINUATION_STATE:') "assembled report lost the CONTINUATION_STATE field"
 
     $env:DT_FAKE_CLAUDE_MODE = 'malformed'
     $claudeMalformed = Join-Path $tempRoot 'claude-wrapper-malformed.md'

@@ -17,24 +17,30 @@ Lane routing:
   selection reason must explain the tier choice. Pass the identical reason to a cross-model wrapper through
   `-SelectionReason`; for a host-native Agent, include the disclosure text and explicit-model Agent call in
   the same assistant message. Bare or inherited-model Agent calls are prohibited.
-- Route crisp, scoped implementation to the Codex lane through
-  `scripts/invoke-codex-chunk.ps1`; never invoke `codex exec` directly.
+- Lane default (binding text in `SKILL.md`): stay in the orchestrator's family. A codex-host builds,
+  verifies, and reviews on the Codex lane; a Claude chunk there is opt-in with a named reason. A
+  claude-host verifies on the Claude lane and SHOULD route crisp, scoped implementation to the Codex lane
+  through `scripts/invoke-codex-chunk.ps1`; never invoke `codex exec` directly.
 - **CLAUDE_DISPATCH** (defined once, used in every template below): a fresh
   host-native Agent with an explicit tier-matched `model` when the orchestrator
   has the Agent tool (Claude Code / Cowork); otherwise
   `scripts/invoke-claude-chunk.ps1` with the same tier — the cross-model bridge
   for a codex-host orchestrator.
-- Route repo-wide navigation, UI judgment, workspace-memory work, and semantic
-  verification to a Claude subagent via CLAUDE_DISPATCH.
+- **VERIFY_DISPATCH**: CLAUDE_DISPATCH on claude-host; on codex-host a fresh Codex session through
+  `scripts/invoke-codex-chunk.ps1` that did not build the chunk. Pass `-ReadOnly` to
+  `invoke-claude-chunk.ps1` for verifier and review chunks.
+- Repo-wide navigation, UI judgment, and workspace-memory work are the Claude lane's named strengths.
 - Tier every chunk by difficulty, on either lane: `light` (Codex `gpt-5.6-luna`
   / Claude `haiku`) for routine mechanical work including light implementation
   — boilerplate, config, renames, straightforward tests, preflight; `standard`
   (`gpt-5.6-terra` / `sonnet`) for ordinary implementation; `complex`
   (`gpt-5.6-sol` / `opus`) for load-bearing, security-sensitive, or ambiguous
-  work. Load-bearing chunks start at `complex`, never light.
+  work. Load-bearing chunks start at `complex`, never light. `standard` is the default for builders,
+  verifiers, and reviewers; `complex` needs a load-bearing flag, a security-sensitive or live-write
+  milestone, or a failed `standard` attempt, named in the selection reason.
 - The orchestrator owns quality: a failed attempt escalates one tier on the
   retry (light → standard → complex), inside the two-attempt budget. A fresh
-  non-builder Claude subagent (via CLAUDE_DISPATCH) performs semantic verification
+  non-builder verifier (via VERIFY_DISPATCH) performs semantic verification
   before acceptance for every
   load-bearing, security-sensitive, live-write, or agent-verification milestone.
 
@@ -54,6 +60,15 @@ Every build/fix prompt ends with:
   `assemble-codex-prompt.ps1`; the invocation wrappers reject a missing identity echo
   or any missing `CHANGED_FILES`, `COMMANDS_AND_RESULTS`, `UNRESOLVED_BLOCKERS`,
   or `DISCOVERED_ENHANCEMENTS` field.
+
+Standing execution rules (every build, fix, verification, and review prompt):
+- `assemble-codex-prompt.ps1` appends them to every assembled prompt; a host-native Agent prompt must carry
+  the same text. No nested agents. Command output goes to a file and only the summary or tail is read. No
+  idle waits on long commands. Checkpoint after about 100 tool calls: write the state note to the path the
+  brief names (`<run-folder>/milestones/<mid>/continuation-<n>.md`) and return it in `CONTINUATION_STATE`.
+- The orchestrator continues a checkpointed chunk in a fresh session and never sends follow-up messages to
+  a builder that has already done substantive work.
+- Briefs carry paths and line ranges, not pasted file content.
 
 Every verification prompt is read-only and contains:
 - The milestone contract and exact accepted diff/commit.
