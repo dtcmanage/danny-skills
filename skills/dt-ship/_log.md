@@ -4,3 +4,4 @@
 2026-09-01 dt-ship: the release gate normalized a Books evidence file from CRLF to LF, making the verified feature tree appear dirty and blocking merge until `git add` proved there was no staged content diff.
 2026-09-01 dt-ship: deploy failed after merge/push because Azure VM run-command was occupied by a concurrent release; retry succeeded, and production advanced again before hash proof, requiring an ancestor check against the newer deployed main.
 2026-09-19 dt-ship: ship.ps1 fails resolve-branch ('Nothing to ship') when the finished work is already on main with no feature branch, and .ship.json gateCommand's '-BaseRef main' is rejected by verify-versioning-policy on clean main (BASE_REF_SELF; it wants the prior release-boundary commit). Gate, push, deploy, and hash probe had to be run by hand with the boundary SHA substituted.
+2026-09-20 dt-ship: on-main mode and -BaseRef auto shipped (0.2.x); the 2026-09-19 hand-run gap is closed.
