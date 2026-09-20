@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex orchestration unverified end-to-end); requires danny-skills repo present."
 metadata:
-  version: 2.12.0
+  version: 2.13.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -204,6 +204,21 @@ raw command output. These rules bind every run:
   run can continue in a fresh session (`/dt-build` with the RUN_ID) or after `/compact`. Continue if he
   does not respond; this is advice, not a gate.
 
+## Usage telemetry (automatic)
+
+`scripts/collect-usage.ps1` sweeps this machine's Claude Code and Codex session logs for dt-build runs
+(orchestrators and wrapper-launched chunks, either host) and refreshes
+`Skill Creation/dt-build-token-efficiency/usage/usage-ledger-<machine>.jsonl` plus `usage-dashboard.html`:
+weighted tokens by model family, peak context, nested agents, resume messages, idle cache losses, and
+Opus share per run. It is read-only against the logs, incremental, and never blocks a build.
+
+- Run `pwsh -NoProfile -File scripts/collect-usage.ps1 -Quiet` once at intake (step 1) and once after the
+  final ledger (step 6.5). The intake sweep is what captures earlier runs, including ones that never
+  reached COMPLETE; there is no separate manual step.
+- Relay any `DT_BUILD_USAGE_ALERT:` line to Danny verbatim, once. Alerts fire only the first time a run is
+  flagged. They are advisory: never stop, retry, or re-plan a build because of one.
+- Do not read the ledger or dashboard into your context; report the dashboard path only.
+
 ## Procedure (7A intake + 7B execution + 7C acceptance gate)
 
 1. Intake in one question:
@@ -215,6 +230,7 @@ raw command output. These rules bind every run:
 - Optional integration branch (default `build/<RUN_ID>`, cut from `main`).
 - Optional merge target (default `main`); use an existing feature branch only when the build is explicitly
   continuing that isolated feature surface.
+- Then run the usage sweep (`scripts/collect-usage.ps1 -Quiet`, see "Usage telemetry").
 
 2. Resolve the input to a roadmap contract:
 - If the input file already parses as a roadmap (frontmatter `schema_version` + a `## Milestones`
@@ -325,6 +341,7 @@ raw command output. These rules bind every run:
   - When `<run-folder>/deferred-findings.md` exists, the ledger appends its content as a
     "Deferred / Next Version" section in both outputs — the record of what the orchestrator chose not to
     build and why. It is informational, never a blocker, and requires no review by Danny.
+- Run the usage sweep again (`scripts/collect-usage.ps1 -Quiet`) and include the dashboard path in the final output.
 - Mark the run complete in the pipeline checkpoint: rewrite `_build-state.md` (same template and location as step 6.h) with `status: COMPLETE`, the final commit SHA, and no in-flight work.
 - `build-run-review.html`: Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks for it, generate `build-run-review.html` in the run artifact folder with:
   - the acceptance ledger as the headline panel (above the milestone status cards),
@@ -394,3 +411,4 @@ raw command output. These rules bind every run:
   - `scripts/build-acceptance-ledger.ps1` — final four-axis ledger (.md + .html), plus the
     deferred-findings section when present
 - Claude-lane invocation wrapper for non-Claude orchestrators: `scripts/invoke-claude-chunk.ps1`
+- Usage telemetry collector: `scripts/collect-usage.ps1` (entry point) and `scripts/collect-usage.py`

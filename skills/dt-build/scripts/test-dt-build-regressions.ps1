@@ -471,6 +471,45 @@ Write-Output $report
     Assert-True ($assembler -match 'after about 100 tool calls') "assembled prompt lost the checkpoint rule"
     Assert-True ($assembler -match '(?m)^CONTINUATION_STATE:') "assembled report lost the CONTINUATION_STATE field"
 
+    # Usage collector: an executed acceptance gate marks an orchestrator, a session
+    # that only mentions the script does not, nested agents and unset models are
+    # flagged, and a broken environment never fails the build.
+    $usageHome = Join-Path $tempRoot 'usage-claude-home'
+    $usageProject = Join-Path $usageHome 'projects\fixture-project'
+    New-Item -ItemType Directory -Path (Join-Path $usageProject 'sess-orch\subagents') -Force | Out-Null
+    $usageLine = {
+        param($id, $block, $cacheRead)
+        (@{ type = 'assistant'; timestamp = '2030-01-01T00:00:00Z'; message = @{ id = $id; model = 'claude-opus-5'
+            usage = @{ input_tokens = 10; cache_creation_input_tokens = 0; cache_read_input_tokens = $cacheRead; output_tokens = 5 }
+            content = @($block) } } | ConvertTo-Json -Depth 8 -Compress)
+    }
+    $gateCall = @{ type = 'tool_use'; name = 'Bash'; input = @{ command = 'pwsh -File scripts/verify-milestone-acceptance.ps1 -RoadmapPath r.md -MilestoneId M01 -WorkingTree .dt-build/fixture-usage-run' } }
+    $mention = @{ type = 'tool_use'; name = 'Bash'; input = @{ command = 'echo "verify-milestone-acceptance.ps1", "write-build-state.ps1"' } }
+    $spawn = @{ type = 'tool_use'; name = 'Agent'; input = @{ prompt = 'look around' } }
+    Write-Utf8 -Path (Join-Path $usageProject 'sess-orch.jsonl') -Content (& $usageLine 'm1' $gateCall 400000)
+    Write-Utf8 -Path (Join-Path $usageProject 'sess-orch\subagents\agent-builder.jsonl') -Content (& $usageLine 'm2' $spawn 1000)
+    Write-Utf8 -Path (Join-Path $usageProject 'sess-mention.jsonl') -Content (& $usageLine 'm3' $mention 1000)
+    $usageOut = Join-Path $tempRoot 'usage-out'
+    $savedClaudeHome = $env:CLAUDE_CONFIG_DIR; $savedUsageCache = $env:DT_BUILD_USAGE_CACHE; $savedCodexHome = $env:CODEX_HOME
+    try {
+        $env:CLAUDE_CONFIG_DIR = $usageHome
+        $env:DT_BUILD_USAGE_CACHE = Join-Path $tempRoot 'usage-cache'
+        $env:CODEX_HOME = Join-Path $tempRoot 'usage-no-codex'
+        $usageStdout = (& pwsh -NoProfile -File (Join-Path $scriptDir 'collect-usage.ps1') -OutDir $usageOut -Baseline '2029-01-01') -join "`n"
+        Assert-True ($LASTEXITCODE -eq 0) "usage collector returned nonzero"
+        $usageRows = @(Get-ChildItem -LiteralPath $usageOut -Filter 'usage-ledger-*.jsonl' | Get-Content | ForEach-Object { $_ | ConvertFrom-Json })
+        Assert-True ($usageRows.Count -eq 1) "usage collector should keep only the session that executed a dt-build gate"
+        Assert-True ([string]$usageRows[0].run_id -eq 'fixture-usage-run') "usage collector lost the run id"
+        Assert-True ([int]$usageRows[0].nested_agents -eq 1) "usage collector missed a nested agent"
+        Assert-True ($usageStdout -match 'DT_BUILD_USAGE_ALERT: fixture-usage-run .*context peaked at 400K; 1 nested agents') "usage collector did not alert on a new flagged run"
+        Assert-True (Test-Path -LiteralPath (Join-Path $usageOut 'usage-dashboard.html')) "usage dashboard was not rendered"
+        $usageAgain = (& pwsh -NoProfile -File (Join-Path $scriptDir 'collect-usage.ps1') -OutDir $usageOut -Baseline '2029-01-01') -join "`n"
+        Assert-True ($usageAgain -notmatch 'DT_BUILD_USAGE_ALERT') "usage collector re-alerted on an already-seen flag"
+    }
+    finally {
+        $env:CLAUDE_CONFIG_DIR = $savedClaudeHome; $env:DT_BUILD_USAGE_CACHE = $savedUsageCache; $env:CODEX_HOME = $savedCodexHome
+    }
+
     $env:DT_FAKE_CLAUDE_MODE = 'malformed'
     $claudeMalformed = Join-Path $tempRoot 'claude-wrapper-malformed.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `

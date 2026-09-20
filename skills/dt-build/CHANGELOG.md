@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.13.0
+
+- Automatic usage telemetry: collect-usage.ps1/.py sweep Claude Code and Codex session logs at intake and completion into a per-machine usage ledger and usage-dashboard.html, with one-time advisory alerts for bloated context, nested agents, resume messages, idle cache loss, and Opus overuse. Also lands the JSON acceptance-artifact fix (extract-named-artifacts and verify-milestone-acceptance recognize .json paths) and the local file-link contract wording.
+
 ## 2.12.0
 
 - Context discipline and lane default: standing no-nested-agents, quiet-output, and ~100-tool-call checkpoint rules in every assembled prompt with a CONTINUATION_STATE report field; fresh-session continuation replaces resuming a working builder; thin-orchestrator rules; standard tier is the default and complex must be earned; dispatches stay in the orchestrator's family (codex-host verifies on Codex, claude-host should build on Codex); invoke-claude-chunk.ps1 starts a slim session (no MCP, no Agent tool) with -ReadOnly for verifiers.

@@ -1,5 +1,7 @@
 # dt-prototype changelog
 
+- 1.1.4 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).
+
 - 1.1.3 (2026-09-06): Shared plan-shape.md: Build-intake revalidation rows start with the plan's live-checked premises; no change to this skill's own files.
 
 - 1.1.2 (2026-08-30): Shared references/plan-shape.md now specifies the required '## Build-intake revalidation' section and names skills/dt-plan/scripts/verify-plan-shape.ps1 as the producer-side gate; no change to this skill's own files.
