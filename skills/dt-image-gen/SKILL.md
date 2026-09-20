@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash Read Write Edit"
 compatibility: "Windows with Codex CLI authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Node required for helpers/gallery. Requires the danny-skills repo present."
 metadata:
-  version: 0.1.2
+  version: 0.1.3
   changelog: "Release history: CHANGELOG.md (newest first)."
 ---
 
@@ -161,8 +161,9 @@ beside the images. For a single image, skip the gallery - just view and report t
 
 ## Reporting
 
-- Backtick every Windows path (especially any with spaces).
-- Report each saved image path and the gallery path when built.
+- Report each saved image and the gallery as clickable local file links under
+  `../../references/conventions.md`.
+- Backtick a Windows path only when it must be shown literally rather than linked.
 - Note that generation used Codex's built-in engine on the subscription (no API key, no extra billing).
 
 ## Guardrails

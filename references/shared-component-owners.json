@@ -22,7 +22,7 @@
       "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
       "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
     ],
-    "summary_token": "version policy"
+    "summary_token": "local file-link contract"
   },
   "references/deterministic-reference-policy.md": {
     "consumers": [
@@ -109,6 +109,10 @@
   "scripts/invoke-codex-process.ps1": {
     "consumers": ["dt-review"],
     "summary_token": "process wrapper"
+  },
+  "scripts/test-file-link-format.py": {
+    "consumers": [],
+    "summary_token": "file-link contract"
   },
   "scripts/resolve-codex-model.ps1": {
     "consumers": ["dt-build", "dt-review"],

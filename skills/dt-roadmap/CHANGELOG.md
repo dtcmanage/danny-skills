@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.2.2
+
+- Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.
+
 ## 1.2.1
 
 - Declared shared artifact-extraction ownership for the version-policy release gate.

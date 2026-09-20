@@ -63,4 +63,6 @@ containment. It writes atomically and deletes only the verified
 
 ## 4. Report
 
-Report the bare absolute final path and changed context path. When invoked by a pipeline/subagent, return to the caller without an implementation question. Otherwise stop after the artifact handoff; Danny decides the next stage.
+Report the final artifact and changed context file as clickable local file links under
+`../../../references/conventions.md`. When invoked by a pipeline/subagent, return to the caller without
+an implementation question. Otherwise stop after the artifact handoff; Danny decides the next stage.

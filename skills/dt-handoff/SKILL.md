@@ -3,7 +3,7 @@ name: dt-handoff
 description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Also owns handoff validation: trigger on 'validate the handoff X', 'validate the build X', 'was this handoff acted on?', or '-validate <handoff-path>' to audit a handoff against deterministic evidence. Do not use for capturing memory or preferences mid-session - that is dt-session-audit's job."
 argument-hint: "What should the next session focus on?"
 metadata:
-  version: 0.2.1
+  version: 0.2.2
 ---
 
 # Handoff
@@ -101,7 +101,9 @@ Write it as a starting prompt, not a status report. Use this structure:
 - **Your task** — one paragraph: what the next session should accomplish. If Danny passed arguments, treat them as the focus and shape this section around them.
 - **Current state** — what is done and where things stand right now.
 - **Next steps** — concrete, ordered actions.
-- **Key files & artifacts** — paths and URLs with a one-line note each. Reference PRDs, plans, ADRs, issues, commits, and diffs by path; do not duplicate their content.
+- **Key files & artifacts** — clickable local file links under `../../references/conventions.md` and
+  URLs, each with a one-line note. Reference PRDs, plans, ADRs, issues, commits, and diffs by path; do
+  not duplicate their content.
 - **Decisions & gotchas** — choices already made and traps to avoid.
 - **Execution setup** — include by default for any build-type handoff (the next session writes code, runs migrations, or touches prod). Keep it one tight paragraph in this shape:
 
@@ -121,7 +123,9 @@ Generate the HTML companion only if Danny explicitly asks (see HTML Companion Po
 
 ## Step 4: Report
 
-Print the bare absolute path of the `.md` handoff on its own line. If an HTML companion was explicitly requested and built, also print its path and a one-line command to open it:
+Report the `.md` handoff as a clickable local file link using the shared contract in
+`../../references/conventions.md`. If an HTML companion was explicitly requested and built, report it
+the same way and include a one-line command to open it; keep the command's literal path in quotes:
 
 ```
 ii "<absolute path to .html handoff>"
@@ -145,4 +149,3 @@ Procedure:
 3. **Produce a per-claim table**, one row per task, artifact, or requirement the handoff specifies: the claim, how it was checked (the specific command, file read, or test run), the concrete evidence, and a verdict of **PASS / FAIL / UNVERIFIED**. UNVERIFIED means you could not check it — say why and what would close it.
 4. **Never bucket a mismatch as out-of-scope or pre-existing.** Every discrepancy gets investigated and lands as a FAIL with a recommended fix, or is escalated explicitly with the specific reason. No silent buckets (global rule).
 5. **Close the loop:** if the verdict is that the handoff was fully acted on, move it to `_handoffs\consumed\` per the Consumption Convention (if it is not there already). If it was not, leave it OPEN and summarize the gap list as the next session's work.
-

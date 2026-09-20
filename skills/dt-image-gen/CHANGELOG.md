@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.1.3 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.
+
 - 0.1.2 (2026-07-12): Inherited the shared deterministic and versioning policy baseline.
 
 - 0.1.1 (2026-07-05): Replaced hardcoded C:\Users\Danny\.codex imagegen guidance path with USERPROFILE-based resolution plus locate-then-degrade fallback.

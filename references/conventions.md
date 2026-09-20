@@ -66,22 +66,32 @@ The plugin manifest version (`.claude-plugin/plugin.json` + `marketplace.json`) 
 skill's `metadata.version`. The binding bump rules, changelog order, release transaction, and validation
 gate live only in `references/versioning-policy.md`.
 
-## Output paths in skill final output
+## Local file links in Markdown output
 
-When a skill reports the artifacts it wrote, format each path as a **bare absolute path on its own line**:
+When a skill reports an artifact it wrote in chat or names a local file in prose inside a Markdown
+artifact, make the filename a Markdown link to the absolute local path. Apply this contract to every
+local file reported by every skill:
 
-- No `computer://` links — Danny's client does not render them.
-- No markdown wrappers around the path (no `[label](path)`, no link-style formatting) — paths get mangled when the renderer eats backslashes.
-- Use plain Windows absolute paths with backslashes.
+- Use forward slashes in the Markdown destination, including on Windows.
+- Enclose a destination containing spaces in angle brackets.
+- Keep underscores literal. Never emit a bare Windows path as a clickable link when it contains
+  `\_`; CommonMark treats the backslash as an escape and silently changes the target.
+- Do not use `computer://` or `file://` links.
+- An optional line number follows the path inside the destination, for example `:42`.
+- If a path must be shown literally instead of linked, wrap the entire path in backticks so Markdown
+  cannot consume its backslashes.
 
-Example (correct):
+Examples (correct):
 
+```markdown
+Plan saved at [plan-draft.md](<D:/Claude/_Claude-Workspace/Skill Creation/project/plan-draft.md>).
+Source: [worker_file.ts:42](<D:/Claude/_Claude-Workspace/Skill Creation/project/src/worker_file.ts:42>).
+Literal path for a copy-paste command: `D:\Claude\_Claude-Workspace\Skill Creation\project\plan-draft.md`
 ```
-Plan saved at D:\Claude\_Claude-Workspace\<workstation>\<project>\plan-draft.md.
-Plan review HTML saved at D:\Claude\_Claude-Workspace\<workstation>\<project>\plan-view.html.
-```
 
-This rule applies to every skill in the repo that writes artifacts and reports their location.
+This is the single skill-pack output contract. Skill-specific instructions point here instead of
+restating a different path format. Run `python scripts/test-file-link-format.py` after changing this
+contract or any artifact-reporting instruction.
 
 ## The `_log.md` friction-note convention
 

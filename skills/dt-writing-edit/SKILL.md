@@ -2,7 +2,7 @@
 name: dt-writing-edit
 description: "Tighten and improve a finished draft: a structural pass (section order, dependency logic, does each section earn its place), a clarity and voice pass (cut padding, split overloaded sentences, enforce voice principles and the genre style profile), and a fact-check against the source corpus when one exists. Writes a new versioned file plus a change summary; the original is never touched. Trigger on /dt-writing-edit, dt-writing-edit X, or any request to edit, revise, tighten, clean up, or improve a written draft. Do not use to write a piece from scratch (that is dt-writing-draft)."
 metadata:
-  version: 0.2.1
+  version: 0.2.2
 ---
 
 # Writing-Edit — Structural & Clarity Pass
@@ -132,14 +132,14 @@ The review HTML is on request only. Do NOT generate the HTML companion automatic
 - clarity edits by section,
 - fact-check findings with severity tags.
 
-Output the bare absolute paths per the output-paths convention in `../../references/conventions.md`, each on its own line:
+Output clickable local file links per `../../references/conventions.md`:
 
 ```
-Edited draft saved at <bare absolute path>.
-Change summary saved at <bare absolute path>.
+Edited draft saved at [draft filename](<absolute-path-with-forward-slashes>).
+Change summary saved at [summary filename](<absolute-path-with-forward-slashes>).
 ```
 
-If Danny asked for the review HTML and it was built, add `Edit review HTML saved at <bare absolute path>.` on its own line.
+If Danny asked for the review HTML and it was built, report it as another clickable local file link.
 
 ## Guardrails
 
@@ -149,4 +149,3 @@ If Danny asked for the review HTML and it was built, add `Edit review HTML saved
 - **Edit the prose, not the argument.** Preserve Danny's meaning and his calls. A point you think is wrong gets flagged, not silently rewritten.
 - **No arbitrary length caps.** Match length to stakes, per the business voice profile.
 - **Flag, do not fabricate.** Unsupported facts get surfaced; nothing gets smoothed over or invented.
-

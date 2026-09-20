@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.1
+  version: 1.1.2
   changelog: "Hardened shared Mermaid rendering so design-view.html verifies real SVG diagrams instead of raw graph text."
 ---
 
@@ -71,7 +71,7 @@ Do NOT fire for:
   fold is skim-first (status cards + key change visuals before long narrative blocks).
 
 4. Report result:
-- Return absolute output path.
+- Return the output as a clickable local file link under `../../references/conventions.md`.
 - If fallback rendering happened, include debt/provenance tags exactly as shown in the footer.
 
 ## Security + dependency rules

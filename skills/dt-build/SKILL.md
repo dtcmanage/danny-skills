@@ -370,7 +370,9 @@ raw command output. These rules bind every run:
   - same milestone-commit outcome class as pre-refactor dt-build behavior
   - artifact integrity checks still pass
   - no regression to verify/fix budget policy
-- Report bare absolute paths for primary run artifacts (including the acceptance ledger and `_build-state.md`), and for `build-run-review.html` when Danny asked for it.
+- Report primary run artifacts (including the acceptance ledger and `_build-state.md`) as clickable
+  local file links under `../../references/conventions.md`; do the same for `build-run-review.html`
+  when Danny asked for it.
 
 ## References
 

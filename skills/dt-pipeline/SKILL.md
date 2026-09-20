@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 0.1.2
+  version: 0.1.3
   changelog: "0.1.0 initial release: one-command plan -> dt-review -> dt-build orchestration. Stage-aware intake (objective / plan-draft.md / handoff / existing design-final enters the pipeline at the right stage), subagent-run review and build phases, ~10-minute one-line status cadence while subagents run (default on), rolling _build-state.md crash-resume checkpoint written from templates/build-state-template.md at every phase boundary and milestone completion, prod-write single-threading restated as binding, and the end-of-run 'ready to merge to main?' prompt."
 ---
 
@@ -114,7 +114,8 @@ Rules:
 
 7. **Completion.** When dt-build's acceptance ledger lands: rewrite `_build-state.md` with
    `status: COMPLETE`, then report — what shipped, the ledger verdict per milestone, the build branch,
-   and bare absolute paths to the retained artifacts (plan, design, roadmap, ledger). Then proactively
+   and clickable local file links to the retained artifacts (plan, design, roadmap, ledger), formatted
+   under `../../references/conventions.md`. Then proactively
    ask **"ready to merge to main?"** per the git rules and wait for the go-ahead before
    `/git-merge-feature` — or hand off to shipping directly if Danny says "ship it" / "push live"
    (rebase onto main, `--ff-only` merge, push, gates passing first).
@@ -128,7 +129,7 @@ Rules:
 - Checkpoints only at genuine forks (A/B/C adjudication, a real blocker, an irreversible or
   outward-facing boundary) — the pipeline is an already-authorized multi-step process and runs start to
   completion in one pass.
-- Report artifact locations as bare absolute paths per `../../references/conventions.md`.
+- Report artifact locations as clickable local file links per `../../references/conventions.md`.
 
 ## References
 

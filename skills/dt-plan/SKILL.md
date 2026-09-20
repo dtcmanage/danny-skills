@@ -257,10 +257,11 @@ pwsh -NoProfile -File skills/dt-plan/scripts/next-adr-number.ps1 -Dir "<project>
 
 The script scans existing ADR filenames and returns JSON `{ next_number, existing_count }` — use `next_number` for `<NNNN>`. A missing or empty `docs/adr/` folder yields `next_number = 1`.
 
-After saving, output exactly this, with bare absolute paths on their own lines per the output-paths convention in `../../references/conventions.md`:
+After saving, output exactly this, using clickable local file links under
+`../../references/conventions.md`:
 
 ```
-Plan saved at <bare absolute path>.
+Plan saved at [plan-draft.md](<absolute-path-with-forward-slashes>).
 
 To see the visual, ask and I'll run dt-visualize-plan on it.
 To run adversarial review with Codex when ready, open Claude Code in workspace root and trigger /dt-review pointing at this file.

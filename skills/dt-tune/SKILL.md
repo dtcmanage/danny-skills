@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Read Write Edit AskUserQuestion Bash(pwsh:*)"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 0.2.1
+  version: 0.2.2
   changelog: "Release history: CHANGELOG.md (newest first)."
 ---
 

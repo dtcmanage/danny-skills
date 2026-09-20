@@ -103,6 +103,5 @@ If unsure, default to `plan-plus-mermaid`.
 
 - Do not rewrite the plan content. Render only.
 - Do not block on unavailable upstream skills if a documented fallback exists.
-- Follow the output-paths convention in `../../references/conventions.md` (bare absolute paths, no `computer://` links).
+- Follow the clickable local file-link contract in `../../references/conventions.md`.
 - Keep this skill focused: rendering and surface clarity only.
-

@@ -2,7 +2,7 @@
 name: dt-memory-hygiene
 description: "Periodic maintenance pass for CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Runs when deterministic bloat thresholds are exceeded. Compacts verbose entries, removes duplicate drift, normalizes shape, and preserves current-state clarity without changing underlying decisions."
 metadata:
-  version: 0.3.0
+  version: 0.3.1
 ---
 
 # Memory Hygiene
@@ -127,4 +127,5 @@ Produce:
 2. A "what was removed" list (duplicates, stale lines, excessive detail).
 3. A residual-risk list for anything not safely auto-cleaned.
 4. Only when Danny explicitly asks: a companion `memory-hygiene-report.html` with summary cards, change table, and risk/status visualization. Do NOT generate the HTML companion automatically; skipping it is the default.
-5. Bare absolute paths for any written report artifacts.
+5. Clickable local file links for written report artifacts, formatted under
+   `../../references/conventions.md`.

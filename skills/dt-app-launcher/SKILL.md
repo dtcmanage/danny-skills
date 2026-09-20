@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI on Windows; requires danny-skills repo present."
 metadata:
-  version: 0.3.1
+  version: 0.3.2
   changelog: "Extracted launcher verification to scripts/verify-launcher.ps1: deterministic pass/fail report on manifest files, shortcut .lnk targets (edge_static vs python_gui), TCP listener, and Edge hardening-flag presence. SKILL.md step 4 now invokes the script instead of asking the AI to interpret process command lines and shortcut targets by hand."
 ---
 
@@ -108,7 +108,8 @@ Optional parameters:
 - Run the generated stop script and re-run the verifier without `-CheckRunning` to confirm the listener is gone and the install-time artifacts remain.
 
 5. Report the result:
-- quote or backtick every Windows path, especially paths containing spaces such as `Start Menu`
+- format generated files and shortcuts as clickable local file links under
+  `../../references/conventions.md`; backtick paths only when they must be literal
 - include the generated script paths
 - include Desktop and Start Menu shortcut paths if created
 - include the exact smoke-test result
@@ -151,5 +152,5 @@ The generated stop script must:
 - Do not leave the user's normal Edge profile involved in the app launcher.
 - Do not create shortcuts that point at a compatibility script if the direct hardened start script exists.
 - For Python GUI apps, do not point shortcuts to `.bat` or `powershell.exe`; point directly to `pythonw.exe`.
-- Quote or backtick paths with spaces in all final output.
+- Format local file paths in final output under `../../references/conventions.md`.
 - If a pinned taskbar shortcut could still point at an old target, say that explicitly and tell Danny to unpin the stale one.
