@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.13.1
+
+- Corrected stale wording: Codex is the most-used orchestrator in practice (usage ledger); only its stage-2 hardening remains unbuilt.
+
 ## 2.13.0
 
 - Automatic usage telemetry: collect-usage.ps1/.py sweep Claude Code and Codex session logs at intake and completion into a per-machine usage ledger and usage-dashboard.html, with one-time advisory alerts for bloated context, nested agents, resume messages, idle cache loss, and Opus overuse. Also lands the JSON acceptance-artifact fix (extract-named-artifacts and verify-milestone-acceptance recognize .json paths) and the local file-link contract wording.

@@ -4,9 +4,9 @@ description: "Execute a finalized build end-to-end. Trigger on /dt-build or 'dt-
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
-compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex orchestration unverified end-to-end); requires danny-skills repo present."
+compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.13.0
+  version: 2.13.1
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -159,9 +159,11 @@ exception below applies:
 
 Both wrappers keep the same contract: prompt over stdin, pinned model, provenance JSON, structured-report
 shape check. `invoke-claude-chunk.ps1` starts a slim session (`--strict-mcp-config`, built-in file and
-shell tools only, no Agent tool); pass `-ReadOnly` for verifier and review chunks. A fully Codex-orchestrated dt-build run is currently
-unverified end-to-end (sandbox, child-process network, and `.git`-write behavior under Codex's launch
-profile are unproven); the wrapper is the supported bridge, not a parity claim.
+shell tools only, no Agent tool); pass `-ReadOnly` for verifier and review chunks. Codex is the most-used
+orchestrator in practice (usage ledger, 2026-09-19: 67 codex-host sessions ran acceptance gates and 40
+advanced an integration branch, against 7 claude-host sessions), so codex-host is a first-class path, not
+an experiment. What remains unbuilt is its stage-2 hardening: enforced build/verify task kinds in the
+Claude wrapper and sandbox, child-process network, and `.git`-write preflights under Codex's launch profile.
 
 Before the first substantive invocation of each distinct Codex tier, run
 `scripts/invoke-codex-chunk.ps1 -Preflight -TimeoutMs 30000` under a 30-second outer timeout. Every

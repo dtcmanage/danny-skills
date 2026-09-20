@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.12.17",
+  "version": "0.12.18",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.12.18 dt-build 2.13.1 corrects stale Codex-host wording: codex-host is the most-used orchestrator in practice; only stage-2 hardening remains unbuilt.",
       "0.12.17 dt-ship 0.2.0 on-main mode (ship work already committed on main; -Branch main forces it; pushed_only outcome) with .ship.json gate on -BaseRef auto; version policy tooling: verify-versioning-policy.ps1 and build-plugin.ps1 accept -BaseRef auto, and log-only commits after the release commit no longer break clean-main validation.",
       "0.12.16 dt-build 2.13.0 usage telemetry (automatic usage ledger and dashboard) atop 2.12.0 context discipline; JSON acceptance-artifact fix in shared extract-named-artifacts.ps1; local file-link contract and file-link contract test (scripts/test-file-link-format.py) across the pack; version policy owners map updated. Skill versions: dt-app-launcher 0.3.2, dt-build 2.13.0, dt-handoff 0.2.2, dt-image-gen 0.1.3, dt-memory-hygiene 0.3.1, dt-pipeline 0.1.3, dt-plan 1.3.1, dt-prototype 1.1.4, dt-review 1.12.1, dt-roadmap 1.2.2, dt-session-audit 0.5.1, dt-ship 0.1.5, dt-terminal-format-profile 1.1.2, dt-tune 0.2.2, dt-visualize-design 1.1.2, dt-visualize-plan 1.1.4, dt-writing-draft 0.1.3, dt-writing-edit 0.2.2, git-merge-feature 1.2.4, git-sync-features 0.1.2, start-work 0.1.2.",
       "0.12.15 dt-build 2.12.0 context discipline (checkpointed builders, no nested agents, quiet output, thin orchestrator), earned complex tier, same-family lane default, slim claude -p chunk sessions.",
