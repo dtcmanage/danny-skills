@@ -32,6 +32,50 @@ try {
     Assert-True ($extracted.commands.Count -eq 1) "python -m pytest was extracted more than once"
     Assert-True ($extracted.commands[0] -eq 'python -m pytest tests/test_one.py -q') "wrong extracted command"
 
+    # Extension matches must end at the path token. In particular, `.js` must
+    # never consume the prefix of a `.json` fixture named inside a command.
+    $jsonExtracted = Extract-NamedArtifacts -Text 'Run `python scripts/repair_campaign_manifest.py --fixture tests/fixtures/service_split/v1/campaign-3.json --preview`.'
+    Assert-True ($jsonExtracted.artifacts -contains 'tests/fixtures/service_split/v1/campaign-3.json') "JSON fixture path was not extracted exactly"
+    Assert-True (-not ($jsonExtracted.artifacts -contains 'tests/fixtures/service_split/v1/campaign-3.js')) "JSON fixture path was truncated to .js"
+    $unsupportedSuffixes = @(
+        @{ Path = 'tests/assets/bundle.js.map'; Prefix = 'tests/assets/bundle.js' },
+        @{ Path = 'tests/assets/check.ps1-old'; Prefix = 'tests/assets/check.ps1' },
+        @{ Path = 'tests/assets/receipt.json.tmp'; Prefix = 'tests/assets/receipt.json' }
+    )
+    foreach ($case in $unsupportedSuffixes) {
+        $unsupported = Extract-NamedArtifacts -Text ("Inspect ``python scripts/check.py --input {0}``." -f $case.Path)
+        Assert-True (-not ($unsupported.artifacts -contains $case.Prefix)) ("unsupported suffix was truncated to {0}" -f $case.Prefix)
+    }
+
+    # The shared helper and the gate's dependency-free inline copy are one
+    # contract. Compare their parsed function extents so either copy drifting
+    # alone fails this regression suite.
+    $helperTokens = $null
+    $helperErrors = $null
+    $inlineTokens = $null
+    $inlineErrors = $null
+    $helperAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1'),
+        [ref]$helperTokens,
+        [ref]$helperErrors
+    )
+    $inlineAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $scriptDir 'verify-milestone-acceptance.ps1'),
+        [ref]$inlineTokens,
+        [ref]$inlineErrors
+    )
+    Assert-True ($helperErrors.Count -eq 0 -and $inlineErrors.Count -eq 0) "artifact extractor scripts did not parse"
+    $helperFunction = $helperAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Extract-NamedArtifacts'
+    }, $true)
+    $inlineFunction = $inlineAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Extract-NamedArtifacts'
+    }, $true)
+    Assert-True ($null -ne $helperFunction -and $null -ne $inlineFunction) "artifact extractor function was not found in both scripts"
+    Assert-True ($helperFunction.Extent.Text -ceq $inlineFunction.Extent.Text) "shared and inline artifact extractor function bodies drifted"
+
     # Current model tiers resolve deterministically from a synthetic live cache.
     . (Join-Path $repoRoot 'scripts\resolve-codex-model.ps1')
     $cachePath = Join-Path $tempRoot 'models.json'
@@ -63,6 +107,8 @@ try {
 }
 '@
     Write-Utf8 -Path (Join-Path $workingTree 'tests\slow.ps1') -Content 'Start-Sleep -Seconds 5'
+    Write-Utf8 -Path (Join-Path $workingTree 'scripts\repair_campaign_manifest.py') -Content 'raise SystemExit(0)'
+    Write-Utf8 -Path (Join-Path $workingTree 'tests\fixtures\service_split\v1\campaign-3.json') -Content '{"synthetic":true}'
     & git -C $workingTree init -q
     & git -C $workingTree config user.email 'fixture@example.invalid'
     & git -C $workingTree config user.name 'Fixture'
@@ -83,12 +129,14 @@ generated_at_utc: 2026-07-12T00:00:00Z
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
 | M01 | Foundation | - | chunk-m01 | machine-checkable | none | Run `pwsh -NoProfile -File tests/noisy.ps1` and capture PASS/FAIL. | fixture |
 | M02 | Cut over with rollback intact | M01 | chunk-m02 | machine-checkable | M01 | Run `pwsh -NoProfile -File tests/slow.ps1` and capture PASS/FAIL. | fixture |
+| M03 | JSON artifact extraction | M02 | chunk-m03 | machine-checkable | M02 | Run `python scripts/repair_campaign_manifest.py --fixture tests/fixtures/service_split/v1/campaign-3.json --preview` and capture PASS/FAIL. | fixture |
 
 ## Chunks
 | chunk-slug | milestone-id | model-routing | reference-pack-entitlement |
 | :-- | :-- | :-- | :-- |
 | chunk-m01 | M01 | codex | contracts, glossary |
 | chunk-m02 | M02 | codex | contracts, glossary |
+| chunk-m03 | M03 | codex | contracts, glossary |
 
 ## Verification Manifest
 | check-id | milestone-id | execution-scope | prerequisites | mode | procedure |
@@ -96,11 +144,13 @@ generated_at_utc: 2026-07-12T00:00:00Z
 | chk-m01-first | M01 | integration | none | machine-checkable | Run an end-to-end check with `pwsh -NoProfile -File tests/noisy.ps1`. |
 | chk-m01 | M01 | integration | none | machine-checkable | Run `pwsh -NoProfile -File tests/noisy.ps1` and capture PASS/FAIL. |
 | chk-m02 | M02 | integration | M01 | machine-checkable | Run `pwsh -NoProfile -File tests/slow.ps1` and capture PASS/FAIL. |
+| chk-m03 | M03 | integration | M02 | machine-checkable | Run `python scripts/repair_campaign_manifest.py --fixture tests/fixtures/service_split/v1/campaign-3.json --preview` and capture PASS/FAIL. |
 
 ## Dependency Graph (Mermaid)
 ```mermaid
 graph TD
   M01 --> M02
+  M02 --> M03
 ```
 
 ## Sequential Gantt (Mermaid)
@@ -130,6 +180,18 @@ gantt
     Assert-True ($verify.status -eq 'PASS') "high-volume verifier did not PASS"
     Assert-True ($verify.commands_named.Count -eq 1) "verifier ran a duplicate command"
     Assert-True (-not $verify.command_results[0].timed_out) "high-volume verifier timed out"
+
+    # The gate's inline extractor must preserve a JSON fixture path exactly; a
+    # shared-helper-only assertion would not prevent the synchronized copy from
+    # drifting back to the `.js` prefix bug.
+    $jsonGateRaw = & pwsh -NoProfile -File (Join-Path $scriptDir 'verify-milestone-acceptance.ps1') `
+        -RoadmapPath $roadmap -MilestoneId M03 -WorkingTree $workingTree -Json
+    Assert-True ($LASTEXITCODE -eq 0) "JSON artifact inspection failed"
+    $jsonGate = $jsonGateRaw | ConvertFrom-Json
+    Assert-True ($jsonGate.status -eq 'INSPECT_ONLY') "JSON artifact inspection returned the wrong status"
+    Assert-True ($jsonGate.artifacts_named -contains 'tests/fixtures/service_split/v1/campaign-3.json') "gate did not preserve the JSON fixture path"
+    Assert-True (-not ($jsonGate.artifacts_named -contains 'tests/fixtures/service_split/v1/campaign-3.js')) "gate truncated the JSON fixture path to .js"
+    Assert-True ($jsonGate.artifacts_missing.Count -eq 0) "gate reported a present JSON fixture as missing"
 
     # Timeout is bounded, recorded, and blocks acceptance.
     $timeoutJson = & pwsh -NoProfile -File (Join-Path $scriptDir 'verify-milestone-acceptance.ps1') `

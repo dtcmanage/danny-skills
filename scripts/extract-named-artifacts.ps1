@@ -35,7 +35,7 @@ function Extract-NamedArtifacts {
         if ($candidate -match '^(pytest|python|pwsh|powershell|node|npm|bun)\b') {
             $commands.Add($candidate) | Out-Null
             # Also extract any file paths inside it.
-            $pathMatches = [regex]::Matches($candidate, '(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|js|ps1)')
+            $pathMatches = [regex]::Matches($candidate, '(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
             foreach ($p in $pathMatches) { $artifacts.Add($p.Value) | Out-Null }
             continue
         }
@@ -54,7 +54,7 @@ function Extract-NamedArtifacts {
     foreach ($m in $inlineCmd) {
         $cmd = $m.Groups[1].Value.Trim()
         if (-not ($commands -contains $cmd)) { $commands.Add($cmd) | Out-Null }
-        $pathMatches = [regex]::Matches($cmd, '(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|js|ps1)')
+        $pathMatches = [regex]::Matches($cmd, '(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
         foreach ($p in $pathMatches) {
             if (-not ($artifacts -contains $p.Value)) { $artifacts.Add($p.Value) | Out-Null }
         }
