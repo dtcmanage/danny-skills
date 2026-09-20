@@ -2,7 +2,7 @@
 name: dt-ship
 description: "One-command close-out for a finished feature: run the build/tests gate, rebase + ff-only merge to main via the shared merge machinery, push, deploy per the repo's .ship.json, PROVE the deploy is live (deployed commit hash must equal local main HEAD, plus browser-smoke on the configured routes), then purge the merged worktree and branch. Trigger on /dt-ship, 'ship it', 'push live', or 'ship and clean tree'. Do NOT use to create branches or worktrees (that is start-work), for design review (dt-review), or for build execution (dt-build)."
 metadata:
-  version: 0.1.5
+  version: 0.2.0
   changelog:
     - "0.1.0 - Initial: ship.ps1 drives gate -> merge (reusing git-merge-feature's merge-feature.ps1 with -PurgeWorktree) -> purge sweep -> push -> deploy -> live proof (commit-hash probe + browser-smoke) from a per-repo .ship.json; fail-closed JSON summary; optional chaining into dt-session-audit / dt-handoff."
 ---
@@ -26,7 +26,7 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
 
 ## Procedure
 
-1. **Resolve the surface.** Identify the repo's primary tree and the feature branch/worktree in play. If Danny named it, pass it as `-Branch`; otherwise let the script auto-detect. If the script reports ambiguity (multiple candidate branches), ask which one — that is the only permitted question.
+1. **Resolve the surface.** Identify the repo's primary tree and the feature branch/worktree in play. When the finished work is already committed on `main` and no feature branch exists (a Light-tier change, or a feature merged earlier), the driver runs in **on-main mode**: it requires a clean primary tree on `main`, runs the gate there, skips merge and purge (`on_main: true`, both listed in `skipped`), then pushes, deploys, and proves live as usual. Pass `-Branch main` to force this mode when unrelated feature branches exist. Never hand-run the chain because the work is already on `main`. If Danny named it, pass it as `-Branch`; otherwise let the script auto-detect. If the script reports ambiguity (multiple candidate branches), ask which one — that is the only permitted question.
 
 2. **Run the gate, then the chain, via the deterministic driver:**
 
@@ -54,7 +54,7 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
 4. **Interpret the result honestly.**
    - `status: shipped` — hash matched and every smoke route passed. Only now may you say it is shipped.
    - `status: not_shipped` — the hash mismatched or a smoke route failed. Report LOUDLY: "NOT SHIPPED" leads the response, with the mismatched hashes or failing routes and screenshots from the smoke harness. Then drive to a fix — do not stop at the diagnosis.
-   - `status: merged_only` — merged and pushed, deploy/verify skipped (no config).
+   - `status: merged_only` — merged and pushed, deploy/verify skipped (no config). In on-main mode the same outcome is `status: pushed_only`.
    - `status: failed` — report `failed_step` and `error_message`; nothing after that step ran.
 
 5. **Report a verification table.** One row per claim: what was done, how it was checked, and the concrete evidence. At minimum: gate (command + exit code), merge (commit range), push (origin main), deploy (command exit), hash proof (`prod_commit` vs `local_head`), each smoke route (pass + screenshot path), purge (worktrees/branches removed — quote `purged`, and confirm `git worktree list` shows only the primary tree). If `rerere_enabled` is `false`, suggest `git config --global rerere.enabled true`.

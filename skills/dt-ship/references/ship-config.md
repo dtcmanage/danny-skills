@@ -62,3 +62,11 @@ Requirement on the repo side: `deploy.sh` must end by writing the deployed commi
 ## Scaffolding a new config
 
 When dt-ship reports `merged_only` (no config), offer to scaffold: pick the example that matches the repo's deploy shape, fill in the real commands, and add the commit-SHA publication step to the build/deploy if it does not exist yet. Commit `.ship.json` to the repo — it is per-repo config, not skill config.
+
+## Gate commands that compare against a base ref
+
+A `gateCommand` runs in the feature worktree on a normal ship and in the primary tree in on-main mode, so
+it must not hardcode a base that is only valid in one of them. For danny-skills, pass `-BaseRef auto` to
+`scripts/verify-versioning-policy.ps1` and `tools/build-plugin.ps1`: they resolve `main` on a feature
+branch, `HEAD` on dirty `main`, and the prior plugin-release commit on clean `main`. Log-only commits
+(`_log.md`, `_log-archive.md`) after the release commit do not move that boundary.

@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.2.0 (2026-09-20): On-main mode: ship work already committed on main (no feature branch) by gating in the primary tree and skipping merge/purge; explicit -Branch main forces it; no-config outcome is pushed_only. Gate config uses -BaseRef auto.
+
 - 0.1.5 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).
 
 - 0.1.4 (2026-09-03): verify-hash URL probe: fix the cache-buster separator (-like '*?*' treated ? as a wildcard, so every probe requested /version.json&cb=... and an SPA fallback answered with index.html whose first 40-hex run - the Cloudflare beacon token - was reported as the deployed commit); a URL probe now counts only when the body is JSON with a commit field, retries ~3 min on any other body, and records a per-attempt probe_log in the JSON summary.

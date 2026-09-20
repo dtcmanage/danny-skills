@@ -49,6 +49,7 @@ $state = [ordered]@{
     failed_step = $null
     branch = $Branch
     resolved_branch = $null
+    on_main = $false
     merged = $false
     pushed = $false
     deployed = $false
@@ -169,6 +170,7 @@ if (-not $primary) {
 
 # --- Step: resolve-branch ----------------------------------------------------
 
+$onMain = $false
 if (-not $Branch) {
     $head = (Invoke-Git -GitArgs @('-C', $RepoRoot, 'rev-parse', '--abbrev-ref', 'HEAD')).Output.Trim()
     if ($head -and $head -ne 'main' -and $head -ne 'HEAD') {
@@ -179,7 +181,7 @@ if (-not $Branch) {
         if ($candidates.Count -eq 1) {
             $Branch = $candidates[0]
         } elseif ($candidates.Count -eq 0) {
-            Fail-Step 'resolve-branch' "No feature branch found: the only local branch is main and HEAD is main. Nothing to ship."
+            $Branch = 'main'
         } else {
             Fail-Step 'resolve-branch' "Ambiguous: multiple feature branches exist and -Branch was not given. Candidates: $($candidates -join ', ')"
         }
@@ -187,14 +189,31 @@ if (-not $Branch) {
     $state.branch = $Branch
 }
 
+# On-main mode (auto-detected above, or an explicit -Branch main): the finished
+# work is already committed on main (a Light-tier change, or a feature merged
+# earlier). There is nothing to merge or purge; gate in the primary tree, then
+# push, deploy, and prove live as usual.
+if ($Branch -eq 'main') {
+    $primaryHead = (Invoke-Git -GitArgs @('-C', $primary, 'rev-parse', '--abbrev-ref', 'HEAD')).Output.Trim()
+    if ($primaryHead -ne 'main') {
+        Fail-Step 'resolve-branch' "Shipping from main, but the primary tree is on '$primaryHead'. Nothing to ship."
+    }
+    $primaryDirty = (Invoke-Git -GitArgs @('-C', $primary, 'status', '--porcelain')).Output
+    if (-not [string]::IsNullOrWhiteSpace($primaryDirty)) {
+        Fail-Step 'resolve-branch' "Shipping from main, but main has uncommitted changes. Commit them (or move them to a feature branch) first."
+    }
+    $onMain = $true
+    $state.on_main = $true
+}
+
 # Resolve the branch name the same way merge-feature.ps1 does (bare, then
 # feat/, then feature/) so the gate and the purge sweep name the real branch.
 $resolvedBranch = $null
-foreach ($candidate in @($Branch, "feat/$Branch", "feature/$Branch")) {
+foreach ($candidate in $(if ($onMain) { @() } else { @($Branch, "feat/$Branch", "feature/$Branch") })) {
     $exists = Invoke-Git -GitArgs @('-C', $primary, 'rev-parse', '--verify', "refs/heads/$candidate")
     if ($exists.ExitCode -eq 0) { $resolvedBranch = $candidate; break }
 }
-if (-not $resolvedBranch) {
+if (-not $onMain -and -not $resolvedBranch) {
     Fail-Step 'resolve-branch' "No local branch named '$Branch', 'feat/$Branch', or 'feature/$Branch'."
 }
 $state.resolved_branch = $resolvedBranch
@@ -204,7 +223,7 @@ $state.resolved_branch = $resolvedBranch
 # The merge step purges the feature worktree. On Windows that delete fails when
 # the invoking shell's cwd sits inside the worktree -- and by then the merge has
 # already landed, stranding the chain mid-state. Refuse before any mutation.
-$featureTree = $wtMap.byBranch["refs/heads/$resolvedBranch"]
+$featureTree = if ($onMain) { $null } else { $wtMap.byBranch["refs/heads/$resolvedBranch"] }
 if ($featureTree) {
     $featureTreeFull = [System.IO.Path]::GetFullPath($featureTree).TrimEnd('\') + '\'
     foreach ($cwdCandidate in @((Get-Location).Path, [System.IO.Directory]::GetCurrentDirectory())) {
@@ -238,7 +257,7 @@ if (Test-Path -LiteralPath $configFile) {
 
 $gateCommand = Get-Prop $config 'gateCommand'
 if ($gateCommand -and -not $SkipGate) {
-    $branchTree = $wtMap.byBranch["refs/heads/$resolvedBranch"]
+    $branchTree = if ($onMain) { $primary } else { $wtMap.byBranch["refs/heads/$resolvedBranch"] }
     if (-not $branchTree) {
         Fail-Step 'gate' "gateCommand is configured but branch '$resolvedBranch' is not checked out in any worktree, so there is no tree to run the gate in. Run the gate by hand in the right tree, then re-run with -SkipGate."
     }
@@ -260,6 +279,9 @@ if ($gateCommand -and -not $SkipGate) {
 
 # --- Step: merge (reuse merge-feature.ps1; never reimplement) -----------------
 
+if ($onMain) {
+    $state.skipped += @('merge', 'purge')
+} else {
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $skillRoot = Split-Path -Parent $scriptDir
 $resolvedLink = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
@@ -310,12 +332,13 @@ if ($wtDirLeftover) {
 if (Get-Prop $mergeParsed 'branch_deleted' $false) {
     $state.purged += "branch: $resolvedBranch"
 }
+}
 
 $state.local_head = (Invoke-Git -GitArgs @('-C', $primary, 'rev-parse', 'main')).Output.Trim()
 
 # --- Step: purge (sweep: nothing of the merged feature may remain) -----------
 
-$branchLeft = (Invoke-Git -GitArgs @('-C', $primary, 'rev-parse', '--verify', "refs/heads/$resolvedBranch")).ExitCode -eq 0
+$branchLeft = (-not $onMain) -and (Invoke-Git -GitArgs @('-C', $primary, 'rev-parse', '--verify', "refs/heads/$resolvedBranch")).ExitCode -eq 0
 if ($branchLeft) {
     $fullyMerged = (Invoke-Git -GitArgs @('-C', $primary, 'merge-base', '--is-ancestor', $resolvedBranch, 'main')).ExitCode -eq 0
     if (-not $fullyMerged) {
@@ -361,7 +384,7 @@ if ($SkipPush) {
 
 if (-not $config) {
     $state.skipped += @('deploy', 'verify-hash', 'smoke')
-    $state.status = 'merged_only'
+    $state.status = if ($onMain) { 'pushed_only' } else { 'merged_only' }
     Emit-Result -ExitCode 0
 }
 

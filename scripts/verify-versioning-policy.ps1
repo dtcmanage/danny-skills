@@ -341,6 +341,30 @@ $sharedOwners = $null
 $sharedOwnersPath = Join-Path $RepoRoot 'references\shared-component-owners.json'
 try { $sharedOwners = Get-Content -Raw -LiteralPath $sharedOwnersPath | ConvertFrom-Json }
 catch { Add-Error 'SHARED_OWNER_MAP_INVALID' $_.Exception.Message }
+# -BaseRef auto picks the only base each state allows, so one gate command works
+# on a feature branch (main), on dirty main (HEAD), and on clean main (the commit
+# before the current plugin version was established).
+if ($BaseRef -eq 'auto') {
+    $autoBranch = (Invoke-Git -Arguments @('branch', '--show-current')).text.Trim()
+    if ($autoBranch -ne 'main') { $BaseRef = 'main' }
+    else {
+        $autoDirty = @((Invoke-Git -Arguments @('status', '--porcelain', '--untracked-files=normal')).lines |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+        if ($autoDirty) { $BaseRef = 'HEAD' }
+        else {
+            $BaseRef = ''
+            foreach ($candidate in (Invoke-Git -Arguments @('rev-list', 'HEAD', '--', '.claude-plugin/plugin.json')).lines) {
+                $candidatePlugin = Invoke-Git -Arguments @('show', "$candidate`:.claude-plugin/plugin.json") -AllowFailure
+                if ($candidatePlugin.code -ne 0) { continue }
+                try { $candidateVersion = [string](($candidatePlugin.text | ConvertFrom-Json).version) } catch { continue }
+                if ($candidateVersion -ne $pluginVersion) { $BaseRef = [string]$candidate; break }
+            }
+            if ([string]::IsNullOrWhiteSpace($BaseRef)) {
+                Add-Error 'PRIOR_RELEASE_BASE_MISSING' "could not locate the release before plugin $pluginVersion"
+            }
+        }
+    }
+}
 if (-not [string]::IsNullOrWhiteSpace($BaseRef)) {
     $baseProbe = Invoke-Git -Arguments @('rev-parse', '--verify', "$BaseRef`^{commit}") -AllowFailure
     if ($baseProbe.code -ne 0) {
@@ -384,7 +408,15 @@ if (-not [string]::IsNullOrWhiteSpace($BaseRef)) {
                     Add-Error 'BASE_REF_SELF' 'clean main cannot validate against HEAD because that proves no release delta'
                 }
                 $latestPluginCommit = (Invoke-Git -Arguments @('log', '-1', '--format=%H', '--', '.claude-plugin/plugin.json')).text.Trim()
+                # Friction logs are version-exempt, so log-only commits after the
+                # release commit do not move the release boundary.
+                $afterRelease = @()
                 if ($latestPluginCommit -ne $headCommit) {
+                    $afterRelease = @((Invoke-Git -Arguments @('diff', '--name-only', $latestPluginCommit, $headCommit, '--')).lines |
+                        ForEach-Object { ([string]$_).Trim().Replace('\', '/') } |
+                        Where-Object { $_ -and $_ -notmatch '^skills/[^/]+/_log(-archive)?\.md$' })
+                }
+                if ($latestPluginCommit -ne $headCommit -and $afterRelease.Count -gt 0) {
                     Add-Error 'RELEASE_COMMIT_NOT_HEAD' "clean main HEAD must be the commit that established plugin $pluginVersion; latest plugin commit is $latestPluginCommit"
                 }
                 $expectedBase = ''

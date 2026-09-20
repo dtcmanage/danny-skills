@@ -24,6 +24,10 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch)) {
     throw "Could not resolve the current Git branch for $RepoRoot."
 }
 
+# -BaseRef auto: main on a feature branch, otherwise the self-resolving main path
+# below. Lets one gate command serve both a feature branch and main.
+if ($BaseRef -eq 'auto') { $BaseRef = if ($branch -ne 'main') { 'main' } else { '' } }
+
 if ([string]::IsNullOrWhiteSpace($BaseRef)) {
     if ($branch -ne 'main') {
         throw "-BaseRef is required when packaging or validating from any branch other than main."

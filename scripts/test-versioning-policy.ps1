@@ -98,6 +98,39 @@ try {
     & pwsh -NoProfile -File (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\build-plugin.ps1') `
         -RepoRoot $tempRoot -BaseRef main -ValidateOnly *> $null
     Assert-True ($LASTEXITCODE -eq 0) 'feature-branch packaging rejected explicit base-ref validation'
+
+    # -BaseRef auto resolves the only valid base for each state, and log-only
+    # commits after the release commit do not move the clean-main boundary.
+    & pwsh -NoProfile -File $validator -RepoRoot $tempRoot -BaseRef auto -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'validator -BaseRef auto failed on a valid feature branch'
+    & pwsh -NoProfile -File (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\build-plugin.ps1') `
+        -RepoRoot $tempRoot -BaseRef auto -ValidateOnly *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'packaging -BaseRef auto failed on a valid feature branch'
+    $autoRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("versioning-auto-{0}" -f ([guid]::NewGuid().ToString('N')))
+    try {
+        $featureName = (& git -C $tempRoot branch --show-current).Trim()
+        & git clone -q $tempRoot $autoRoot
+        & git -C $autoRoot config user.email 'fixture@example.com'
+        & git -C $autoRoot config user.name 'fixture'
+        & git -C $autoRoot checkout -q -B main "origin/$featureName"
+        & pwsh -NoProfile -File $validator -RepoRoot $autoRoot -BaseRef auto -Json *> $null
+        Assert-True ($LASTEXITCODE -eq 0) 'validator -BaseRef auto failed on clean main at the release commit'
+        Write-Utf8 (Join-Path $autoRoot 'skills\alpha\_log-archive.md') '2026-09-20 alpha: archived friction'
+        & git -C $autoRoot add -A
+        & git -C $autoRoot commit -q -m 'log only'
+        & pwsh -NoProfile -File $validator -RepoRoot $autoRoot -BaseRef auto -Json *> $null
+        Assert-True ($LASTEXITCODE -eq 0) 'a log-only commit after the release commit broke clean-main validation'
+        Write-Utf8 (Join-Path $autoRoot 'skills\alpha\extra.md') 'unversioned change'
+        & git -C $autoRoot add -A
+        & git -C $autoRoot commit -q -m 'unversioned change'
+        $driftJson = & pwsh -NoProfile -File $validator -RepoRoot $autoRoot -BaseRef auto -Json
+        Assert-True ($LASTEXITCODE -eq 1) 'an unversioned commit after the release commit passed clean-main validation'
+        Assert-True (($driftJson -join ' ') -match 'RELEASE_COMMIT_NOT_HEAD') 'clean-main drift did not report RELEASE_COMMIT_NOT_HEAD'
+    }
+    finally {
+        if (Test-Path -LiteralPath $autoRoot) { Remove-Item -LiteralPath $autoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     & pwsh -NoProfile -File (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\build-plugin.ps1') `
         -RepoRoot $tempRoot -BaseRef HEAD -ValidateOnly *> $null
     Assert-True ($LASTEXITCODE -eq 1) 'feature-branch packaging accepted self-referential BaseRef HEAD'
