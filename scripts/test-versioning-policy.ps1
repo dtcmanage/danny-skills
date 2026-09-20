@@ -120,6 +120,13 @@ try {
         & git -C $autoRoot commit -q -m 'log only'
         & pwsh -NoProfile -File $validator -RepoRoot $autoRoot -BaseRef auto -Json *> $null
         Assert-True ($LASTEXITCODE -eq 0) 'a log-only commit after the release commit broke clean-main validation'
+        # An uncommitted friction-log edit does not make clean main "dirty".
+        Add-Content -LiteralPath (Join-Path $autoRoot 'skills\alpha\_log-archive.md') -Value '2026-09-20 alpha: uncommitted friction'
+        & pwsh -NoProfile -File $validator -RepoRoot $autoRoot -BaseRef auto -Json *> $null
+        Assert-True ($LASTEXITCODE -eq 0) 'an uncommitted friction-log edit was treated as a dirty main'
+        & pwsh -NoProfile -File (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\build-plugin.ps1') -RepoRoot $autoRoot -ValidateOnly *> $null
+        Assert-True ($LASTEXITCODE -eq 0) 'packaging treated an uncommitted friction-log edit as a dirty main'
+        & git -C $autoRoot checkout -q -- skills/alpha/_log-archive.md
         Write-Utf8 (Join-Path $autoRoot 'skills\alpha\extra.md') 'unversioned change'
         & git -C $autoRoot add -A
         & git -C $autoRoot commit -q -m 'unversioned change'

@@ -198,7 +198,11 @@ if ($Branch -eq 'main') {
     if ($primaryHead -ne 'main') {
         Fail-Step 'resolve-branch' "Shipping from main, but the primary tree is on '$primaryHead'. Nothing to ship."
     }
-    $primaryDirty = (Invoke-Git -GitArgs @('-C', $primary, 'status', '--porcelain')).Output
+    # Skill friction logs are written during sessions and are version-exempt; an
+    # uncommitted one must not block a ship.
+    $primaryDirty = @((Invoke-Git -GitArgs @('-C', $primary, 'status', '--porcelain')).Output -split "`r?`n" |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and
+            $_.Substring([Math]::Min(3, $_.Length)).Trim('"').Replace('\', '/') -notmatch '^skills/[^/]+/_log(-archive)?\.md$' }) -join "`n"
     if (-not [string]::IsNullOrWhiteSpace($primaryDirty)) {
         Fail-Step 'resolve-branch' "Shipping from main, but main has uncommitted changes. Commit them (or move them to a feature branch) first."
     }

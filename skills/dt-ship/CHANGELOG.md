@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.2.1 (2026-09-20): On-main mode ignores uncommitted skill friction logs (_log.md, _log-archive.md), which are version-exempt.
+
 - 0.2.0 (2026-09-20): On-main mode: ship work already committed on main (no feature branch) by gating in the primary tree and skipping merge/purge; explicit -Branch main forces it; no-config outcome is pushed_only. Gate config uses -BaseRef auto.
 
 - 0.1.5 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).

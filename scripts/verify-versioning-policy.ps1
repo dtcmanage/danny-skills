@@ -348,8 +348,10 @@ if ($BaseRef -eq 'auto') {
     $autoBranch = (Invoke-Git -Arguments @('branch', '--show-current')).text.Trim()
     if ($autoBranch -ne 'main') { $BaseRef = 'main' }
     else {
+        # Friction logs are version-exempt: an edited or new _log.md does not make main "dirty".
         $autoDirty = @((Invoke-Git -Arguments @('status', '--porcelain', '--untracked-files=normal')).lines |
-            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) -and
+                ([string]$_).Substring([Math]::Min(3, ([string]$_).Length)).Trim('"').Replace('\', '/') -notmatch '^skills/[^/]+/_log(-archive)?\.md$' }).Count -gt 0
         if ($autoDirty) { $BaseRef = 'HEAD' }
         else {
             $BaseRef = ''
@@ -397,7 +399,8 @@ if (-not [string]::IsNullOrWhiteSpace($BaseRef)) {
         }
         else {
             $workingProbe = Invoke-Git -Arguments @('status', '--porcelain', '--untracked-files=normal')
-            $hasWorkingChanges = @($workingProbe.lines | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+            $hasWorkingChanges = @($workingProbe.lines | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) -and
+                ([string]$_).Substring([Math]::Min(3, ([string]$_).Length)).Trim('"').Replace('\', '/') -notmatch '^skills/[^/]+/_log(-archive)?\.md$' }).Count -gt 0
             if ($hasWorkingChanges) {
                 if ($baseCommit -ne $headCommit) {
                     Add-Error 'BASE_REF_MAIN_DIRTY' "dirty main must compare working-tree changes against HEAD ($headCommit)"

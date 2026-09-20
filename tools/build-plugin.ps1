@@ -34,6 +34,9 @@ if ([string]::IsNullOrWhiteSpace($BaseRef)) {
     }
     $workingChanges = @(& git -C $RepoRoot status --porcelain --untracked-files=normal)
     if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the working tree.' }
+    # Friction logs are version-exempt: an edited or new _log.md does not make main "dirty".
+    $workingChanges = @($workingChanges | Where-Object { $_ -and
+        ([string]$_).Substring([Math]::Min(3, ([string]$_).Length)).Trim('"').Replace('\', '/') -notmatch '^skills/[^/]+/_log(-archive)?\.md$' })
     if ($workingChanges.Count -gt 0) {
         $BaseRef = 'HEAD'
     }
@@ -67,7 +70,8 @@ else {
         }
     }
     elseif ($baseCommit -eq $headCommit) {
-        $workingChanges = @(& git -C $RepoRoot status --porcelain --untracked-files=normal)
+        $workingChanges = @(& git -C $RepoRoot status --porcelain --untracked-files=normal | Where-Object { $_ -and
+            ([string]$_).Substring([Math]::Min(3, ([string]$_).Length)).Trim('"').Replace('\', '/') -notmatch '^skills/[^/]+/_log(-archive)?\.md$' })
         if ($workingChanges.Count -eq 0) {
             throw '-BaseRef resolves to HEAD with no working-tree changes, so it cannot prove a release delta.'
         }
