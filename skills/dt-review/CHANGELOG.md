@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.13.1 (2026-09-26): Claude-lane rounds and preflight record the exact model version that ran (resolved_model, models_used, total_cost_usd) via the shared claude-cli-result parser and fail closed on a family mismatch; the test suite now counts assertions instead of reporting a stale constant.
+
 - 1.13.0 (2026-09-26): Codex review models are auto-selected from the live account catalog via the shared resolver (complex review = top rung, light review = second rung, preflight = last rung of the newest generation); hardcoded 5.6 pins and fallback lists removed.
 
 - 1.12.1 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).

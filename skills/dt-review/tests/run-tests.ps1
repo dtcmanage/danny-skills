@@ -4,11 +4,15 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$script:AssertionCount = 0
+
 function Assert-True([bool]$Condition, [string]$Message) {
+    $script:AssertionCount++
     if (-not $Condition) { throw "ASSERTION FAILED: $Message" }
 }
 
 function Assert-Throws([scriptblock]$Action, [string]$Pattern, [string]$Message) {
+    $script:AssertionCount++
     try { & $Action }
     catch {
         if ($_.Exception.Message -match $Pattern) { return }
@@ -107,6 +111,19 @@ try {
     Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-7-luna') 'preflight (light rung) did not select the newest bottom rung'
     Assert-True ((Resolve-CodexModel -Tier light -PreferredModel 'gpt-6.9-sol' -CachePath $cachePath -Strict) -eq 'gpt-6.9-sol') 'selectable explicit override was not honored'
     Assert-Throws { Resolve-CodexModel -Tier light -PreferredModel 'dead' -CachePath $cachePath -Strict } 'not selectable' 'strict resolver accepted an unselectable override'
+
+    # Claude CLI envelope parser records the exact model version and fails closed on a
+    # family mismatch or a missing model report.
+    . (Join-Path $RepoRoot 'scripts\claude-cli-result.ps1')
+    $envelope = '{"type":"result","is_error":false,"result":"OK","total_cost_usd":0.2,"modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":5,"outputTokens":3},"claude-opus-5-5":{"inputTokens":50,"outputTokens":300,"costUSD":0.19}}}'
+    $parsedEnvelope = ConvertFrom-ClaudeCliResult -Stdout $envelope -RequestedModel 'opus'
+    Assert-True ($parsedEnvelope.resolved_model -eq 'claude-opus-5-5') 'Claude parser did not resolve the opus alias to the exact version'
+    Assert-True (@($parsedEnvelope.models_used).Count -eq 2) 'Claude parser dropped a model from models_used'
+    Assert-True ($parsedEnvelope.result -eq 'OK') 'Claude parser lost the final message'
+    Assert-True ((ConvertFrom-ClaudeCliResult -Stdout $envelope -RequestedModel 'claude-opus-5-5[1m]').resolved_model -eq 'claude-opus-5-5') 'Claude parser did not accept a full model id request'
+    Assert-Throws { ConvertFrom-ClaudeCliResult -Stdout $envelope -RequestedModel 'sonnet' } 'sonnet family' 'Claude parser accepted a run outside the requested family'
+    Assert-Throws { ConvertFrom-ClaudeCliResult -Stdout '{"result":"OK"}' -RequestedModel 'opus' } 'no modelUsage' 'Claude parser accepted a run with no model report'
+    Assert-Throws { ConvertFrom-ClaudeCliResult -Stdout 'plain text' -RequestedModel 'opus' } 'unparseable' 'Claude parser accepted a non-JSON envelope'
 
     # The shared process runner must kill a timed-out child.
     . (Join-Path $RepoRoot 'scripts\invoke-codex-process.ps1')
@@ -511,7 +528,7 @@ Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNe
 
     [pscustomobject]@{
         status = 'ok'
-        assertions = 62
+        assertions = $script:AssertionCount
         final_path = $final.final_path
     } | ConvertTo-Json -Compress
 }

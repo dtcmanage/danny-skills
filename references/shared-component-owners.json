@@ -114,6 +114,10 @@
     "consumers": [],
     "summary_token": "file-link contract"
   },
+  "scripts/claude-cli-result.ps1": {
+    "consumers": ["dt-build", "dt-review"],
+    "summary_token": ""
+  },
   "scripts/resolve-codex-model.ps1": {
     "consumers": ["dt-build", "dt-review"],
     "summary_token": ""

@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.13.0
+  version: 1.13.1
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -76,7 +76,9 @@ effort and get 600,000 ms (10 minutes), matching dt-build's substantive-call bud
 also use `--ephemeral`, a hermetic temporary working directory, ignored user config, read-only sandbox,
 explicit ChatGPT auth, explicit model/effort, and structured output. The Claude lane mirrors this with
 a hermetic working directory, default permission mode, an embedded output schema, and the same receipt,
-validation, and redaction chain.
+validation, and redaction chain. Claude rounds run with JSON output; round metadata records the exact
+model version the CLI reports (`resolved_model`, `models_used`, `total_cost_usd`) beside the requested
+alias, and a run outside the requested family fails closed.
 
 Model slugs are never hardcoded. Preflight refreshes the live account catalog (`codex debug models`);
 the shared `scripts/resolve-codex-model.ps1` takes the newest selectable `gpt-<version>` generation,

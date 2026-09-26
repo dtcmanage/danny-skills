@@ -185,25 +185,28 @@ if ($RequestedModel -cne $tierDefaultModel -and [string]::IsNullOrWhiteSpace($Mo
     throw "Model '$RequestedModel' deviates from the $Tier-tier default '$tierDefaultModel'. Record the reason with -ModelReason."
 }
 
+. (Join-Path $RepoRoot 'scripts\claude-cli-result.ps1')
 $claudeCli = Get-ClaudeCliPath
 $executionDir = Join-Path $env:TEMP ("dt-review-claude-exec-{0}" -f [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $executionDir -Force | Out-Null
 
 if ($Preflight) {
     try {
-        $preflightArgs = @('-p', '--model', $RequestedModel, '--permission-mode', 'default', '--output-format', 'text')
+        $preflightArgs = @('-p', '--model', $RequestedModel, '--permission-mode', 'default', '--output-format', 'json')
         $result = Invoke-ClaudeProcess -CliPath $claudeCli -Arguments $preflightArgs `
             -Prompt 'Reply with the single word OK and nothing else. Do not inspect or modify files.' `
             -WorkingDirectory $executionDir -TimeoutMs $TimeoutMs
         if ($result.timed_out) { throw "Claude preflight exceeded ${TimeoutMs}ms." }
         if ($result.exit_code -ne 0) { throw "Claude preflight exited $($result.exit_code): $($result.stderr.Trim())" }
-        if ($result.stdout.Trim() -ne 'OK') { throw "Claude preflight expected OK, received '$($result.stdout.Trim())'." }
+        $parsed = ConvertFrom-ClaudeCliResult -Stdout $result.stdout -RequestedModel $RequestedModel
+        if ($parsed.is_error -or $parsed.result.Trim() -ne 'OK') { throw "Claude preflight expected OK, received '$($parsed.result.Trim())'." }
         [pscustomobject]@{
             status = 'ok'
             preflight = $true
             lane = 'claude'
             tier = $Tier
             model = $RequestedModel
+            resolved_model = $parsed.resolved_model
             duration_ms = $result.duration_ms
         } | ConvertTo-Json -Compress
         return
@@ -290,7 +293,7 @@ try {
         '-p',
         '--model', $RequestedModel,
         '--permission-mode', 'default',
-        '--output-format', 'text'
+        '--output-format', 'json'
     )
     $processResult = Invoke-ClaudeProcess `
         -CliPath $claudeCli `
@@ -307,12 +310,17 @@ try {
     if ($processResult.exit_code -ne 0) {
         throw "Claude round $Round failed with exit code $($processResult.exit_code). Redacted stream: $streamPath"
     }
-    if ([string]::IsNullOrWhiteSpace($processResult.stdout)) {
+    try { $cliResult = ConvertFrom-ClaudeCliResult -Stdout $processResult.stdout -RequestedModel $RequestedModel }
+    catch { throw "Claude round ${Round}: $($_.Exception.Message) Redacted stream: $streamPath" }
+    if ($cliResult.is_error) {
+        throw "Claude round $Round reported is_error. Redacted stream: $streamPath"
+    }
+    if ([string]::IsNullOrWhiteSpace($cliResult.result)) {
         throw "Claude round $Round returned no final message. Redacted stream: $streamPath"
     }
 
     try {
-        $review = ConvertFrom-ClaudeReviewOutput -Text $processResult.stdout
+        $review = ConvertFrom-ClaudeReviewOutput -Text $cliResult.result
         $reviewRaw = ConvertTo-Json -InputObject $review -Depth 10
     }
     catch {
@@ -358,7 +366,9 @@ try {
         round = $Round
         tier = $Tier
         requested_model = $RequestedModel
-        resolved_model = $RequestedModel
+        resolved_model = $cliResult.resolved_model
+        models_used = @($cliResult.models_used)
+        total_cost_usd = $cliResult.total_cost_usd
         reasoning_effort = 'cli-session-default'
         model_reason = $ModelReason
         blocking_downgrades = @($blockingDowngrades)
@@ -386,6 +396,7 @@ try {
         round = $Round
         lane = 'claude'
         model = $RequestedModel
+        resolved_model = $cliResult.resolved_model
         duration_ms = $processResult.duration_ms
         verdict = [string]$review.verdict
         findings = $findings.Count

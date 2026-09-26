@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.14.1
+
+- Claude-lane provenance records the exact model version that ran (resolved_model from the CLI's JSON modelUsage, plus models_used and total_cost_usd) instead of the alias; a run outside the requested family or with no model report fails closed.
+
 ## 2.14.0
 
 - Codex tier models are auto-selected from the live account catalog (codex debug models): the newest generation ranked by catalog priority maps to complex/standard/light, so new OpenAI releases are picked up with no edit; hardcoded 5.6 slugs removed, -Model is an explicit override that fails closed, provenance records model_ladder, and usage attribution keeps full gpt slugs.

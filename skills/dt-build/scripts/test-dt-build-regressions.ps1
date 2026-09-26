@@ -420,7 +420,13 @@ if ($args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
 if ($env:DT_FAKE_CLAUDE_ARGS) { [System.IO.File]::WriteAllText($env:DT_FAKE_CLAUDE_ARGS, ($args -join '|')) }
 [void][Console]::In.ReadToEnd()
 $mode = [string]$env:DT_FAKE_CLAUDE_MODE
-if ($mode -eq 'malformed') { Write-Output 'I cannot do that.'; exit 0 }
+$ranModel = if ($mode -eq 'wrongmodel') { 'claude-haiku-4-5-20251001' } else { 'claude-sonnet-5' }
+function Write-Envelope([string]$Text) {
+    $usage = [ordered]@{}; $usage[$ranModel] = @{ inputTokens = 10; outputTokens = 20; costUSD = 0.01 }
+    Write-Output (@{ type = 'result'; is_error = $false; result = $Text; total_cost_usd = 0.01; modelUsage = $usage } | ConvertTo-Json -Depth 5 -Compress)
+}
+if ($mode -eq 'malformed') { Write-Envelope 'I cannot do that.'; exit 0 }
+if ($mode -eq 'rawtext') { Write-Output 'plain text, no envelope'; exit 0 }
 $report = @"
 DT_BUILD_REPORT_VERSION: 2
 RUN_ID: fixture-run
@@ -436,7 +442,7 @@ DISCOVERED_ENHANCEMENTS:
 NONE
 credential: ghp_abcdefghijklmnopqrstuvwxyz123456
 "@
-Write-Output $report
+Write-Envelope $report
 '@
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
@@ -459,6 +465,24 @@ Write-Output $report
     $claudeProv = Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json" | ConvertFrom-Json
     Assert-True ([string]$claudeProv.selection_reason -eq 'ordinary fixture verification logic') "Claude provenance omitted selection reason"
     Assert-True ([string]$claudeProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> sonnet \(standard\): ordinary fixture verification logic$') "Claude provenance omitted canonical disclosure line"
+    Assert-True ([string]$claudeProv.requested_model -eq 'sonnet') "Claude provenance lost the requested alias"
+    Assert-True ([string]$claudeProv.resolved_model -eq 'claude-sonnet-5') "Claude provenance did not record the exact model version that ran"
+    Assert-True (@($claudeProv.models_used).Count -eq 1 -and [string]@($claudeProv.models_used)[0].model -eq 'claude-sonnet-5') "Claude provenance omitted models_used"
+    Assert-True ((Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json") -match '"models_used":\s*\[') "Claude provenance models_used is not a JSON array"
+
+    # A run whose reported model is outside the requested family, or whose output
+    # carries no model report, fails closed with a provenance record.
+    foreach ($badMode in @('wrongmodel', 'rawtext')) {
+        $env:DT_FAKE_CLAUDE_MODE = $badMode
+        $badOut = Join-Path $tempRoot "claude-wrapper-$badMode.md"
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+            -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $badOut `
+            -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
+        Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper accepted $badMode output"
+        $badProv = Get-Content -Raw -LiteralPath "$badOut.provenance.json" | ConvertFrom-Json
+        Assert-True (-not [bool]$badProv.pass) "Claude $badMode provenance claimed PASS"
+    }
+    $env:DT_FAKE_CLAUDE_MODE = 'success'
 
     # Slim-session contract: no MCP servers, no Agent tool (blocks nested agents),
     # and -ReadOnly drops the file-writing tools for verifier/review chunks.

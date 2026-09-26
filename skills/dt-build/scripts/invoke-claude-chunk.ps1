@@ -128,6 +128,7 @@ if (-not $Preflight) {
 
 $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot "scripts\security\redact-secrets.ps1")
+. (Join-Path $repoRoot "scripts\claude-cli-result.ps1")
 
 $resolvedModel = $Model
 if ([string]::IsNullOrWhiteSpace($resolvedModel)) {
@@ -141,6 +142,8 @@ $disclosureLine = if ($Preflight) { $null } else {
     "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($Tier): $SelectionReason"
 }
 $claudeCli = Get-ClaudeCliPath
+# The exact model version the CLI reports; null until a run is parsed.
+$actualModel = $null
 
 $temporaryOutput = $false
 if ($Preflight -and [string]::IsNullOrWhiteSpace($OutputPath)) {
@@ -179,7 +182,7 @@ $args = @(
     '-p',
     '--model', $resolvedModel,
     '--permission-mode', $permissionMode,
-    '--output-format', 'text',
+    '--output-format', 'json',
     '--strict-mcp-config',
     '--tools', $toolList
 )
@@ -247,9 +250,18 @@ try {
     $exitCode = if ($timedOut) { 124 } else { $proc.ExitCode }
     $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
 
-    # claude -p returns the final message on stdout; stderr is the stream log.
-    $lastMessage = Invoke-SecretRedaction -Text $stdout
+    # claude -p returns a JSON envelope on stdout (final message + modelUsage naming
+    # the exact model version that ran); stderr is the stream log.
+    $cliResult = $null
+    $cliResultError = $null
+    if (-not $timedOut -and $exitCode -eq 0) {
+        try { $cliResult = ConvertFrom-ClaudeCliResult -Stdout $stdout -RequestedModel $resolvedModel }
+        catch { $cliResultError = $_.Exception.Message }
+    }
+    if ($cliResult) { $actualModel = $cliResult.resolved_model }
+    $lastMessage = Invoke-SecretRedaction -Text $(if ($cliResult) { $cliResult.result } else { '' })
     $streamText = Invoke-SecretRedaction -Text $stderr
+    if (-not $cliResult) { $streamText += "`n--- stdout ---`n" + (Invoke-SecretRedaction -Text $stdout) }
     [System.IO.File]::WriteAllText($streamPath, $streamText)
     [System.IO.File]::WriteAllText($OutputPath, $lastMessage)
 
@@ -262,6 +274,14 @@ try {
     }
     elseif ($exitCode -ne 0) {
         $failureReason = "CLAUDE_INVOKE_FAIL: claude -p exited $exitCode. Redacted stream: $streamPath"
+        $failureCategory = 'tooling'
+    }
+    elseif ($cliResultError) {
+        $failureReason = "CLAUDE_INVOKE_FAIL: $cliResultError Redacted stream: $streamPath"
+        $failureCategory = 'tooling'
+    }
+    elseif ($cliResult.is_error) {
+        $failureReason = "CLAUDE_INVOKE_FAIL: claude -p reported is_error. Redacted stream: $streamPath"
         $failureCategory = 'tooling'
     }
     elseif ([string]::IsNullOrWhiteSpace($lastMessage)) {
@@ -290,7 +310,9 @@ try {
         lane                = 'claude'
         tier                = $Tier
         requested_model     = $resolvedModel
-        resolved_model      = $resolvedModel
+        resolved_model      = $actualModel
+        models_used         = @(if ($cliResult) { $cliResult.models_used })
+        total_cost_usd      = if ($cliResult) { $cliResult.total_cost_usd } else { $null }
         selection_reason    = if ($Preflight) { $null } else { $SelectionReason }
         disclosure_line     = $disclosureLine
         permission_mode     = $permissionMode
@@ -324,7 +346,7 @@ catch {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
             pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier
-            requested_model = $resolvedModel; resolved_model = $resolvedModel
+            requested_model = $resolvedModel; resolved_model = $actualModel
             selection_reason = if ($Preflight) { $null } else { $SelectionReason }
             disclosure_line = $disclosureLine
             attempt = $Attempt; duration_ms = $durationMs; timeout_ms = $TimeoutMs

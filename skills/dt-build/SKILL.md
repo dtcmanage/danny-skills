@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.14.0
+  version: 2.14.1
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -138,7 +138,11 @@ provenance JSON records the effective mode. Never treat that Windows block as a 
 
 **Claude lane.** Repo-wide navigation, UI judgment, and workspace-memory work belong on this lane (on
 codex-host only under the opt-in exception in the lane default below). Dispatch it via CLAUDE_DISPATCH (harness contract below); record the surface/model actually
-used, never invent a slug.
+used, never invent a slug. Tier aliases (`opus` / `sonnet` / `haiku`) track each family's newest
+version automatically; `scripts/invoke-claude-chunk.ps1` reads the exact version from the CLI's JSON
+`modelUsage` and persists it as `resolved_model` (plus `models_used`, `total_cost_usd`) in provenance,
+failing closed when no model of the requested family ran. On a host-native Agent dispatch, record the
+exact model the harness reports, not the alias.
 
 **Harness contract.** At intake, note which harness is orchestrating: `claude-host` (a Claude Code / Cowork
 session with the host-native Agent tool) or `codex-host` (any orchestrator without it). Define
