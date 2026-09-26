@@ -102,6 +102,7 @@ try {
             [pscustomobject]@{ slug = 'gpt-7-luna'; visibility = 'list'; priority = 3 },
             [pscustomobject]@{ slug = 'gpt-6.9-sol'; visibility = 'list'; priority = 4 },
             [pscustomobject]@{ slug = 'gpt-7-codex-spark'; visibility = 'list'; priority = 0 },
+            [pscustomobject]@{ slug = 'gpt-7-astra'; visibility = 'list'; priority = 0; description = 'Frontier intelligence for the most demanding work.' },
             [pscustomobject]@{ slug = 'gpt-8-preview'; visibility = 'hide'; priority = 0 }
         )
     } | ConvertTo-Json -Depth 4

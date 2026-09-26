@@ -33,8 +33,8 @@ Lane routing:
 - Tier every chunk by difficulty, on either lane: `light` (Codex newest-generation
   last rung / Claude `haiku`) for routine mechanical work including light implementation
   — boilerplate, config, renames, straightforward tests, preflight; `standard`
-  (second rung / `sonnet`) for ordinary implementation; `complex`
-  (top rung / `opus`) for load-bearing, security-sensitive, or ambiguous
+  (middle rung / `sonnet`) for ordinary implementation; `complex`
+  (top non-frontier rung / `opus`) for load-bearing, security-sensitive, or ambiguous
   work. Codex rungs come from the live catalog via the shared resolver; never name a slug. Load-bearing chunks start at `complex`, never light. `standard` is the default for builders,
   verifiers, and reviewers; `complex` needs a load-bearing flag, a security-sensitive or live-write
   milestone, or a failed `standard` attempt, named in the selection reason.

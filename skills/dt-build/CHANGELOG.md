@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.14.2
+
+- Codex resolver never auto-routes frontier models (catalog description 'frontier', e.g. GPT-6 Astra, Fable-tier cost): complex and standard now resolve to GPT-6 Sol, light to Luna; frontier runs only as an explicit -Model override.
+
 ## 2.14.1
 
 - Claude-lane provenance records the exact model version that ran (resolved_model from the CLI's JSON modelUsage, plus models_used and total_cost_usd) instead of the alias; a run outside the requested family or with no model report fails closed.

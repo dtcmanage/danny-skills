@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.13.1
+  version: 1.13.2
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -54,8 +54,8 @@ authoring model:
 
 | Role | Codex lane | Claude lane | Limit |
 | --- | --- | --- | --- |
-| Light review | newest generation's second rung (today `gpt-6-sol`), effort `medium` | `sonnet` | 3 rounds |
-| Complex review | newest generation's top rung (today `gpt-6-astra`), effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
+| Light review | newest generation's middle rung, or top rung when only two (today `gpt-6-sol`), effort `medium` | `sonnet` | 3 rounds |
+| Complex review | newest generation's top non-frontier rung (today `gpt-6-sol`), effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
 | Preflight | newest generation's last rung (today `gpt-6-luna`), effort `low` | tier model, echo check | 30 seconds |
 
 Rounds 1-2 are the full critique; rounds 3+ are verification rounds (check prior commitments, new
@@ -66,7 +66,7 @@ round metadata.
 
 **Model-selection disclosure (tracking).** At Round 0, state in the chat output the selected lane and
 tier model with a one-sentence reason (authoring family + review class), e.g.
-`codex lane, gpt-6-astra @ high: Claude-authored draft, complex review`. Any mid-review deviation
+`codex lane, gpt-6-sol @ high: Claude-authored draft, complex review`. Any mid-review deviation
 restates the new model and its recorded reason in chat. One sentence is enough; this visible line is how
 Danny tracks that model routing works as intended — round metadata records the same facts but does not
 replace saying it.
@@ -82,8 +82,10 @@ alias, and a run outside the requested family fails closed.
 
 Model slugs are never hardcoded. Preflight refreshes the live account catalog (`codex debug models`);
 the shared `scripts/resolve-codex-model.ps1` takes the newest selectable `gpt-<version>` generation,
-orders it by the catalog's own priority, and maps top / second / last rung to complex review / light
-review / preflight. Spark and models carrying a retirement notice are never selected. A new OpenAI
+orders it by the catalog's own priority, and maps top / middle / last rung to complex review / light
+review / preflight (middle = top when only two rungs). Spark, models carrying a retirement notice, and
+frontier models (description says "frontier", e.g. GPT-6 Astra, Fable-tier cost) are never selected
+automatically; a frontier model runs only as an explicit `-Model` override. A new OpenAI
 release is picked up with no edit; the "today" slugs above are examples. `-Model` is a deliberate
 override only, and an unselectable override fails closed.
 

@@ -78,14 +78,15 @@ try {
 
     # Tiers resolve from the newest generation's catalog priority, never from hardcoded names:
     # an older generation that stays selectable must not win, a shared name (Sol) must not
-    # carry its old rank, and Spark or retiring models are never chosen.
+    # carry its old rank, and Spark, retiring, or frontier (Fable-tier cost) models are never
+    # chosen automatically.
     . (Join-Path $repoRoot 'scripts\resolve-codex-model.ps1')
     $cachePath = Join-Path $tempRoot 'models.json'
     Write-Utf8 -Path $cachePath -Content @'
 {"models":[
-  {"slug":"gpt-6-astra","visibility":"list","priority":1,"upgrade":null},
-  {"slug":"gpt-6-sol","visibility":"list","priority":2,"upgrade":null},
-  {"slug":"gpt-6-luna","visibility":"list","priority":3,"upgrade":null},
+  {"slug":"gpt-6-astra","visibility":"list","priority":1,"upgrade":null,"description":"Frontier intelligence for the most demanding work."},
+  {"slug":"gpt-6-sol","visibility":"list","priority":2,"upgrade":null,"description":"Workhorse model for coding and everyday work."},
+  {"slug":"gpt-6-luna","visibility":"list","priority":3,"upgrade":null,"description":"Fast and affordable model for easier tasks."},
   {"slug":"gpt-5.6-sol","visibility":"list","priority":4,"upgrade":null},
   {"slug":"gpt-5.6-terra","visibility":"list","priority":7,"upgrade":null},
   {"slug":"gpt-5.6-luna","visibility":"list","priority":8,"upgrade":null},
@@ -93,9 +94,11 @@ try {
   {"slug":"gpt-reserve","visibility":"hide","priority":3,"upgrade":null}
 ]}
 '@
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-astra') "complex tier did not select the newest top rung"
-    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "standard tier did not select the newest middle rung"
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "complex tier did not select the newest non-frontier top rung"
+    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "standard tier on a two-rung ladder did not select the first rung"
     Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') "light tier did not select the newest bottom rung"
+    Assert-True ((@(Get-CodexModelLadder -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)) -join ',') -eq 'gpt-6-sol,gpt-6-luna') "frontier model leaked into the automatic ladder"
+    Assert-True ((Resolve-CodexModel -Tier complex -PreferredModel 'gpt-6-astra' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-6-astra') "explicit frontier override was not honored"
     $retiringCache = Join-Path $tempRoot 'models-retiring.json'
     Write-Utf8 -Path $retiringCache -Content '{"models":[{"slug":"gpt-7-nova","visibility":"list","priority":1,"upgrade":{"model":"gpt-6-astra"}},{"slug":"gpt-6-astra","visibility":"list","priority":2,"upgrade":null}]}'
     Assert-True ((Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) -eq 'gpt-6-astra') "resolver selected a model carrying a retirement notice"

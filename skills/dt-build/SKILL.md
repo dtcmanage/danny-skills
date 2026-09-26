@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.14.1
+  version: 2.14.2
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -89,12 +89,15 @@ the goal is an optimized build, not maximum firepower:
 | Tier | When | Codex lane | Claude lane |
 | :-- | :-- | :-- | :-- |
 | `light` | Routine mechanical work: boilerplate, config, renames, straightforward tests, preflight | newest generation's last rung (today `gpt-6-luna`), effort `low`/`medium` | `haiku` |
-| `standard` | Ordinary implementation with real logic | newest generation's second rung (today `gpt-6-sol`), effort `medium` | `sonnet` |
-| `complex` | Load-bearing, security-sensitive, ambiguous, or escalated chunks | newest generation's top rung (today `gpt-6-astra`), effort `medium` (raise to `high` only with a recorded reason) | `opus` |
+| `standard` | Ordinary implementation with real logic | newest generation's middle rung, or top rung when only two (today `gpt-6-sol`), effort `medium` | `sonnet` |
+| `complex` | Load-bearing, security-sensitive, ambiguous, or escalated chunks | newest generation's top non-frontier rung (today `gpt-6-sol`), effort `medium` (raise to `high` only with a recorded reason) | `opus` |
 
 Codex slugs are never hardcoded. On every call the wrapper refreshes the live account catalog
 (`codex debug models`) and the shared resolver ranks the newest selectable `gpt-<version>` generation
-by the catalog's own priority (Spark and models carrying a retirement notice are excluded). A new
+by the catalog's own priority. Spark, models carrying a retirement notice, and frontier models (catalog
+description says "frontier", e.g. GPT-6 Astra: Claude Fable's premium tier) are excluded, mirroring the
+Claude lane's Opus-not-Fable choice for cost; a frontier model runs only as an explicit `-Model`
+override with a recorded reason. A new
 OpenAI release is picked up automatically; the "today" slugs above are examples, not pins. Pass
 `-Model` only as a deliberate override; an unselectable override fails closed.
 

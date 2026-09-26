@@ -11,10 +11,14 @@
 #   1. Refresh the catalog with `codex debug models` (Update-CodexModelCatalog), or read
 #      Codex's models_cache.json when the caller supplies no catalog.
 #   2. Keep selectable rows: visibility 'list', a gpt-<major>[.<minor>] slug, no retirement
-#      notice ('upgrade'), and never a Spark model (Danny's no-Spark direction).
+#      notice ('upgrade'), never a Spark model (Danny's no-Spark direction), and never a
+#      frontier model (catalog description says "frontier"). Frontier models such as GPT-6
+#      Astra sit at Claude Fable's premium tier; Danny excludes them from automatic routing on
+#      both lanes for cost. They remain reachable only as an explicit override.
 #   3. Take the newest generation and order it by the catalog's own 'priority' (the order
 #      Codex's model picker shows, best first).
-#   4. complex = first rung, standard = second rung (first when only one), light = last rung.
+#   4. complex = first rung, light = last rung, standard = middle rung when there are three or
+#      more, otherwise the first rung (GPT-6 today: Sol / Sol / Luna).
 # An explicit -PreferredModel override wins only when it is selectable; strict callers fail
 # loudly otherwise instead of silently substituting.
 
@@ -72,6 +76,8 @@ function Get-CodexModelLadder {
         if ($slug -match 'spark') { continue }
         $upgradeProp = $m.PSObject.Properties['upgrade']
         if ($upgradeProp -and $null -ne $upgradeProp.Value) { continue }
+        $descProp = $m.PSObject.Properties['description']
+        if ($descProp -and [string]$descProp.Value -match 'frontier') { continue }
         $gen = [regex]::Match($slug, '^gpt-(\d+)(?:\.(\d+))?(?:-|$)')
         if (-not $gen.Success) { continue }
         $prioProp = $m.PSObject.Properties['priority']
@@ -128,7 +134,7 @@ function Resolve-CodexModel {
     if ($PreferredModel) {
         if ($selectable -contains $PreferredModel) {
             if ($ladder.Count -gt 0 -and $ladder -notcontains $PreferredModel) {
-                Write-Warning "Override '$PreferredModel' is not in the newest Codex generation ($($ladder -join ', '))."
+                Write-Warning "Override '$PreferredModel' is outside the automatic ladder ($($ladder -join ', ')): an older generation or a frontier model."
             }
             return $PreferredModel
         }
@@ -143,7 +149,7 @@ function Resolve-CodexModel {
     }
     switch ($Tier) {
         'complex'  { return $ladder[0] }
-        'standard' { return $ladder[[Math]::Min(1, $ladder.Count - 1)] }
+        'standard' { return $(if ($ladder.Count -ge 3) { $ladder[1] } else { $ladder[0] }) }
         'light'    { return $ladder[$ladder.Count - 1] }
     }
 }
