@@ -2,7 +2,7 @@
 name: dt-writing-draft
 description: "Turn an idea or a pile of notes into a publishable draft: investor letters, white papers, case studies, marketing copy, decks, DDQ content. Builds a sourced corpus first (digests FT Unhedged and the Economist from Outlook, fetches article URLs, reads memos and prior pieces), surfaces what Danny would forget, shapes the draft section by section, then fact-checks it. Trigger on /dt-writing-draft, dt-writing-draft X, or any request to write, draft, or put together a substantial written piece. Do not use to edit a finished draft (that is dt-writing-edit) or for a single short email."
 metadata:
-  version: 0.1.3
+  version: 0.1.4
 ---
 
 # Writing-Draft — From Sources to Publishable Draft
@@ -100,7 +100,7 @@ Fire ONE `AskUserQuestion` covering:
 1. **Genre** — investor letter, white paper, case study, marketing copy, deck, DDQ content, other. Determines the style profile and the likely source channels.
 2. **Audience** — LPs / current investors, prospects, public, internal, other. Shapes register and how much context to assume.
 3. **Working title / slug** — short, kebab-case-friendly; used for the folder and filenames. Free text via "Other".
-4. **Save location** — infer the workstation from the Routing Map in workspace `CLAUDE.md` based on the genre and topic (an investor letter routes to TCM Website; Astavet copy to Astavet). Default the path to `D:\Claude\_Claude-Workspace\<workstation>\<slug>\` and ask Danny to confirm or change.
+4. **Save location** — infer the workstation or substation from the Routing Map in root `D:\Claude\CLAUDE.md` based on the genre and topic (an investor letter routes to the Investor Letters substation of TCM Website; Astavet copy to Astavet). Default the path to that folder plus the slug — `D:\Claude\_Claude-Workspace\<workstation>\<slug>\`, or `...\<workstation>\<substation>\<slug>\` for a substation (investor letter: `D:\Claude\_Claude-Workspace\TCM Website\Investor Letters\<slug>\`) — and ask Danny to confirm or change.
 
 If the trigger phrase already answers any of these, pre-fill it and ask only for confirmation. Do not ask blind questions when context already answers them.
 
