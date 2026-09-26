@@ -30,12 +30,12 @@ Lane routing:
   `scripts/invoke-codex-chunk.ps1` that did not build the chunk. Pass `-ReadOnly` to
   `invoke-claude-chunk.ps1` for verifier and review chunks.
 - Repo-wide navigation, UI judgment, and workspace-memory work are the Claude lane's named strengths.
-- Tier every chunk by difficulty, on either lane: `light` (Codex `gpt-5.6-luna`
-  / Claude `haiku`) for routine mechanical work including light implementation
+- Tier every chunk by difficulty, on either lane: `light` (Codex newest-generation
+  last rung / Claude `haiku`) for routine mechanical work including light implementation
   — boilerplate, config, renames, straightforward tests, preflight; `standard`
-  (`gpt-5.6-terra` / `sonnet`) for ordinary implementation; `complex`
-  (`gpt-5.6-sol` / `opus`) for load-bearing, security-sensitive, or ambiguous
-  work. Load-bearing chunks start at `complex`, never light. `standard` is the default for builders,
+  (second rung / `sonnet`) for ordinary implementation; `complex`
+  (top rung / `opus`) for load-bearing, security-sensitive, or ambiguous
+  work. Codex rungs come from the live catalog via the shared resolver; never name a slug. Load-bearing chunks start at `complex`, never light. `standard` is the default for builders,
   verifiers, and reviewers; `complex` needs a load-bearing flag, a security-sensitive or live-write
   milestone, or a failed `standard` attempt, named in the selection reason.
 - The orchestrator owns quality: a failed attempt escalates one tier on the

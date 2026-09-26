@@ -118,20 +118,19 @@ $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot "scripts\resolve-codex-model.ps1")
 . (Join-Path $repoRoot "scripts\security\redact-secrets.ps1")
 
-$preferred = $Model
-if ([string]::IsNullOrWhiteSpace($preferred)) {
-    $preferred = switch ($Tier) {
-        'complex'  { 'gpt-5.6-sol' }
-        'standard' { 'gpt-5.6-terra' }
-        'light'    { 'gpt-5.6-luna' }
-    }
-}
-$resolvedModel = Resolve-CodexModel -Tier $Tier -PreferredModel $preferred -Strict
-[void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $ReasoningEffort -Strict)
+$codexCli = Get-CodexCliPath
+# No model names live here: refresh the live account catalog and let the shared
+# resolver pick the tier's rung from the newest generation. -Model is an explicit
+# override only.
+try { $modelCatalog = Update-CodexModelCatalog -CodexCliPath $codexCli }
+catch { throw "CODEX_INVOKE_FAIL: $($_.Exception.Message)" }
+$modelLadder = @(Get-CodexModelLadder -Catalog $modelCatalog)
+$preferred = if ([string]::IsNullOrWhiteSpace($Model)) { $null } else { $Model }
+$resolvedModel = Resolve-CodexModel -Tier $Tier -PreferredModel $preferred -Catalog $modelCatalog -Strict
+[void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $ReasoningEffort -Catalog $modelCatalog -Strict)
 $disclosureLine = if ($Preflight) { $null } else {
     "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($Tier, effort $ReasoningEffort): $SelectionReason"
 }
-$codexCli = Get-CodexCliPath
 
 $temporaryOutput = $false
 if ($Preflight -and [string]::IsNullOrWhiteSpace($OutputPath)) {
@@ -321,6 +320,7 @@ try {
         tier                   = $Tier
         requested_model        = $preferred
         resolved_model         = $resolvedModel
+        model_ladder           = $modelLadder
         selection_reason       = if ($Preflight) { $null } else { $SelectionReason }
         disclosure_line        = $disclosureLine
         reasoning_effort       = $ReasoningEffort

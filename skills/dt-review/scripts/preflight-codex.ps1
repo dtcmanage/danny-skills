@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)]
     [string]$ProjectPath,
 
-    [string]$Model = 'gpt-5.6-luna',
+    # Explicit override only; empty auto-selects from the newest Codex generation.
+    [string]$Model = '',
 
     [ValidateSet('complex', 'light')]
     [string]$Tier = 'light',
@@ -67,12 +68,10 @@ try {
     if ($versionResult.exit_code -ne 0 -or $helpResult.exit_code -ne 0 -or $helpText -notmatch '--output-schema' -or $helpText -notmatch '--ephemeral' -or $helpText -notmatch '--ignore-user-config') {
         throw "Codex CLI lacks required dt-review capabilities (--output-schema, --ephemeral, --ignore-user-config). Detected: $versionText"
     }
-    $catalogResult = Invoke-CodexProcess -CodexPath $codexCli -Arguments @('debug', 'models') -Prompt '' -WorkingDirectory $executionDir -TimeoutMs 15000
-    if ($catalogResult.exit_code -ne 0 -or $catalogResult.timed_out) {
-        throw "Codex model catalog refresh failed; cannot verify current account availability. Detected: $versionText"
-    }
-    $Model = Resolve-CodexModel -Tier $Tier -PreferredModel $Model -Strict
-    [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Strict)
+    try { $catalog = Update-CodexModelCatalog -CodexCliPath $codexCli -TimeoutMs 15000 }
+    catch { throw "Codex model catalog refresh failed; cannot verify current account availability ($($_.Exception.Message)). Detected: $versionText" }
+    $Model = Resolve-CodexModel -Tier $Tier -PreferredModel $Model -Catalog $catalog -Strict
+    [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Catalog $catalog -Strict)
     $arguments = @(
         '-a', 'never',
         '-c', 'forced_login_method="chatgpt"',

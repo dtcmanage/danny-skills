@@ -88,8 +88,8 @@ Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the desig
 **What it does:**
 
 - Reads the plan (from `dt-plan`, a file path, or a substantive trigger prompt), validates/normalizes its Round 0 shape, then treats the resulting `draft-v1.md` as the immutable review input.
-- Preflight verifies current CLI capabilities/auth on GPT-5.6 Luna before spending review tokens.
-- Light reviews use GPT-5.6 Terra; complex reviews use GPT-5.6 Sol. Every review round pins medium reasoning rather than inheriting the user's global effort.
+- Codex models are auto-selected from the live account catalog: the newest generation's top, second, and last rungs serve complex reviews, light reviews, and preflight (no hardcoded slugs).
+- Preflight verifies current CLI capabilities/auth before spending review tokens. Every review round pins medium reasoning rather than inheriting the user's global effort.
 - Each round uses a JSON schema with stable finding IDs, prior-commitment checks, and a separate `blocks_design` materiality axis; scripts reject inconsistent verdicts.
 - Claude reconciles each finding as ACCEPT / REJECT / DEFER / COUNTER against canonical constraints and evidence. Reopened rejections pause for user adjudication.
 - Scratch prompts, reviews, streams, dispositions, and drafts live in `design/_review/` only while active. Successful finalization deletes them.

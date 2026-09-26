@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.14.0
+
+- Codex tier models are auto-selected from the live account catalog (codex debug models): the newest generation ranked by catalog priority maps to complex/standard/light, so new OpenAI releases are picked up with no edit; hardcoded 5.6 slugs removed, -Model is an explicit override that fails closed, provenance records model_ladder, and usage attribution keeps full gpt slugs.
+
 ## 2.13.1
 
 - Corrected stale wording: Codex is the most-used orchestrator in practice (usage ledger); only its stage-2 hardening remains unbuilt.

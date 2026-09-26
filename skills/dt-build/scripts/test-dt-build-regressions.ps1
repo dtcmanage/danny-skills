@@ -76,23 +76,36 @@ try {
     Assert-True ($null -ne $helperFunction -and $null -ne $inlineFunction) "artifact extractor function was not found in both scripts"
     Assert-True ($helperFunction.Extent.Text -ceq $inlineFunction.Extent.Text) "shared and inline artifact extractor function bodies drifted"
 
-    # Current model tiers resolve deterministically from a synthetic live cache.
+    # Tiers resolve from the newest generation's catalog priority, never from hardcoded names:
+    # an older generation that stays selectable must not win, a shared name (Sol) must not
+    # carry its old rank, and Spark or retiring models are never chosen.
     . (Join-Path $repoRoot 'scripts\resolve-codex-model.ps1')
     $cachePath = Join-Path $tempRoot 'models.json'
     Write-Utf8 -Path $cachePath -Content @'
 {"models":[
-  {"slug":"gpt-5.6-sol","visibility":"list"},
-  {"slug":"gpt-5.6-terra","visibility":"list"},
-  {"slug":"gpt-5.6-luna","visibility":"list"},
-  {"slug":"gpt-5.3-codex-spark","visibility":"list"}
+  {"slug":"gpt-6-astra","visibility":"list","priority":1,"upgrade":null},
+  {"slug":"gpt-6-sol","visibility":"list","priority":2,"upgrade":null},
+  {"slug":"gpt-6-luna","visibility":"list","priority":3,"upgrade":null},
+  {"slug":"gpt-5.6-sol","visibility":"list","priority":4,"upgrade":null},
+  {"slug":"gpt-5.6-terra","visibility":"list","priority":7,"upgrade":null},
+  {"slug":"gpt-5.6-luna","visibility":"list","priority":8,"upgrade":null},
+  {"slug":"gpt-6-codex-spark","visibility":"list","priority":0,"upgrade":null},
+  {"slug":"gpt-reserve","visibility":"hide","priority":3,"upgrade":null}
 ]}
 '@
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-5.6-sol') "complex tier did not select Sol"
-    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-5.6-terra') "standard tier did not select Terra"
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-5.6-luna') "light tier did not select Luna"
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-astra') "complex tier did not select the newest top rung"
+    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "standard tier did not select the newest middle rung"
+    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') "light tier did not select the newest bottom rung"
+    $retiringCache = Join-Path $tempRoot 'models-retiring.json'
+    Write-Utf8 -Path $retiringCache -Content '{"models":[{"slug":"gpt-7-nova","visibility":"list","priority":1,"upgrade":{"model":"gpt-6-astra"}},{"slug":"gpt-6-astra","visibility":"list","priority":2,"upgrade":null}]}'
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) -eq 'gpt-6-astra') "resolver selected a model carrying a retirement notice"
+    $overrideRejected = $false
+    try { [void](Resolve-CodexModel -Tier standard -PreferredModel 'gone-model' -CachePath $cachePath -Strict) }
+    catch { $overrideRejected = $true }
+    Assert-True $overrideRejected "strict resolver silently replaced an unselectable override"
     $effortCache = Join-Path $tempRoot 'models-effort.json'
-    Write-Utf8 -Path $effortCache -Content '{"models":[{"slug":"gpt-5.5","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]}]}'
-    $fallbackModel = Resolve-CodexModel -Tier standard -PreferredModel 'gone-model' -CachePath $effortCache -Strict
+    Write-Utf8 -Path $effortCache -Content '{"models":[{"slug":"gpt-5.5","visibility":"list","priority":1,"supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]}]}'
+    $fallbackModel = Resolve-CodexModel -Tier standard -CachePath $effortCache -Strict
     $effortRejected = $false
     try { [void](Assert-CodexReasoningEffort -Model $fallbackModel -Effort max -CachePath $effortCache -Strict) }
     catch { $effortRejected = $true }
@@ -324,6 +337,7 @@ rationale: Framework limitation accepted with visible evidence.
     $fakeCodex = Join-Path $tempRoot 'fake-codex.ps1'
     Write-Utf8 -Path $fakeCodex -Content @'
 if ($args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
+if ($args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path $env:CODEX_HOME 'models_cache.json'); exit 0 }
 $outIndex = [Array]::IndexOf([object[]]$args, '--output-last-message')
 $outPath = if ($outIndex -ge 0) { [string]$args[$outIndex + 1] } else { '' }
 $mode = [string]$env:DT_FAKE_CODEX_MODE

@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.13.1
+  version: 2.14.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -88,9 +88,15 @@ the goal is an optimized build, not maximum firepower:
 
 | Tier | When | Codex lane | Claude lane |
 | :-- | :-- | :-- | :-- |
-| `light` | Routine mechanical work: boilerplate, config, renames, straightforward tests, preflight | `gpt-5.6-luna`, effort `low`/`medium` | `haiku` |
-| `standard` | Ordinary implementation with real logic | `gpt-5.6-terra`, effort `medium` | `sonnet` |
-| `complex` | Load-bearing, security-sensitive, ambiguous, or escalated chunks | `gpt-5.6-sol`, effort `medium` (raise to `high` only with a recorded reason) | `opus` |
+| `light` | Routine mechanical work: boilerplate, config, renames, straightforward tests, preflight | newest generation's last rung (today `gpt-6-luna`), effort `low`/`medium` | `haiku` |
+| `standard` | Ordinary implementation with real logic | newest generation's second rung (today `gpt-6-sol`), effort `medium` | `sonnet` |
+| `complex` | Load-bearing, security-sensitive, ambiguous, or escalated chunks | newest generation's top rung (today `gpt-6-astra`), effort `medium` (raise to `high` only with a recorded reason) | `opus` |
+
+Codex slugs are never hardcoded. On every call the wrapper refreshes the live account catalog
+(`codex debug models`) and the shared resolver ranks the newest selectable `gpt-<version>` generation
+by the catalog's own priority (Spark and models carrying a retirement notice are excluded). A new
+OpenAI release is picked up automatically; the "today" slugs above are examples, not pins. Pass
+`-Model` only as a deliberate override; an unselectable override fails closed.
 
 Light-tier implementation is allowed — the orchestrator owns quality: it reviews each chunk's result, and
 when a light-tier model proves incapable, the retry escalates one tier (light → standard → complex; a
@@ -124,7 +130,8 @@ durable audit record but does not replace the visible report.
 
 **Codex lane.** Never inherit Codex's user-config model or reasoning effort. Resolve every Codex chunk
 through `scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and
-persist the returned provenance JSON beside the chunk output. On Windows the wrapper runs substantive
+persist the returned provenance JSON beside the chunk output (it records `resolved_model`,
+`model_ladder`, and `model_cache_fetched_at`). On Windows the wrapper runs substantive
 chunks unsandboxed (Codex removed its Windows sandbox; a `workspace-write` request fails closed and
 blocks every command): containment there is the scoped worktree plus independent verification, and the
 provenance JSON records the effective mode. Never treat that Windows block as a dead Codex lane.

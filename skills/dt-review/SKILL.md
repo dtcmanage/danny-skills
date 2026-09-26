@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.12.1
+  version: 1.13.0
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -48,15 +48,15 @@ primarily authored the draft (Claude session -> `claude`; Codex session -> `code
 review through the opposite lane. The lane is fixed for the life of the review, like the tier. Default
 lane when authorship is mixed or unclear: `codex` (the Claude orchestrator authored or reconciled it).
 
-Use explicit pins; never inherit `~/.codex/config.toml` (currently Sol/ultra). Explicit pinning is
+Use explicit tier resolution; never inherit `~/.codex/config.toml`. Explicit selection is
 about provenance, not economy — the complex tier deliberately runs at high effort to match a top-tier
 authoring model:
 
 | Role | Codex lane | Claude lane | Limit |
 | --- | --- | --- | --- |
-| Light review | `gpt-5.6-terra`, effort `medium` | `sonnet` | 3 rounds |
-| Complex review | `gpt-5.6-sol`, effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
-| Preflight | `gpt-5.6-luna`, effort `low` | tier model, echo check | 30 seconds |
+| Light review | newest generation's second rung (today `gpt-6-sol`), effort `medium` | `sonnet` | 3 rounds |
+| Complex review | newest generation's top rung (today `gpt-6-astra`), effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
+| Preflight | newest generation's last rung (today `gpt-6-luna`), effort `low` | tier model, echo check | 30 seconds |
 
 Rounds 1-2 are the full critique; rounds 3+ are verification rounds (check prior commitments, new
 findings only at high severity), so the complex tier drops to medium effort there and the invoker's
@@ -66,7 +66,7 @@ round metadata.
 
 **Model-selection disclosure (tracking).** At Round 0, state in the chat output the selected lane and
 tier model with a one-sentence reason (authoring family + review class), e.g.
-`codex lane, gpt-5.6-sol @ high: Claude-authored draft, complex review`. Any mid-review deviation
+`codex lane, gpt-6-astra @ high: Claude-authored draft, complex review`. Any mid-review deviation
 restates the new model and its recorded reason in chat. One sentence is enough; this visible line is how
 Danny tracks that model routing works as intended — round metadata records the same facts but does not
 replace saying it.
@@ -78,15 +78,12 @@ explicit ChatGPT auth, explicit model/effort, and structured output. The Claude 
 a hermetic working directory, default permission mode, an embedded output schema, and the same receipt,
 validation, and redaction chain.
 
-The shared resolver validates pins against the account catalog. Fallbacks are:
-
-- Complex: Sol -> Terra -> 5.5 -> 5.4.
-- Light: Terra -> Luna -> 5.4 -> 5.4-mini -> 5.5 -> Sol.
-- Never select `gpt-5.3-codex-spark`.
-
-When the catalog changes, refresh with `codex debug models`, verify official OpenAI model guidance,
-probe each proposed pin read-only, then update this table, both script defaults, and
-`scripts/resolve-codex-model.ps1` together.
+Model slugs are never hardcoded. Preflight refreshes the live account catalog (`codex debug models`);
+the shared `scripts/resolve-codex-model.ps1` takes the newest selectable `gpt-<version>` generation,
+orders it by the catalog's own priority, and maps top / second / last rung to complex review / light
+review / preflight. Spark and models carrying a retirement notice are never selected. A new OpenAI
+release is picked up with no edit; the "today" slugs above are examples. `-Model` is a deliberate
+override only, and an unselectable override fails closed.
 
 ## References
 
@@ -133,7 +130,7 @@ budgets (10 + 10 + 15 + 30 seconds) plus bounded cleanup:
 
 ```powershell
 pwsh -NoProfile -File <skill>\scripts\preflight-codex.ps1 `
-  -ProjectPath <abs> -Model gpt-5.6-luna -Tier light -ReasoningEffort low -TimeoutMs 30000
+  -ProjectPath <abs> -Tier light -ReasoningEffort low -TimeoutMs 30000
 ```
 
 This verifies CLI features (`--output-schema`, `--ephemeral`, `--ignore-user-config`), auth, model

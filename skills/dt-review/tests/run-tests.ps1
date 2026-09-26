@@ -88,20 +88,25 @@ $scratch = Join-Path $project 'design\_review'
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 
 try {
-    # Model resolver prefers the current GPT-5.6 tier models.
+    # Model resolver ranks the newest generation by catalog priority; no names are hardcoded.
     . (Join-Path $RepoRoot 'scripts\resolve-codex-model.ps1')
     $cachePath = Join-Path $testRoot 'models.json'
     $cache = [pscustomobject]@{
         models = @(
-            [pscustomobject]@{ slug = 'gpt-5.6-sol'; visibility = 'list' },
-            [pscustomobject]@{ slug = 'gpt-5.6-terra'; visibility = 'list' },
-            [pscustomobject]@{ slug = 'gpt-5.6-luna'; visibility = 'list' }
+            [pscustomobject]@{ slug = 'gpt-7-sol'; visibility = 'list'; priority = 2 },
+            [pscustomobject]@{ slug = 'gpt-7-nova'; visibility = 'list'; priority = 1 },
+            [pscustomobject]@{ slug = 'gpt-7-luna'; visibility = 'list'; priority = 3 },
+            [pscustomobject]@{ slug = 'gpt-6.9-sol'; visibility = 'list'; priority = 4 },
+            [pscustomobject]@{ slug = 'gpt-7-codex-spark'; visibility = 'list'; priority = 0 },
+            [pscustomobject]@{ slug = 'gpt-8-preview'; visibility = 'hide'; priority = 0 }
         )
     } | ConvertTo-Json -Depth 4
     Write-Utf8 $cachePath $cache
-    Assert-True ((Resolve-CodexModel -Tier complex -PreferredModel 'dead' -CachePath $cachePath) -eq 'gpt-5.6-sol') 'complex resolver did not select Sol'
-    Assert-True ((Resolve-CodexModel -Tier light -PreferredModel 'gpt-5.6-terra' -CachePath $cachePath) -eq 'gpt-5.6-terra') 'dt-review light pin did not select Terra'
-    Assert-True ((Resolve-CodexModel -Tier light -PreferredModel 'dead' -CachePath $cachePath) -eq 'gpt-5.6-luna') 'shared light fallback did not select Luna'
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-7-nova') 'complex resolver did not select the newest top rung'
+    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-7-sol') 'light-review (standard rung) did not select the newest middle rung'
+    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-7-luna') 'preflight (light rung) did not select the newest bottom rung'
+    Assert-True ((Resolve-CodexModel -Tier light -PreferredModel 'gpt-6.9-sol' -CachePath $cachePath -Strict) -eq 'gpt-6.9-sol') 'selectable explicit override was not honored'
+    Assert-Throws { Resolve-CodexModel -Tier light -PreferredModel 'dead' -CachePath $cachePath -Strict } 'not selectable' 'strict resolver accepted an unselectable override'
 
     # The shared process runner must kill a timed-out child.
     . (Join-Path $RepoRoot 'scripts\invoke-codex-process.ps1')

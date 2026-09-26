@@ -49,6 +49,9 @@ def parse_ts(value: str | None) -> datetime | None:
 
 def family(model: str | None) -> str:
     m = (model or "unset").lower()
+    # Codex slugs keep their generation: a rung name like "sol" changes rank across releases.
+    if m.startswith("gpt-"):
+        return m
     for key in ("opus", "sonnet", "haiku", "fable", "sol", "terra", "luna"):
         if key in m:
             return key

@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.13.0 (2026-09-26): Codex review models are auto-selected from the live account catalog via the shared resolver (complex review = top rung, light review = second rung, preflight = last rung of the newest generation); hardcoded 5.6 pins and fallback lists removed.
+
 - 1.12.1 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).
 
 - 1.12.0 (2026-09-06): Convergence gates from the 2026-09-06 audit of eleven reviews: script-enforced blocking policy in both invokers (high blocks any round, medium only rounds 1-2, low never; downgrades recorded in round metadata and review markdown, verdict recomputed); persist cap in evaluate-termination (a finding blocking in three rounds escalates to USER_DECISION instead of CONTINUE); verification-round prompt block from round 3 (verify prior commitments, new findings only at high severity); complex tier drops Sol to medium effort from round 3; complex cap 6 -> 4; security minimum checks in the shared dimension contract now apply only to artifacts with external actors or untrusted input.

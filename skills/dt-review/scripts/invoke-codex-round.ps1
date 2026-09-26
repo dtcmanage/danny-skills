@@ -10,7 +10,8 @@ param(
     [Parameter(Mandatory)]
     [string]$PromptPath,
 
-    [string]$Model = 'gpt-5.6-terra',
+    # Explicit override only; empty auto-selects from the newest Codex generation.
+    [string]$Model = '',
 
     [ValidateSet('complex', 'light')]
     [string]$Tier = 'light',
@@ -103,7 +104,9 @@ if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) {
 }
 
 $RequestedModel = $Model
-$Model = Resolve-CodexModel -Tier $Tier -PreferredModel $Model -Strict
+# Light reviews run the newest generation's standard rung; complex reviews its top rung.
+$resolverTier = if ($Tier -eq 'complex') { 'complex' } else { 'standard' }
+$Model = Resolve-CodexModel -Tier $resolverTier -PreferredModel $Model -Strict
 [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Strict)
 # Complex rounds 1-2 are the full critique at high effort; rounds 3+ are verification rounds and
 # run at medium. A high-effort critic re-reading the whole draft every round manufactured findings
