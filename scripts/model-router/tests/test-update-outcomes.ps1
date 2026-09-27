@@ -32,12 +32,15 @@ try {
     $table = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/seed-table.json') -Raw | ConvertFrom-Json -Depth 30
     $table.source = 'research'
     $table.coverage = 'full'
+    $table.evidence_routing_approved = $true
     $table.generated_at = '2026-09-27'
     $rows = $table.categories.'routine-coding'.claude.candidates
     foreach ($candidate in @($rows[1],$rows[2])) {
         $candidate.grade = 'capable'
+        $candidate.confirmed_grade = 'capable'
         $candidate.citations = @([pscustomobject]@{ source='Fixture'; url='https://example.org/evidence'; independent=$true; note='Fixture' })
     }
+    $rows[1].grade = 'strong'; $rows[1].confirmed_grade = 'strong'
     $rows[1].est_burn = 10; $rows[1].est_seconds = 30
     $rows[2].est_burn = 8; $rows[2].est_seconds = 10
     $table | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $script:state 'router-table.json')
@@ -105,6 +108,7 @@ try {
 
     $fixture = Get-Content -LiteralPath (Join-Path $script:state 'router-table.json') -Raw | ConvertFrom-Json -Depth 30
     $fixture.categories.'routine-coding'.claude.candidates[1].grade = 'unknown'
+    $fixture.categories.'routine-coding'.claude.candidates[1].confirmed_grade = 'unknown'
     $fixture | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $script:state 'router-table.json')
     @([pscustomobject]@{ category='routine-coding'; lane='claude'; model=$rows[2].model; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' }) | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $script:state 'drift-flags.json')
     $none = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck

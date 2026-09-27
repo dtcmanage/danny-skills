@@ -42,19 +42,22 @@ return [pscustomobject]@{ id = 'fake-message' }
     $table = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'references/model-router/seed-table.json') | ConvertFrom-Json -Depth 30
     $table.source = 'research'
     $table.coverage = 'full'
+    $table.evidence_routing_approved = $true
     $table.generated_at = '2026-09-27'
     $rows = @(
         @('complex-coding','codex','gpt-6-sol','strong',10), @('complex-coding','codex','gpt-6-luna','capable',2),
-        @('routine-coding','codex','gpt-6-sol','strong',10), @('routine-coding','codex','gpt-6-luna','capable',2),
-        @('mechanical','codex','gpt-5.6-sol','capable',1),
-        @('planning','codex','gpt-6-sol','strong',10), @('planning','codex','gpt-6-luna','capable',2), @('planning','codex','gpt-5.6-sol','capable',5),
+        @('routine-coding','codex','gpt-6-sol','capable',10), @('routine-coding','codex','gpt-6-luna','capable',2),
+        @('mechanical','codex','gpt-6-luna','capable',10), @('mechanical','codex','gpt-5.6-sol','strong',1),
+        @('planning','codex','gpt-6-sol','capable',10), @('planning','codex','gpt-6-luna','capable',2), @('planning','codex','gpt-5.6-sol','capable',5),
         @('ui-frontend','codex','gpt-6-sol','strong',5),
         @('routine-coding','claude','claude-opus-5-5','strong',10), @('routine-coding','claude','claude-sonnet-5','capable',2),
+        @('code-review','claude','claude-opus-5-5','strong',10), @('code-review','claude','claude-sonnet-5','capable',2),
         @('complex-coding','claude','claude-opus-5-5','strong',10), @('complex-coding','claude','claude-sonnet-5','capable',2),
         @('long-form-writing','claude','claude-opus-5-5','strong',10))
     foreach ($row in $rows) {
         $candidate = @($table.categories.($row[0]).($row[1]).candidates | Where-Object { $_.model -eq $row[2] })[0]
         $candidate.grade = $row[3]
+        $candidate.confirmed_grade = $row[3]
         $candidate.citations = @([pscustomobject]@{ source = 'Fixture'; url = 'https://example.org/fixture'; independent = $true; note = 'Fixture' })
         $candidate.est_burn = $row[4]
         $candidate.est_seconds = 10
@@ -161,9 +164,13 @@ $report
     $r = Invoke-ClaudeWrapper 'claude-escalate' @('-Category','complex-coding','-EscalateFrom','claude-sonnet-5')
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.escalated_from -eq 'claude-sonnet-5') 'claude wrapper -EscalateFrom moves one step up'
     $beforeSends = Get-TransportCount
+    $tablePath = Join-Path $state 'router-table.json'
+    $validTable = Get-Content -LiteralPath $tablePath -Raw
+    Write-Utf8 $tablePath '{"schema_version":99}'
     $r = Invoke-ClaudeWrapper 'claude-review' @('-Category','code-review','-ReadOnly')
+    Write-Utf8 $tablePath $validTable
     $parsed = $null; try { $parsed = $r.stdout | ConvertFrom-Json } catch { }
-    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $parsed -and $parsed.category -eq 'code-review') 'claude wrapper -Json keeps stdout one JSON object'
+    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-sonnet-5' -and $parsed -and $parsed.category -eq 'code-review') 'claude wrapper -Json keeps stdout one JSON object'
     Assert-True ($r.stderr -match 'ROUTER_ALERT: ' -and (Get-TransportCount) -gt $beforeSends) 'wrapper passes -SendAlerts and prints the ROUTER_ALERT line (fake transport)'
     Assert-True (([regex]::Matches($r.stderr, 'ROUTER_ALERT_TEST_TRANSPORT_ACTIVE')).Count -eq 1) 'test transport seam writes its stderr marker once per process'
     $claudeText = Get-Content -Raw -LiteralPath (Join-Path $buildScripts 'invoke-claude-chunk.ps1')

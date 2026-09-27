@@ -90,6 +90,7 @@ function Get-RouterAlertMessage {
     param([string]$Key)
     switch -Regex -CaseSensitive ($Key) {
         '^router-seed-table-in-use$' { return 'Model router has no research table yet, so routing matches the pre-router defaults until research runs.' }
+        '^router-picks-changed-needs-approval$' { return 'Model router research changed its picks; review and approve before they take effect.' }
         '^new-model:(.+)$' { return "Model router found a new model: $($Matches[1]). Research is needed before it can be selected." }
         '^model-missing:(.+)$' { return "Model router can no longer find model $($Matches[1]) in the vendor catalog." }
         '^catalog-check-timeout$' { return 'Model router catalog check timed out; it will retry later.' }

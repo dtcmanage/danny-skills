@@ -114,7 +114,9 @@ function Build-RouterTable {
     $frontierConfig = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json
     $table.source = 'research'
     $table.generated_at = $Now.ToString('yyyy-MM-dd')
+    if (-not $table.PSObject.Properties['approved_picks']) { $table | Add-Member -NotePropertyName approved_picks -NotePropertyValue @() }
     $profiles = @{}
+    $history = @{}
     if (Test-Path -LiteralPath $ProfilesDir) {
         foreach ($file in @(Get-ChildItem -LiteralPath $ProfilesDir -File -Filter '*.json' | Sort-Object Name)) {
             try {
@@ -125,6 +127,20 @@ function Build-RouterTable {
                 $profiles[[string]$profile.model] = $profile
                 if (($Now - [datetime]$profile.researched_at).TotalDays -gt 90) { $alerts.Add("stale-profile:$($profile.model)") }
             } catch { $alerts.Add("research-profile-invalid:$($file.BaseName)"); continue }
+        }
+    }
+    $historyDir = Join-Path $ProfilesDir 'history'
+    if (Test-Path -LiteralPath $historyDir) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $historyDir -File -Filter '*@*.json' | Sort-Object Name -Descending)) {
+            if ($file.BaseName -notmatch '^(.+)@(\d{4}-\d{2}-\d{2}T\d{6})$') { continue }
+            $id = $Matches[1]
+            if (-not $history.ContainsKey($id)) { $history[$id] = [System.Collections.Generic.List[object]]::new() }
+            if ($history[$id].Count -ge 2) { continue }
+            try {
+                $item = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 40
+                if (-not (Test-RouterProfile $item) -or $item.model -cne $id -or @(Get-RouterProfileNumericIssues -Profile $item -VendorDomains $frontierConfig.vendor_domains).Count) { throw 'invalid history profile' }
+                $history[$id].Add($item)
+            } catch { $history[$id].Add($null) }
         }
     }
     # Every model added here arrives with a valid researched profile, so a full table stays full when a
@@ -168,12 +184,23 @@ function Build-RouterTable {
                     $profile.categories.'image-generation'.grade -eq 'unknown' -and
                     @($profile.categories.'image-generation'.citations).Count -eq 0) { continue }
                 if ($row.Count -eq 0) {
-                    $new = [pscustomobject]@{ model = $profile.model; frontier = $false; strength_rank = [long]($rows.Count + 1); grade = 'unknown'; citations = @(); est_burn = $null; est_seconds = $null; pass_rate = $null; pass_samples = [long]0 }
+                    $new = [pscustomobject]@{ model = $profile.model; frontier = $false; strength_rank = [long]($rows.Count + 1); grade = 'unknown'; confirmed_grade = 'unknown'; citations = @(); est_burn = $null; est_seconds = $null; pass_rate = $null; pass_samples = [long]0 }
                     $rows.Add($new); $row = @($new)
                 }
                 $candidate = $row[0]
                 $evidence = $profile.categories.$categoryName
                 $candidate.grade = [string]$evidence.grade
+                $candidate.confirmed_grade = 'unknown'
+                if ($history.ContainsKey([string]$profile.model) -and $history[[string]$profile.model].Count -ge 2) {
+                    $recent = @($history[[string]$profile.model].ToArray())
+                    $first = if ($null -ne $recent[0]) { $recent[0].categories.$categoryName } else { $null }
+                    $second = if ($null -ne $recent[1]) { $recent[1].categories.$categoryName } else { $null }
+                    if ($null -ne $first -and $null -ne $second -and $first.grade -eq $second.grade -and
+                        @($first.citations | Where-Object { Test-RouterIndependentCitation $_ $frontierConfig.vendor_domains }).Count -gt 0 -and
+                        @($second.citations | Where-Object { Test-RouterIndependentCitation $_ $frontierConfig.vendor_domains }).Count -gt 0) {
+                        $candidate.confirmed_grade = [string]$first.grade
+                    }
+                }
                 $citations = [System.Collections.Generic.List[object]]::new()
                 $seenUrls = @{}
                 foreach ($citation in $evidence.citations) {
@@ -216,12 +243,12 @@ function Build-RouterTable {
             }
             if ($categoryName -eq 'long-form-writing') {
                 if ($laneName -eq 'claude' -and @($rows | Where-Object { $_.model -eq $topWritingClaude }).Count -eq 0) {
-                    $rows.Add([pscustomobject]@{ model = $topWritingClaude; frontier = $false; strength_rank = [long]($rows.Count + 1); grade = 'unknown'; citations = @(); est_burn = $null; est_seconds = $null; pass_rate = $null; pass_samples = [long]0 })
+                    $rows.Add([pscustomobject]@{ model = $topWritingClaude; frontier = $false; strength_rank = [long]($rows.Count + 1); grade = 'unknown'; confirmed_grade = 'unknown'; citations = @(); est_burn = $null; est_seconds = $null; pass_rate = $null; pass_samples = [long]0 })
                 }
                 foreach ($candidate in $rows) {
                     $profile = if ($profiles.ContainsKey([string]$candidate.model)) { $profiles[[string]$candidate.model] } else { $null }
                     $exempt = $laneName -eq 'claude' -and ($candidate.frontier -or $candidate.model -eq $topWritingClaude)
-                    if (-not $exempt -and ($null -eq $profile -or $profile.voice_policy_check -cne 'passed')) { $candidate.grade = 'unknown'; $candidate.citations = @() }
+                    if (-not $exempt -and ($null -eq $profile -or $profile.voice_policy_check -cne 'passed')) { $candidate.grade = 'unknown'; $candidate.confirmed_grade = 'unknown'; $candidate.citations = @() }
                 }
             }
             $graded = [System.Collections.Generic.List[object]]::new()
@@ -262,7 +289,28 @@ function Build-RouterTable {
     $directory = Split-Path -Parent $OutPath
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
     $temp = Join-Path $directory ('.router-table.' + [guid]::NewGuid().ToString('N') + '.tmp')
-    try { [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false)); [IO.File]::Move($temp,$OutPath,$true) }
+    try {
+        [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false))
+        if ($table.evidence_routing_approved) {
+            . (Join-Path $PSScriptRoot 'resolve-model.ps1')
+            $currentPicks = @(Get-RouterPicksSnapshot -TablePath $temp)
+            $oldPicks = @($base.table.approved_picks)
+            $changed = $oldPicks.Count -ne $currentPicks.Count
+            if (-not $changed) {
+                for ($i = 0; $i -lt $currentPicks.Count; $i++) {
+                    if ($oldPicks[$i].category -ne $currentPicks[$i].category -or $oldPicks[$i].lane -ne $currentPicks[$i].lane -or
+                        [bool]$oldPicks[$i].protected -ne [bool]$currentPicks[$i].protected -or $oldPicks[$i].model -ne $currentPicks[$i].model) { $changed = $true; break }
+                }
+            }
+            if ($changed) {
+                $table.evidence_routing_approved = $false
+                $alerts.Add('router-picks-changed-needs-approval')
+                $json = ConvertTo-Json -InputObject $table -Depth 40
+                [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false))
+            }
+        }
+        [IO.File]::Move($temp,$OutPath,$true)
+    }
     finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
     return [pscustomobject]@{ written = $true; alerts = @($alerts.ToArray()); table = $table }
 }

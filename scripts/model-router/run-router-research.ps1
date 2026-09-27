@@ -165,11 +165,24 @@ function Invoke-RouterResearch {
                 if ($text -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $text = $Matches[1] }
                 $profile = $text | ConvertFrom-Json -Depth 40
                 if (-not (Test-RouterProfile $profile) -or $profile.model -cne $id -or $profile.lane -cne $lane) { throw 'invalid research profile' }
-                $profile.researched_at = $Now.ToString('yyyy-MM-dd')
+                $profile.researched_at = $Now.ToString('o')
                 $profilesDir = Join-Path $state 'profiles'
                 New-Item -ItemType Directory -Path $profilesDir -Force | Out-Null
                 $path = Join-Path $profilesDir ($id + '.json')
                 $json = ConvertTo-Json -InputObject $profile -Depth 40
+                $historyDir = Join-Path $profilesDir 'history'
+                New-Item -ItemType Directory -Path $historyDir -Force | Out-Null
+                $historyTime = $Now
+                do {
+                    $historyPath = Join-Path $historyDir ($id + '@' + $historyTime.ToString('yyyy-MM-ddTHHmmss') + '.json')
+                    if (-not (Test-Path -LiteralPath $historyPath)) { break }
+                    $historyTime = $historyTime.AddSeconds(1)
+                } while ($true)
+                $historyStream = [IO.File]::Open($historyPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+                try {
+                    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+                    $historyStream.Write($bytes,0,$bytes.Length)
+                } finally { $historyStream.Dispose() }
                 $temp = Join-Path $profilesDir ('.' + $id + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
                 try { [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false)); [IO.File]::Move($temp,$path,$true) }
                 finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }

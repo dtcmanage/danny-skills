@@ -355,6 +355,34 @@ try {
         $r = Invoke-RouterResearch -Now ([datetime]'2026-09-27')
         Assert-True (@($r.researched).Count -eq 0 -and $r.table_written -and @(Read-RouterJsonArray -Path (Join-Path $caseDir 'pending-research.json')).Count -eq 0) "empty queue file ($($content.Length) bytes) is an empty queue"
     }
+    $caseDir = New-Case 'confirmed-approval'
+    $env:DT_MODEL_ROUTER_STATE = $caseDir
+    $historyDir = Join-Path $profiles 'history'
+    New-Item -ItemType Directory -Path $historyDir -Force | Out-Null
+    $incumbentProfile = New-Profile 'gpt-6-sol' 'codex' '2026-09-27'
+    Enable-Grade $incumbentProfile 'complex-coding' 'capable' $true 20
+    Save-Profile $incumbentProfile
+    $challengerProfile = New-Profile 'gpt-5.6-sol' 'codex' '2026-09-27'
+    Enable-Grade $challengerProfile 'complex-coding' 'capable' $true 30
+    Save-Profile $challengerProfile
+    foreach ($stamp in @('2026-09-27T100000','2026-09-27T110000')) {
+        foreach ($profile in @($incumbentProfile,$challengerProfile)) {
+            $profile | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $historyDir ($profile.model + '@' + $stamp + '.json'))
+        }
+    }
+    $result = Build-RouterTable -ProfilesDir $profiles -OutPath $out -Now ([datetime]'2026-09-27') -FullCoverage
+    Assert-True ($result.written -and (Get-Row (Get-Lane 'complex-coding' 'codex') 'gpt-6-sol').confirmed_grade -eq 'capable') 'two cited matching history runs confirm grade'
+    & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Approve -TablePath $out | Out-Null
+    $result = Rebuild
+    Assert-True ($result.table.evidence_routing_approved -and $result.alerts -notcontains 'router-picks-changed-needs-approval') 'unchanged picks preserve approval'
+    Enable-Grade $challengerProfile 'complex-coding' 'strong' $true 30
+    Save-Profile $challengerProfile
+    foreach ($stamp in @('2026-09-27T120000','2026-09-27T130000')) {
+        $challengerProfile | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $historyDir ($challengerProfile.model + '@' + $stamp + '.json'))
+    }
+    $result = Rebuild
+    Assert-True ($result.written -and -not $result.table.evidence_routing_approved -and $result.alerts -contains 'router-picks-changed-needs-approval') 'changed evidence pick revokes approval and queues alert'
+    Assert-True ((Get-Row (Get-Lane 'complex-coding' 'codex') 'gpt-5.6-sol').confirmed_grade -eq 'strong') 'newest two history runs determine confirmed grade'
     $env:DT_MODEL_ROUTER_STATE = $temp
     Write-Output "SUMMARY: $script:passed passed"
 } finally {

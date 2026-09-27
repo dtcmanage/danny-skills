@@ -107,10 +107,12 @@ try {
     $routerTable = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'references\model-router\seed-table.json') | ConvertFrom-Json -Depth 30
     $routerTable.source = 'research'
     $routerTable.coverage = 'full'
+    $routerTable | Add-Member -Force -NotePropertyName evidence_routing_approved -NotePropertyValue $true
     $routerTable.generated_at = '2026-09-27'
     foreach ($fixtureRow in @(@('gpt-6-sol', 'strong', 10), @('gpt-6-luna', 'capable', 2), @('gpt-5.6-sol', 'capable', 5))) {
         $candidate = @($routerTable.categories.planning.codex.candidates | Where-Object { $_.model -eq $fixtureRow[0] })[0]
         $candidate.grade = $fixtureRow[1]
+        $candidate | Add-Member -Force -NotePropertyName confirmed_grade -NotePropertyValue $fixtureRow[1]
         $candidate.citations = @([pscustomobject]@{ source = 'Fixture'; url = 'https://example.org/fixture'; independent = $true; note = 'Fixture' })
         $candidate.est_burn = $fixtureRow[2]
         $candidate.est_seconds = 10
@@ -130,8 +132,8 @@ try {
     } | ConvertTo-Json -Depth 4
     Write-Utf8 $cachePath $cache
     Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'complex review (planning, protected) did not select the strongest eligible router candidate'
-    Assert-True ((Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'light review uses the mechanical category'
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'legacy tier-only caller did not route through the router (mechanical fallback)'
+    Assert-True ((Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'light review uses the mechanical category (no mechanical evidence keeps the luna incumbent)'
+    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'legacy tier-only caller did not route through the router (mechanical keeps luna incumbent)'
     Assert-True ((Resolve-CodexModel -Category planning -PreferredModel 'gpt-5.6-sol' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-5.6-sol') 'selectable explicit override was not honored'
     Assert-Throws { Resolve-CodexModel -Category planning -PreferredModel 'dead' -CachePath $cachePath -Strict } 'not selectable' 'strict resolver accepted an unselectable override'
     # Bridge mode (seed table, no research yet): dt-review keeps its pre-router picks.

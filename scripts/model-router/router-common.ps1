@@ -5,6 +5,22 @@ function Get-RouterCategories {
     return @('complex-coding','routine-coding','code-review','ui-frontend','planning','deep-research','long-form-writing','mechanical','image-generation')
 }
 
+function Get-RouterModelGeneration {
+    param([Parameter(Mandatory)][string]$Model)
+    if ($Model -match '^gpt-(\d+)(?:\.(\d+))?(?:-|$)') {
+        return [pscustomobject]@{ vendor = 'gpt'; major = [long]$Matches[1]; minor = $(if ($Matches[2]) { [long]$Matches[2] } else { [long]0 }) }
+    }
+    if ($Model -match '^claude-(?:opus|sonnet|haiku|fable)-(\d+)-(\d+)(?:-|$)') {
+        return [pscustomobject]@{ vendor = 'claude'; major = [long]$Matches[1]; minor = [long]$Matches[2] }
+    }
+    return $null
+}
+
+function Get-RouterGradeRank {
+    param([string]$Grade)
+    switch ($Grade) { 'strong' { return 3 }; 'capable' { return 2 }; 'weak' { return 1 }; default { return 0 } }
+}
+
 function Get-RouterStateDir {
     if ($env:DT_MODEL_ROUTER_STATE) { $state = [System.IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE) }
     else {
@@ -63,7 +79,7 @@ function Test-RouterTable {
     param([Parameter(Mandatory)][object]$Table)
     $errors = [System.Collections.Generic.List[string]]::new()
     if ($null -eq $Table -or $Table -isnot [pscustomobject]) { return @('ROOT_OBJECT: table must be an object') }
-    foreach ($field in @('schema_version','generated_at','source','coverage','categories')) {
+    foreach ($field in @('schema_version','generated_at','source','coverage','evidence_routing_approved','categories')) {
         if (-not $Table.PSObject.Properties[$field]) { $errors.Add("ROOT_FIELD: missing $field") }
     }
     if ($errors.Count -gt 0) { return $errors.ToArray() }
@@ -73,6 +89,8 @@ function Test-RouterTable {
     elseif (-not [datetimeoffset]::TryParse([string]$Table.generated_at, [ref]$date)) { $errors.Add('GENERATED_AT: expected ISO date') }
     if ($Table.source -notin @('seed','research')) { $errors.Add('SOURCE: expected seed or research') }
     if ($Table.coverage -cnotin @('partial','full')) { $errors.Add('COVERAGE: expected partial or full') }
+    if ($Table.evidence_routing_approved -isnot [bool]) { $errors.Add('APPROVAL: expected Boolean') }
+    if ($Table.PSObject.Properties['approved_picks'] -and $null -ne $Table.approved_picks -and $Table.approved_picks -isnot [array]) { $errors.Add('APPROVED_PICKS: expected array') }
     if ($Table.source -eq 'seed' -and $Table.coverage -cne 'partial') { $errors.Add('COVERAGE: seed must be partial') }
     if ($Table.categories -isnot [pscustomobject]) { $errors.Add('CATEGORIES: expected object'); return $errors.ToArray() }
     $expected = @(Get-RouterCategories)
@@ -90,7 +108,7 @@ function Test-RouterTable {
             foreach ($candidate in $entry.candidates) {
                 $where = "$category/$lane"
                 if ($candidate -isnot [pscustomobject]) { $errors.Add("CANDIDATE: invalid $where"); continue }
-                $fields = @('model','frontier','strength_rank','grade','citations','est_burn','est_seconds','pass_rate','pass_samples')
+                $fields = @('model','frontier','strength_rank','grade','confirmed_grade','citations','est_burn','est_seconds','pass_rate','pass_samples')
                 $missing = @($fields | Where-Object { -not $candidate.PSObject.Properties[$_] })
                 if ($missing.Count) { $errors.Add("CANDIDATE_FIELDS: $where missing $($missing -join ',')"); continue }
                 $id = [string]$candidate.model
@@ -98,6 +116,7 @@ function Test-RouterTable {
                 if ($candidate.frontier -isnot [bool]) { $errors.Add("FRONTIER: $where/$id") }
                 if ($candidate.strength_rank -isnot [long] -or $candidate.strength_rank -lt 1 -or $ranks.ContainsKey([string]$candidate.strength_rank)) { $errors.Add("STRENGTH_RANK: $where/$id") } else { $ranks[[string]$candidate.strength_rank] = $true }
                 if ($candidate.grade -notin @('strong','capable','weak','unknown')) { $errors.Add("GRADE: $where/$id") }
+                if ($candidate.confirmed_grade -notin @('strong','capable','weak','unknown')) { $errors.Add("CONFIRMED_GRADE: $where/$id") }
                 if ($candidate.citations -isnot [array]) { $errors.Add("CITATIONS: $where/$id") } else {
                     foreach ($citation in $candidate.citations) {
                         if ($citation -isnot [pscustomobject] -or -not $citation.PSObject.Properties['source'] -or -not $citation.PSObject.Properties['url'] -or -not $citation.PSObject.Properties['independent'] -or -not $citation.PSObject.Properties['note'] -or -not $citation.source -or -not ([uri]::IsWellFormedUriString([string]$citation.url,[System.UriKind]::Absolute)) -or $citation.independent -isnot [bool] -or $citation.note -isnot [string]) { $errors.Add("CITATION: $where/$id") }
