@@ -50,7 +50,7 @@ return [pscustomobject]@{ id = 'fake-message' }
         @('mechanical','codex','gpt-6-luna','capable',10), @('mechanical','codex','gpt-5.6-sol','strong',1),
         @('planning','codex','gpt-6-sol','capable',10), @('planning','codex','gpt-6-luna','capable',2), @('planning','codex','gpt-5.6-sol','capable',5),
         @('ui-frontend','codex','gpt-6-sol','strong',5),
-        @('routine-coding','claude','claude-opus-5-5','strong',10), @('routine-coding','claude','claude-sonnet-5','capable',2),
+        @('routine-coding','claude','claude-opus-5-5','capable',10), @('routine-coding','claude','claude-sonnet-5','capable',2),
         @('code-review','claude','claude-opus-5-5','strong',10), @('code-review','claude','claude-sonnet-5','capable',2),
         @('complex-coding','claude','claude-opus-5-5','strong',10), @('complex-coding','claude','claude-sonnet-5','capable',2),
         @('long-form-writing','claude','claude-opus-5-5','strong',10))

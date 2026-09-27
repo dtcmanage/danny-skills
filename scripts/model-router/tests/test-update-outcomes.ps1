@@ -40,7 +40,7 @@ try {
         $candidate.confirmed_grade = 'capable'
         $candidate.citations = @([pscustomobject]@{ source='Fixture'; url='https://example.org/evidence'; independent=$true; note='Fixture' })
     }
-    $rows[1].grade = 'strong'; $rows[1].confirmed_grade = 'strong'
+    $rows[1].grade = 'capable'; $rows[1].confirmed_grade = 'capable'
     $rows[1].est_burn = 10; $rows[1].est_seconds = 30
     $rows[2].est_burn = 8; $rows[2].est_seconds = 10
     $table | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $script:state 'router-table.json')
@@ -99,7 +99,7 @@ try {
     $drift = Run-Update
     Assert-True ($drift.drift_flags -eq 1 -and @($drift.alerts | Where-Object { $_ -like 'drift:*' }).Count -eq 1) 'drift at exactly 15 points with 10 plus 20 samples'
     $demoted = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
-    Assert-True ($demoted.model -eq $rows[1].model -and $demoted.reason -match 'Drift demotion') 'resolver demotes flagged candidate'
+    Assert-True ($demoted.model -eq $rows[2].model -and $demoted.alerts -contains "drift-no-alternative:$($rows[2].model):routine-coding:claude") 'drift keeps incumbent when no qualifying challenger exists'
     $protected = Resolve-RouterModel -Category routine-coding -Lane claude -Protected -SkipModelCheck
     Assert-True ($protected.model -eq $rows[1].model) 'protected pick remains strongest under drift'
     for ($i=21; $i -le 50; $i++) { Write-Provenance "recent-$i" 'M01' 1 'sonnet' ($i -le 46) '2026-09-25T12:00:00Z' }

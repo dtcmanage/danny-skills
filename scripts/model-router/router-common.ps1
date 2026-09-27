@@ -10,8 +10,8 @@ function Get-RouterModelGeneration {
     if ($Model -match '^gpt-(\d+)(?:\.(\d+))?(?:-|$)') {
         return [pscustomobject]@{ vendor = 'gpt'; major = [long]$Matches[1]; minor = $(if ($Matches[2]) { [long]$Matches[2] } else { [long]0 }) }
     }
-    if ($Model -match '^claude-(?:opus|sonnet|haiku|fable)-(\d+)-(\d+)(?:-|$)') {
-        return [pscustomobject]@{ vendor = 'claude'; major = [long]$Matches[1]; minor = [long]$Matches[2] }
+    if ($Model -match '^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$') {
+        return [pscustomobject]@{ vendor = 'claude'; major = [long]$Matches[1]; minor = $(if ($Matches[2]) { [long]$Matches[2] } else { [long]0 }) }
     }
     return $null
 }
@@ -79,7 +79,7 @@ function Test-RouterTable {
     param([Parameter(Mandatory)][object]$Table)
     $errors = [System.Collections.Generic.List[string]]::new()
     if ($null -eq $Table -or $Table -isnot [pscustomobject]) { return @('ROOT_OBJECT: table must be an object') }
-    foreach ($field in @('schema_version','generated_at','source','coverage','evidence_routing_approved','categories')) {
+    foreach ($field in @('schema_version','generated_at','source','coverage','categories')) {
         if (-not $Table.PSObject.Properties[$field]) { $errors.Add("ROOT_FIELD: missing $field") }
     }
     if ($errors.Count -gt 0) { return $errors.ToArray() }
@@ -89,7 +89,7 @@ function Test-RouterTable {
     elseif (-not [datetimeoffset]::TryParse([string]$Table.generated_at, [ref]$date)) { $errors.Add('GENERATED_AT: expected ISO date') }
     if ($Table.source -notin @('seed','research')) { $errors.Add('SOURCE: expected seed or research') }
     if ($Table.coverage -cnotin @('partial','full')) { $errors.Add('COVERAGE: expected partial or full') }
-    if ($Table.evidence_routing_approved -isnot [bool]) { $errors.Add('APPROVAL: expected Boolean') }
+    if ($Table.PSObject.Properties['evidence_routing_approved'] -and $Table.evidence_routing_approved -isnot [bool]) { $errors.Add('APPROVAL: expected Boolean') }
     if ($Table.PSObject.Properties['approved_picks'] -and $null -ne $Table.approved_picks -and $Table.approved_picks -isnot [array]) { $errors.Add('APPROVED_PICKS: expected array') }
     if ($Table.source -eq 'seed' -and $Table.coverage -cne 'partial') { $errors.Add('COVERAGE: seed must be partial') }
     if ($Table.categories -isnot [pscustomobject]) { $errors.Add('CATEGORIES: expected object'); return $errors.ToArray() }
@@ -108,7 +108,7 @@ function Test-RouterTable {
             foreach ($candidate in $entry.candidates) {
                 $where = "$category/$lane"
                 if ($candidate -isnot [pscustomobject]) { $errors.Add("CANDIDATE: invalid $where"); continue }
-                $fields = @('model','frontier','strength_rank','grade','confirmed_grade','citations','est_burn','est_seconds','pass_rate','pass_samples')
+                $fields = @('model','frontier','strength_rank','grade','citations','est_burn','est_seconds','pass_rate','pass_samples')
                 $missing = @($fields | Where-Object { -not $candidate.PSObject.Properties[$_] })
                 if ($missing.Count) { $errors.Add("CANDIDATE_FIELDS: $where missing $($missing -join ',')"); continue }
                 $id = [string]$candidate.model
@@ -116,7 +116,7 @@ function Test-RouterTable {
                 if ($candidate.frontier -isnot [bool]) { $errors.Add("FRONTIER: $where/$id") }
                 if ($candidate.strength_rank -isnot [long] -or $candidate.strength_rank -lt 1 -or $ranks.ContainsKey([string]$candidate.strength_rank)) { $errors.Add("STRENGTH_RANK: $where/$id") } else { $ranks[[string]$candidate.strength_rank] = $true }
                 if ($candidate.grade -notin @('strong','capable','weak','unknown')) { $errors.Add("GRADE: $where/$id") }
-                if ($candidate.confirmed_grade -notin @('strong','capable','weak','unknown')) { $errors.Add("CONFIRMED_GRADE: $where/$id") }
+                if ($candidate.PSObject.Properties['confirmed_grade'] -and $candidate.confirmed_grade -notin @('strong','capable','weak','unknown')) { $errors.Add("CONFIRMED_GRADE: $where/$id") }
                 if ($candidate.citations -isnot [array]) { $errors.Add("CITATIONS: $where/$id") } else {
                     foreach ($citation in $candidate.citations) {
                         if ($citation -isnot [pscustomobject] -or -not $citation.PSObject.Properties['source'] -or -not $citation.PSObject.Properties['url'] -or -not $citation.PSObject.Properties['independent'] -or -not $citation.PSObject.Properties['note'] -or -not $citation.source -or -not ([uri]::IsWellFormedUriString([string]$citation.url,[System.UriKind]::Absolute)) -or $citation.independent -isnot [bool] -or $citation.note -isnot [string]) { $errors.Add("CITATION: $where/$id") }
@@ -148,7 +148,22 @@ function Read-RouterTable {
         try {
             $table = Get-Content -LiteralPath $live -Raw | ConvertFrom-Json -Depth 30
             $validation = @(Test-RouterTable -Table $table)
-            if ($validation.Count -eq 0) { return [pscustomobject]@{ table = $table; source = 'live'; validation_error = $null } }
+            if ($validation.Count -eq 0) {
+                if (-not $table.PSObject.Properties['evidence_routing_approved']) { $table | Add-Member -NotePropertyName evidence_routing_approved -NotePropertyValue $false }
+                $missingConfirmedGrade = $false
+                foreach ($category in $table.categories.PSObject.Properties.Name) {
+                    foreach ($lane in $table.categories.$category.PSObject.Properties.Name) {
+                        foreach ($candidate in $table.categories.$category.$lane.candidates) {
+                            if (-not $candidate.PSObject.Properties['confirmed_grade']) {
+                                $candidate | Add-Member -NotePropertyName confirmed_grade -NotePropertyValue 'unknown'
+                                $missingConfirmedGrade = $true
+                            }
+                        }
+                    }
+                }
+                if ($missingConfirmedGrade) { $table.evidence_routing_approved = $false }
+                return [pscustomobject]@{ table = $table; source = 'live'; validation_error = $null }
+            }
             $liveError = $validation -join '; '
         } catch { $liveError = $_.Exception.Message }
     }

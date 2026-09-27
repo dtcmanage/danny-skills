@@ -372,6 +372,8 @@ try {
     }
     $result = Build-RouterTable -ProfilesDir $profiles -OutPath $out -Now ([datetime]'2026-09-27') -FullCoverage
     Assert-True ($result.written -and (Get-Row (Get-Lane 'complex-coding' 'codex') 'gpt-6-sol').confirmed_grade -eq 'capable') 'two cited matching history runs confirm grade'
+    $shown = & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Show -TablePath $out
+    Assert-True (($shown -join "`n") -match 'complex-coding' -and ($shown -join "`n") -match 'gpt-6-sol') 'approval show succeeds on two-history fixture'
     & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Approve -TablePath $out | Out-Null
     $result = Rebuild
     Assert-True ($result.table.evidence_routing_approved -and $result.alerts -notcontains 'router-picks-changed-needs-approval') 'unchanged picks preserve approval'

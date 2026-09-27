@@ -38,11 +38,34 @@ try {
     Assert-True ((Get-RouterModelGeneration 'gpt-6-sol').major -gt (Get-RouterModelGeneration 'gpt-5.6-sol').major) 'GPT major generation order'
     Assert-True ((Get-RouterModelGeneration 'gpt-5.6-sol').minor -gt (Get-RouterModelGeneration 'gpt-5.5').minor) 'GPT minor generation order'
     Assert-True ((Get-RouterModelGeneration 'claude-opus-5-5').major -gt (Get-RouterModelGeneration 'claude-haiku-4-5-20251001').major) 'Claude generation order'
+    Assert-True ((Get-RouterModelGeneration 'claude-sonnet-5').minor -eq 0 -and (Get-RouterModelGeneration 'claude-sonnet-5').major -eq 5) 'Claude major-only generation is 5.0'
+    Assert-True ((Get-RouterModelGeneration 'claude-sonnet-5-20251001').minor -eq 0) 'Claude major-only date-suffixed generation is 5.0'
+    Assert-True ((Get-RouterModelGeneration 'claude-opus-5-5').minor -eq 5 -and (Get-RouterModelGeneration 'claude-haiku-4-5-20251001').minor -eq 5) 'Claude minor and date-suffixed generations parse'
     $table = New-Fixture
     $table.evidence_routing_approved = $false
     Save-Fixture $table $fixturePath
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex).model -eq 'gpt-6-sol') 'unapproved research table uses bridge'
     $table.evidence_routing_approved = $true
+    $imageRow = @($table.categories.'image-generation'.codex.candidates | Where-Object model -eq 'gpt-image-2')[0]
+    Enable-Candidate $imageRow 'capable' 2 10
+    Save-Fixture $table $fixturePath
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category image-generation -Lane codex).model -eq 'gpt-image-2') 'confirmed image incumbent resolves without chat catalog'
+    & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Show -TablePath $fixturePath | Out-Null
+    Assert-True $true 'approval show handles confirmed image incumbent'
+    $legacy = $table | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $legacy.PSObject.Properties.Remove('evidence_routing_approved')
+    foreach ($category in $legacy.categories.PSObject.Properties.Name) {
+        foreach ($lane in $legacy.categories.$category.PSObject.Properties.Name) {
+            foreach ($candidate in $legacy.categories.$category.$lane.candidates) { $candidate.PSObject.Properties.Remove('confirmed_grade') }
+        }
+    }
+    Save-Fixture $legacy $fixturePath
+    $legacyPick = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude
+    Assert-True ($legacyPick.model -eq 'claude-sonnet-5' -and $legacyPick.reason -match '^bridge mode' -and $null -eq $legacyPick.validation_error -and @($legacyPick.alerts | Where-Object { $_ -match 'router-live-table-invalid' }).Count -eq 0) 'pre-hardening table is valid and bridges without invalid alert'
+    $legacy | Add-Member -NotePropertyName evidence_routing_approved -NotePropertyValue $true
+    Save-Fixture $legacy $fixturePath
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude).reason -match '^bridge mode') 'missing confirmed grades bridge even with approval flag'
+    Save-Fixture $table $fixturePath
     $sol = @($table.categories.'complex-coding'.codex.candidates | Where-Object model -eq 'gpt-6-sol')[0]
     $older = @($table.categories.'complex-coding'.codex.candidates | Where-Object model -eq 'gpt-5.6-sol')[0]
     Enable-Candidate $sol 'capable' 10 30
@@ -55,10 +78,58 @@ try {
     $older.confirmed_grade = 'unknown'
     Save-Fixture $table $fixturePath
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex).model -eq 'gpt-6-sol') 'raw strong without confirmation cannot challenge'
+    $mechanical = $table.categories.mechanical.codex.candidates
+    $mechanicalSol = @($mechanical | Where-Object model -eq 'gpt-6-sol')[0]
+    $mechanicalLuna = @($mechanical | Where-Object model -eq 'gpt-6-luna')[0]
+    Enable-Candidate $mechanicalSol 'capable' 10 30
+    Enable-Candidate $mechanicalLuna 'capable' 1 5
+    Save-Fixture $table $fixturePath
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category mechanical -Lane codex -Protected).model -eq 'gpt-6-sol') 'protected Codex mechanical retains stronger Sol'
+    $mechanicalClaude = $table.categories.mechanical.claude.candidates
+    $mechanicalOpus = @($mechanicalClaude | Where-Object model -eq 'claude-opus-5-5')[0]
+    $mechanicalHaiku = @($mechanicalClaude | Where-Object model -eq 'claude-haiku-4-5-20251001')[0]
+    Enable-Candidate $mechanicalOpus 'capable' 10 30
+    Enable-Candidate $mechanicalHaiku 'strong' 1 5
+    Save-Fixture $table $fixturePath
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category mechanical -Lane claude -Protected).model -eq 'claude-opus-5-5') 'protected Claude mechanical retains stronger Opus despite Haiku grade and cost'
+    $sonnet = @($table.categories.'routine-coding'.claude.candidates | Where-Object model -eq 'claude-sonnet-5')[0]
+    $haiku = @($table.categories.'routine-coding'.claude.candidates | Where-Object model -eq 'claude-haiku-4-5-20251001')[0]
+    $opus = @($table.categories.'routine-coding'.claude.candidates | Where-Object model -eq 'claude-opus-5-5')[0]
+    Enable-Candidate $sonnet 'capable' 10 20
+    Enable-Candidate $haiku 'capable' 1 5
+    Save-Fixture $table $fixturePath
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude).model -eq 'claude-sonnet-5') 'confirmed Sonnet 5 stays over equal-grade older cheaper Haiku'
+    Enable-Candidate $opus 'strong' 100 100
+    Save-Fixture $table $fixturePath
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude).model -eq 'claude-opus-5-5') 'higher confirmed grade wins despite challenger cost'
+    $opus.confirmed_grade = 'unknown'; $haiku.confirmed_grade = 'strong'; $haiku.est_burn = 100; $sonnet.est_burn = 1
+    Save-Fixture $table $fixturePath
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude).model -eq 'claude-haiku-4-5-20251001') 'higher confirmed grade wins despite older generation, lower strength, and cost'
+    $sonnet.confirmed_grade = 'unknown'; $opus.confirmed_grade = 'unknown'; $haiku.confirmed_grade = 'unknown'
+    $table.categories.'complex-coding'.codex.candidates[1].confirmed_grade = 'capable'
+    $table.categories.'complex-coding'.codex.candidates[1].citations = $sonnet.citations
+    Save-Fixture $table $fixturePath
+    $noneSelectable = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Catalog ([pscustomobject]@{ models = @() })
+    Assert-True ($noneSelectable.alerts -contains 'no-eligible:complex-coding:codex') 'no-eligible keyed alert fires when incumbent and challengers are unselectable'
+    $table.categories.'complex-coding'.codex.candidates[1].confirmed_grade = 'unknown'
+    Save-Fixture $table $fixturePath
     $sol.confirmed_grade = 'unknown'
     Save-Fixture $table $fixturePath
     $held = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex
     Assert-True ($held.model -eq 'gpt-6-sol' -and $held.reason -eq 'incumbent kept: no confirmed evidence') 'unknown incumbent kept with reason'
+    $script:sentRouterAlerts = [System.Collections.Generic.List[string]]::new()
+    function Send-RouterAlerts { param([string[]]$Alerts, [switch]$ChatToStderr) foreach ($alert in $Alerts) { $script:sentRouterAlerts.Add($alert) } }
+    $table.categories.'complex-coding'.codex.fallback = 'gpt-6-sol'
+    $unknownCatalog = [pscustomobject]@{ models = @([pscustomobject]@{ slug = 'gpt-6-luna'; visibility = 'list' }) }
+    $unknownSent = Resolve-RouterModel -SkipModelCheck -SendAlerts -Category complex-coding -Lane codex -Catalog $unknownCatalog
+    Assert-True ($unknownSent.model -eq 'gpt-6-luna' -and $script:sentRouterAlerts -contains 'UNSELECTABLE_CODEX_MODEL: gpt-6-sol') 'unknown-incumbent return sends resolver alerts through fake transport'
+    $script:sentRouterAlerts.Clear()
+    @{ category = 'complex-coding'; lane = 'codex'; model = 'gpt-6-sol' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $temp 'drift-flags.json')
+    $driftCatalog = [pscustomobject]@{ models = @([pscustomobject]@{ slug = 'gpt-6-sol'; visibility = 'list' },[pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; description = 'frontier' }) }
+    $driftedUnknown = Resolve-RouterModel -SkipModelCheck -SendAlerts -Category complex-coding -Lane codex -Catalog $driftCatalog
+    Assert-True ($driftedUnknown.model -eq 'gpt-6-astra' -and $driftedUnknown.reason -match 'escalation') 'unknown incumbent obeys drift demotion'
+    Remove-Item -LiteralPath (Join-Path $temp 'drift-flags.json')
+    . (Join-Path $PSScriptRoot '../send-router-alert.ps1')
     $writing = Resolve-RouterModel -SkipModelCheck -Category long-form-writing -Lane claude
     Assert-True ($writing.model -eq 'claude-opus-5-5' -and $writing.model -ne 'claude-fable-5-1') 'unknown Opus keeps writing, never Fable'
     $table.coverage = 'partial'; Save-Fixture $table $fixturePath
@@ -76,10 +147,11 @@ try {
     $r = $table.categories.'routine-coding'.claude.candidates
     Enable-Candidate $r[1] 'strong' 8 30
     Enable-Candidate $r[2] 'capable' 2 10
+    $r[1].confirmed_grade = 'capable'
     $r[3].grade = 'capable'; $r[3].citations = @([pscustomobject]@{ source = 'Vendor'; url = 'https://example.org/vendor'; independent = $false; note = 'Vendor only' })
     Save-Fixture $table $fixturePath
     $pick = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude
-    Assert-True ($pick.model -eq $r[2].model -and $pick.ranked.Count -eq 2) 'eligibility excludes vendor-only and unknown'
+    Assert-True ($pick.model -eq $r[2].model -and $pick.ranked.Count -eq 1) 'eligibility excludes vendor-only, unknown, and non-qualifying challengers'
     Assert-True ($pick.table_source -eq 'live' -and $pick.table_date -eq '2026-09-27') 'live table over seed'
 
     $r[2].est_burn = 6; $r[2].est_seconds = 1
@@ -112,8 +184,8 @@ try {
 
     $r[1].est_burn = $null; $r[2].est_burn = $null
     Save-Fixture $table $fixturePath
-    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude).model -eq $r[1].model) 'null burn retains strength order'
-    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -Protected).model -eq $r[1].model) 'protected picks strongest'
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude).model -eq $r[2].model) 'null burn keeps incumbent without calibrated cost'
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -Protected).model -eq 'claude-opus-5-5') 'protected picks strongest incumbent'
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $r[2].model).model -eq $r[1].model) 'escalation next stronger'
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom 'sonnet').model -eq $r[1].model) 'evidence escalation resolves Claude alias'
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $r[1].model).reason -match 'no stronger') 'escalation ceiling reason'

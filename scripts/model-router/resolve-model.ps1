@@ -151,10 +151,19 @@ function Resolve-RouterModel {
     $incumbentRow = @($laneTable.candidates | Where-Object { $_.model -eq $incumbentId } | Select-Object -First 1)
     if ($incumbentRow.Count -eq 0 -or $incumbentRow[0].confirmed_grade -eq 'unknown') {
         $held = if ($EscalateFrom) { Resolve-RouterBridgeModel -Category $Category -Lane $Lane -IsProtected $isProtected -EscalateFrom $EscalateFrom -Catalog $Catalog -Alerts $alerts } else { $bridgePick }
+        if (-not $EscalateFrom) {
+            $drift = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-flags.json') | Where-Object { $_.category -eq $Category -and $_.lane -eq $Lane -and $_.model -eq $held.model })
+            if ($drift.Count) {
+                $demoted = Resolve-RouterBridgeModel -Category $Category -Lane $Lane -IsProtected $isProtected -EscalateFrom $held.model -Catalog $Catalog -Alerts $alerts
+                if ($demoted.model -ne $held.model) { $held = $demoted }
+                else { $alerts.Add("drift-no-alternative:$($held.model):$Category`:$Lane") }
+            }
+        }
         if ($Lane -eq 'codex' -and $Category -ne 'image-generation' -and $held.model -eq $laneTable.fallback -and -not (Test-RouterCodexSelectable -ParsedCatalog (Get-CodexModelCatalog -Catalog $Catalog) -Model $held.model)) {
             $alerts.Add("fallback_unselectable: $($laneTable.fallback)")
         }
-        $result = [pscustomobject]@{ model = $held.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $held.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $(if ($EscalateFrom) { $held.reason } else { 'incumbent kept: no confirmed evidence' }); table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @($held.model) }
+        $result = [pscustomobject]@{ model = $held.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $held.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $(if ($EscalateFrom -or $held.model -ne $bridgePick.model) { $held.reason } else { 'incumbent kept: no confirmed evidence' }); table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @($held.model) }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
         return $result
     }
     $incumbent = $incumbentRow[0]
@@ -177,7 +186,7 @@ function Resolve-RouterModel {
     $eligible = $all
     $nonfrontier = @($eligible | Where-Object { -not $_.frontier })
     if ($nonfrontier.Count -gt 0) { $eligible = $nonfrontier }
-    $incumbentSelectable = $Lane -ne 'codex' -or (Test-RouterCodexSelectable -ParsedCatalog $parsed -Model $incumbentId)
+    $incumbentSelectable = $Category -eq 'image-generation' -or $Lane -ne 'codex' -or (Test-RouterCodexSelectable -ParsedCatalog $parsed -Model $incumbentId)
     if ($incumbentSelectable -and @($eligible | Where-Object { $_.model -eq $incumbentId }).Count -eq 0) { $eligible = @($incumbent) + $eligible }
     if ($eligible.Count -eq 0) {
         if ($read.table.source -ne 'seed') { $alerts.Add("no-eligible:$Category`:$Lane") }
@@ -227,6 +236,7 @@ function Resolve-RouterModel {
     foreach ($candidate in $rankedCandidates) {
         if ($candidate.model -eq $incumbentId) { $qualifying.Add($candidate); continue }
         if ($candidate.frontier -or $candidate.confirmed_grade -notin @('strong','capable')) { continue }
+        if ($isProtected -and $candidate.strength_rank -ge $incumbent.strength_rank) { continue }
         $gradeComparison = (Get-RouterGradeRank $candidate.confirmed_grade) - (Get-RouterGradeRank $incumbent.confirmed_grade)
         if ($gradeComparison -lt 0) { continue }
         $generation = Get-RouterModelGeneration -Model $candidate.model
@@ -239,6 +249,11 @@ function Resolve-RouterModel {
             if ($candidateCost -ge $incumbentCost) { continue }
         }
         $qualifying.Add($candidate)
+    }
+    if (-not $EscalateFrom -and @($qualifying | Where-Object { $_.model -ne $incumbentId -and (Get-RouterGradeRank $_.confirmed_grade) -gt (Get-RouterGradeRank $incumbent.confirmed_grade) }).Count -gt 0) {
+        $higher = @($qualifying | Where-Object { $_.model -ne $incumbentId -and (Get-RouterGradeRank $_.confirmed_grade) -gt (Get-RouterGradeRank $incumbent.confirmed_grade) })
+        $qualifying = [System.Collections.Generic.List[object]]::new()
+        foreach ($candidate in $higher) { $qualifying.Add($candidate) }
     }
     $rankedCandidates = $qualifying
     if ($rankedCandidates.Count -eq 0) {
