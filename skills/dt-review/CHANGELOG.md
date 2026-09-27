@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.14.1 (2026-09-27): Model-router research now sends its profile schema inside the prompt, so research runs produce valid profiles.
+
 - 1.14.0 (2026-09-27): Route review model selection through the shared model router.
 
 - 1.13.2 (2026-09-26): Codex complex reviews no longer auto-route to frontier models (GPT-6 Astra, Fable-tier cost); complex and light reviews resolve to GPT-6 Sol, preflight to Luna.

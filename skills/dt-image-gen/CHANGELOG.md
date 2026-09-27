@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.2.1 (2026-09-27): Model-router research now sends its profile schema inside the prompt, so research runs produce valid profiles.
+
 - 0.2.0 (2026-09-27): Add model-router advice to image generation output.
 
 - 0.1.3 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.

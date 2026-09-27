@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.1.6 (2026-09-27): Model-router research now sends its profile schema inside the prompt, so research runs produce valid profiles.
+
 - 0.1.5 (2026-09-27): Clarify model-router guardrails for drafting.
 
 - 0.1.4 (2026-09-26): Route investor letters to the TCM Website > Investor Letters substation and resolve substation save paths from the root Routing Map.

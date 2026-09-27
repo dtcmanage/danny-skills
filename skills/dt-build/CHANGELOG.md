@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.15.1
+
+- Model-router research now sends its profile schema inside the prompt, so research runs produce valid profiles.
+
 ## 2.15.0
 
 - Route build chunks through the shared model router with bridge defaults and evidence-based picks.

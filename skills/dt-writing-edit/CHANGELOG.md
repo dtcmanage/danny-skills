@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.2.4 (2026-09-27): Model-router research now sends its profile schema inside the prompt, so research runs produce valid profiles.
+
 - 0.2.3 (2026-09-27): Clarify model-router guardrails for editing.
 
 - 0.2.2 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.
