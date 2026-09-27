@@ -106,6 +106,7 @@ try {
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
     $routerTable = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'references\model-router\seed-table.json') | ConvertFrom-Json -Depth 30
     $routerTable.source = 'research'
+    $routerTable.coverage = 'full'
     $routerTable.generated_at = '2026-09-27'
     foreach ($fixtureRow in @(@('gpt-6-sol', 'strong', 10), @('gpt-6-luna', 'capable', 2), @('gpt-5.6-sol', 'capable', 5))) {
         $candidate = @($routerTable.categories.planning.codex.candidates | Where-Object { $_.model -eq $fixtureRow[0] })[0]
@@ -129,7 +130,7 @@ try {
     } | ConvertTo-Json -Depth 4
     Write-Utf8 $cachePath $cache
     Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'complex review (planning, protected) did not select the strongest eligible router candidate'
-    Assert-True ((Resolve-CodexModel -Category planning -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'light review (planning) did not select the router cost pick'
+    Assert-True ((Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'light review uses the mechanical category'
     Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'legacy tier-only caller did not route through the router (mechanical fallback)'
     Assert-True ((Resolve-CodexModel -Category planning -PreferredModel 'gpt-5.6-sol' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-5.6-sol') 'selectable explicit override was not honored'
     Assert-Throws { Resolve-CodexModel -Category planning -PreferredModel 'dead' -CachePath $cachePath -Strict } 'not selectable' 'strict resolver accepted an unselectable override'
@@ -139,7 +140,7 @@ try {
     Remove-Item -LiteralPath $researchTablePath -Force
     try {
         Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'bridge mode: complex review (planning, protected) did not keep gpt-6-sol'
-        Assert-True ((Resolve-CodexModel -Category planning -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'bridge mode: light review (planning) did not keep gpt-6-sol'
+        Assert-True ((Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'bridge mode: light review (mechanical) did not keep gpt-6-luna'
     } finally { Write-Utf8 $researchTablePath $researchTableText }
 
     # Claude CLI envelope parser records the exact model version and fails closed on a

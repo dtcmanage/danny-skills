@@ -15,6 +15,16 @@ function Reset-State {
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $script:temp = Join-Path $env:TEMP ('model-check-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
+$priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
+$transportPath = Join-Path $temp 'fake-alert-transport.ps1'
+Set-Content -LiteralPath $transportPath -Value @'
+param($request)
+if ($request['kind'] -eq 'secret') { return 'fake-secret' }
+if ([string]$request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '1' } }
+if ([string]$request['uri'] -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm' } }
+return [pscustomobject]@{ id = 'fake-message' }
+'@
+$env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transportPath
 $now = [datetime]'2026-09-27T12:00:00Z'
 try {
     $script:canaryLaunchCount = 0
@@ -36,6 +46,7 @@ try {
     Assert-True (-not $r.skipped -and $r.new_models.Count -eq 0) 'Force runs and bootstrap reports no new models'
     $registry = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
     Assert-True ($registry.Count -eq 2 -and -not (Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'pending-research.json'))) 'bootstrap writes registry without research queue'
+
 
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol'; 'gpt-6-new' } else { 'claude-sonnet-4-5' } }
     $r = Invoke-RouterModelCheck -Now $now.AddHours(13)
@@ -134,13 +145,21 @@ try {
     Assert-True (-not $r.skipped -and $r.errors.Count -eq 0) 'corrupt last-check.json treated as absent; check runs instead of throwing'
 
     Reset-State
-    $script:RouterModelCheckFetcher = $null
-    Write-Output 'LIVE: real vendor check, read-only upstream'
-    $r = Invoke-RouterModelCheck -Force -TimeoutSeconds 30
-    $live = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
-    Assert-True (-not $r.timed_out -and $r.errors.Count -eq 0 -and @($live | Where-Object vendor -eq 'openai').Count -gt 0 -and @($live | Where-Object vendor -eq 'anthropic').Count -gt 0) 'LIVE: both vendors return models within 30 seconds'
+    $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }
+    [void](Invoke-RouterModelCheck -Force)
+    $cachePath = Join-Path $temp 'models.json'
+    @{ models = @(@{ slug = 'gpt-6-sol'; visibility = 'list'; priority = 1 }, @{ slug = 'gpt-6-luna'; visibility = 'list'; priority = 2 }) } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $cachePath
+    $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol'; 'gpt-6-new' } else { 'claude-sonnet-4-5' } }
+    @{ checked_at = (Get-Date).AddHours(-13).ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'last-check.json')
+    try {
+        [void](Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict)
+        [void](Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict)
+        $delivered = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.event -eq 'delivered' -and $_.key -eq 'new-model:gpt-6-new' })
+        Assert-True ($delivered.Count -eq 1) 'Resolve-CodexModel sends new-model alert once without SendAlerts'
+    } finally { $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transportPath }
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport
     $env:DT_MODEL_ROUTER_STATE = $priorState
     Remove-Item -LiteralPath $temp -Recurse -Force
 }

@@ -107,7 +107,7 @@ function Get-RouterProfileNumericIssues {
 }
 
 function Build-RouterTable {
-    param([Parameter(Mandatory)][string]$ProfilesDir, [Parameter(Mandatory)][string]$OutPath, [datetime]$Now = (Get-Date))
+    param([Parameter(Mandatory)][string]$ProfilesDir, [Parameter(Mandatory)][string]$OutPath, [datetime]$Now = (Get-Date), [switch]$FullCoverage)
     $alerts = [System.Collections.Generic.List[string]]::new()
     $base = Read-RouterTable -TablePath $OutPath
     $table = $base.table | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
@@ -127,6 +127,9 @@ function Build-RouterTable {
             } catch { $alerts.Add("research-profile-invalid:$($file.BaseName)"); continue }
         }
     }
+    # Every model added here arrives with a valid researched profile, so a full table stays full when a
+    # new release is researched on its own; only a seed or partial base needs a complete -All pass.
+    $table.coverage = if ($FullCoverage -or ($base.table.source -eq 'research' -and $base.table.coverage -eq 'full')) { 'full' } else { 'partial' }
     $catalog = $null
     try { $catalog = Get-CodexModelCatalog } catch { }
     # Long-form-writing fallback never comes from research ranking: the highest-versioned non-frontier claude-opus-* model

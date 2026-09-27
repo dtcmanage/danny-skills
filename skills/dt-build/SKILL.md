@@ -103,20 +103,20 @@ Claude Fable) run only when no non-frontier model is eligible, or as an explicit
 recorded reason. The wrappers take `-Category`, `-Protected`, and `-EscalateFrom`; a legacy `-Tier` alone
 maps `complex` -> `complex-coding` protected, `standard` -> `routine-coding`, `light` -> `mechanical`.
 
-**Bridge mode (no research table yet).** While the router's table source is `seed`, the router ignores
-eligibility and routes exactly as dt-build did before the router, from
+**Bridge mode (no full research table yet).** Until the router's table source is `research` with `coverage=full`, the router ignores
+eligibility and makes first picks that match the pre-router tiers, from
 `references/model-router/bridge-map.json`: Codex `gpt-6-sol` for every coding, review, planning, research, and
 writing category and `gpt-6-luna` for `mechanical`; Claude `opus` for `complex-coding`, `planning`, and
 `long-form-writing`, `sonnet` for `routine-coding`, `code-review`, `ui-frontend`, and `deep-research`, `haiku`
 for `mechanical`. A `-Protected` call in any category resolves instead to the lane's protected pick
 (`claude-opus-5-5` on Claude, `gpt-6-sol` on Codex), matching the pre-router tier behavior where load-bearing
 and security-sensitive work ran on the complex tier regardless of the chunk's category. The router reason
-starts `bridge mode (no research table yet):`. Once a research table exists, the evidence rules above apply
+starts `bridge mode (no full research table yet):`. Once a full-coverage research table exists, the evidence rules above apply
 unchanged.
 
-Bridge mode reproduces the pre-router tier behavior exactly, including protected work running on the top
+Bridge first picks match the pre-router tiers, including protected work running on the top
 non-frontier model on each lane; bridge escalation may reach a frontier model (`gpt-6-astra`, `claude-fable-5-1`)
-only on a retry, never as a first pick.
+on a retry after the frontier-spend check, never as a first pick.
 
 **Escalation.** A failed attempt retries one step up that category's ranked list (in bridge mode, one rung up
 the lane ladder: `gpt-6-luna` -> `gpt-6-sol` -> `gpt-6-astra`; haiku -> sonnet -> opus -> fable): pass

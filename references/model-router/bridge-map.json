@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Bridge mode: while the resolved router table's source is 'seed' (no research table yet), the resolver ignores eligibility and routes exactly as dt-build did before the model router. Ladders run weakest to strongest; a frontier rung is reached only by escalation, never as a first pick.",
+  "purpose": "Bridge mode: until a full-coverage research table exists, first picks match pre-router tiers. Ladders run weakest to strongest; a frontier rung is reached only by escalation after the frontier-spend check, never as a first pick.",
   "lanes": {
     "codex": {
       "ladder": [

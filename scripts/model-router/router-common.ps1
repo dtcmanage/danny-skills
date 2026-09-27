@@ -6,12 +6,21 @@ function Get-RouterCategories {
 }
 
 function Get-RouterStateDir {
-    if ($env:DT_MODEL_ROUTER_STATE) { return [System.IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE) }
-    $common = & git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null | Select-Object -First 1
-    if (-not $common) { throw 'ROUTER_GIT_COMMON_DIR: Cannot locate main checkout.' }
-    $common = $common.Trim()
-    $main = Split-Path -Parent $common
-    return [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $main) 'model-router/state'))
+    if ($env:DT_MODEL_ROUTER_STATE) { $state = [System.IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE) }
+    else {
+        $common = & git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null | Select-Object -First 1
+        if (-not $common) { throw 'ROUTER_GIT_COMMON_DIR: Cannot locate main checkout.' }
+        $common = $common.Trim()
+        $main = Split-Path -Parent $common
+        $state = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $main) 'model-router/state'))
+    }
+    [IO.Directory]::CreateDirectory($state) | Out-Null
+    $ignore = Join-Path $state '.gitignore'
+    if (-not (Test-Path -LiteralPath $ignore)) {
+        try { [IO.File]::WriteAllText($ignore, "*`n", [Text.UTF8Encoding]::new($false)) }
+        catch [IO.IOException] { if (-not (Test-Path -LiteralPath $ignore)) { throw } }
+    }
+    return $state
 }
 
 function Read-RouterJsonArray {
@@ -54,7 +63,7 @@ function Test-RouterTable {
     param([Parameter(Mandatory)][object]$Table)
     $errors = [System.Collections.Generic.List[string]]::new()
     if ($null -eq $Table -or $Table -isnot [pscustomobject]) { return @('ROOT_OBJECT: table must be an object') }
-    foreach ($field in @('schema_version','generated_at','source','categories')) {
+    foreach ($field in @('schema_version','generated_at','source','coverage','categories')) {
         if (-not $Table.PSObject.Properties[$field]) { $errors.Add("ROOT_FIELD: missing $field") }
     }
     if ($errors.Count -gt 0) { return $errors.ToArray() }
@@ -63,6 +72,8 @@ function Test-RouterTable {
     if ($Table.generated_at -isnot [string] -and $Table.generated_at -isnot [datetime] -and $Table.generated_at -isnot [datetimeoffset]) { $errors.Add('GENERATED_AT: expected ISO date') }
     elseif (-not [datetimeoffset]::TryParse([string]$Table.generated_at, [ref]$date)) { $errors.Add('GENERATED_AT: expected ISO date') }
     if ($Table.source -notin @('seed','research')) { $errors.Add('SOURCE: expected seed or research') }
+    if ($Table.coverage -cnotin @('partial','full')) { $errors.Add('COVERAGE: expected partial or full') }
+    if ($Table.source -eq 'seed' -and $Table.coverage -cne 'partial') { $errors.Add('COVERAGE: seed must be partial') }
     if ($Table.categories -isnot [pscustomobject]) { $errors.Add('CATEGORIES: expected object'); return $errors.ToArray() }
     $expected = @(Get-RouterCategories)
     foreach ($category in $expected) {

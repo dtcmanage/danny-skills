@@ -47,6 +47,7 @@ try {
     Save-Profile $capable
     $r = Rebuild
     Assert-True $r.written 'valid table rebuild'
+    Assert-True ($r.table.coverage -eq 'partial') 'profile rebuild from seed stays partial'
     $lane = Get-Lane 'routine-coding' 'codex'
     Assert-True ((Get-Row $lane 'gpt-6-luna').grade -eq 'strong' -and @(Get-Row $lane 'gpt-6-luna').Count -eq 1 -and (Get-Row $lane 'gpt-6-luna').citations[0].independent -eq $false) 'vendor citation retained but ineligible'
     Assert-True ((Get-Row $lane 'gpt-5.6-luna').grade -eq 'unknown') 'unknown never eligible'
@@ -177,8 +178,22 @@ try {
     Remove-Item -LiteralPath (Join-Path $temp 'pending-research.json') -Force
     $r = Invoke-RouterResearch -Models @('gpt-6-sol') -Now ([datetime]'2026-09-27')
     Assert-True ($r.researched -contains 'gpt-6-sol') 'Models run handles missing queue under StrictMode'
+    Assert-True ((Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).coverage -eq 'partial') 'single-model research run retains partial coverage'
     $r = Invoke-RouterResearch -All -Now ([datetime]'2026-09-27')
     Assert-True ($r.table_written -and -not (Test-Path -LiteralPath (Join-Path $temp 'pending-research.json'))) 'All run handles missing queue under StrictMode'
+    Assert-True ((Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).coverage -eq 'partial') 'failed All pass does not claim full coverage'
+    $script:RouterResearchInvoker = { param($id,$prompt)
+        $lane = if ($id -like 'claude-*') { 'claude' } else { 'codex' }
+        return (New-Profile $id $lane '2026-09-27' | ConvertTo-Json -Depth 40)
+    }
+    $r = Invoke-RouterResearch -All -Now ([datetime]'2026-09-27')
+    Assert-True ($r.table_written -and (Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).coverage -eq 'full') 'complete All pass enables full coverage'
+    $r = Invoke-RouterResearch -Models @('gpt-6-sol') -Now ([datetime]'2026-09-27')
+    Assert-True ((Get-Content -LiteralPath $out -Raw | ConvertFrom-Json).coverage -eq 'full') 'partial refresh of full table retains full coverage'
+    Save-Profile (New-Profile 'gpt-7-new' 'codex' '2026-09-27')
+    $r = Rebuild
+    Assert-True ($r.table.coverage -eq 'full' -and @($r.table.categories.'routine-coding'.codex.candidates | Where-Object model -eq 'gpt-7-new').Count -eq 1) 'researched new model joins a full table without dropping to bridge mode'
+    Remove-Item -LiteralPath (Join-Path $profiles 'gpt-7-new.json') -Force
 
     $queuePath = Join-Path $temp 'pending-research.json'
     @([pscustomobject]@{ id = 'gpt-6-sol'; lane = 'codex' }) | ConvertTo-Json | Set-Content -LiteralPath $queuePath

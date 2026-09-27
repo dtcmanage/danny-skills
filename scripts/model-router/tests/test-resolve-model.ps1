@@ -11,6 +11,7 @@ function Assert-True([bool]$Condition, [string]$Name) {
 function New-Fixture {
     $copy = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/seed-table.json') -Raw | ConvertFrom-Json -Depth 30
     $copy.source = 'research'
+    $copy.coverage = 'full'
     $copy.generated_at = '2026-09-27'
     $rows = $copy.categories.'routine-coding'.claude.candidates
     foreach ($row in $rows) { $row.grade = 'unknown'; $row.citations = @(); $row.est_burn = $null; $row.est_seconds = $null; $row.pass_rate = $null; $row.pass_samples = 0 }
@@ -75,6 +76,7 @@ try {
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude).model -eq $r[1].model) 'null burn retains strength order'
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -Protected).model -eq $r[1].model) 'protected picks strongest'
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $r[2].model).model -eq $r[1].model) 'escalation next stronger'
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom 'sonnet').model -eq $r[1].model) 'evidence escalation resolves Claude alias'
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $r[1].model).reason -match 'no stronger') 'escalation ceiling reason'
 
     $r[1].grade = 'unknown'; $r[2].grade = 'unknown'
@@ -137,19 +139,12 @@ try {
     Assert-True (@(Test-RouterTable -Table $table).Count -eq 0) 'ISO timestamp accepted'
     $table.generated_at = [datetime]'2026-09-27'
     Assert-True (@(Test-RouterTable -Table $table).Count -eq 0) 'DateTime accepted'
-    $env:DT_MODEL_ROUTER_STATE = $null
-    $worktreeDir = Get-RouterStateDir
-    $mainDir = Split-Path -Parent ((& git rev-parse --path-format=absolute --git-common-dir).Trim())
-    Push-Location $mainDir
-    try { $mainState = Get-RouterStateDir } finally { Pop-Location }
-    Assert-True ($worktreeDir -eq $mainState) 'state dir identical from main and worktree'
-    Push-Location $env:TEMP
-    try { $tempState = Get-RouterStateDir } finally { Pop-Location }
-    Assert-True ($worktreeDir -eq $tempState) 'state dir independent of temp cwd'
-    $outside = Split-Path -Parent $temp
-    Push-Location $outside
-    try { $outsideState = Get-RouterStateDir } finally { Pop-Location }
-    Assert-True ($worktreeDir -eq $outsideState) 'state dir independent of other folder cwd'
+    $isolatedState = Join-Path $temp 'new-state'
+    $env:DT_MODEL_ROUTER_STATE = $isolatedState
+    Assert-True ((Get-RouterStateDir) -eq $isolatedState -and (Get-Content -LiteralPath (Join-Path $isolatedState '.gitignore') -Raw) -eq "*`n") 'new machine state gets gitignore'
+    Set-Content -LiteralPath (Join-Path $isolatedState '.gitignore') -Value 'custom'
+    [void](Get-RouterStateDir)
+    Assert-True ((Get-Content -LiteralPath (Join-Path $isolatedState '.gitignore') -Raw).Trim() -eq 'custom') 'existing state gitignore is preserved'
     $image = Resolve-RouterModel -SkipModelCheck -Category image-generation -Lane codex -Catalog ([pscustomobject]@{ models = @() })
     Assert-True ($image.model -eq 'gpt-image-2' -and @($image.alerts | Where-Object { $_ -match 'UNSELECTABLE|fallback_unselectable' }).Count -eq 0) 'image advice bypasses chat catalog'
     $env:DT_MODEL_ROUTER_STATE = $temp
@@ -171,7 +166,7 @@ try {
             $want = $bridgeExpected[$category][$(if ($lane -eq 'codex') { 0 } else { 1 })]
             if ($null -eq $want) { continue }
             $pick = Resolve-RouterModel -SkipModelCheck -Category $category -Lane $lane -Catalog $bridgeCatalog
-            Assert-True ($pick.model -eq $want -and $pick.reason -match '^bridge mode \(no research table yet\): ' -and $pick.table_source -eq 'seed' -and @($pick.alerts | Where-Object { $_ -eq 'router-seed-table-in-use' }).Count -eq 1) "bridge pick $category/$lane -> $want"
+            Assert-True ($pick.model -eq $want -and $pick.reason -match '^bridge mode \(no full research table yet\): ' -and $pick.table_source -eq 'seed' -and @($pick.alerts | Where-Object { $_ -eq 'router-seed-table-in-use' }).Count -eq 1) "bridge pick $category/$lane -> $want"
         }
     }
     $protectedBridge = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Protected -Catalog $bridgeCatalog
@@ -183,6 +178,9 @@ try {
     foreach ($step in @(@('codex','gpt-6-luna','gpt-6-sol'), @('codex','gpt-6-sol','gpt-6-astra'), @('claude','claude-haiku-4-5-20251001','claude-sonnet-5'), @('claude','claude-sonnet-5','claude-opus-5-5'), @('claude','claude-opus-5-5','claude-fable-5-1'))) {
         $up = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $step[0] -EscalateFrom $step[1] -Catalog $bridgeCatalog
         Assert-True ($up.model -eq $step[2] -and $up.reason -match 'one rung up') "bridge escalation $($step[1]) -> $($step[2])"
+    }
+    foreach ($aliasStep in @(@('haiku','claude-sonnet-5'), @('sonnet','claude-opus-5-5'), @('sonnet[1m]','claude-opus-5-5'), @('opus','claude-fable-5-1'), @('fable','claude-fable-5-1'))) {
+        Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $aliasStep[0]).model -eq $aliasStep[1]) "bridge alias escalation $($aliasStep[0])"
     }
     foreach ($top in @(@('codex','gpt-6-astra'), @('claude','claude-fable-5-1'))) {
         $same = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $top[0] -EscalateFrom $top[1] -Catalog $bridgeCatalog
@@ -198,6 +196,12 @@ try {
     Save-Fixture (New-Fixture) $fixturePath
     $research = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude
     Assert-True ($research.table_source -eq 'live' -and $research.reason -notmatch 'bridge mode' -and @($research.alerts | Where-Object { $_ -eq 'router-seed-table-in-use' }).Count -eq 0) 'research-sourced table uses evidence rules, not bridge mode'
+    $partial = New-Fixture; $partial.coverage = 'partial'; Save-Fixture $partial $fixturePath
+    foreach ($case in @(@('routine-coding','claude','claude-sonnet-5'),@('mechanical','claude','claude-haiku-4-5-20251001'),@('mechanical','codex','gpt-6-luna'),@('planning','codex','gpt-6-sol'))) {
+        $pick = Resolve-RouterModel -SkipModelCheck -Category $case[0] -Lane $case[1] -Catalog $bridgeCatalog
+        Assert-True ($pick.model -eq $case[2] -and $pick.reason -match 'bridge mode') "partial research bridge pick $($case[0])/$($case[1])"
+    }
+    Save-Fixture (New-Fixture) $fixturePath
     $a = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude | ConvertTo-Json -Depth 12 -Compress
     $b = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude | ConvertTo-Json -Depth 12 -Compress
     Assert-True ($a -ceq $b) 'identical input produces identical JSON'

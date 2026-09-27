@@ -135,7 +135,7 @@ return [pscustomobject]@{ id = 'fake' }
     foreach ($claudeTier in @(@('complex', 'claude-opus-5-5'), @('standard', 'claude-sonnet-5'), @('light', 'claude-haiku-4-5-20251001'))) {
         $mappedTier = ConvertTo-RouterCategoryFromTier -Tier $claudeTier[0]
         $claudePick = Resolve-RouterModel -Category $mappedTier.category -Lane claude -Protected:$mappedTier.protected -SkipModelCheck
-        Assert-True ($claudePick.model -eq $claudeTier[1] -and $claudePick.reason -match '^bridge mode \(no research table yet\)') "bridge mode: Claude $($claudeTier[0]) tier did not keep the pre-router $($claudeTier[1]) pick"
+        Assert-True ($claudePick.model -eq $claudeTier[1] -and $claudePick.reason -match '^bridge mode \(no full research table yet\)') "bridge mode: Claude $($claudeTier[0]) tier did not keep the pre-router $($claudeTier[1]) pick"
     }
     Assert-True ((@(Get-CodexModelLadder -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)) -join ',') -eq 'gpt-6-sol,gpt-6-luna') "frontier model leaked into the automatic ladder"
     Assert-True ((Resolve-CodexModel -Tier complex -PreferredModel 'gpt-6-astra' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-6-astra') "explicit frontier override was not honored"

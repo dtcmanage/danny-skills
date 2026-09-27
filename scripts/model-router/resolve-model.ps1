@@ -47,9 +47,19 @@ function Get-RouterAgentAlias {
     return $match.Groups[1].Value
 }
 
+function Resolve-RouterEscalationAlias {
+    param([string]$EscalateFrom, [string]$Lane)
+    if ($Lane -ne 'claude' -or -not $EscalateFrom) { return $EscalateFrom }
+    $family = ($EscalateFrom -replace '\[1m\]$','').ToLowerInvariant()
+    if ($family -notin @('haiku','sonnet','opus','fable')) { return $EscalateFrom }
+    $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/bridge-map.json') -Raw | ConvertFrom-Json -Depth 10
+    $match = @($map.lanes.claude.ladder | Where-Object { (Get-RouterAgentAlias -Model $_.model) -eq $family } | Select-Object -First 1)
+    if ($match.Count) { return [string]$match[0].model }
+    return $EscalateFrom
+}
+
 function Resolve-RouterBridgeModel {
-    # Bridge mode (source 'seed', no research table yet): ignore eligibility and route exactly
-    # as dt-build did before the router, from references/model-router/bridge-map.json.
+    # Bridge first picks match pre-router tiers until full research coverage is available.
     # Escalation moves one rung up the lane ladder; a frontier rung is reachable only that way.
     param(
         [Parameter(Mandatory)][string]$Category,
@@ -57,7 +67,7 @@ function Resolve-RouterBridgeModel {
         [bool]$IsProtected,
         [string]$EscalateFrom,
         [object]$Catalog,
-        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$Alerts
+        [System.Collections.Generic.List[string]]$Alerts
     )
     $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/bridge-map.json') -Raw | ConvertFrom-Json -Depth 10
     $laneMap = $map.lanes.$Lane
@@ -97,7 +107,7 @@ function Resolve-RouterBridgeModel {
             else { $mapping += "; $model is not selectable and no ladder rung is" }
         }
     }
-    return [pscustomobject]@{ model = $model; reason = "bridge mode (no research table yet): $mapping" }
+    return [pscustomobject]@{ model = $model; reason = "bridge mode (no full research table yet): $mapping" }
 }
 
 function Resolve-RouterModel {
@@ -114,6 +124,7 @@ function Resolve-RouterModel {
     )
     if ($Category -notin @(Get-RouterCategories)) { throw "CATEGORY: Unknown category '$Category'" }
     if ($Category -eq 'image-generation' -and $Lane -ne 'codex') { throw 'LANE: image-generation has only codex' }
+    $EscalateFrom = Resolve-RouterEscalationAlias -EscalateFrom $EscalateFrom -Lane $Lane
     $alerts = [System.Collections.Generic.List[string]]::new()
     if (-not $SkipModelCheck) {
         try {
@@ -121,12 +132,14 @@ function Resolve-RouterModel {
             foreach ($alert in @($check.alerts)) { $alerts.Add([string]$alert) }
         } catch { $alerts.Add("catalog-check-error:resolver: $($_.Exception.Message)") }
     }
+    $checkAlerts = @($alerts.ToArray())
+    if ($checkAlerts.Count) { Send-RouterAlerts -Alerts $checkAlerts -ChatToStderr | Out-Null }
     $read = Read-RouterTable -TablePath $TablePath
     $laneTable = $read.table.categories.$Category.$Lane
     if ($read.table.source -eq 'seed') { $alerts.Add('router-seed-table-in-use') }
     if ($read.validation_error) { $alerts.Add("router-live-table-invalid: $($read.validation_error)") }
     $isProtected = [bool]$Protected -or $Category -eq 'long-form-writing'
-    if ($read.table.source -eq 'seed') {
+    if ($read.table.source -ne 'research' -or $read.table.coverage -ne 'full') {
         $bridge = Resolve-RouterBridgeModel -Category $Category -Lane $Lane -IsProtected $isProtected -EscalateFrom $EscalateFrom -Catalog $Catalog -Alerts $alerts
         $result = [pscustomobject]@{ model = $bridge.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $bridge.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $bridge.reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @($bridge.model) }
         if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts -ChatToStderr:$ChatToStderr | Out-Null }

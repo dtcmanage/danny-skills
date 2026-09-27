@@ -21,6 +21,12 @@ try {
     }
     if (-not $python) { throw "python not found on PATH" }
 
+    $sweep = if ($env:DT_MODEL_ROUTER_USAGE_SWEEP) { $env:DT_MODEL_ROUTER_USAGE_SWEEP } else { Join-Path $PSScriptRoot '../../skills/dt-build/scripts/collect-usage.py' }
+    try {
+        & $python $sweep --all-sessions --quiet *> $null
+        if ($LASTEXITCODE -ne 0) { throw "usage sweep exited $LASTEXITCODE" }
+    } catch { Write-Output "DT_MODEL_ROUTER_COST_REPORT: usage sweep failed ($($_.Exception.Message)); reporting existing data" }
+
     $script = Join-Path (Split-Path -Parent $PSCommandPath) 'cost_report.py'
     $pyArgs = @($script)
     if (-not [string]::IsNullOrWhiteSpace($StateDir)) { $pyArgs += @('--state-dir', $StateDir) }

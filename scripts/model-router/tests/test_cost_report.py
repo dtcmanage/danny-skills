@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -403,3 +404,33 @@ def test_default_dt_build_mode_output_unchanged_vs_baseline(tmp_path):
         b = _GEN_LINE_RE.sub("Generated <ts>", b)
         c = _GEN_LINE_RE.sub("Generated <ts>", c)
         assert b == c, f"{name} differs between baseline and current default-mode output"
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_cost_report_refreshes_all_sessions_with_fake_sweep(tmp_path, exit_code):
+    sweep = tmp_path / "fake_sweep.py"
+    marker = tmp_path / "sweep_args.json"
+    sweep.write_text(
+        "import json, pathlib, sys\n"
+        f"pathlib.Path({str(marker)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        f"sys.exit({exit_code})\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["DT_MODEL_ROUTER_STATE"] = str(tmp_path / "state")
+    env["DT_MODEL_ROUTER_USAGE_SWEEP"] = str(sweep)
+    state = Path(env["DT_MODEL_ROUTER_STATE"])
+    state.mkdir()
+    (state / "usage-all-sessions.jsonl").write_text(json.dumps({
+        "kind": "usage", "host": "codex", "session_id": "fixture", "model": "gpt-6-sol",
+        "date_et": "2026-09-21", "tokens": {"input": 10, "cache_write": 0, "cache_read": 0, "output": 2},
+    }) + "\n", encoding="utf-8")
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-File", str(REPO_ROOT / "scripts/model-router/cost-report.ps1"),
+         "-StateDir", env["DT_MODEL_ROUTER_STATE"]],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+    assert result.returncode == 0
+    assert json.loads(marker.read_text(encoding="utf-8")) == ["--all-sessions", "--quiet"]
+    assert ("usage sweep failed" in result.stdout) is bool(exit_code)
+    assert (tmp_path / "state" / "cost-reports" / "latest.md").exists()

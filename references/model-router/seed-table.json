@@ -2,6 +2,7 @@
   "schema_version": 1,
   "generated_at": "2026-09-26",
   "source": "seed",
+  "coverage": "partial",
   "categories": {
     "complex-coding": {
       "codex": {

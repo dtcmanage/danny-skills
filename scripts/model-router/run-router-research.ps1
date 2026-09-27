@@ -181,7 +181,10 @@ function Invoke-RouterResearch {
                 finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
             }
         }
-        $build = Build-RouterTable -ProfilesDir (Join-Path $state 'profiles') -OutPath (Join-Path $state 'router-table.json') -Now $Now
+        $profilesDir = Join-Path $state 'profiles'
+        $profileIds = if (Test-Path -LiteralPath $profilesDir) { @(Get-ChildItem -LiteralPath $profilesDir -File -Filter '*.json' | ForEach-Object BaseName) } else { @() }
+        $fullCoverage = [bool]$All -and $ids.Count -gt 0 -and $done.Count -eq $ids.Count -and @($profileIds | Where-Object { $done -notcontains $_ }).Count -eq 0
+        $build = Build-RouterTable -ProfilesDir $profilesDir -OutPath (Join-Path $state 'router-table.json') -Now $Now -FullCoverage:$fullCoverage
         foreach ($alert in $build.alerts) { $alerts.Add([string]$alert) }
         if ($alerts.Count -and -not (Get-Variable RouterResearchSuppressAlerts -Scope Script -ErrorAction SilentlyContinue)) { Send-RouterAlerts -Alerts @($alerts.ToArray()) | Out-Null }
         return [pscustomobject]@{ researched = @($done.ToArray()); alerts = @($alerts.ToArray()); table_written = [bool]$build.written }

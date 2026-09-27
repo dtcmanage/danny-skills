@@ -31,6 +31,7 @@ try {
     @($script:repo,(Join-Path $temp 'missing-repo')) | ConvertTo-Json | Set-Content -LiteralPath $script:sources
     $table = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/seed-table.json') -Raw | ConvertFrom-Json -Depth 30
     $table.source = 'research'
+    $table.coverage = 'full'
     $table.generated_at = '2026-09-27'
     $rows = $table.categories.'routine-coding'.claude.candidates
     foreach ($candidate in @($rows[1],$rows[2])) {
