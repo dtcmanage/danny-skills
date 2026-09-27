@@ -71,6 +71,54 @@ try {
     Assert-True ($log -notmatch [regex]::Escape($script:fakeToken) -and (($first + $again + $fallback + $failed + $retried | Out-String) -notmatch [regex]::Escape($script:fakeToken))) 'log and output contain no fake token'
     Assert-True (@($log -split '\r?\n' | Where-Object { $_ -match 'delivery_failed' }).Count -eq 1) 'failed delivery logged'
 
+    $script:logAttempts = 0
+    function Write-RouterAlertLog { $script:logAttempts++; throw 'synthetic log lock' }
+    $logFailure = @(Send-RouterAlert -Key 'log-failure' -Message 'Delivered despite log lock' -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
+    Assert-True ($logFailure.sent -and $logFailure.channel -eq 'discord' -and $logFailure.log_error -and $script:logAttempts -eq 3) 'delivered status survives log write failure after retries'
+    . (Join-Path $PSScriptRoot '../send-router-alert.ps1')
+
+    $mutexReady = Join-Path $temp 'mutex-ready'
+    $holder = Start-ThreadJob -ScriptBlock {
+        param($ready)
+        $mutex = [System.Threading.Mutex]::new($false, 'Local\DtModelRouterAlert')
+        try { $null = $mutex.WaitOne(); [IO.File]::WriteAllText($ready, 'ready'); Start-Sleep -Seconds 7 }
+        finally { $mutex.ReleaseMutex(); $mutex.Dispose() }
+    } -ArgumentList $mutexReady
+    try {
+        $limit = (Get-Date).AddSeconds(2)
+        while (-not (Test-Path -LiteralPath $mutexReady) -and (Get-Date) -lt $limit) { Start-Sleep -Milliseconds 20 }
+        Assert-True (Test-Path -LiteralPath $mutexReady) 'mutex holder starts'
+        $beforeBusy = $script:requests.Count
+        $busy = Send-RouterAlert -Key 'busy-key' -Message 'No delivery' -Transport $fake
+        Assert-True (-not $busy.sent -and -not $busy.deduped -and $busy.error -eq 'busy' -and $script:requests.Count -eq $beforeBusy) 'mutex timeout leaves alert retryable without transport'
+    } finally { Wait-Job -Job $holder | Out-Null; Remove-Job -Job $holder }
+
+    $messageResult = @(Send-RouterAlerts -Alerts @('router-seed-table-in-use') -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
+    $messageRequest = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' })[-1]
+    $messageBody = $messageRequest.body | ConvertFrom-Json
+    Assert-True ($messageResult.sent -and $messageBody.content -match 'starter table' -and @($messageBody.allowed_mentions.parse).Count -eq 0) 'key-only alert gets readable Discord text with no mentions'
+    $longText = '@everyone ' + ('x' * 2000)
+    $longResult = @(Send-RouterAlert -Key 'long-message' -Message $longText -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
+    $longBody = (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' })[-1].body | ConvertFrom-Json)
+    Assert-True ($longResult.sent -and $longBody.content.Length -eq 1900 -and @($longBody.allowed_mentions.parse).Count -eq 0) 'Discord body is capped at 1900 characters without mentions'
+    Assert-True ((Get-RouterAlertMessage -Key 'new-model:gpt-test') -match 'gpt-test' -and (Get-RouterAlertMessage -Key 'unknown:key') -eq 'unknown:key') 'known keys are explained and unknown keys stay intact'
+
+    [IO.File]::AppendAllText((Join-Path $temp 'alert-log.jsonl'), '{"event":"delivered","key":"cli-json","channel":"discord"}' + [Environment]::NewLine)
+    @{ checked_at = (Get-Date).ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $temp 'last-check.json')
+    $cliCases = @(
+        @{ name = 'resolve-model'; arguments = @('-Category','routine-coding','-Lane','claude','-SkipModelCheck','-Json'); property = 'model' },
+        @{ name = 'check-new-models'; arguments = @('-Json'); property = 'skipped' },
+        @{ name = 'send-router-alert'; arguments = @('-Key','cli-json','-Message','Already delivered','-Json'); property = 'deduped' }
+    )
+    foreach ($case in $cliCases) {
+        $path = Join-Path $PSScriptRoot "../$($case.name).ps1"
+        $cliArgs = $case.arguments
+        $lines = @(& pwsh -NoProfile -File $path @cliArgs)
+        $exitCode = $LASTEXITCODE
+        $parsed = if ($lines.Count -eq 1) { $lines[0] | ConvertFrom-Json } else { $null }
+        Assert-True ($exitCode -eq 0 -and $lines.Count -eq 1 -and $parsed -and $parsed.PSObject.Properties[$case.property]) "$($case.name) -Json emits exactly one parseable object"
+    }
+
     $before = $script:requests.Count
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     Assert-True ($pick.PSObject.Properties['alerts'] -and $script:requests.Count -eq $before) 'resolver SendAlerts off by default'

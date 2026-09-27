@@ -1,13 +1,13 @@
 param(
-    [string]$Category,
-    [string]$Lane,
-    [switch]$Protected,
-    [string]$EscalateFrom,
-    [object]$Catalog,
-    [string]$TablePath,
-    [switch]$SkipModelCheck,
-    [switch]$SendAlerts,
-    [switch]$Json
+    [Alias('Category')][string]$RouterResolveCliCategory,
+    [Alias('Lane')][string]$RouterResolveCliLane,
+    [Alias('Protected')][switch]$RouterResolveCliProtected,
+    [Alias('EscalateFrom')][string]$RouterResolveCliEscalateFrom,
+    [Alias('Catalog')][object]$RouterResolveCliCatalog,
+    [Alias('TablePath')][string]$RouterResolveCliTablePath,
+    [Alias('SkipModelCheck')][switch]$RouterResolveCliSkipModelCheck,
+    [Alias('SendAlerts')][switch]$RouterResolveCliSendAlerts,
+    [Alias('Json')][switch]$RouterResolveCliJson
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -139,6 +139,6 @@ function Resolve-RouterModel {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Resolve-RouterModel -Category $Category -Lane $Lane -Protected:$Protected -EscalateFrom $EscalateFrom -Catalog $Catalog -TablePath $TablePath -SkipModelCheck:$SkipModelCheck -SendAlerts:$SendAlerts
-    if ($Json) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
+    $result = Resolve-RouterModel -Category $RouterResolveCliCategory -Lane $RouterResolveCliLane -Protected:$RouterResolveCliProtected -EscalateFrom $RouterResolveCliEscalateFrom -Catalog $RouterResolveCliCatalog -TablePath $RouterResolveCliTablePath -SkipModelCheck:$RouterResolveCliSkipModelCheck -SendAlerts:$RouterResolveCliSendAlerts
+    if ($RouterResolveCliJson) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
 }

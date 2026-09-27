@@ -1,4 +1,4 @@
-param([switch]$Force, [int]$TimeoutSeconds = 30, [datetime]$Now = (Get-Date), [switch]$Json)
+param([Alias('Force')][switch]$RouterCheckCliForce, [Alias('TimeoutSeconds')][int]$RouterCheckCliTimeoutSeconds = 30, [Alias('Now')][datetime]$RouterCheckCliNow = (Get-Date), [Alias('Json')][switch]$RouterCheckCliJson)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
@@ -143,6 +143,6 @@ function Invoke-RouterModelCheck {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Invoke-RouterModelCheck -Force:$Force -TimeoutSeconds $TimeoutSeconds -Now $Now
-    if ($Json) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
+    $result = Invoke-RouterModelCheck -Force:$RouterCheckCliForce -TimeoutSeconds $RouterCheckCliTimeoutSeconds -Now $RouterCheckCliNow
+    if ($RouterCheckCliJson) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
 }
