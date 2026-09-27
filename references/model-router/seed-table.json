@@ -11,7 +11,7 @@
             "model": "gpt-6-astra",
             "frontier": true,
             "strength_rank": 1,
-            "grade": "capable",
+            "grade": "unknown",
             "citations": [
               {
                 "source": "Terminal-Bench",
@@ -57,7 +57,7 @@
             "model": "gpt-5.6-sol",
             "frontier": false,
             "strength_rank": 4,
-            "grade": "capable",
+            "grade": "unknown",
             "citations": [
               {
                 "source": "Simon Willison",
@@ -113,7 +113,7 @@
             "model": "claude-fable-5-1",
             "frontier": true,
             "strength_rank": 1,
-            "grade": "capable",
+            "grade": "unknown",
             "citations": [
               {
                 "source": "Terminal-Bench",
@@ -177,7 +177,7 @@
             "model": "gpt-6-astra",
             "frontier": true,
             "strength_rank": 1,
-            "grade": "capable",
+            "grade": "unknown",
             "citations": [
               {
                 "source": "Terminal-Bench",
@@ -223,7 +223,7 @@
             "model": "gpt-5.6-sol",
             "frontier": false,
             "strength_rank": 4,
-            "grade": "capable",
+            "grade": "unknown",
             "citations": [
               {
                 "source": "Simon Willison",
@@ -279,7 +279,7 @@
             "model": "claude-fable-5-1",
             "frontier": true,
             "strength_rank": 1,
-            "grade": "capable",
+            "grade": "unknown",
             "citations": [
               {
                 "source": "Terminal-Bench",
@@ -620,15 +620,8 @@
             "model": "gpt-6-sol",
             "frontier": false,
             "strength_rank": 2,
-            "grade": "capable",
-            "citations": [
-              {
-                "source": "Artificial Analysis Agents' Last Exam",
-                "url": "https://artificialanalysis.ai/",
-                "independent": true,
-                "note": "Design records a planning benchmark result; no quota estimate."
-              }
-            ],
+            "grade": "unknown",
+            "citations": [],
             "est_burn": null,
             "est_seconds": null,
             "pass_rate": null,
@@ -649,8 +642,15 @@
             "model": "gpt-5.6-sol",
             "frontier": false,
             "strength_rank": 4,
-            "grade": "unknown",
-            "citations": [],
+            "grade": "capable",
+            "citations": [
+              {
+                "source": "Artificial Analysis Agents' Last Exam",
+                "url": "https://artificialanalysis.ai/",
+                "independent": true,
+                "note": "Design records GPT-5.6 Sol at 53.6 on Agents' Last Exam."
+              }
+            ],
             "est_burn": null,
             "est_seconds": null,
             "pass_rate": null,
@@ -755,7 +755,7 @@
                 "source": "BrowseComp (BenchLM.ai)",
                 "url": "https://benchlm.ai/",
                 "independent": true,
-                "note": "Design records BrowseComp result; category grade is qualitative."
+                "note": "Design records GPT-6 Astra at 91.5% on BrowseComp."
               }
             ],
             "est_burn": null,
@@ -767,15 +767,8 @@
             "model": "gpt-6-sol",
             "frontier": false,
             "strength_rank": 2,
-            "grade": "strong",
-            "citations": [
-              {
-                "source": "BrowseComp (BenchLM.ai)",
-                "url": "https://benchlm.ai/",
-                "independent": true,
-                "note": "Design records BrowseComp result; category grade is qualitative."
-              }
-            ],
+            "grade": "unknown",
+            "citations": [],
             "est_burn": null,
             "est_seconds": null,
             "pass_rate": null,
@@ -796,8 +789,15 @@
             "model": "gpt-5.6-sol",
             "frontier": false,
             "strength_rank": 4,
-            "grade": "unknown",
-            "citations": [],
+            "grade": "strong",
+            "citations": [
+              {
+                "source": "BrowseComp (BenchLM.ai)",
+                "url": "https://benchlm.ai/",
+                "independent": true,
+                "note": "Design records GPT-5.6 Sol at 92.2% on BrowseComp."
+              }
+            ],
             "est_burn": null,
             "est_seconds": null,
             "pass_rate": null,
@@ -1079,30 +1079,12 @@
     },
     "image-generation": {
       "codex": {
-        "fallback": "gpt-image-2.5",
+        "fallback": "gpt-image-2",
         "candidates": [
-          {
-            "model": "gpt-image-2.5",
-            "frontier": false,
-            "strength_rank": 1,
-            "grade": "strong",
-            "citations": [
-              {
-                "source": "Artificial Analysis",
-                "url": "https://artificialanalysis.ai/image",
-                "independent": true,
-                "note": "Design records current image leaderboard placement; no score."
-              }
-            ],
-            "est_burn": null,
-            "est_seconds": null,
-            "pass_rate": null,
-            "pass_samples": 0
-          },
           {
             "model": "gpt-image-2",
             "frontier": false,
-            "strength_rank": 2,
+            "strength_rank": 1,
             "grade": "strong",
             "citations": [
               {

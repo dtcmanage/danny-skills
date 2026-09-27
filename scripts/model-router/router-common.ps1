@@ -7,8 +7,9 @@ function Get-RouterCategories {
 
 function Get-RouterStateDir {
     if ($env:DT_MODEL_ROUTER_STATE) { return [System.IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE) }
-    $common = (& git rev-parse --path-format=absolute --git-common-dir 2>$null | Select-Object -First 1).Trim()
+    $common = & git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null | Select-Object -First 1
     if (-not $common) { throw 'ROUTER_GIT_COMMON_DIR: Cannot locate main checkout.' }
+    $common = $common.Trim()
     $main = Split-Path -Parent $common
     return [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $main) 'model-router/state'))
 }
@@ -23,7 +24,8 @@ function Test-RouterTable {
     if ($errors.Count -gt 0) { return $errors.ToArray() }
     if ($Table.schema_version -isnot [long] -or $Table.schema_version -ne 1) { $errors.Add('SCHEMA_VERSION: expected integer 1') }
     $date = [datetimeoffset]::MinValue
-    if ($Table.generated_at -isnot [string] -or -not [datetimeoffset]::TryParse($Table.generated_at, [ref]$date)) { $errors.Add('GENERATED_AT: expected ISO date') }
+    if ($Table.generated_at -isnot [string] -and $Table.generated_at -isnot [datetime] -and $Table.generated_at -isnot [datetimeoffset]) { $errors.Add('GENERATED_AT: expected ISO date') }
+    elseif (-not [datetimeoffset]::TryParse([string]$Table.generated_at, [ref]$date)) { $errors.Add('GENERATED_AT: expected ISO date') }
     if ($Table.source -notin @('seed','research')) { $errors.Add('SOURCE: expected seed or research') }
     if ($Table.categories -isnot [pscustomobject]) { $errors.Add('CATEGORIES: expected object'); return $errors.ToArray() }
     $expected = @(Get-RouterCategories)
@@ -75,14 +77,17 @@ function Read-RouterTable {
     param([string]$TablePath)
     $seed = Join-Path $PSScriptRoot '../../references/model-router/seed-table.json'
     $live = if ($TablePath) { $TablePath } else { Join-Path (Get-RouterStateDir) 'router-table.json' }
+    $liveError = $null
     if (Test-Path -LiteralPath $live) {
         try {
             $table = Get-Content -LiteralPath $live -Raw | ConvertFrom-Json -Depth 30
-            if (@(Test-RouterTable -Table $table).Count -eq 0) { return [pscustomobject]@{ table = $table; source = 'live' } }
-        } catch { }
+            $validation = @(Test-RouterTable -Table $table)
+            if ($validation.Count -eq 0) { return [pscustomobject]@{ table = $table; source = 'live'; validation_error = $null } }
+            $liveError = $validation -join '; '
+        } catch { $liveError = $_.Exception.Message }
     }
     $table = Get-Content -LiteralPath $seed -Raw | ConvertFrom-Json -Depth 30
     $errors = @(Test-RouterTable -Table $table)
     if ($errors.Count) { throw "SEED_TABLE_INVALID: $($errors -join '; ')" }
-    return [pscustomobject]@{ table = $table; source = 'seed' }
+    return [pscustomobject]@{ table = $table; source = 'seed'; validation_error = $liveError }
 }
