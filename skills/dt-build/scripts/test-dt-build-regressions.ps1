@@ -103,7 +103,7 @@ try {
     Write-Utf8 -Path $fakeAlertTransport -Content @'
 param($request)
 if ($request['kind'] -eq 'secret') { return 'fake-secret' }
-if ([string]$request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '1' } }
+if ([string]$request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '1' } } }
 return [pscustomobject]@{ id = 'fake' }
 '@
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport

@@ -32,7 +32,7 @@ try {
 param(`$request)
 Add-Content -LiteralPath '$transportLog' -Value ([string]`$request['kind'] + ' ' + [string]`$request['uri'])
 if (`$request['kind'] -eq 'secret') { return 'fake-secret' }
-if ([string]`$request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '1' } }
+if ([string]`$request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '1' } } }
 if ([string]`$request['uri'] -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm' } }
 return [pscustomobject]@{ id = 'fake-message' }
 "@

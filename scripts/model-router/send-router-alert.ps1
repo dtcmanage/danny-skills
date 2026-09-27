@@ -145,13 +145,14 @@ function Send-RouterAlert {
             $configPath = Join-Path $state 'alert-config.json'
             $owner = $null
             if (Test-Path -LiteralPath $configPath) {
-                try { $owner = [string]((Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json).owner_id) } catch { $owner = $null }
+                try { $cfg = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json; if ($cfg.recipient_source -eq 'application-owner') { $owner = [string]$cfg.owner_id } } catch { $owner = $null }
             }
             if (-not $owner) {
-                $guild = Invoke-RouterAlertRequest -Transport $Transport -Deadline $Deadline -Request @{ kind = 'http'; method = 'GET'; uri = 'https://discord.com/api/v10/guilds/1014307672339779674'; headers = $headers; body = $null }
-                $owner = [string]$guild.owner_id
-                if (-not $owner) { throw 'Guild owner unavailable' }
-                [System.IO.File]::WriteAllText($configPath, (ConvertTo-Json -InputObject @{ owner_id = $owner } -Compress), [Text.UTF8Encoding]::new($false))
+                # Danny owns the bot application; the guild owner is a different person, so never DM the guild owner.
+                $app = Invoke-RouterAlertRequest -Transport $Transport -Deadline $Deadline -Request @{ kind = 'http'; method = 'GET'; uri = 'https://discord.com/api/v10/oauth2/applications/@me'; headers = $headers; body = $null }
+                $owner = if ($app.PSObject.Properties['team'] -and $app.team) { [string]$app.team.owner_user_id } elseif ($app.PSObject.Properties['owner'] -and $app.owner) { [string]$app.owner.id } else { $null }
+                if (-not $owner) { throw 'Bot application owner unavailable' }
+                [System.IO.File]::WriteAllText($configPath, (ConvertTo-Json -InputObject @{ owner_id = $owner; recipient_source = 'application-owner' } -Compress), [Text.UTF8Encoding]::new($false))
             }
             $dm = Invoke-RouterAlertRequest -Transport $Transport -Deadline $Deadline -Request @{ kind = 'http'; method = 'POST'; uri = 'https://discord.com/api/v10/users/@me/channels'; headers = $headers; body = (ConvertTo-Json -InputObject @{ recipient_id = $owner } -Compress) }
             if (-not $dm.id) { throw 'DM channel unavailable' }

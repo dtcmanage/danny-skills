@@ -30,7 +30,7 @@ try {
             if ($request.name -eq 'discord-bot-token') { return $script:fakeToken }
             return 're_fake_key'
         }
-        if ($request.uri -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '123456789' } }
+        if ($request.uri -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '123456789' } } }
         if ($request.uri -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm-channel' } }
         if ($request.uri -like '*/channels/*/messages') {
             if ($script:failDm) { throw "Discord rejected $script:fakeToken" }
@@ -58,8 +58,17 @@ try {
     $fallback = Send-RouterAlert -Key 'fallback' -Message 'Fallback alert' -Transport $fake 6>&1
     $fallbackStatus = @($fallback | Where-Object { $_ -is [pscustomobject] })[-1]
     Assert-True ($fallbackStatus.sent -and $fallbackStatus.channel -eq 'email') 'DM failure falls back to email'
-    Assert-True (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/guilds/*' }).Count -eq 1) 'owner ID cached after first lookup'
+    Assert-True (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/oauth2/applications/@me' }).Count -eq 1) 'owner ID cached after first lookup'
     Assert-True (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like 'https://discord.com/*' -and $_.headers['User-Agent'] -eq 'DiscordBot (https://github.com/dtcmanage/danny-skills, 1)' }).Count -eq 5) 'Discord requests carry User-Agent'
+    $cachedCfg = Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'alert-config.json') -Raw | ConvertFrom-Json
+    Assert-True ($cachedCfg.owner_id -eq '123456789' -and $cachedCfg.recipient_source -eq 'application-owner') 'DM recipient is the bot application owner'
+    Set-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'alert-config.json') -Value '{"owner_id":"324036629440495617"}'
+    $savedRequests = $script:requests; $savedFailDm = $script:failDm
+    $script:requests = [System.Collections.Generic.List[object]]::new()
+    $script:failDm = $false
+    [void](Send-RouterAlert -Key 'stale-owner-cache' -Message 'Stale cache alert' -Transport $fake 6>&1)
+    Assert-True (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/oauth2/applications/@me' }).Count -eq 1 -and @($script:requests | Where-Object { $_.ContainsKey('body') -and [string]$_['body'] -like '*324036629440495617*' }).Count -eq 0) 'legacy guild-owner cache is ignored and never messaged'
+    $script:requests = $savedRequests; $script:failDm = $savedFailDm
     $mailRequest = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -eq 'https://api.resend.com/emails' })[-1]
     Assert-True ($mailRequest.headers['Idempotency-Key'] -like 'model-router-*' -and ($mailRequest.body | ConvertFrom-Json).from -eq 'finance@notification.thaicapital.com') 'email sender and idempotency key'
 
@@ -132,7 +141,7 @@ param($request)
 $log = Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-transport.log'
 Add-Content -LiteralPath $log -Value ([string]$request['kind'] + ' ' + [string]$request['uri'])
 if ($request['kind'] -eq 'secret') { return 'fake-secret' }
-if ($request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '123456789' } }
+if ($request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '123456789' } } }
 if ($request['uri'] -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm-channel' } }
 return [pscustomobject]@{ id = 'fake-message' }
 '@

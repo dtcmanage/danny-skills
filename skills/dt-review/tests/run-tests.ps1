@@ -102,7 +102,7 @@ try {
     $env:DT_MODEL_ROUTER_STATE = $routerState
     Write-Utf8 (Join-Path $routerState 'last-check.json') (@{ checked_at = (Get-Date).ToString('o') } | ConvertTo-Json)
     $fakeAlertTransport = Join-Path $testRoot 'fake-alert-transport.ps1'
-    Write-Utf8 $fakeAlertTransport "param(`$request)`nif (`$request['kind'] -eq 'secret') { return 'fake-secret' }`nif ([string]`$request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '1' } }`nreturn [pscustomobject]@{ id = 'fake' }`n"
+    Write-Utf8 $fakeAlertTransport "param(`$request)`nif (`$request['kind'] -eq 'secret') { return 'fake-secret' }`nif ([string]`$request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '1' } } }`nreturn [pscustomobject]@{ id = 'fake' }`n"
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
     $routerTable = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'references\model-router\seed-table.json') | ConvertFrom-Json -Depth 30
     $routerTable.source = 'research'

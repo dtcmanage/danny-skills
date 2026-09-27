@@ -20,7 +20,7 @@ $transportPath = Join-Path $temp 'fake-alert-transport.ps1'
 Set-Content -LiteralPath $transportPath -Value @'
 param($request)
 if ($request['kind'] -eq 'secret') { return 'fake-secret' }
-if ([string]$request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '1' } }
+if ([string]$request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '1' } } }
 if ([string]$request['uri'] -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm' } }
 return [pscustomobject]@{ id = 'fake-message' }
 '@
