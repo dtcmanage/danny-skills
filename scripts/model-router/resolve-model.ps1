@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../resolve-codex-model.ps1')
 . (Join-Path $PSScriptRoot 'check-new-models.ps1')
 . (Join-Path $PSScriptRoot 'send-router-alert.ps1')
+. (Join-Path $PSScriptRoot 'run-router-research.ps1')
 
 function Get-RouterFailureProbability {
     param([object]$Candidate)
@@ -54,6 +55,10 @@ function Resolve-RouterModel {
         try {
             $check = Invoke-RouterModelCheck
             foreach ($alert in @($check.alerts)) { $alerts.Add([string]$alert) }
+            if (@($check.new_models).Count -gt 0) {
+                try { [void](Start-RouterResearchDetached) }
+                catch { $alerts.Add('research-launch-error') }
+            }
         } catch { $alerts.Add("catalog-check-error:resolver: $($_.Exception.Message)") }
     }
     $read = Read-RouterTable -TablePath $TablePath
