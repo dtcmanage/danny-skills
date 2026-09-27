@@ -7,20 +7,18 @@
 # shipped), and tier names do not keep their meaning across generations (Sol was 5.6's top
 # model and is 6.0's middle one).
 #
-# So this file holds no model names. It ranks the live per-account catalog deterministically:
+# Routing now lives in the shared model router (scripts/model-router/resolve-model.ps1):
+# Resolve-CodexModel maps a legacy tier to a router category (complex -> complex-coding,
+# protected; standard -> routine-coding; light -> mechanical) or takes -Category directly, and
+# asks the router for the Codex-lane pick. This file keeps the live catalog plumbing:
 #   1. Refresh the catalog with `codex debug models` (Update-CodexModelCatalog), or read
 #      Codex's models_cache.json when the caller supplies no catalog.
-#   2. Keep selectable rows: visibility 'list', a gpt-<major>[.<minor>] slug, no retirement
-#      notice ('upgrade'), never a Spark model (Danny's no-Spark direction), and never a
-#      frontier model (catalog description says "frontier"). Frontier models such as GPT-6
-#      Astra sit at Claude Fable's premium tier; Danny excludes them from automatic routing on
-#      both lanes for cost. They remain reachable only as an explicit override.
-#   3. Take the newest generation and order it by the catalog's own 'priority' (the order
-#      Codex's model picker shows, best first).
-#   4. complex = first rung, light = last rung, standard = middle rung when there are three or
-#      more, otherwise the first rung (GPT-6 today: Sol / Sol / Luna).
+#   2. Get-CodexModelLadder is the selectable check the router reuses: visibility 'list', a
+#      gpt-<major>[.<minor>] slug, no retirement notice ('upgrade'), never Spark. It no longer
+#      picks models; the router checks each candidate against it.
 # An explicit -PreferredModel override wins only when it is selectable; strict callers fail
-# loudly otherwise instead of silently substituting.
+# loudly otherwise instead of silently substituting. A router pick that the catalog cannot
+# select fails closed under -Strict.
 
 function Get-CodexCachePath {
     $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
@@ -100,12 +98,26 @@ function Get-CodexModelLadder {
     )
 }
 
+function ConvertTo-RouterCategoryFromTier {
+    # Legacy tier callers map onto the model router's fixed categories.
+    param([Parameter(Mandatory)][ValidateSet('complex', 'standard', 'light')][string]$Tier)
+    switch ($Tier) {
+        'complex'  { return [pscustomobject]@{ category = 'complex-coding'; protected = $true } }
+        'standard' { return [pscustomobject]@{ category = 'routine-coding'; protected = $false } }
+        'light'    { return [pscustomobject]@{ category = 'mechanical'; protected = $false } }
+    }
+}
+
 function Resolve-CodexModel {
     param(
-        [Parameter(Mandatory)]
+        # Legacy tier; maps to a router category when -Category is absent.
         [ValidateSet('complex', 'standard', 'light')]
         [string]$Tier,
-        # Explicit override only. Leave empty for automatic newest-generation selection.
+        # Model-router category (scripts/model-router/router-common.ps1 Get-RouterCategories).
+        [string]$Category,
+        # Protected work: the router picks the strongest eligible candidate.
+        [switch]$Protected,
+        # Explicit override only. Leave empty for router selection.
         [string]$PreferredModel,
         # A catalog from Update-CodexModelCatalog. When absent, the cache file is read.
         [object]$Catalog,
@@ -114,10 +126,18 @@ function Resolve-CodexModel {
         # Automation fails closed when the catalog cannot verify the selection.
         [switch]$Strict
     )
+    if (-not $Tier -and -not $Category) { throw 'Resolve-CodexModel requires -Category or -Tier.' }
+    $isProtected = [bool]$Protected
+    if (-not $Category) {
+        $mapped = ConvertTo-RouterCategoryFromTier -Tier $Tier
+        $Category = $mapped.category
+        $isProtected = $isProtected -or $mapped.protected
+    }
+    $label = if ($Tier) { "tier '$Tier' (category '$Category')" } else { "category '$Category'" }
 
     try { $parsed = Get-CodexModelCatalog -Catalog $Catalog -CachePath $CachePath }
     catch {
-        if ($Strict -or -not $PreferredModel) { throw "Cannot resolve Codex tier '$Tier': $($_.Exception.Message)" }
+        if ($Strict -or -not $PreferredModel) { throw "Cannot resolve Codex ${label}: $($_.Exception.Message)" }
         Write-Warning "$($_.Exception.Message); using unverified override '$PreferredModel'."
         return $PreferredModel
     }
@@ -129,29 +149,32 @@ function Resolve-CodexModel {
             if ($slug -and $vis -and $vis.Value -eq 'list') { [string]$slug.Value }
         }
     )
-    $ladder = @(Get-CodexModelLadder -Catalog $parsed)
 
     if ($PreferredModel) {
         if ($selectable -contains $PreferredModel) {
+            $ladder = @(Get-CodexModelLadder -Catalog $parsed)
             if ($ladder.Count -gt 0 -and $ladder -notcontains $PreferredModel) {
                 Write-Warning "Override '$PreferredModel' is outside the automatic ladder ($($ladder -join ', ')): an older generation or a frontier model."
             }
             return $PreferredModel
         }
         if ($Strict) {
-            throw "Codex model override '$PreferredModel' is not selectable on this auth. Selectable: $($selectable -join ', '). Drop the override to auto-select the newest generation."
+            throw "Codex model override '$PreferredModel' is not selectable on this auth. Selectable: $($selectable -join ', '). Drop the override to let the model router select."
         }
-        Write-Warning "Override '$PreferredModel' is not selectable; auto-selecting tier '$Tier' instead."
+        Write-Warning "Override '$PreferredModel' is not selectable; routing $label instead."
     }
 
-    if ($ladder.Count -eq 0) {
-        throw "No usable Codex model for tier '$Tier': the catalog lists no selectable gpt-<version> model. Selectable: $($selectable -join ', ')."
+    # The model router is the only routing source. Loaded lazily: it dot-sources this file.
+    if (-not (Get-Command Resolve-RouterModel -ErrorAction SilentlyContinue)) {
+        . (Join-Path $PSScriptRoot 'model-router/resolve-model.ps1')
     }
-    switch ($Tier) {
-        'complex'  { return $ladder[0] }
-        'standard' { return $(if ($ladder.Count -ge 3) { $ladder[1] } else { $ladder[0] }) }
-        'light'    { return $ladder[$ladder.Count - 1] }
+    $pick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected -Catalog $parsed
+    if (-not (Test-RouterCodexSelectable -ParsedCatalog $parsed -Model $pick.model)) {
+        $message = "No usable Codex model for ${label}: router pick '$($pick.model)' ($($pick.reason)) is not selectable. Selectable: $($selectable -join ', ')."
+        if ($Strict) { throw $message }
+        Write-Warning $message
     }
+    return $pick.model
 }
 
 function Assert-CodexReasoningEffort {

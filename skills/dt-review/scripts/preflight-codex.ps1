@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)]
     [string]$ProjectPath,
 
-    # Explicit override only; empty auto-selects from the newest Codex generation.
+    # Explicit override only; empty lets the model router pick (category planning).
     [string]$Model = '',
 
     [ValidateSet('complex', 'light')]
@@ -70,7 +70,7 @@ try {
     }
     try { $catalog = Update-CodexModelCatalog -CodexCliPath $codexCli -TimeoutMs 15000 }
     catch { throw "Codex model catalog refresh failed; cannot verify current account availability ($($_.Exception.Message)). Detected: $versionText" }
-    $Model = Resolve-CodexModel -Tier $Tier -PreferredModel $Model -Catalog $catalog -Strict
+    $Model = Resolve-CodexModel -Category planning -Protected:($Tier -eq 'complex') -PreferredModel $Model -Catalog $catalog -Strict
     [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Catalog $catalog -Strict)
     $arguments = @(
         '-a', 'never',

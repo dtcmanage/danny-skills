@@ -109,6 +109,16 @@ TIMEOUT_BIN=""; if command -v timeout >/dev/null 2>&1; then TIMEOUT_BIN="timeout
 # Cost estimate (Round 1 F6).
 echo "[dt-image-gen] expected Codex generation calls: $COUNT (each ~57k tokens; grid mode = 1 call for many options)" >&2
 
+# Model router, advisory only: record the image-generation pick. Codex's image_gen tool
+# cannot choose a model, so generation stays on gpt-image-2 whatever the router says.
+ROUTER_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd -P)/scripts/model-router/resolve-model.ps1"
+ROUTER_PICK=""
+if [ -f "$ROUTER_SCRIPT" ] && command -v pwsh >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  ROUTER_PICK="$(pwsh -NoProfile -File "$(wpath "$ROUTER_SCRIPT")" -Category image-generation -Lane codex -Json 2>/dev/null \
+    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);process.stdout.write(r.model+" ("+r.reason+")")}catch(e){}})' 2>/dev/null || true)"
+fi
+echo "[dt-image-gen] model router (advisory, category image-generation): ${ROUTER_PICK:-unavailable}; engine stays gpt-image-2" >&2
+
 CXPROMPT="$(build_prompt)"
 SAVED=()
 

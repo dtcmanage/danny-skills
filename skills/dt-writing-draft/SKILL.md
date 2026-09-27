@@ -221,6 +221,7 @@ Close with: "To run a structural and clarity pass when ready, point `dt-writing-
 
 ## Guardrails
 
+- **Route any model dispatch as `long-form-writing`.** When this skill hands drafting to another model (a subagent or a Codex/Claude CLI call), pick it with the shared model router's fixed category: `scripts/model-router/resolve-model.ps1 -Category long-form-writing -Lane <codex|claude> -Json`. The category is protected by construction; never pass a cheaper model to save quota.
 - **Load the voice references and the style profile before writing a word.** A draft written without them sounds like a model, not like Danny, and gets discarded.
 - **The business voice profile governs.** `voice-principles-business.md` is the governing voice reference for long-form; `voice-principles.md` is the email base beneath it. Where they differ, the business profile wins — it permits the sparing definitional em dash and the financial term "leverage", both banned by the email file. Length always matches stakes, never an arbitrary cap.
 - **Pull comprehensively.** The full quarter of newsletters, not a convenient sample. Sampling is how events get missed, and catching missed events is half the point of the corpus.

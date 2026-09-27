@@ -54,9 +54,9 @@ authoring model:
 
 | Role | Codex lane | Claude lane | Limit |
 | --- | --- | --- | --- |
-| Light review | newest generation's middle rung, or top rung when only two (today `gpt-6-sol`), effort `medium` | `sonnet` | 3 rounds |
-| Complex review | newest generation's top non-frontier rung (today `gpt-6-sol`), effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
-| Preflight | newest generation's last rung (today `gpt-6-luna`), effort `low` | tier model, echo check | 30 seconds |
+| Light review | model router, category `planning` (today `gpt-6-sol`), effort `medium` | `sonnet` | 3 rounds |
+| Complex review | model router, category `planning`, protected (strongest eligible; today `gpt-6-sol`), effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
+| Preflight | the same `planning` pick the rounds will use, effort `low` | tier model, echo check | 30 seconds |
 
 Rounds 1-2 are the full critique; rounds 3+ are verification rounds (check prior commitments, new
 findings only at high severity), so the complex tier drops to medium effort there and the invoker's
@@ -80,14 +80,12 @@ validation, and redaction chain. Claude rounds run with JSON output; round metad
 model version the CLI reports (`resolved_model`, `models_used`, `total_cost_usd`) beside the requested
 alias, and a run outside the requested family fails closed.
 
-Model slugs are never hardcoded. Preflight refreshes the live account catalog (`codex debug models`);
-the shared `scripts/resolve-codex-model.ps1` takes the newest selectable `gpt-<version>` generation,
-orders it by the catalog's own priority, and maps top / middle / last rung to complex review / light
-review / preflight (middle = top when only two rungs). Spark, models carrying a retirement notice, and
-frontier models (description says "frontier", e.g. GPT-6 Astra, Fable-tier cost) are never selected
-automatically; a frontier model runs only as an explicit `-Model` override. A new OpenAI
-release is picked up with no edit; the "today" slugs above are examples. `-Model` is a deliberate
-override only, and an unselectable override fails closed.
+Model slugs are never hardcoded. Codex rounds resolve through the shared model router with the fixed
+category `planning` (`Resolve-CodexModel -Category planning`, protected for complex reviews; see
+`scripts/model-router/resolve-model.ps1`). Preflight refreshes the live account catalog (`codex debug models`),
+and the router's pick must be selectable on it: a pick the catalog cannot select fails closed. Frontier models
+(e.g. GPT-6 Astra, Fable-tier cost) run only when the router's table leaves no non-frontier candidate, or as an
+explicit `-Model` override. `-Model` is a deliberate override only, and an unselectable override fails closed.
 
 ## References
 

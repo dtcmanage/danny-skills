@@ -87,31 +87,52 @@ function New-MaterialReviewHistory {
 $SkillRoot = Split-Path -Parent $PSScriptRoot
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 $testRoot = Join-Path $env:TEMP ("dt-review-tests-{0}" -f [guid]::NewGuid().ToString('N'))
+$priorRouterState = $env:DT_MODEL_ROUTER_STATE
+$priorAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $project = Join-Path $testRoot 'project'
 $scratch = Join-Path $project 'design\_review'
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 
 try {
-    # Model resolver ranks the newest generation by catalog priority; no names are hardcoded.
+    # Codex review rounds resolve through the model router (category planning; complex reviews
+    # are protected). Router state is isolated: temp folder, fresh catalog-check stamp (no
+    # network), fake alert transport (no real alert), and a fixture table.
+    $routerState = Join-Path $testRoot 'router-state'
+    New-Item -ItemType Directory -Path $routerState -Force | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $routerState
+    Write-Utf8 (Join-Path $routerState 'last-check.json') (@{ checked_at = (Get-Date).ToString('o') } | ConvertTo-Json)
+    $fakeAlertTransport = Join-Path $testRoot 'fake-alert-transport.ps1'
+    Write-Utf8 $fakeAlertTransport "param(`$request)`nif (`$request['kind'] -eq 'secret') { return 'fake-secret' }`nif ([string]`$request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '1' } }`nreturn [pscustomobject]@{ id = 'fake' }`n"
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
+    $routerTable = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'references\model-router\seed-table.json') | ConvertFrom-Json -Depth 30
+    $routerTable.source = 'research'
+    $routerTable.generated_at = '2026-09-27'
+    foreach ($fixtureRow in @(@('gpt-6-sol', 'strong', 10), @('gpt-6-luna', 'capable', 2), @('gpt-5.6-sol', 'capable', 5))) {
+        $candidate = @($routerTable.categories.planning.codex.candidates | Where-Object { $_.model -eq $fixtureRow[0] })[0]
+        $candidate.grade = $fixtureRow[1]
+        $candidate.citations = @([pscustomobject]@{ source = 'Fixture'; url = 'https://example.org/fixture'; independent = $true; note = 'Fixture' })
+        $candidate.est_burn = $fixtureRow[2]
+        $candidate.est_seconds = 10
+    }
+    Write-Utf8 (Join-Path $routerState 'router-table.json') ($routerTable | ConvertTo-Json -Depth 30)
     . (Join-Path $RepoRoot 'scripts\resolve-codex-model.ps1')
     $cachePath = Join-Path $testRoot 'models.json'
     $cache = [pscustomobject]@{
         models = @(
-            [pscustomobject]@{ slug = 'gpt-7-sol'; visibility = 'list'; priority = 2 },
-            [pscustomobject]@{ slug = 'gpt-7-nova'; visibility = 'list'; priority = 1 },
-            [pscustomobject]@{ slug = 'gpt-7-luna'; visibility = 'list'; priority = 3 },
-            [pscustomobject]@{ slug = 'gpt-6.9-sol'; visibility = 'list'; priority = 4 },
-            [pscustomobject]@{ slug = 'gpt-7-codex-spark'; visibility = 'list'; priority = 0 },
-            [pscustomobject]@{ slug = 'gpt-7-astra'; visibility = 'list'; priority = 0; description = 'Frontier intelligence for the most demanding work.' },
+            [pscustomobject]@{ slug = 'gpt-6-sol'; visibility = 'list'; priority = 2 },
+            [pscustomobject]@{ slug = 'gpt-6-luna'; visibility = 'list'; priority = 3 },
+            [pscustomobject]@{ slug = 'gpt-5.6-sol'; visibility = 'list'; priority = 4 },
+            [pscustomobject]@{ slug = 'gpt-6-codex-spark'; visibility = 'list'; priority = 0 },
+            [pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; priority = 0; description = 'Frontier intelligence for the most demanding work.' },
             [pscustomobject]@{ slug = 'gpt-8-preview'; visibility = 'hide'; priority = 0 }
         )
     } | ConvertTo-Json -Depth 4
     Write-Utf8 $cachePath $cache
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-7-nova') 'complex resolver did not select the newest top rung'
-    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-7-sol') 'light-review (standard rung) did not select the newest middle rung'
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-7-luna') 'preflight (light rung) did not select the newest bottom rung'
-    Assert-True ((Resolve-CodexModel -Tier light -PreferredModel 'gpt-6.9-sol' -CachePath $cachePath -Strict) -eq 'gpt-6.9-sol') 'selectable explicit override was not honored'
-    Assert-Throws { Resolve-CodexModel -Tier light -PreferredModel 'dead' -CachePath $cachePath -Strict } 'not selectable' 'strict resolver accepted an unselectable override'
+    Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'complex review (planning, protected) did not select the strongest eligible router candidate'
+    Assert-True ((Resolve-CodexModel -Category planning -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'light review (planning) did not select the router cost pick'
+    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'legacy tier-only caller did not route through the router (mechanical fallback)'
+    Assert-True ((Resolve-CodexModel -Category planning -PreferredModel 'gpt-5.6-sol' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-5.6-sol') 'selectable explicit override was not honored'
+    Assert-Throws { Resolve-CodexModel -Category planning -PreferredModel 'dead' -CachePath $cachePath -Strict } 'not selectable' 'strict resolver accepted an unselectable override'
 
     # Claude CLI envelope parser records the exact model version and fails closed on a
     # family mismatch or a missing model report.
@@ -534,6 +555,8 @@ Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNe
     } | ConvertTo-Json -Compress
 }
 finally {
+    $env:DT_MODEL_ROUTER_STATE = $priorRouterState
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorAlertTransport
     if (Test-Path -LiteralPath $testRoot) {
         $resolved = (Resolve-Path -LiteralPath $testRoot).Path
         $tempPrefix = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar

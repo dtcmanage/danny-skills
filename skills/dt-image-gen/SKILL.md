@@ -26,6 +26,10 @@ subscription - no `OPENAI_API_KEY`, no per-image billing. It does not reimplemen
 what the bare engine lacks: a race-safe collection contract, a grid-variation workflow with deterministic
 cell crop, optional brand styling, and a review gallery.
 
+Model routing is advisory here: `gen-image.sh` asks the shared model router for its fixed category
+`image-generation` (`scripts/model-router/resolve-model.ps1 -Category image-generation -Lane codex`) and records
+the pick on stderr, but generation stays on `gpt-image-2` because Codex's image tool cannot choose a model.
+
 Throughout, `<skill-dir>` is the folder containing this `SKILL.md`. Run every script through the Bash tool.
 
 ## When this fires

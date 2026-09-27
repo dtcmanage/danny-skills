@@ -10,7 +10,7 @@ param(
     [Parameter(Mandatory)]
     [string]$PromptPath,
 
-    # Explicit override only; empty auto-selects from the newest Codex generation.
+    # Explicit override only; empty lets the model router pick (category planning).
     [string]$Model = '',
 
     [ValidateSet('complex', 'light')]
@@ -104,9 +104,8 @@ if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) {
 }
 
 $RequestedModel = $Model
-# Light reviews run the newest generation's standard rung; complex reviews its top rung.
-$resolverTier = if ($Tier -eq 'complex') { 'complex' } else { 'standard' }
-$Model = Resolve-CodexModel -Tier $resolverTier -PreferredModel $Model -Strict
+# Review rounds route through the model router's planning category; complex reviews are protected.
+$Model = Resolve-CodexModel -Category planning -Protected:($Tier -eq 'complex') -PreferredModel $Model -Strict
 [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Strict)
 # Complex rounds 1-2 are the full critique at high effort; rounds 3+ are verification rounds and
 # run at medium. A high-effort critic re-reading the whole draft every round manufactured findings

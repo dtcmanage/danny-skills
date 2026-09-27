@@ -257,6 +257,9 @@ foreach ($mid in $milestoneIds) {
             $namedChecks.Count -eq $checkRecords.Count -and $evidencedChecks.Count -gt 0
     }
     $testedEvidence = [bool]($hasTestsText -or $hasCheckEvidence)
+    # Router routing metadata (optional; rows written before the model router lack it).
+    $category = if ($stored -and $stored.PSObject.Properties.Name -contains 'category' -and $stored.category) { [string]$stored.category } else { $null }
+    $escalated = if ($stored -and $stored.PSObject.Properties.Name -contains 'escalated' -and $null -ne $stored.escalated) { [bool]$stored.escalated } else { $null }
 
     if (-not $RunTests) {
         $blockers = New-Object System.Collections.Generic.List[string]
@@ -320,6 +323,8 @@ foreach ($mid in $milestoneIds) {
             verification_checks = @()
             stored_notes        = @($storedNotes)
             commit_sha          = $commitSha
+            category            = $category
+            escalated           = $escalated
         }
         continue
     }
@@ -386,6 +391,8 @@ foreach ($mid in $milestoneIds) {
         verification_checks = $verificationChecks
         stored_notes        = @()
         commit_sha          = $commitSha
+        category            = $category
+        escalated           = $escalated
     }
 }
 
@@ -463,6 +470,8 @@ $mdLines += "|----|-------------|--------|----------|--------|-------|"
 foreach ($r in $ledgerRows) {
     $noteParts = @()
     if ($r.commit_sha) { $noteParts += "commit: $($r.commit_sha.Substring(0, [Math]::Min(12, $r.commit_sha.Length)))" }
+    if ($r.PSObject.Properties['category'] -and $r.category) { $noteParts += "category: $($r.category)" }
+    if ($r.PSObject.Properties['escalated'] -and $null -ne $r.escalated) { $noteParts += "escalated: $(if ($r.escalated) { 'yes' } else { 'no' })" }
     foreach ($storedNote in @($r.stored_notes)) { if ($storedNote) { $noteParts += [string]$storedNote } }
     if ($r.status -eq "APPROVED_DOWNGRADE" -and $r.approval) {
         $noteParts += "approved-by: $($r.approval.approver)"
@@ -508,6 +517,8 @@ foreach ($r in $ledgerRows) {
         $shortSha = $r.commit_sha.Substring(0, [Math]::Min(12, $r.commit_sha.Length))
         $noteHtml += "<div><b>commit:</b> <code>$shortSha</code></div>"
     }
+    if ($r.PSObject.Properties['category'] -and $r.category) { $noteHtml += "<div><b>category:</b> $([System.Web.HttpUtility]::HtmlEncode([string]$r.category))</div>" }
+    if ($r.PSObject.Properties['escalated'] -and $null -ne $r.escalated) { $noteHtml += "<div><b>escalated:</b> $(if ($r.escalated) { 'yes' } else { 'no' })</div>" }
     foreach ($storedNote in @($r.stored_notes)) {
         if ($storedNote) { $noteHtml += "<div>$([System.Web.HttpUtility]::HtmlEncode([string]$storedNote))</div>" }
     }

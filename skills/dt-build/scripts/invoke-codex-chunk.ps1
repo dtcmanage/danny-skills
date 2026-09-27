@@ -3,6 +3,12 @@ param(
     [string]$PromptPath = "",
     [string]$OutputPath = "",
     [ValidateSet('complex', 'standard', 'light')][string]$Tier = "standard",
+    # Model-router category; when empty, -Tier maps to one (complex -> complex-coding protected,
+    # standard -> routine-coding, light -> mechanical).
+    [string]$Category = "",
+    [switch]$Protected,
+    # Retry after a failed attempt: the router moves one step up from this model.
+    [string]$EscalateFrom = "",
     [string]$Model = "",
     [string]$SelectionReason = "",
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$ReasoningEffort = "medium",
@@ -116,20 +122,43 @@ if (-not $Preflight) {
 
 $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot "scripts\resolve-codex-model.ps1")
+. (Join-Path $repoRoot "scripts\model-router\resolve-model.ps1")
 . (Join-Path $repoRoot "scripts\security\redact-secrets.ps1")
 
 $codexCli = Get-CodexCliPath
-# No model names live here: refresh the live account catalog and let the shared
-# resolver pick the tier's rung from the newest generation. -Model is an explicit
-# override only.
+# No model names live here: refresh the live account catalog and let the shared model
+# router pick for the chunk's category. -Model is an explicit override only.
 try { $modelCatalog = Update-CodexModelCatalog -CodexCliPath $codexCli }
 catch { throw "CODEX_INVOKE_FAIL: $($_.Exception.Message)" }
 $modelLadder = @(Get-CodexModelLadder -Catalog $modelCatalog)
+$isProtected = [bool]$Protected
+if ([string]::IsNullOrWhiteSpace($Category)) {
+    $mappedCategory = ConvertTo-RouterCategoryFromTier -Tier $Tier
+    $Category = $mappedCategory.category
+    $isProtected = $isProtected -or $mappedCategory.protected
+}
+$escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
+try {
+    $routerPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected -EscalateFrom $escalatedFrom -Catalog $modelCatalog -SendAlerts -ChatToStderr:$Json
+}
+catch { throw "CODEX_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
+$isProtected = [bool]$routerPick.protected
 $preferred = if ([string]::IsNullOrWhiteSpace($Model)) { $null } else { $Model }
-$resolvedModel = Resolve-CodexModel -Tier $Tier -PreferredModel $preferred -Catalog $modelCatalog -Strict
+if ($preferred) {
+    $resolvedModel = Resolve-CodexModel -Category $Category -Protected:$isProtected -PreferredModel $preferred -Catalog $modelCatalog -Strict
+    $routerReason = "Explicit -Model override; router pick was $($routerPick.model) ($($routerPick.reason))"
+}
+else {
+    $resolvedModel = [string]$routerPick.model
+    if (-not (Test-RouterCodexSelectable -ParsedCatalog $modelCatalog -Model $resolvedModel)) {
+        throw "CODEX_INVOKE_FAIL: router pick '$resolvedModel' for category '$Category' is not selectable on this account ($($routerPick.reason))."
+    }
+    $routerReason = [string]$routerPick.reason
+}
 [void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $ReasoningEffort -Catalog $modelCatalog -Strict)
+$selectionLabel = $Category + $(if ($isProtected) { ', protected' } else { '' }) + $(if ($escalatedFrom) { ", escalated from $escalatedFrom" } else { '' })
 $disclosureLine = if ($Preflight) { $null } else {
-    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($Tier, effort $ReasoningEffort): $SelectionReason"
+    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel, effort $ReasoningEffort): $SelectionReason; router: $routerReason"
 }
 
 $temporaryOutput = $false
@@ -318,6 +347,12 @@ try {
         pass                   = [string]::IsNullOrWhiteSpace($failureReason)
         preflight              = [bool]$Preflight
         tier                   = $Tier
+        category               = $Category
+        protected              = $isProtected
+        escalated_from         = $escalatedFrom
+        router_reason          = $routerReason
+        router_table_source    = $routerPick.table_source
+        router_table_date      = $routerPick.table_date
         requested_model        = $preferred
         resolved_model         = $resolvedModel
         model_ladder           = $modelLadder
@@ -361,6 +396,8 @@ catch {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
             pass = $false; preflight = [bool]$Preflight; tier = $Tier
+            category = $Category; protected = $isProtected; escalated_from = $escalatedFrom
+            router_reason = $routerReason; router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
             requested_model = $preferred; resolved_model = $resolvedModel
             selection_reason = if ($Preflight) { $null } else { $SelectionReason }
             disclosure_line = $disclosureLine

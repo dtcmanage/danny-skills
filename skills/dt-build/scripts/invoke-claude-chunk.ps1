@@ -3,6 +3,12 @@ param(
     [string]$PromptPath = "",
     [string]$OutputPath = "",
     [ValidateSet('complex', 'standard', 'light')][string]$Tier = "standard",
+    # Model-router category; when empty, -Tier maps to one (complex -> complex-coding protected,
+    # standard -> routine-coding, light -> mechanical).
+    [string]$Category = "",
+    [switch]$Protected,
+    # Retry after a failed attempt: the router moves one step up from this model.
+    [string]$EscalateFrom = "",
     [string]$Model = "",
     [string]$SelectionReason = "",
     [ValidateRange(1, 2)][int]$Attempt = 1,
@@ -20,13 +26,11 @@ param(
 # IS a Claude Code session, dispatch Claude subagents through the Agent tool with an
 # explicit model instead — this wrapper is the cross-model bridge, not the default.
 #
-# Tier -> model uses CLI aliases, not dated slugs, so the pin self-heals when
-# Anthropic rotates model versions:
-#   complex  -> opus
-#   standard -> sonnet
-#   light    -> haiku
+# The model comes from the shared model router (scripts/model-router/resolve-model.ps1,
+# Claude lane) for the chunk's category; -Tier alone maps to a category the same way
+# as the Codex wrapper. -Model is an explicit override only.
 # There is no reasoning-effort knob on the claude CLI; effort is a session-level
-# setting, so provenance records the alias and resolved CLI version only.
+# setting, so provenance records the requested model and resolved CLI version only.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -129,17 +133,32 @@ if (-not $Preflight) {
 $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot "scripts\security\redact-secrets.ps1")
 . (Join-Path $repoRoot "scripts\claude-cli-result.ps1")
+. (Join-Path $repoRoot "scripts\resolve-codex-model.ps1")
+. (Join-Path $repoRoot "scripts\model-router\resolve-model.ps1")
 
-$resolvedModel = $Model
-if ([string]::IsNullOrWhiteSpace($resolvedModel)) {
-    $resolvedModel = switch ($Tier) {
-        'complex'  { 'opus' }
-        'standard' { 'sonnet' }
-        'light'    { 'haiku' }
-    }
+$isProtected = [bool]$Protected
+if ([string]::IsNullOrWhiteSpace($Category)) {
+    $mappedCategory = ConvertTo-RouterCategoryFromTier -Tier $Tier
+    $Category = $mappedCategory.category
+    $isProtected = $isProtected -or $mappedCategory.protected
 }
+$escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
+try {
+    $routerPick = Resolve-RouterModel -Category $Category -Lane claude -Protected:$isProtected -EscalateFrom $escalatedFrom -SendAlerts -ChatToStderr:$Json
+}
+catch { throw "CLAUDE_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
+$isProtected = [bool]$routerPick.protected
+if ([string]::IsNullOrWhiteSpace($Model)) {
+    $resolvedModel = [string]$routerPick.model
+    $routerReason = [string]$routerPick.reason
+}
+else {
+    $resolvedModel = $Model
+    $routerReason = "Explicit -Model override; router pick was $($routerPick.model) ($($routerPick.reason))"
+}
+$selectionLabel = $Category + $(if ($isProtected) { ', protected' } else { '' }) + $(if ($escalatedFrom) { ", escalated from $escalatedFrom" } else { '' })
 $disclosureLine = if ($Preflight) { $null } else {
-    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($Tier): $SelectionReason"
+    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel): $SelectionReason; router: $routerReason"
 }
 $claudeCli = Get-ClaudeCliPath
 # The exact model version the CLI reports; null until a run is parsed.
@@ -309,6 +328,12 @@ try {
         preflight           = [bool]$Preflight
         lane                = 'claude'
         tier                = $Tier
+        category            = $Category
+        protected           = $isProtected
+        escalated_from      = $escalatedFrom
+        router_reason       = $routerReason
+        router_table_source = $routerPick.table_source
+        router_table_date   = $routerPick.table_date
         requested_model     = $resolvedModel
         resolved_model      = $actualModel
         models_used         = @(if ($cliResult) { $cliResult.models_used })
@@ -346,6 +371,8 @@ catch {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
             pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier
+            category = $Category; protected = $isProtected; escalated_from = $escalatedFrom
+            router_reason = $routerReason; router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
             requested_model = $resolvedModel; resolved_model = $actualModel
             selection_reason = if ($Preflight) { $null } else { $SelectionReason }
             disclosure_line = $disclosureLine

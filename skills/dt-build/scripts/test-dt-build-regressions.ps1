@@ -23,6 +23,8 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-regressions-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $originalCodexHome = $env:CODEX_HOME
+$originalRouterState = $env:DT_MODEL_ROUTER_STATE
+$originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
     # Extract once: a backticked python -m pytest command must not produce an
@@ -76,10 +78,39 @@ try {
     Assert-True ($null -ne $helperFunction -and $null -ne $inlineFunction) "artifact extractor function was not found in both scripts"
     Assert-True ($helperFunction.Extent.Text -ceq $inlineFunction.Extent.Text) "shared and inline artifact extractor function bodies drifted"
 
-    # Tiers resolve from the newest generation's catalog priority, never from hardcoded names:
-    # an older generation that stays selectable must not win, a shared name (Sol) must not
-    # carry its old rank, and Spark, retiring, or frontier (Fable-tier cost) models are never
-    # chosen automatically.
+    # Model router state is isolated: a temp state folder, a fresh catalog-check stamp (no
+    # network), a fake alert transport (no real alert can be sent), and a fixture table.
+    $routerState = Join-Path $tempRoot 'router-state'
+    New-Item -ItemType Directory -Path $routerState -Force | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $routerState
+    Write-Utf8 -Path (Join-Path $routerState 'last-check.json') -Content (@{ checked_at = (Get-Date).ToString('o') } | ConvertTo-Json)
+    $fakeAlertTransport = Join-Path $tempRoot 'fake-alert-transport.ps1'
+    Write-Utf8 -Path $fakeAlertTransport -Content @'
+param($request)
+if ($request['kind'] -eq 'secret') { return 'fake-secret' }
+if ([string]$request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '1' } }
+return [pscustomobject]@{ id = 'fake' }
+'@
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
+    $routerTable = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'references\model-router\seed-table.json') | ConvertFrom-Json -Depth 30
+    $routerTable.source = 'research'
+    $routerTable.generated_at = '2026-09-27'
+    foreach ($fixtureRow in @(
+        @('complex-coding', 'codex', 'gpt-6-sol', 'strong', 10), @('complex-coding', 'codex', 'gpt-6-luna', 'capable', 2),
+        @('mechanical', 'codex', 'gpt-6-luna', 'capable', 2),
+        @('routine-coding', 'claude', 'claude-opus-5-5', 'strong', 10), @('routine-coding', 'claude', 'claude-sonnet-5', 'capable', 2))) {
+        $candidate = @($routerTable.categories.($fixtureRow[0]).($fixtureRow[1]).candidates | Where-Object { $_.model -eq $fixtureRow[2] })[0]
+        $candidate.grade = $fixtureRow[3]
+        $candidate.citations = @([pscustomobject]@{ source = 'Fixture'; url = 'https://example.org/fixture'; independent = $true; note = 'Fixture' })
+        $candidate.est_burn = $fixtureRow[4]
+        $candidate.est_seconds = 10
+    }
+    Write-Utf8 -Path (Join-Path $routerState 'router-table.json') -Content ($routerTable | ConvertTo-Json -Depth 30)
+
+    # Codex picks come from the model router (legacy tiers map to categories: complex ->
+    # complex-coding protected, standard -> routine-coding, light -> mechanical) and must be
+    # selectable on the live catalog: Spark, retiring, or unlisted models are never chosen
+    # automatically, and frontier models run only as an explicit override.
     . (Join-Path $repoRoot 'scripts\resolve-codex-model.ps1')
     $cachePath = Join-Path $tempRoot 'models.json'
     Write-Utf8 -Path $cachePath -Content @'
@@ -94,20 +125,20 @@ try {
   {"slug":"gpt-reserve","visibility":"hide","priority":3,"upgrade":null}
 ]}
 '@
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "complex tier did not select the newest non-frontier top rung"
-    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "standard tier on a two-rung ladder did not select the first rung"
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') "light tier did not select the newest bottom rung"
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "complex tier (complex-coding, protected) did not select the strongest eligible router candidate"
+    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "standard tier (routine-coding, no eligible candidate) did not select the router lane fallback"
+    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') "light tier (mechanical) did not select the router pick"
     Assert-True ((@(Get-CodexModelLadder -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)) -join ',') -eq 'gpt-6-sol,gpt-6-luna') "frontier model leaked into the automatic ladder"
     Assert-True ((Resolve-CodexModel -Tier complex -PreferredModel 'gpt-6-astra' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-6-astra') "explicit frontier override was not honored"
     $retiringCache = Join-Path $tempRoot 'models-retiring.json'
-    Write-Utf8 -Path $retiringCache -Content '{"models":[{"slug":"gpt-7-nova","visibility":"list","priority":1,"upgrade":{"model":"gpt-6-astra"}},{"slug":"gpt-6-astra","visibility":"list","priority":2,"upgrade":null}]}'
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) -eq 'gpt-6-astra') "resolver selected a model carrying a retirement notice"
+    Write-Utf8 -Path $retiringCache -Content '{"models":[{"slug":"gpt-6-sol","visibility":"list","priority":1,"upgrade":{"model":"gpt-6-luna"}},{"slug":"gpt-6-luna","visibility":"list","priority":2,"upgrade":null}]}'
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) -eq 'gpt-6-luna') "resolver selected a model carrying a retirement notice"
     $overrideRejected = $false
     try { [void](Resolve-CodexModel -Tier standard -PreferredModel 'gone-model' -CachePath $cachePath -Strict) }
     catch { $overrideRejected = $true }
     Assert-True $overrideRejected "strict resolver silently replaced an unselectable override"
     $effortCache = Join-Path $tempRoot 'models-effort.json'
-    Write-Utf8 -Path $effortCache -Content '{"models":[{"slug":"gpt-5.5","visibility":"list","priority":1,"supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]}]}'
+    Write-Utf8 -Path $effortCache -Content '{"models":[{"slug":"gpt-6-sol","visibility":"list","priority":1,"supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]}]}'
     $fallbackModel = Resolve-CodexModel -Tier standard -CachePath $effortCache -Strict
     $effortRejected = $false
     try { [void](Assert-CodexReasoningEffort -Model $fallbackModel -Effort max -CachePath $effortCache -Strict) }
@@ -334,7 +365,7 @@ rationale: Framework limitation accepted with visible evidence.
     # failure provenance even when a child never reads stdin.
     $fixtureCodexHome = Join-Path $tempRoot 'codex-home'
     New-Item -ItemType Directory -Path $fixtureCodexHome -Force | Out-Null
-    Write-Utf8 -Path (Join-Path $fixtureCodexHome 'models_cache.json') -Content '{"fetched_at":"fixture","models":[{"slug":"gpt-5.6-terra","visibility":"list","supported_reasoning_levels":[{"effort":"medium"}]}]}'
+    Write-Utf8 -Path (Join-Path $fixtureCodexHome 'models_cache.json') -Content '{"fetched_at":"fixture","models":[{"slug":"gpt-6-sol","visibility":"list","supported_reasoning_levels":[{"effort":"medium"}]}]}'
     Write-Utf8 -Path (Join-Path $fixtureCodexHome 'auth.json') -Content '{"auth_mode":"fixture"}'
     $env:CODEX_HOME = $fixtureCodexHome
     $fakeCodex = Join-Path $tempRoot 'fake-codex.ps1'
@@ -387,7 +418,7 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     Assert-True ($retained -match '\[REDACTED-SECRET\]') "retained chunk output was not redacted"
     $wrapperProv = Get-Content -Raw -LiteralPath "$wrapperOutput.provenance.json" | ConvertFrom-Json
     Assert-True ([string]$wrapperProv.selection_reason -eq 'ordinary fixture implementation logic') "Codex provenance omitted selection reason"
-    Assert-True ([string]$wrapperProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> gpt-5\.6-terra \(standard, effort medium\): ordinary fixture implementation logic$') "Codex provenance omitted canonical disclosure line"
+    Assert-True ([string]$wrapperProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> gpt-6-sol \(routine-coding, effort medium\): ordinary fixture implementation logic; router: .+$') "Codex provenance omitted canonical disclosure line"
 
     $env:DT_FAKE_CODEX_MODE = 'malformed'
     $malformedOutput = Join-Path $tempRoot 'wrapper-malformed.md'
@@ -467,8 +498,8 @@ Write-Envelope $report
     Assert-True ($claudeRetained -match '\[REDACTED-SECRET\]') "retained Claude chunk output was not redacted"
     $claudeProv = Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json" | ConvertFrom-Json
     Assert-True ([string]$claudeProv.selection_reason -eq 'ordinary fixture verification logic') "Claude provenance omitted selection reason"
-    Assert-True ([string]$claudeProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> sonnet \(standard\): ordinary fixture verification logic$') "Claude provenance omitted canonical disclosure line"
-    Assert-True ([string]$claudeProv.requested_model -eq 'sonnet') "Claude provenance lost the requested alias"
+    Assert-True ([string]$claudeProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> claude-sonnet-5 \(routine-coding\): ordinary fixture verification logic; router: .+$') "Claude provenance omitted canonical disclosure line"
+    Assert-True ([string]$claudeProv.requested_model -eq 'claude-sonnet-5') "Claude provenance lost the router-requested model"
     Assert-True ([string]$claudeProv.resolved_model -eq 'claude-sonnet-5') "Claude provenance did not record the exact model version that ran"
     Assert-True (@($claudeProv.models_used).Count -eq 1 -and [string]@($claudeProv.models_used)[0].model -eq 'claude-sonnet-5') "Claude provenance omitted models_used"
     Assert-True ((Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json") -match '"models_used":\s*\[') "Claude provenance models_used is not a JSON array"
@@ -566,6 +597,8 @@ Write-Envelope $report
 finally {
     if ($null -eq $originalCodexHome) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
     else { $env:CODEX_HOME = $originalCodexHome }
+    $env:DT_MODEL_ROUTER_STATE = $originalRouterState
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $originalAlertTransport
     Remove-Item Env:DT_FAKE_CODEX_MODE -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

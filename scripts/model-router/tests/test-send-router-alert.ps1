@@ -123,6 +123,42 @@ try {
         Assert-True ($exitCode -eq 0 -and $lines.Count -eq 1 -and $parsed -and $parsed.PSObject.Properties[$case.property]) "$($case.name) -Json emits exactly one parseable object"
     }
 
+    # A real (non-deduped) send in -Json script mode keeps stdout to one JSON object; the
+    # chat line goes to stderr. Child processes get the fake transport through the env seam.
+    $fakeScript = Join-Path $temp 'fake-transport.ps1'
+    $fakeLog = Join-Path $temp 'fake-transport.log'
+    Set-Content -LiteralPath $fakeScript -Value @'
+param($request)
+$log = Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-transport.log'
+Add-Content -LiteralPath $log -Value ([string]$request['kind'] + ' ' + [string]$request['uri'])
+if ($request['kind'] -eq 'secret') { return 'fake-secret' }
+if ($request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owner_id = '123456789' } }
+if ($request['uri'] -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm-channel' } }
+return [pscustomobject]@{ id = 'fake-message' }
+'@
+    $priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeScript
+    try {
+        $jsonSendCases = @(
+            @{ name = 'send-router-alert'; arguments = @('-Key','cli-json-fresh','-Message','Fresh JSON-mode alert','-Json'); property = 'sent' },
+            @{ name = 'resolve-model'; arguments = @('-Category','routine-coding','-Lane','claude','-SkipModelCheck','-SendAlerts','-Json'); property = 'model' }
+        )
+        Remove-Item -LiteralPath (Join-Path $temp 'alert-log.jsonl') -Force -ErrorAction SilentlyContinue
+        foreach ($case in $jsonSendCases) {
+            $path = Join-Path $PSScriptRoot "../$($case.name).ps1"
+            $cliArgs = $case.arguments
+            $errPath = Join-Path $temp "$($case.name)-stderr.txt"
+            $before = if (Test-Path -LiteralPath $fakeLog) { @(Get-Content -LiteralPath $fakeLog).Count } else { 0 }
+            $lines = @(& pwsh -NoProfile -File $path @cliArgs 2>$errPath)
+            $exitCode = $LASTEXITCODE
+            $after = if (Test-Path -LiteralPath $fakeLog) { @(Get-Content -LiteralPath $fakeLog).Count } else { 0 }
+            $parsed = if ($lines.Count -eq 1) { $lines[0] | ConvertFrom-Json } else { $null }
+            Assert-True ($after -gt $before) "$($case.name) -Json performed a real (fake-transport) send"
+            Assert-True ($exitCode -eq 0 -and $lines.Count -eq 1 -and $parsed -and $parsed.PSObject.Properties[$case.property]) "$($case.name) -Json non-deduped send emits exactly one parseable object on stdout"
+            Assert-True ((Get-Content -LiteralPath $errPath -Raw) -match 'ROUTER_ALERT: ') "$($case.name) -Json chat line goes to stderr"
+        }
+    } finally { $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport }
+
     $before = $script:requests.Count
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     Assert-True ($pick.PSObject.Properties['alerts'] -and $script:requests.Count -eq $before) 'resolver SendAlerts off by default'

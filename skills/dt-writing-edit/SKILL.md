@@ -143,6 +143,7 @@ If Danny asked for the review HTML and it was built, report it as another clicka
 
 ## Guardrails
 
+- **Route any model dispatch as `long-form-writing`.** When this skill hands an edit pass to another model (a subagent or a Codex/Claude CLI call), pick it with the shared model router's fixed category: `scripts/model-router/resolve-model.ps1 -Category long-form-writing -Lane <codex|claude> -Json`. The category is protected by construction; never pass a cheaper model to save quota.
 - **Load the voice references and the style profile first.** `voice-principles-business.md` governs, `voice-principles.md` is the email base beneath it, and the genre style profile is the per-genre layer. They are what make this an edit in Danny's voice, not a generic cleanup.
 - **Never overwrite the original.** The edit is always a new versioned file. Danny compares and decides. The SHA256 before/after check in Step 5 proves it — the summary carries the `original unchanged` line.
 - **Get sign-off before restructuring.** Reordering is a big, visible change — propose, then move. Clarity edits within an agreed structure do not need per-section permission.

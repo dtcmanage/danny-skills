@@ -55,6 +55,8 @@ function Invoke-RouterAlertRequest {
     param([scriptblock]$Transport, [object]$Request, [datetime]$Deadline = [datetime]::MaxValue)
     if ([datetime]::UtcNow -ge $Deadline) { throw 'Alert batch deadline exceeded' }
     if ($Transport) { return & $Transport $Request }
+    # Test seam for child processes that cannot receive a scriptblock: a script path that acts as the transport.
+    if ($env:DT_MODEL_ROUTER_ALERT_TRANSPORT) { return & $env:DT_MODEL_ROUTER_ALERT_TRANSPORT $Request }
     return Invoke-RouterAlertTransport -Request $Request -Deadline $Deadline
 }
 
@@ -98,7 +100,9 @@ function Send-RouterAlert {
         [Parameter(Mandatory)][string]$Message,
         [ValidateSet('info','warn')][string]$Severity = 'warn',
         [scriptblock]$Transport,
-        [datetime]$Deadline = [datetime]::MaxValue
+        [datetime]$Deadline = [datetime]::MaxValue,
+        # Script -Json modes keep stdout to one JSON object, so the chat line goes to stderr.
+        [switch]$ChatToStderr
     )
     $status = [ordered]@{ key = $Key; sent = $false; channel = 'none'; deduped = $false; error = $null; log_error = $null }
     $mutex = [System.Threading.Mutex]::new($false, 'Local\DtModelRouterAlert')
@@ -123,7 +127,7 @@ function Send-RouterAlert {
                 } catch { }
             }
         }
-        Write-Host "ROUTER_ALERT: $Message"
+        if ($ChatToStderr) { [Console]::Error.WriteLine("ROUTER_ALERT: $Message") } else { Write-Host "ROUTER_ALERT: $Message" }
         $discordError = $null
         try {
             $token = [string](Invoke-RouterAlertRequest -Transport $Transport -Deadline $Deadline -Request @{ kind = 'secret'; name = 'discord-bot-token' })
@@ -178,17 +182,17 @@ function Send-RouterAlert {
 }
 
 function Send-RouterAlerts {
-    param([Parameter(Mandatory)][AllowEmptyCollection()][array]$Alerts, [scriptblock]$Transport)
+    param([Parameter(Mandatory)][AllowEmptyCollection()][array]$Alerts, [scriptblock]$Transport, [switch]$ChatToStderr)
     $deadline = [datetime]::UtcNow.AddSeconds(45)
     foreach ($alert in $Alerts) {
         $key = if ($alert -is [string]) { $alert } else { [string]$alert.key }
         $message = if ($alert -is [string]) { Get-RouterAlertMessage -Key $key } else { [string]$alert.message }
         if ([datetime]::UtcNow -ge $deadline) { [pscustomobject]@{ key = $key; sent = $false; channel = 'none'; deduped = $false; error = 'busy'; log_error = $null } }
-        else { Send-RouterAlert -Key $key -Message $message -Severity $(if ($key -eq 'research-stale-lock-cleared' -or $key -like 'drift-cleared:*') { 'info' } else { 'warn' }) -Transport $Transport -Deadline $deadline }
+        else { Send-RouterAlert -Key $key -Message $message -Severity $(if ($key -eq 'research-stale-lock-cleared' -or $key -like 'drift-cleared:*') { 'info' } else { 'warn' }) -Transport $Transport -Deadline $deadline -ChatToStderr:$ChatToStderr }
     }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Send-RouterAlert -Key $RouterAlertCliKey -Message $RouterAlertCliMessage -Severity $RouterAlertCliSeverity
+    $result = Send-RouterAlert -Key $RouterAlertCliKey -Message $RouterAlertCliMessage -Severity $RouterAlertCliSeverity -ChatToStderr:$RouterAlertCliJson
     if ($RouterAlertCliJson) { $result | ConvertTo-Json -Compress } else { $result }
 }

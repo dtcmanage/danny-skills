@@ -37,6 +37,16 @@ function Test-RouterCodexSelectable {
     return (@(Get-CodexModelLadder -Catalog ([pscustomobject]@{ models = @($copy) })) -contains $Model)
 }
 
+function Get-RouterAgentAlias {
+    # Host-native Agent dispatch takes a family alias, not a model id: map the router's
+    # Claude pick (claude-<family>-...) to opus, sonnet, haiku, or fable. Null when the
+    # model has no Agent alias; dispatch it through invoke-claude-chunk.ps1 instead.
+    param([Parameter(Mandatory)][string]$Model)
+    $match = [regex]::Match($Model.ToLowerInvariant(), '^claude-(opus|sonnet|haiku|fable)-')
+    if (-not $match.Success) { return $null }
+    return $match.Groups[1].Value
+}
+
 function Resolve-RouterModel {
     param(
         [Parameter(Mandatory)][string]$Category,
@@ -46,7 +56,8 @@ function Resolve-RouterModel {
         [object]$Catalog,
         [string]$TablePath,
         [switch]$SkipModelCheck,
-        [switch]$SendAlerts
+        [switch]$SendAlerts,
+        [switch]$ChatToStderr
     )
     if ($Category -notin @(Get-RouterCategories)) { throw "CATEGORY: Unknown category '$Category'" }
     if ($Category -eq 'image-generation' -and $Lane -ne 'codex') { throw 'LANE: image-generation has only codex' }
@@ -80,8 +91,8 @@ function Resolve-RouterModel {
     $isProtected = [bool]$Protected -or $Category -eq 'long-form-writing'
     if ($eligible.Count -eq 0) {
         if ($read.table.source -ne 'seed') { $alerts.Add("no-eligible:$Category`:$Lane") }
-        $result = [pscustomobject]@{ model = $laneTable.fallback; category = $Category; lane = $Lane; protected = $isProtected; reason = 'No eligible candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }
-        if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts | Out-Null }
+        $result = [pscustomobject]@{ model = $laneTable.fallback; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $laneTable.fallback } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = 'No eligible candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts -ChatToStderr:$ChatToStderr | Out-Null }
         return $result
     }
     $byStrength = @($eligible | Sort-Object strength_rank)
@@ -155,12 +166,12 @@ function Resolve-RouterModel {
     else { $chosen = $rankedCandidates[0]; $reason = 'Lowest expected retry-adjusted burn; 10% time tie-break.' }
     if ($driftApplied) { $reason += ' Drift demotion moved a flagged model down one eligible position.' }
     if ($chosen.frontier) { $reason += ' No non-frontier eligible.' }
-    $result = [pscustomobject]@{ model = $chosen.model; category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
-    if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts | Out-Null }
+    $result = [pscustomobject]@{ model = $chosen.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $chosen.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
+    if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts -ChatToStderr:$ChatToStderr | Out-Null }
     return $result
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Resolve-RouterModel -Category $RouterResolveCliCategory -Lane $RouterResolveCliLane -Protected:$RouterResolveCliProtected -EscalateFrom $RouterResolveCliEscalateFrom -Catalog $RouterResolveCliCatalog -TablePath $RouterResolveCliTablePath -SkipModelCheck:$RouterResolveCliSkipModelCheck -SendAlerts:$RouterResolveCliSendAlerts
+    $result = Resolve-RouterModel -Category $RouterResolveCliCategory -Lane $RouterResolveCliLane -Protected:$RouterResolveCliProtected -EscalateFrom $RouterResolveCliEscalateFrom -Catalog $RouterResolveCliCatalog -TablePath $RouterResolveCliTablePath -SkipModelCheck:$RouterResolveCliSkipModelCheck -SendAlerts:$RouterResolveCliSendAlerts -ChatToStderr:$RouterResolveCliJson
     if ($RouterResolveCliJson) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
 }

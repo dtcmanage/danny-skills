@@ -79,47 +79,62 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 ## Model and lane routing
 
 **Orchestrator:** whatever session Danny launches IS the orchestrator — dt-build imposes no orchestrator
-model gate. The orchestrator's job is dividing the roadmap into chunks, routing each chunk to the cheapest
-model tier that can genuinely do it, judging failures, and escalating. The orchestrator never delegates its
+model gate. The orchestrator's job is dividing the roadmap into chunks, routing each chunk to the router
+category that fits it, judging failures, and escalating. The orchestrator never delegates its
 own model for implementation chunks.
 
-**Per-chunk tier selection (both lanes).** Route every chunk to a tier by difficulty, not by habit —
-the goal is an optimized build, not maximum firepower:
+**Per-chunk category (both lanes).** Every model pick comes from the shared model router
+(`scripts/model-router/resolve-model.ps1`), never from a tier map or a hardcoded slug. At roadmap time the
+orchestrator gives each chunk exactly one router category and records it in `build-plan.md`:
 
-| Tier | When | Codex lane | Claude lane |
-| :-- | :-- | :-- | :-- |
-| `light` | Routine mechanical work: boilerplate, config, renames, straightforward tests, preflight | newest generation's last rung (today `gpt-6-luna`), effort `low`/`medium` | `haiku` |
-| `standard` | Ordinary implementation with real logic | newest generation's middle rung, or top rung when only two (today `gpt-6-sol`), effort `medium` | `sonnet` |
-| `complex` | Load-bearing, security-sensitive, ambiguous, or escalated chunks | newest generation's top non-frontier rung (today `gpt-6-sol`), effort `medium` (raise to `high` only with a recorded reason) | `opus` |
+| Chunk | Category | Protected |
+| :-- | :-- | :-- |
+| Load-bearing (`scripts/identify-load-bearing.ps1` flagged it) or security-sensitive / live-write | `complex-coding` | yes (`-Protected`) |
+| Ordinary implementation, including routine mechanical work | `routine-coding` | no |
+| UI / front-end chunk | `ui-frontend` | no (yes when also load-bearing) |
+| Independent verifier (step 6.d) and final combined-diff review (step 6.5) | `code-review` | yes only for a load-bearing milestone |
 
-Codex slugs are never hardcoded. On every call the wrapper refreshes the live account catalog
-(`codex debug models`) and the shared resolver ranks the newest selectable `gpt-<version>` generation
-by the catalog's own priority. Spark, models carrying a retirement notice, and frontier models (catalog
-description says "frontier", e.g. GPT-6 Astra: Claude Fable's premium tier) are excluded, mirroring the
-Claude lane's Opus-not-Fable choice for cost; a frontier model runs only as an explicit `-Model`
-override with a recorded reason. A new
-OpenAI release is picked up automatically; the "today" slugs above are examples, not pins. Pass
-`-Model` only as a deliberate override; an unselectable override fails closed.
+The router reads its category table, keeps candidates the live account catalog can actually select (Codex
+lane: `codex debug models`; Spark and retiring models never qualify), and returns the model plus a one-line
+reason. Unprotected work gets the lowest expected retry-adjusted cost among eligible candidates; protected
+work gets the strongest eligible candidate. Frontier models (a per-model table flag, e.g. GPT-6 Astra,
+Claude Fable) run only when no non-frontier model is eligible, or as an explicit `-Model` override with a
+recorded reason. The wrappers take `-Category`, `-Protected`, and `-EscalateFrom`; a legacy `-Tier` alone
+maps `complex` -> `complex-coding` protected, `standard` -> `routine-coding`, `light` -> `mechanical`.
 
-Light-tier implementation is allowed — the orchestrator owns quality: it reviews each chunk's result, and
-when a light-tier model proves incapable, the retry escalates one tier (light → standard → complex; a
-standard failure escalates to complex, as before). Escalation IS the second attempt and stays inside the
-two-attempt budget. Start load-bearing chunks at `complex` directly; never start them light.
+**Escalation.** A failed attempt retries one step up that category's ranked list: pass
+`-EscalateFrom <the model that failed>` to the wrapper (on claude-host, resolve with
+`resolve-model.ps1 -Category <c> -Lane claude -EscalateFrom <model> -Json`). Escalation IS the second
+attempt and stays inside the two-attempt budget.
 
-**`standard` is the default; `complex` must be earned.** A dispatch — builder, verifier, or final reviewer,
-on either lane — may use `complex` only when (a) `scripts/identify-load-bearing.ps1` flagged the milestone,
-(b) the milestone is security-sensitive or performs a live write, or (c) it is the escalation retry of a
-failed `standard` attempt. The selection reason must name which one. "Large", "important", or "to be safe"
-is not a reason. Verifiers of non-flagged milestones run `standard`. (Measured 2026-09-19: 9 of 10
-claude-host dispatches and 206 of 211 codex-host `claude -p` chunks ran on Opus.)
+**Protected must be earned.** `-Protected` (and `complex-coding`) is allowed only when (a)
+`scripts/identify-load-bearing.ps1` flagged the milestone, or (b) the milestone is security-sensitive or
+performs a live write. The selection reason must name which one. "Large", "important", or "to be safe" is not
+a reason. Verifiers of non-flagged milestones run `code-review` unprotected. (Measured 2026-09-19: 9 of 10
+claude-host dispatches and 206 of 211 codex-host `claude -p` chunks ran on Opus.) Quota never lowers a pick:
+there is no weekly step-down; cost control comes only from not over-assigning.
+
+**Host-native Claude dispatch.** On claude-host, resolve with
+`pwsh -NoProfile -File scripts/model-router/resolve-model.ps1 -Category <c> -Lane claude [-Protected]
+[-EscalateFrom <model>] -SendAlerts -Json` and set the Agent tool's `model` to the result's `agent_alias`
+(`opus`, `sonnet`, `haiku`, or `fable`, mapped from the router's Claude model id). When `agent_alias` is null,
+dispatch through `scripts/invoke-claude-chunk.ps1` instead. Relay any `ROUTER_ALERT:` line to Danny once.
+
+**Stop finished subagents.** After collecting a subagent's report, stop it (TaskStop on claude-host) before
+the next step. Never leave a finished agent idle. Codex wrapper sessions already exit when done.
+
+**Frontier spend (alert only).** At each milestone boundary (after step 6.i), run
+`pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1 -RunStartedAt <run start, ISO> -RunId <RUN_ID> -Json`.
+It alerts Danny once per run when frontier models reach 10 points of a weekly limit; relay its
+`ROUTER_ALERT:` line if one prints. It never changes a model and never stops the run.
 
 **Mandatory model-selection report (hard dispatch gate).** Immediately before every substantive subagent
 dispatch — initial build, checkpoint continuation, retry/escalation, remediation, independent verifier, and
 final combined-diff review, on either lane — emit this standalone user-visible line:
 
-`MODEL_SELECTION: <dispatch_id> -> <resolved_model> (<tier>[, effort <effort>]): <one-sentence selection reason>`
+`MODEL_SELECTION: <dispatch_id> -> <resolved_model> (<category>[, protected][, escalated from <model>][, effort <effort>]): <one-sentence selection reason>; router: <router reason>`
 
-The reason must explain why that model tier fits the task; a status update, test count, or reason for
+The reason must explain why that category (and protection) fits the task; a status update, test count, or reason for
 dispatching does not qualify. Do not launch the subagent until the line is visible in chat. On a Claude
 host, put the disclosure text block and the host-native `Agent` tool call in the same assistant message,
 and set the Agent `model` explicitly; a bare Agent call or inherited model is prohibited. On a Codex host,
@@ -128,21 +143,23 @@ one line per dispatch. Capability preflights are not substantive dispatches and 
 
 For either cross-model wrapper, pass the identical reason through `-SelectionReason`. Both wrappers hard
 fail a blank, multiline, or over-240-character reason and persist `selection_reason` plus the canonical
-`disclosure_line` in provenance. The orchestrator must print that exact canonical line; provenance is the
+`disclosure_line` (with the router's reason appended) in provenance, plus `category`, `protected`,
+`router_reason`, `router_table_source`, `router_table_date`, and `escalated_from`. The orchestrator must print that exact canonical line; provenance is the
 durable audit record but does not replace the visible report.
 
-**Codex lane.** Never inherit Codex's user-config model or reasoning effort. Resolve every Codex chunk
-through `scripts/resolve-codex-model.ps1`, invoke it only through `scripts/invoke-codex-chunk.ps1`, and
-persist the returned provenance JSON beside the chunk output (it records `resolved_model`,
-`model_ladder`, and `model_cache_fetched_at`). On Windows the wrapper runs substantive
+**Codex lane.** Never inherit Codex's user-config model or reasoning effort. Invoke every Codex chunk
+only through `scripts/invoke-codex-chunk.ps1 -Category <c>`, which refreshes the live catalog and resolves the
+model through the router (`scripts/resolve-codex-model.ps1` keeps the catalog plumbing and the selectable
+check), and persist the returned provenance JSON beside the chunk output (it records `resolved_model`, the
+router fields, and `model_cache_fetched_at`). On Windows the wrapper runs substantive
 chunks unsandboxed (Codex removed its Windows sandbox; a `workspace-write` request fails closed and
 blocks every command): containment there is the scoped worktree plus independent verification, and the
 provenance JSON records the effective mode. Never treat that Windows block as a dead Codex lane.
 
 **Claude lane.** Repo-wide navigation, UI judgment, and workspace-memory work belong on this lane (on
 codex-host only under the opt-in exception in the lane default below). Dispatch it via CLAUDE_DISPATCH (harness contract below); record the surface/model actually
-used, never invent a slug. Tier aliases (`opus` / `sonnet` / `haiku`) track each family's newest
-version automatically; `scripts/invoke-claude-chunk.ps1` reads the exact version from the CLI's JSON
+used, never invent a slug. The model comes from the router's Claude lane for the chunk's category;
+`scripts/invoke-claude-chunk.ps1` reads the exact version from the CLI's JSON
 `modelUsage` and persists it as `resolved_model` (plus `models_used`, `total_cost_usd`) in provenance,
 failing closed when no model of the requested family ran. On a host-native Agent dispatch, record the
 exact model the harness reports, not the alias.
@@ -150,13 +167,14 @@ exact model the harness reports, not the alias.
 **Harness contract.** At intake, note which harness is orchestrating: `claude-host` (a Claude Code / Cowork
 session with the host-native Agent tool) or `codex-host` (any orchestrator without it). Define
 **CLAUDE_DISPATCH** once for the run — on claude-host, a fresh host-native Agent with an explicit `model`
-matching the tier map; on codex-host, `scripts/invoke-claude-chunk.ps1` with the same tier — and use
+set to the router's `agent_alias` for the chunk's category; on codex-host, `scripts/invoke-claude-chunk.ps1`
+with the same `-Category` — and use
 CLAUDE_DISPATCH everywhere this skill dispatches a Claude subagent. Define **VERIFY_DISPATCH** the same
 way for independent semantic verification (step 6.d) and the final combined-diff review (step 6.5): on
 claude-host it is CLAUDE_DISPATCH; on codex-host it is a fresh Codex session through
 `scripts/invoke-codex-chunk.ps1` that did not build the chunk under review. On codex-host, run
-`scripts/invoke-claude-chunk.ps1 -Preflight -TimeoutMs 30000` once per selected Claude tier before its
-first substantive use, same rules as the Codex tier preflights. Claude frontmatter (`allowed-tools`) binds
+`scripts/invoke-claude-chunk.ps1 -Preflight -TimeoutMs 30000` once per selected Claude category before its
+first substantive use, same rules as the Codex category preflights. Claude frontmatter (`allowed-tools`) binds
 only Claude surfaces; Codex permissions come from its launch-time sandbox, not this file.
 
 **Lane default: stay in the orchestrator's family.** Every dispatch goes to the host's own lane unless an
@@ -179,7 +197,7 @@ advanced an integration branch, against 7 claude-host sessions), so codex-host i
 an experiment. What remains unbuilt is its stage-2 hardening: enforced build/verify task kinds in the
 Claude wrapper and sandbox, child-process network, and `.git`-write preflights under Codex's launch profile.
 
-Before the first substantive invocation of each distinct Codex tier, run
+Before the first substantive invocation of each distinct Codex category, run
 `scripts/invoke-codex-chunk.ps1 -Preflight -TimeoutMs 30000` under a 30-second outer timeout. Every
 substantive call sets `-TimeoutMs 600000` plus a 10-minute outer timeout. The wrapper passes the prompt over stdin, pins model and effort explicitly, uses
 the correct sandbox, redacts the stream log, and records requested/resolved model, CLI version, auth surface,
@@ -193,15 +211,15 @@ resume messages climbed to ~965K tokens and re-read it on every one of 600-1,300
 their 5-minute cache and re-wrote it 181 times; the orchestrator grew to 600K by reading whole designs and
 raw command output. These rules bind every run:
 
-- **No chunk-size limit.** Size chunks by coherence. One session may build a large component on a high
-  tier when splitting it would hurt the design. Cost is controlled by the rules below, not by chopping.
+- **No chunk-size limit.** Size chunks by coherence. One session may build a large component on a strong
+  model when splitting it would hurt the design. Cost is controlled by the rules below, not by chopping.
 - **Checkpoint, never bloat.** Every chunk prompt carries the standing execution rules appended by
   `assemble-codex-prompt.ps1`: no nested agents, command output to a file and read the tail, no idle waits,
   and a checkpoint after about 100 tool calls. Name the state-note path in the brief:
   `<run-folder>/milestones/<mid>/continuation-<n>.md` (the one `.dt-build/` write a builder may make). On
   claude-host, put the same standing rules in every host-native Agent prompt.
 - **Continue in a fresh session.** When a report returns `CONTINUATION_STATE` with a path, dispatch a fresh
-  builder on the same tier whose brief is the milestone contract plus that note. A continuation is the same
+  builder on the same category (same router pick) whose brief is the milestone contract plus that note. A continuation is the same
   attempt — it consumes no attempt budget — and gets its own `MODEL_SELECTION` line. Never build the note's
   content into your own context beyond confirming it exists.
 - **No resume of a working builder.** Do not send follow-up messages to a builder that has already done
@@ -297,7 +315,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 5. Spawn preflight contract check:
 - Resolve each chunk entitlement through `scripts/spawn-preflight.ps1`.
 - Abort if any manifest mismatch or missing entitlement.
-- Capability-probe each distinct Codex tier selected by the run and record the result before chunk dispatch.
+- Capability-probe each distinct Codex category selected by the run and record the result before chunk dispatch.
 
 5.5 Identify load-bearing milestones:
 - Run `scripts/identify-load-bearing.ps1 -RoadmapPath <roadmap> -Json`.
@@ -308,7 +326,8 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
 - b. **Assemble and verify the chunk prompt (both lanes).** `scripts/assemble-codex-prompt.ps1` (single canonical implementation — the name is historical; both lane wrappers consume its verified output, which carries the identity headers and report contract each wrapper enforces; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`), then the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every chunk invocation on either lane.
 - c. **Run the chunk through the canonical lane.** For Codex, call `scripts/invoke-codex-chunk.ps1`
-  with the routed tier, explicit effort, and `-SelectionReason`. For Claude, dispatch via CLAUDE_DISPATCH with the same brief and scoped
+  with the chunk's `-Category` (plus `-Protected` when earned), explicit effort, and `-SelectionReason`; a retry
+  adds `-EscalateFrom <failed model>`. For Claude, dispatch via CLAUDE_DISPATCH with the same brief and scoped
   worktree. Do not hand-roll `codex exec` or `claude -p`. Automatic implementation failures consume at most two attempts;
   environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
   restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
@@ -327,7 +346,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 - e. **Run the acceptance gate.** `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
 - f. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
 - g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and
-  resolved model, selection reason, disclosure line, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
+  resolved model, `category`, `escalated` (true when the accepted attempt used `-EscalateFrom`), selection reason, disclosure line, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
   and downgrade status. This append-only row is the final ledger's source of truth.
 - h. **Update the integration branch** (`<integration-branch>` from `build-plan.md`) via compare-and-swap through `scripts/branch-cas-update.ps1` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
 - i. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (e–g) and the integration branch is updated (h), rewrite `_build-state.md` in the project's planning folder (the folder holding `plan-draft.md` / `design-final*.md` / `roadmap.md`, typically `<project>/design/`) as an atomic full-file rewrite from the canonical template `skills/dt-pipeline/templates/build-state-template.md` — reference that template, never duplicate its shape here. Record phase, current milestone, completed list (this milestone appended with its commit SHA), in-flight work, last commit SHA, uncommitted artifacts, and next step. This file is distinct from the run-folder `build-state.md` (dt-build's internal run scaffold from step 4): `_build-state.md` is the crash-resume checkpoint dt-pipeline and Danny read.
@@ -358,6 +377,8 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
     "Deferred / Next Version" section in both outputs — the record of what the orchestrator chose not to
     build and why. It is informational, never a blocker, and requires no review by Danny.
 - Run the usage sweep again (`scripts/collect-usage.ps1 -Quiet`) and include the dashboard path in the final output.
+- Feed the router's outcome history: `pwsh -NoProfile -File scripts/model-router/update-outcomes.ps1 -Json` (reads
+  the run's provenance and acceptance rows; relay any `ROUTER_ALERT:` line once).
 - Mark the run complete in the pipeline checkpoint: rewrite `_build-state.md` (same template and location as step 6.h) with `status: COMPLETE`, the final commit SHA, and no in-flight work.
 - `build-run-review.html`: Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks for it, generate `build-run-review.html` in the run artifact folder with:
   - the acceptance ledger as the headline panel (above the milestone status cards),
