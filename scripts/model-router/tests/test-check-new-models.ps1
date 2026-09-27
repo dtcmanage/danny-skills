@@ -17,6 +17,8 @@ $script:temp = Join-Path $env:TEMP ('model-check-test-' + [guid]::NewGuid().ToSt
 New-Item -ItemType Directory -Path $temp | Out-Null
 $now = [datetime]'2026-09-27T12:00:00Z'
 try {
+    $script:canaryLaunchCount = 0
+    $script:RouterCanaryLauncher = { param($exe,$arguments) $script:canaryLaunchCount++ }
     Reset-State
     $script:launchCount = 0
     $script:RouterResearchLauncher = { param($exe,$arguments)
@@ -40,6 +42,7 @@ try {
     $queue = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'pending-research.json') -Raw | ConvertFrom-Json)
     Assert-True ($r.new_models -contains 'gpt-6-new' -and $r.alerts -contains 'new-model:gpt-6-new' -and $queue[0].id -eq 'gpt-6-new') 'new model queued and alerted'
     Assert-True ($script:launchCount -eq 1) 'new queue launches detached research once'
+    Assert-True ($script:canaryLaunchCount -eq 1) 'new models launch detached post-release canary after research'
     $registry = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
     Assert-True ((@($registry | Where-Object id -eq 'gpt-6-new')[0]).status -eq 'unprofiled') 'new model remains unprofiled'
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck

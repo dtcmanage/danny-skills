@@ -1,0 +1,1 @@
+def topo_order(*args): return None

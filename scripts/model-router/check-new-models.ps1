@@ -160,6 +160,12 @@ function Invoke-RouterModelCheck {
                 }
             }
         }
+        if (@($result.new_models).Count) {
+            try {
+                if (-not (Get-Command Start-RouterCanaryDetached -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'canary/run-canary.ps1') }
+                [void](Start-RouterCanaryDetached -Models @($result.new_models))
+            } catch { $result.alerts += 'canary-launch-error' }
+        }
         return [pscustomobject]$result
     } finally {
         foreach ($job in $jobs) { if ($job.State -notin @('Completed','Failed','Stopped')) { Stop-Job -Job $job }; Remove-Job -Job $job -Force }
