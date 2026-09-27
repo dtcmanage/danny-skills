@@ -17,8 +17,16 @@ function Test-RouterFiniteNumber {
 function Get-RouterEvidenceUrl {
     param([string]$Url)
     $uri = $null
-    if (-not [uri]::TryCreate($Url,[UriKind]::Absolute,[ref]$uri) -or $uri.Scheme -notin @('http','https') -or -not $uri.Host) { return '' }
-    return ($uri.GetLeftPart([UriPartial]::Path).TrimEnd('/').ToLowerInvariant())
+    if (-not [uri]::TryCreate($Url,[UriKind]::Absolute,[ref]$uri) -or $uri.Scheme -notin @('http','https')) { return '' }
+    $hostName = $uri.Host.TrimEnd('.')
+    if (-not $hostName) { return '' }
+    $port = if ($uri.IsDefaultPort) { '' } else { ':' + $uri.Port }
+    return ($uri.Scheme + '://' + $hostName + $port + $uri.AbsolutePath).TrimEnd('/').ToLowerInvariant()
+}
+
+function Get-RouterEvidenceKey {
+    param([string]$Url)
+    return ((Get-RouterEvidenceUrl -Url $Url) -replace '^https?://','')
 }
 
 function Test-RouterIndependentCitation {
@@ -74,12 +82,35 @@ function Test-RouterProfile {
     return $true
 }
 
+function Get-RouterProfileNumericIssues {
+    param([object]$Profile, [string[]]$VendorDomains)
+    $issues = [System.Collections.Generic.List[string]]::new()
+    foreach ($categoryProperty in $Profile.categories.PSObject.Properties) {
+        $evidence = $categoryProperty.Value
+        if ($null -ne $evidence.price_per_token -and $null -ne $evidence.tokens_per_task) {
+            $burn = [double]$evidence.price_per_token.value * [double]$evidence.tokens_per_task.value
+            if (-not (Test-RouterFiniteNumber $burn)) { $issues.Add('invalid-burn') }
+        }
+        if ($null -ne $evidence.output_speed -and [double]$evidence.output_speed.value -gt 0 -and $null -ne $evidence.tokens_per_task) {
+            $seconds = [double]$evidence.tokens_per_task.value / [double]$evidence.output_speed.value
+            if (-not (Test-RouterFiniteNumber $seconds)) { $issues.Add('invalid-seconds') }
+        }
+        $score = 0.0
+        foreach ($benchmark in $evidence.benchmark_scores) {
+            if (Test-RouterIndependentCitation $benchmark.source $VendorDomains) {
+                $score += [double]$benchmark.value
+                if (-not (Test-RouterFiniteNumber $score)) { $issues.Add('invalid-benchmark'); break }
+            }
+        }
+    }
+    return @($issues.ToArray() | Select-Object -Unique)
+}
+
 function Build-RouterTable {
     param([Parameter(Mandatory)][string]$ProfilesDir, [Parameter(Mandatory)][string]$OutPath, [datetime]$Now = (Get-Date))
     $alerts = [System.Collections.Generic.List[string]]::new()
     $base = Read-RouterTable -TablePath $OutPath
     $table = $base.table | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
-    $seed = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/seed-table.json') -Raw | ConvertFrom-Json -Depth 40
     $frontierConfig = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json
     $table.source = 'research'
     $table.generated_at = $Now.ToString('yyyy-MM-dd')
@@ -89,16 +120,38 @@ function Build-RouterTable {
             try {
                 $profile = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 40
                 if (-not (Test-RouterProfile $profile) -or $file.BaseName -cne $profile.model) { throw 'invalid profile' }
+                $numericIssues = @(Get-RouterProfileNumericIssues -Profile $profile -VendorDomains $frontierConfig.vendor_domains)
+                if ($numericIssues.Count) { throw ($numericIssues -join ',') }
                 $profiles[[string]$profile.model] = $profile
                 if (($Now - [datetime]$profile.researched_at).TotalDays -gt 90) { $alerts.Add("stale-profile:$($profile.model)") }
-            } catch { $alerts.Add("invalid-profile:$($file.BaseName)"); return [pscustomobject]@{ written = $false; alerts = @($alerts.ToArray()); table = $null } }
+            } catch { $alerts.Add("research-profile-invalid:$($file.BaseName)"); continue }
         }
     }
     $catalog = $null
     try { $catalog = Get-CodexModelCatalog } catch { }
-    $topWritingClaude = @($seed.categories.'complex-coding'.claude.candidates | Where-Object { -not $_.frontier } | Sort-Object strength_rank | Select-Object -First 1)[0].model
+    # Long-form-writing fallback never comes from research ranking: the highest-versioned non-frontier claude-opus-* model
+    # among the table's Claude candidates, Claude profiles, and the known-models registry.
+    $claudeIds = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($categoryProperty in $table.categories.PSObject.Properties) { if ($categoryProperty.Value.PSObject.Properties['claude']) { foreach ($old in @($categoryProperty.Value.claude.candidates)) { [void]$claudeIds.Add([string]$old.model) } } }
+    foreach ($profile in $profiles.Values) { if ($profile.lane -eq 'claude') { [void]$claudeIds.Add([string]$profile.model) } }
+    $known = @()
+    try { $known = @(Read-RouterJsonArray -Path (Join-Path (Split-Path -Parent $OutPath) 'known-models.json')) } catch { }
+    foreach ($item in $known) { if ($item -is [pscustomobject] -and $item.PSObject.Properties['id'] -and -not ($item.PSObject.Properties['status'] -and $item.status -eq 'missing')) { [void]$claudeIds.Add([string]$item.id) } }
+    $topWritingClaude = $null; $topWritingVersion = $null
+    foreach ($id in @($claudeIds | Sort-Object)) {
+        if ($id -cnotmatch '^claude-opus-\d{1,9}(-\d{1,9})*$') { continue }
+        if (@($frontierConfig.claude_patterns | Where-Object { $id -clike $_ }).Count) { continue }
+        $version = @($id.Substring(12).Split('-') | ForEach-Object { [long]$_ })
+        $better = $null -eq $topWritingVersion
+        for ($i = 0; -not $better -and $i -lt [Math]::Max($version.Count,$topWritingVersion.Count); $i++) {
+            $a = if ($i -lt $version.Count) { $version[$i] } else { -1 }
+            $b = if ($i -lt $topWritingVersion.Count) { $topWritingVersion[$i] } else { -1 }
+            if ($a -gt $b) { $better = $true } elseif ($a -lt $b) { break }
+        }
+        if ($better) { $topWritingClaude = $id; $topWritingVersion = $version }
+    }
     foreach ($categoryName in @(Get-RouterCategories)) {
-        if ($categoryName -eq 'long-form-writing') { $topWritingClaude = [string]$table.categories.'complex-coding'.claude.fallback }
+        if ($categoryName -eq 'long-form-writing' -and -not $topWritingClaude) { $topWritingClaude = [string]$table.categories.'complex-coding'.claude.fallback }
         $category = $table.categories.$categoryName
         $lanes = if ($categoryName -eq 'image-generation') { @('codex') } else { @('codex','claude') }
         foreach ($laneName in $lanes) {
@@ -123,8 +176,9 @@ function Build-RouterTable {
                 foreach ($citation in $evidence.citations) {
                     $citationUrl = if ($citation.PSObject.Properties['url']) { [string]$citation.url } else { '' }
                     $url = Get-RouterEvidenceUrl -Url $citationUrl
-                    if (-not $url -or $seenUrls.ContainsKey($url)) { continue }
-                    $seenUrls[$url] = $true
+                    $key = Get-RouterEvidenceKey -Url $citationUrl
+                    if (-not $url -or $seenUrls.ContainsKey($key)) { continue }
+                    $seenUrls[$key] = $true
                     $citations.Add([pscustomobject]@{ source = [string]$citation.source; url = $url; independent = (Test-RouterIndependentCitation $citation $frontierConfig.vendor_domains); note = ''; quote = [string]$citation.quote })
                 }
                 $candidate.citations = @($citations.ToArray())
@@ -135,14 +189,17 @@ function Build-RouterTable {
                     $catalogRow = @($catalog.models | Where-Object { $_.PSObject.Properties['slug'] -and $_.slug -eq $profile.model } | Select-Object -First 1)
                     if ($catalogRow.Count -and $catalogRow[0].PSObject.Properties['description'] -and [string]$catalogRow[0].description -match 'frontier') { $candidate.frontier = $true }
                 }
+                # Numeric overflow for this profile's category evidence was already screened out in the profile-loading
+                # loop above (Get-RouterProfileNumericIssues); an invalid profile never reaches this point, so these
+                # computations are guarded defensively rather than aborting the whole rebuild.
                 $candidate.est_burn = $null; $candidate.est_seconds = $null
                 if ($null -ne $evidence.price_per_token -and $null -ne $evidence.tokens_per_task) {
-                    $candidate.est_burn = [double]$evidence.price_per_token.value * [double]$evidence.tokens_per_task.value
-                    if (-not (Test-RouterFiniteNumber $candidate.est_burn)) { $alerts.Add("invalid-burn:$($profile.model)"); return [pscustomobject]@{ written = $false; alerts = @($alerts.ToArray()); table = $null } }
+                    $burn = [double]$evidence.price_per_token.value * [double]$evidence.tokens_per_task.value
+                    if (Test-RouterFiniteNumber $burn) { $candidate.est_burn = $burn }
                 }
                 if ($null -ne $evidence.output_speed -and [double]$evidence.output_speed.value -gt 0 -and $null -ne $evidence.tokens_per_task) {
-                    $candidate.est_seconds = [double]$evidence.tokens_per_task.value / [double]$evidence.output_speed.value
-                    if (-not (Test-RouterFiniteNumber $candidate.est_seconds)) { $alerts.Add("invalid-seconds:$($profile.model)"); return [pscustomobject]@{ written = $false; alerts = @($alerts.ToArray()); table = $null } }
+                    $seconds = [double]$evidence.tokens_per_task.value / [double]$evidence.output_speed.value
+                    if (Test-RouterFiniteNumber $seconds) { $candidate.est_seconds = $seconds }
                 }
             }
             foreach ($candidate in $rows) {
@@ -155,29 +212,34 @@ function Build-RouterTable {
                 }
             }
             if ($categoryName -eq 'long-form-writing') {
+                if ($laneName -eq 'claude' -and @($rows | Where-Object { $_.model -eq $topWritingClaude }).Count -eq 0) {
+                    $rows.Add([pscustomobject]@{ model = $topWritingClaude; frontier = $false; strength_rank = [long]($rows.Count + 1); grade = 'unknown'; citations = @(); est_burn = $null; est_seconds = $null; pass_rate = $null; pass_samples = [long]0 })
+                }
                 foreach ($candidate in $rows) {
                     $profile = if ($profiles.ContainsKey([string]$candidate.model)) { $profiles[[string]$candidate.model] } else { $null }
-                    if (-not $candidate.frontier -and ($laneName -ne 'claude' -or $candidate.model -ne $topWritingClaude) -and ($null -eq $profile -or $profile.voice_policy_check -cne 'passed')) { $candidate.grade = 'unknown'; $candidate.citations = @() }
+                    $exempt = $laneName -eq 'claude' -and ($candidate.frontier -or $candidate.model -eq $topWritingClaude)
+                    if (-not $exempt -and ($null -eq $profile -or $profile.voice_policy_check -cne 'passed')) { $candidate.grade = 'unknown'; $candidate.citations = @() }
                 }
             }
-            $graded = foreach ($candidate in $rows) {
+            $graded = [System.Collections.Generic.List[object]]::new()
+            foreach ($candidate in $rows) {
                 $profile = if ($profiles.ContainsKey([string]$candidate.model)) { $profiles[[string]$candidate.model] } else { $null }
                 $evidence = if ($null -ne $profile) { $profile.categories.$categoryName } else { $null }
-                $sources = @($candidate.citations | Where-Object independent | ForEach-Object { Get-RouterEvidenceUrl ([string]$_.url) } | Where-Object { $_ } | Sort-Object -Unique)
+                $sources = @($candidate.citations | Where-Object independent | ForEach-Object { Get-RouterEvidenceKey ([string]$_.url) } | Where-Object { $_ } | Sort-Object -Unique)
                 $count = [Math]::Min(5,$sources.Count)
                 $score = 0.0
                 if ($null -ne $evidence) {
                     foreach ($benchmark in $evidence.benchmark_scores) {
                         if (Test-RouterIndependentCitation $benchmark.source $frontierConfig.vendor_domains) {
-                            $score += [double]$benchmark.value
-                            if (-not (Test-RouterFiniteNumber $score)) { $alerts.Add("invalid-benchmark:$($candidate.model)"); return [pscustomobject]@{ written = $false; alerts = @($alerts.ToArray()); table = $null } }
+                            $candidateScore = $score + [double]$benchmark.value
+                            if (Test-RouterFiniteNumber $candidateScore) { $score = $candidateScore }
                         }
                     }
                 }
                 $gradeOrder = if ($categoryName -eq 'long-form-writing' -and $laneName -eq 'claude' -and $candidate.model -eq $topWritingClaude) { -1 } elseif ($candidate.grade -eq 'strong') { 0 } elseif ($candidate.grade -eq 'capable') { 1 } elseif ($candidate.grade -eq 'weak') { 2 } else { 3 }
-                [pscustomobject]@{ row = $candidate; grade = $gradeOrder; count = $count; score = [double]$score; old = [long]$candidate.strength_rank }
+                $graded.Add([pscustomobject]@{ row = $candidate; grade = $gradeOrder; count = $count; score = [double]$score; old = [long]$candidate.strength_rank })
             }
-            $ordered = @($graded | Sort-Object grade, @{ Expression = 'count'; Descending = $true }, @{ Expression = 'score'; Descending = $true }, old, @{ Expression = { $_.row.model } })
+            $ordered = @($graded.ToArray() | Sort-Object grade, @{ Expression = 'count'; Descending = $true }, @{ Expression = 'score'; Descending = $true }, old, @{ Expression = { $_.row.model } })
             $rank = 0
             foreach ($item in $ordered) { $rank++; $item.row.strength_rank = [long]$rank }
             $lane.candidates = @($ordered | ForEach-Object { $_.row })

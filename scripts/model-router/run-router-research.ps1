@@ -1,4 +1,4 @@
-param([Alias('Models')][string[]]$RouterResearchCliModels, [Alias('All')][switch]$RouterResearchCliAll, [Alias('Context')][string]$RouterResearchCliContext, [Alias('DetachedChild')][switch]$RouterResearchCliDetachedChild, [Alias('Json')][switch]$RouterResearchCliJson)
+param([Alias('Models')][string[]]$RouterResearchCliModels, [Alias('ModelsFile')][string]$RouterResearchCliModelsFile, [Alias('All')][switch]$RouterResearchCliAll, [Alias('Context')][string]$RouterResearchCliContext, [Alias('DetachedChild')][switch]$RouterResearchCliDetachedChild, [Alias('LockToken')][string]$RouterResearchCliLockToken, [Alias('Json')][switch]$RouterResearchCliJson)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
@@ -7,41 +7,106 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../wrap-prompt-envelope.ps1')
 . (Join-Path $PSScriptRoot 'send-router-alert.ps1')
 
-function Get-RouterLockOwner {
-    param([datetime]$Now = (Get-Date))
-    return [pscustomobject]@{ pid = $PID; process_start = (Get-Process -Id $PID).StartTime.ToString('o'); created_at = $Now.ToString('o') }
+# Lock protocol: the lock file carries a random owner token plus the owner's PID and process start time. The owner
+# refreshes updated_at before and after every research call. A lock is stale when its owner process is gone (or the PID
+# now belongs to a different process start) or when its heartbeat is older than 10 minutes plus the longest single
+# research call. Only the holder of the token deletes the lock.
+$script:RouterResearchCallTimeoutMs = 3600000
+$script:RouterLockStaleMinutes = 10 + ($script:RouterResearchCallTimeoutMs / 60000)
+if (-not (Get-Variable RouterResearchHandoffSeconds -Scope Script -ErrorAction SilentlyContinue)) { $script:RouterResearchHandoffSeconds = 30 }
+
+function Open-RouterLockExclusive {
+    param([string]$Path)
+    for ($attempt = 0; $attempt -lt 40; $attempt++) {
+        try { return [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Delete) }
+        catch [IO.FileNotFoundException] { return $null }
+        catch [IO.IOException], [UnauthorizedAccessException] { if (-not (Test-Path -LiteralPath $Path)) { return $null }; Start-Sleep -Milliseconds 50 }
+    }
+    throw 'ROUTER_LOCK_BUSY'
 }
 
-function Test-RouterLockStale {
-    param([string]$Path, [datetime]$Now = (Get-Date))
+function Read-RouterLockStream {
+    param([IO.FileStream]$Stream)
     try {
-        $owner = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-        if (-not $owner.PSObject.Properties['pid'] -or -not $owner.PSObject.Properties['process_start'] -or -not $owner.PSObject.Properties['created_at']) { return $true }
-        if (($Now - [datetime]$owner.created_at).TotalHours -ge 2) { return $true }
-        $process = Get-Process -Id ([int]$owner.pid) -ErrorAction SilentlyContinue
-        return ($null -eq $process -or $process.StartTime.ToUniversalTime().Ticks -ne ([datetime]$owner.process_start).ToUniversalTime().Ticks)
+        $reader = [IO.StreamReader]::new($Stream,[Text.UTF8Encoding]::new($false),$true,1024,$true)
+        try { $raw = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        return ($raw | ConvertFrom-Json)
+    } catch { return $null }
+}
+
+function Write-RouterLockStream {
+    param([IO.FileStream]$Stream, [object]$Owner)
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Owner | ConvertTo-Json -Compress))
+    $Stream.SetLength(0); $Stream.Position = 0
+    $Stream.Write($bytes,0,$bytes.Length); $Stream.Flush()
+}
+
+function Test-RouterLockOwnerStale {
+    param([object]$Owner, [datetime]$Now = (Get-Date))
+    try {
+        foreach ($key in @('token','pid','process_start','updated_at')) { if ($null -eq $Owner -or -not $Owner.PSObject.Properties[$key]) { return $true } }
+        if (($Now - [datetime]$Owner.updated_at).TotalMinutes -gt $script:RouterLockStaleMinutes) { return $true }
+        $process = Get-Process -Id ([int]$Owner.pid) -ErrorAction SilentlyContinue
+        return ($null -eq $process -or $process.StartTime.ToUniversalTime().Ticks -ne ([datetime]$Owner.process_start).ToUniversalTime().Ticks)
     } catch { return $true }
 }
 
-function Enter-RouterResearchLock {
+function New-RouterLockOwner {
+    param([string]$Token, [string]$Phase, [datetime]$Now = (Get-Date))
+    return [pscustomobject]@{ token = $Token; pid = $PID; process_start = (Get-Process -Id $PID).StartTime.ToString('o'); phase = $Phase; created_at = $Now.ToString('o'); updated_at = $Now.ToString('o') }
+}
+
+function Update-RouterLockOwned {
+    param([string]$Path, [string]$Token, [ValidateSet('heartbeat','take','release')][string]$Action, [datetime]$Now = (Get-Date))
+    $stream = Open-RouterLockExclusive -Path $Path
+    if ($null -eq $stream) { return $false }
+    try {
+        $owner = Read-RouterLockStream -Stream $stream
+        if ($null -eq $owner -or -not $owner.PSObject.Properties['token'] -or [string]$owner.token -cne $Token -or -not $Token) { return $false }
+        if ($Action -eq 'release') { [IO.File]::Delete($Path); return $true }
+        if ($Action -eq 'take') {
+            $taken = New-RouterLockOwner -Token $Token -Phase 'running' -Now $Now
+            if ($owner.PSObject.Properties['created_at']) { $taken.created_at = [string]$owner.created_at }
+            $owner = $taken
+        } else { $owner.updated_at = $Now.ToString('o') }
+        Write-RouterLockStream -Stream $stream -Owner $owner
+        return $true
+    } finally { $stream.Dispose() }
+}
+
+function Remove-RouterLockIfStale {
     param([string]$Path, [datetime]$Now = (Get-Date))
+    $stream = Open-RouterLockExclusive -Path $Path
+    if ($null -eq $stream) { return 'missing' }
+    try {
+        if (-not (Test-RouterLockOwnerStale -Owner (Read-RouterLockStream -Stream $stream) -Now $Now)) { return 'live' }
+        [IO.File]::Delete($Path)
+        return 'removed'
+    } finally { $stream.Dispose() }
+}
+
+function Enter-RouterResearchLock {
+    param([string]$Path, [datetime]$Now = (Get-Date), [string]$Phase = 'running')
     $alerts = [System.Collections.Generic.List[string]]::new()
+    $token = [guid]::NewGuid().ToString('N')
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
         try {
-            $stream = [IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-            try {
-                $bytes = [Text.UTF8Encoding]::new($false).GetBytes((Get-RouterLockOwner -Now $Now | ConvertTo-Json -Compress))
-                $stream.Write($bytes,0,$bytes.Length)
-            } finally { $stream.Dispose() }
-            return [pscustomobject]@{ acquired = $true; alerts = @($alerts.ToArray()) }
-        } catch [IO.IOException] {
-            if (-not (Test-Path -LiteralPath $Path)) { continue }
-            if (-not (Test-RouterLockStale -Path $Path -Now $Now)) { return [pscustomobject]@{ acquired = $false; alerts = @($alerts.ToArray()) } }
-            Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-            $alerts.Add('research-stale-lock-cleared')
+            $stream = [IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Delete)
+            try { Write-RouterLockStream -Stream $stream -Owner (New-RouterLockOwner -Token $token -Phase $Phase -Now $Now) } finally { $stream.Dispose() }
+            return [pscustomobject]@{ acquired = $true; token = $token; alerts = @($alerts.ToArray()) }
+        } catch [IO.IOException], [UnauthorizedAccessException] {
+            $state = Remove-RouterLockIfStale -Path $Path -Now $Now
+            if ($state -eq 'live') { return [pscustomobject]@{ acquired = $false; token = $null; alerts = @($alerts.ToArray()) } }
+            if ($state -eq 'removed') { $alerts.Add('research-stale-lock-cleared') }
         }
     }
-    return [pscustomobject]@{ acquired = $false; alerts = @($alerts.ToArray()) }
+    return [pscustomobject]@{ acquired = $false; token = $null; alerts = @($alerts.ToArray()) }
+}
+
+function Read-RouterResearchModelsFile {
+    param([Parameter(Mandatory)][string]$Path)
+    try { return @([IO.File]::ReadAllText($Path) | ConvertFrom-Json | ForEach-Object { [string]$_ }) }
+    finally { Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue }
 }
 
 function Invoke-RouterResearchCall {
@@ -52,28 +117,30 @@ function Invoke-RouterResearchCall {
     $codex = (Get-Command codex -ErrorAction Stop).Source
     $out = Join-Path $env:TEMP ('router-research-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
-        $result = Invoke-CodexProcess -CodexPath $codex -Arguments @('--ask-for-approval','never','exec','--ignore-user-config','-c','web_search="live"','--sandbox','read-only','--cd',$PSScriptRoot,'--model',$pick.model,'--output-last-message',$out,'-') -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs 3600000
+        $result = Invoke-CodexProcess -CodexPath $codex -Arguments @('--ask-for-approval','never','exec','--ignore-user-config','-c','web_search="live"','--sandbox','read-only','--cd',$PSScriptRoot,'--model',$pick.model,'--output-last-message',$out,'-') -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $script:RouterResearchCallTimeoutMs
         if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw 'Research process failed or timed out.' }
         return (Get-Content -LiteralPath $out -Raw)
     } finally { if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force } }
 }
 
 function Invoke-RouterResearch {
-    param([string[]]$Models, [switch]$All, [string]$Context, [switch]$DetachedChild, [datetime]$Now = (Get-Date))
+    param([string[]]$Models, [switch]$All, [string]$Context, [switch]$DetachedChild, [string]$LockToken, [datetime]$Now = (Get-Date))
     $state = Get-RouterStateDir
     New-Item -ItemType Directory -Path $state -Force | Out-Null
     $lock = Join-Path $state 'research.lock'
-    $owned = $false
     $lockAlerts = @()
-    if (-not $DetachedChild) {
+    if ($DetachedChild) {
+        $token = $LockToken
+        if (-not $token -or -not (Update-RouterLockOwned -Path $lock -Token $token -Action take)) { return [pscustomobject]@{ researched = @(); alerts = @('research-already-running'); table_written = $false } }
+    } else {
         $entry = Enter-RouterResearchLock -Path $lock -Now $Now
         $lockAlerts = @($entry.alerts)
         if (-not $entry.acquired) { return [pscustomobject]@{ researched = @(); alerts = @($lockAlerts + 'research-already-running'); table_written = $false } }
-        $owned = $true
-    } else { Get-RouterLockOwner -Now $Now | ConvertTo-Json -Compress | Set-Content -LiteralPath $lock }
+        $token = $entry.token
+    }
     try {
         $queuePath = Join-Path $state 'pending-research.json'
-        $queue = @(if (Test-Path -LiteralPath $queuePath) { Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json })
+        $queue = @(Read-RouterJsonArray -Path $queuePath)
         $table = (Read-RouterTable).table
         $ids = if ($All) {
             @($table.categories.PSObject.Properties | ForEach-Object { $_.Value.PSObject.Properties | ForEach-Object { $_.Value.candidates | ForEach-Object model } } | Sort-Object -Unique)
@@ -87,6 +154,7 @@ function Invoke-RouterResearch {
             $lane = if ($id -like 'claude-*') { 'claude' } else { 'codex' }
             $prompt = $fixed + "`nModel: $id`nLane: $lane"
             if ($Context) { $prompt += "`n" + (New-PromptEnvelope -Label 'RESEARCH CONTEXT' -Content $Context) }
+            [void](Update-RouterLockOwned -Path $lock -Token $token -Action heartbeat)
             try {
                 $raw = Invoke-RouterResearchCall -Model $id -Prompt $prompt
                 if (-not $raw) { throw 'empty research response' }
@@ -102,20 +170,22 @@ function Invoke-RouterResearch {
                 finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
                 $done.Add($id)
             } catch { $alerts.Add("research-profile-invalid:$id") }
+            [void](Update-RouterLockOwned -Path $lock -Token $token -Action heartbeat)
         }
-        if (Test-Path -LiteralPath $queuePath) {
-            $latest = @(Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json)
-            $remaining = @($latest | Where-Object { $done -notcontains [string]$_.id })
-            $json = ConvertTo-Json -InputObject $remaining -Depth 10
-            $temp = Join-Path $state ('.pending-research.' + [guid]::NewGuid().ToString('N') + '.tmp')
-            try { [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false)); [IO.File]::Move($temp,$queuePath,$true) }
-            finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+        Use-RouterQueueMutex -StateDir $state -Action {
+            if (Test-Path -LiteralPath $queuePath) {
+                $remaining = @(Read-RouterJsonArray -Path $queuePath | Where-Object { $done -notcontains [string]$_.id })
+                $json = ConvertTo-Json -InputObject $remaining -Depth 10
+                $temp = Join-Path $state ('.pending-research.' + [guid]::NewGuid().ToString('N') + '.tmp')
+                try { [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false)); [IO.File]::Move($temp,$queuePath,$true) }
+                finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+            }
         }
         $build = Build-RouterTable -ProfilesDir (Join-Path $state 'profiles') -OutPath (Join-Path $state 'router-table.json') -Now $Now
         foreach ($alert in $build.alerts) { $alerts.Add([string]$alert) }
         if ($alerts.Count -and -not (Get-Variable RouterResearchSuppressAlerts -Scope Script -ErrorAction SilentlyContinue)) { Send-RouterAlerts -Alerts @($alerts.ToArray()) | Out-Null }
         return [pscustomobject]@{ researched = @($done.ToArray()); alerts = @($alerts.ToArray()); table_written = [bool]$build.written }
-    } finally { if ($owned -or $DetachedChild) { Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue } }
+    } finally { [void](Update-RouterLockOwned -Path $lock -Token $token -Action release) }
 }
 
 function Start-RouterResearchDetached {
@@ -123,21 +193,45 @@ function Start-RouterResearchDetached {
     $state = Get-RouterStateDir
     New-Item -ItemType Directory -Path $state -Force | Out-Null
     $lock = Join-Path $state 'research.lock'
-    $entry = Enter-RouterResearchLock -Path $lock -Now $Now
+    $entry = Enter-RouterResearchLock -Path $lock -Now $Now -Phase 'launching'
     if (-not $entry.acquired) { return [pscustomobject]@{ launched = $false; alerts = @($entry.alerts) } }
+    $modelsFile = $null
     try {
         $shim = 'D:\Claude\_system-tools\run-hidden\run-hidden.vbs'
         $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
         $wscript = (Get-Command wscript.exe -ErrorAction Stop).Source
-        $launchArguments = @($shim,$pwsh,(Join-Path $PSScriptRoot 'run-router-research.ps1'),'-DetachedChild')
-        if ($Models -and $Models.Count) { $launchArguments += '-Models'; $launchArguments += @($Models) }
+        $launchArguments = @($shim,$pwsh,(Join-Path $PSScriptRoot 'run-router-research.ps1'),'-DetachedChild','-LockToken',$entry.token)
+        if ($Models -and $Models.Count) {
+            $modelsFile = Join-Path $env:TEMP ('router-research-models-' + [guid]::NewGuid().ToString('N') + '.json')
+            [IO.File]::WriteAllText($modelsFile,(ConvertTo-Json -InputObject @($Models | ForEach-Object { [string]$_ }) -Compress),[Text.UTF8Encoding]::new($false))
+            $launchArguments += @('-ModelsFile',$modelsFile)
+        }
         if ((Get-Variable RouterResearchLauncher -Scope Script -ErrorAction SilentlyContinue) -and $script:RouterResearchLauncher) { & $script:RouterResearchLauncher $wscript $launchArguments | Out-Null }
         else { Start-Process -FilePath $wscript -ArgumentList @($launchArguments | ForEach-Object { '"' + ([string]$_).Replace('"','""') + '"' }) -WindowStyle Hidden | Out-Null }
+        # Wait for the child to take ownership; the parent's live PID and fresh lock keep it unstealable meanwhile.
+        $deadline = [datetime]::UtcNow.AddSeconds($script:RouterResearchHandoffSeconds)
+        while ($true) {
+            $stream = Open-RouterLockExclusive -Path $lock
+            $owner = if ($null -ne $stream) { try { Read-RouterLockStream -Stream $stream } finally { $stream.Dispose() } } else { $null }
+            if ($null -eq $owner -or -not $owner.PSObject.Properties['token'] -or [string]$owner.token -cne $entry.token -or [string]$owner.phase -cne 'launching') { break }
+            if ([datetime]::UtcNow -ge $deadline) {
+                [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action release)
+                if ($modelsFile) { Remove-Item -LiteralPath $modelsFile -Force -ErrorAction SilentlyContinue }
+                return [pscustomobject]@{ launched = $false; alerts = @($entry.alerts + 'research-launch-timeout') }
+            }
+            Start-Sleep -Milliseconds 100
+        }
         return [pscustomobject]@{ launched = $true; alerts = @($entry.alerts) }
-    } catch { Remove-Item -LiteralPath $lock -Force -ErrorAction SilentlyContinue; throw }
+    } catch {
+        [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action release)
+        if ($modelsFile) { Remove-Item -LiteralPath $modelsFile -Force -ErrorAction SilentlyContinue }
+        throw
+    }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Invoke-RouterResearch -Models $RouterResearchCliModels -All:$RouterResearchCliAll -Context $RouterResearchCliContext -DetachedChild:$RouterResearchCliDetachedChild
+    $models = $RouterResearchCliModels
+    if ($RouterResearchCliModelsFile) { $models = @(Read-RouterResearchModelsFile -Path $RouterResearchCliModelsFile) }
+    $result = Invoke-RouterResearch -Models $models -All:$RouterResearchCliAll -Context $RouterResearchCliContext -DetachedChild:$RouterResearchCliDetachedChild -LockToken $RouterResearchCliLockToken
     if ($RouterResearchCliJson) { $result | ConvertTo-Json -Depth 20 -Compress } else { $result }
 }

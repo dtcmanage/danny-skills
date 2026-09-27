@@ -63,15 +63,17 @@ function Invoke-RouterModelCheck {
     $state = Get-RouterStateDir
     $stamp = Join-Path $state 'last-check.json'
     $result = [ordered]@{ skipped = $false; timed_out = $false; checked_at = $null; new_models = @(); missing_models = @(); errors = @(); alerts = @() }
-    if (-not $Force -and (Test-Path -LiteralPath $stamp)) {
-        try {
-            $last = Get-Content -LiteralPath $stamp -Raw | ConvertFrom-Json
-            if (($Now - [datetime]$last.checked_at).TotalHours -ge 0 -and ($Now - [datetime]$last.checked_at).TotalHours -lt 12) {
-                $result.skipped = $true
-                $result.checked_at = $last.checked_at
-                return [pscustomobject]$result
-            }
-        } catch { }
+    if (-not $Force) {
+        $last = Read-RouterJsonObject -Path $stamp
+        if ($null -ne $last) {
+            try {
+                if (($Now - [datetime]$last.checked_at).TotalHours -ge 0 -and ($Now - [datetime]$last.checked_at).TotalHours -lt 12) {
+                    $result.skipped = $true
+                    $result.checked_at = $last.checked_at
+                    return [pscustomobject]$result
+                }
+            } catch { }
+        }
     }
     $vendorsPath = Join-Path $PSScriptRoot '../../references/model-router/vendors.json'
     if ((Get-Variable -Name RouterModelCheckVendorsPath -Scope Script -ErrorAction SilentlyContinue) -and $script:RouterModelCheckVendorsPath) { $vendorsPath = $script:RouterModelCheckVendorsPath }
@@ -114,16 +116,18 @@ function Invoke-RouterModelCheck {
         if ($result.errors.Count) { return [pscustomobject]$result }
         $registryPath = Join-Path $state 'known-models.json'
         $queuePath = Join-Path $state 'pending-research.json'
-        if (-not (Test-Path -LiteralPath $registryPath)) {
+        $registryExisted = Test-Path -LiteralPath $registryPath
+        $registry = @(Read-RouterJsonArray -Path $registryPath)
+        if (-not $registryExisted -or $registry.Count -eq 0) {
+            if ($registryExisted) { $result.alerts += 'known-models-reset' }
             Write-RouterJsonAtomic -Path $registryPath -Value @($listing.ToArray())
         } else {
-            $registry = @(Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json)
-            $queue = @(if (Test-Path -LiteralPath $queuePath) { Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json })
+            $queued = [System.Collections.Generic.List[object]]::new()
             $current = @{}; foreach ($item in $listing) { $current["$($item.vendor)/$($item.id)"] = $item }
             $old = @{}; foreach ($item in $registry) { $old["$($item.vendor)/$($item.id)"] = $item }
             foreach ($item in $listing) {
                 if (-not $old.ContainsKey("$($item.vendor)/$($item.id)")) {
-                    $item.status = 'unprofiled'; $registry += $item; $queue += [pscustomobject]@{ id = $item.id; vendor = $item.vendor; lane = $item.lane; detected_at = $result.checked_at }
+                    $item.status = 'unprofiled'; $registry += $item; $queued.Add([pscustomobject]@{ id = $item.id; vendor = $item.vendor; lane = $item.lane; detected_at = $result.checked_at })
                     $result.new_models += $item.id; $result.alerts += "new-model:$($item.id)"
                 }
             }
@@ -132,12 +136,13 @@ function Invoke-RouterModelCheck {
                     $item.status = 'missing'; $result.missing_models += $item.id; $result.alerts += "model-missing:$($item.id)"
                 }
             }
+            # Queue first, under the mutex the research runner uses for its final re-read, so a failed write loses nothing.
+            if ($queued.Count) { Use-RouterQueueMutex -StateDir $state -Action { Write-RouterJsonAtomic -Path $queuePath -Value @(@(Read-RouterJsonArray -Path $queuePath) + $queued.ToArray()) } }
             Write-RouterJsonAtomic -Path $registryPath -Value @($registry)
-            if ($result.new_models.Count) { Write-RouterJsonAtomic -Path $queuePath -Value @($queue) }
         }
         Write-RouterJsonAtomic -Path $stamp -Value @{ checked_at = $result.checked_at }
         if (Test-Path -LiteralPath $queuePath) {
-            $pending = @(Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json)
+            $pending = @(Read-RouterJsonArray -Path $queuePath)
             if ($pending.Count) {
                 $retryStamp = Join-Path $state 'last-research-launch.json'
                 $due = $true

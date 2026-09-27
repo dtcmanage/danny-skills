@@ -1,5 +1,5 @@
 {
   "claude_patterns": ["claude-fable-*"],
   "codex_models": ["gpt-6-astra"],
-  "vendor_domains": ["openai.com", "anthropic.com", "claude.com"]
+  "vendor_domains": ["openai.com", "anthropic.com", "claude.com", "claude.ai", "chatgpt.com"]
 }

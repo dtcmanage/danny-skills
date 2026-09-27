@@ -19,7 +19,11 @@ $now = [datetime]'2026-09-27T12:00:00Z'
 try {
     Reset-State
     $script:launchCount = 0
-    $script:RouterResearchLauncher = { param($exe,$arguments) $script:launchCount++ }
+    $script:RouterResearchLauncher = { param($exe,$arguments)
+        $script:launchCount++
+        $tokenIndex = [array]::IndexOf($arguments,'-LockToken')
+        [void](Update-RouterLockOwned -Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'research.lock') -Token $arguments[$tokenIndex + 1] -Action take)
+    }
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }
     @{ checked_at = $now.AddHours(-1).ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'last-check.json')
     $script:RouterModelCheckFetcher = { param($vendor) throw 'network should not run' }
@@ -70,6 +74,26 @@ try {
     Assert-True ($r.alerts -contains 'catalog-check-error:unknown' -and $r.errors.Count -eq 1) 'unknown source type skipped with alert'
     $script:RouterModelCheckVendorsPath = $null
 
+    Reset-State
+    $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }
+    [void](Invoke-RouterModelCheck -Force -Now $now)
+    $queuePath = Join-Path $env:DT_MODEL_ROUTER_STATE 'pending-research.json'
+    [IO.File]::WriteAllText($queuePath,'')
+    $registryPath = Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json'
+    $registryBefore = [IO.File]::ReadAllText($registryPath)
+    $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol'; 'gpt-6-queued' } else { 'claude-sonnet-4-5' } }
+    $holder = [IO.FileStream]::new((Join-Path $env:DT_MODEL_ROUTER_STATE 'pending-research.mutex'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    $PSDefaultParameterValues['Use-RouterQueueMutex:TimeoutMs'] = 200
+    $mutexBlocked = $false
+    try { [void](Invoke-RouterModelCheck -Force -Now $now) } catch { $mutexBlocked = $_.Exception.Message -match 'ROUTER_QUEUE_MUTEX_TIMEOUT' }
+    $holder.Dispose()
+    $PSDefaultParameterValues.Remove('Use-RouterQueueMutex:TimeoutMs')
+    Assert-True ($mutexBlocked -and [IO.File]::ReadAllText($registryPath) -ceq $registryBefore -and [IO.File]::ReadAllText($queuePath) -eq '') 'queue write waits on the shared queue mutex and loses nothing when blocked'
+    $r = Invoke-RouterModelCheck -Force -Now $now
+    $queue = @(Read-RouterJsonArray -Path $queuePath)
+    Assert-True ($r.new_models -contains 'gpt-6-queued' -and $queue.Count -eq 1 -and $queue[0].id -eq 'gpt-6-queued') 'empty queue file treated as empty queue when new model is queued'
+    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research.lock') -Force -ErrorAction SilentlyContinue
+
     $html = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/anthropic-models-live-20260927.html') -Raw
     $ids = @(Get-RouterAnthropicModelIds -Html $html)
     $expected = @('claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001') | Sort-Object
@@ -83,6 +107,28 @@ try {
     Assert-True ($pick.model -and @($pick.alerts | Where-Object { $_ -match '^catalog-check-error:resolver:' }).Count -eq 1) 'resolver alerts and returns model when check throws'
     Remove-Item Function:Invoke-RouterModelCheck
     . (Join-Path $PSScriptRoot '../check-new-models.ps1')
+
+    # --- M04 remediation regressions: tolerant reads of known-models.json / last-check.json ---
+    Reset-State
+    $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }
+    [void](Invoke-RouterModelCheck -Force -Now $now)
+    $registryPath = Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json'
+    [IO.File]::WriteAllText($registryPath, '')
+    $r = Invoke-RouterModelCheck -Force -Now $now.AddHours(1)
+    Assert-True ($r.alerts -contains 'known-models-reset' -and -not $r.timed_out -and $r.errors.Count -eq 0) '0-byte registry treated as absent with reset alert instead of throwing'
+    $registry = @(Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json)
+    Assert-True ($registry.Count -eq 2) '0-byte registry rebuilt from current listing on bootstrap path'
+
+    [IO.File]::WriteAllText($registryPath, '{not valid json')
+    $r = Invoke-RouterModelCheck -Force -Now $now.AddHours(2)
+    Assert-True ($r.alerts -contains 'known-models-reset' -and $r.errors.Count -eq 0) 'corrupt registry treated as absent with reset alert instead of throwing'
+    $registry = @(Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json)
+    Assert-True ($registry.Count -eq 2) 'corrupt registry rebuilt from current listing on bootstrap path'
+
+    $stampPath = Join-Path $env:DT_MODEL_ROUTER_STATE 'last-check.json'
+    [IO.File]::WriteAllText($stampPath, '{not valid json')
+    $r = Invoke-RouterModelCheck -Now $now.AddHours(3)
+    Assert-True (-not $r.skipped -and $r.errors.Count -eq 0) 'corrupt last-check.json treated as absent; check runs instead of throwing'
 
     Reset-State
     $script:RouterModelCheckFetcher = $null

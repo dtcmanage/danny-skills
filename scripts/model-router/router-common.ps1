@@ -14,6 +14,42 @@ function Get-RouterStateDir {
     return [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $main) 'model-router/state'))
 }
 
+function Read-RouterJsonArray {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return @() }
+    try {
+        $raw = [IO.File]::ReadAllText($Path)
+        if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+        return @($raw | ConvertFrom-Json -Depth 20 | Where-Object { $null -ne $_ })
+    } catch { return @() }
+}
+
+function Read-RouterJsonObject {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        $raw = [IO.File]::ReadAllText($Path)
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+        return ($raw | ConvertFrom-Json -Depth 20)
+    } catch { return $null }
+}
+
+function Use-RouterQueueMutex {
+    param([Parameter(Mandatory)][string]$StateDir, [Parameter(Mandatory)][scriptblock]$Action, [int]$TimeoutMs = 30000)
+    New-Item -ItemType Directory -Path $StateDir -Force | Out-Null
+    $path = Join-Path $StateDir 'pending-research.mutex'
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $handle = $null
+    while ($null -eq $handle) {
+        try { $handle = [IO.FileStream]::new($path,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,1,[IO.FileOptions]::DeleteOnClose) }
+        catch [IO.IOException], [UnauthorizedAccessException] {
+            if ($watch.ElapsedMilliseconds -ge $TimeoutMs) { throw 'ROUTER_QUEUE_MUTEX_TIMEOUT' }
+            Start-Sleep -Milliseconds 50
+        }
+    }
+    try { & $Action } finally { $handle.Dispose() }
+}
+
 function Test-RouterTable {
     param([Parameter(Mandatory)][object]$Table)
     $errors = [System.Collections.Generic.List[string]]::new()
