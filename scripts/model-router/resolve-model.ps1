@@ -6,6 +6,7 @@ param(
     [object]$Catalog,
     [string]$TablePath,
     [switch]$SkipModelCheck,
+    [switch]$SendAlerts,
     [switch]$Json
 )
 Set-StrictMode -Version Latest
@@ -13,6 +14,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 . (Join-Path $PSScriptRoot '../resolve-codex-model.ps1')
 . (Join-Path $PSScriptRoot 'check-new-models.ps1')
+. (Join-Path $PSScriptRoot 'send-router-alert.ps1')
 
 function Get-RouterFailureProbability {
     param([object]$Candidate)
@@ -42,7 +44,8 @@ function Resolve-RouterModel {
         [string]$EscalateFrom,
         [object]$Catalog,
         [string]$TablePath,
-        [switch]$SkipModelCheck
+        [switch]$SkipModelCheck,
+        [switch]$SendAlerts
     )
     if ($Category -notin @(Get-RouterCategories)) { throw "CATEGORY: Unknown category '$Category'" }
     if ($Category -eq 'image-generation' -and $Lane -ne 'codex') { throw 'LANE: image-generation has only codex' }
@@ -76,7 +79,9 @@ function Resolve-RouterModel {
     $isProtected = [bool]$Protected -or $Category -eq 'long-form-writing'
     if ($eligible.Count -eq 0) {
         if ($read.table.source -ne 'seed') { $alerts.Add("no-eligible:$Category`:$Lane") }
-        return [pscustomobject]@{ model = $laneTable.fallback; category = $Category; lane = $Lane; protected = $isProtected; reason = 'No eligible candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }
+        $result = [pscustomobject]@{ model = $laneTable.fallback; category = $Category; lane = $Lane; protected = $isProtected; reason = 'No eligible candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts | Out-Null }
+        return $result
     }
     $byStrength = @($eligible | Sort-Object strength_rank)
     $rankedCandidates = [System.Collections.Generic.List[object]]::new()
@@ -128,10 +133,12 @@ function Resolve-RouterModel {
     elseif (@($byStrength | Where-Object { $null -eq $_.est_burn }).Count) { $chosen = $rankedCandidates[0]; $reason = 'Uncalibrated burn: strength-rank order.' }
     else { $chosen = $rankedCandidates[0]; $reason = 'Lowest expected retry-adjusted burn; 10% time tie-break.' }
     if ($chosen.frontier) { $reason += ' No non-frontier eligible.' }
-    return [pscustomobject]@{ model = $chosen.model; category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
+    $result = [pscustomobject]@{ model = $chosen.model; category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
+    if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts | Out-Null }
+    return $result
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Resolve-RouterModel -Category $Category -Lane $Lane -Protected:$Protected -EscalateFrom $EscalateFrom -Catalog $Catalog -TablePath $TablePath -SkipModelCheck:$SkipModelCheck
+    $result = Resolve-RouterModel -Category $Category -Lane $Lane -Protected:$Protected -EscalateFrom $EscalateFrom -Catalog $Catalog -TablePath $TablePath -SkipModelCheck:$SkipModelCheck -SendAlerts:$SendAlerts
     if ($Json) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
 }
