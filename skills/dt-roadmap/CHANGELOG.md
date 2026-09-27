@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.2.3
+
+- Correct named-artifact path extraction used by model-router build checks.
+
 ## 1.2.2
 
 - Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.

@@ -20,6 +20,7 @@ All skills now include a `Shared Policy Baseline` block that points to:
 - `references/html-artifact-policy.md` for HTML-first review artifact standards.
 - `references/versioning-policy.md` for skill/plugin SemVer, newest-first changelogs, and the mandatory
   `scripts/verify-versioning-policy.ps1` release gate.
+- `references/model-router/README.md` for the shared model router's operation and checks.
 
 This keeps deterministic and referencing behavior consistent across the full skill pack while allowing tighter per-skill domain guardrails where needed.
 

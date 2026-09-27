@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.14.0 (2026-09-27): Route review model selection through the shared model router.
+
 - 1.13.2 (2026-09-26): Codex complex reviews no longer auto-route to frontier models (GPT-6 Astra, Fable-tier cost); complex and light reviews resolve to GPT-6 Sol, preflight to Luna.
 
 - 1.13.1 (2026-09-26): Claude-lane rounds and preflight record the exact model version that ran (resolved_model, models_used, total_cost_usd) via the shared claude-cli-result parser and fail closed on a family mismatch; the test suite now counts assertions instead of reporting a stale constant.

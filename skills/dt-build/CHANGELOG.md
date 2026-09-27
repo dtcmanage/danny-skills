@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.15.0
+
+- Route build chunks through the shared model router with bridge defaults and evidence-based picks.
+
 ## 2.14.2
 
 - Codex resolver never auto-routes frontier models (catalog description 'frontier', e.g. GPT-6 Astra, Fable-tier cost): complex and standard now resolve to GPT-6 Sol, light to Luna; frontier runs only as an explicit -Model override.
