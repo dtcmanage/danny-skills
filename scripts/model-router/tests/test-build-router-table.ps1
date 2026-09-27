@@ -204,6 +204,18 @@ try {
     $r = Invoke-RouterResearch -Now ([datetime]'2026-09-27')
     $remaining = @(Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json)
     Assert-True ($remaining.Count -eq 1 -and $remaining[0].id -eq 'gpt-6-luna') 'queue additions during research survive final drain'
+    $script:researchPrompt = $null
+    $script:RouterResearchInvoker = { param($id,$prompt)
+        $script:researchPrompt = $prompt
+        return ('```json' + "`n" + (Get-Content -LiteralPath (Join-Path $script:profiles 'gpt-6-sol.json') -Raw) + "`n" + '```')
+    }
+    $r = Invoke-RouterResearch -Models @('gpt-6-sol') -Now ([datetime]'2026-09-27')
+    Assert-True ($script:researchPrompt -match 'Model router research profile \(version 1\)' -and $script:researchPrompt -match 'do not read local files') 'research prompt carries the profile schema inline'
+    Assert-True ($r.researched -contains 'gpt-6-sol') 'code-fenced research profile is accepted'
+    $script:RouterResearchInvoker = { param($id,$prompt) return '{"model":"gpt-6-sol","lane":"codex","status":"blocked","error":"file reads rejected"}' }
+    $r = Invoke-RouterResearch -Models @('gpt-6-sol') -Now ([datetime]'2026-09-27')
+    $failFile = Join-Path $temp 'research-failures/gpt-6-sol.txt'
+    Assert-True ($r.alerts -contains 'research-profile-invalid:gpt-6-sol' -and (Test-Path -LiteralPath $failFile) -and (Get-Content -LiteralPath $failFile -Raw) -match 'file reads rejected') 'rejected research answer is kept for diagnosis'
     $script:RouterResearchInvoker = $null
     function Resolve-RouterModel { return [pscustomobject]@{ model = 'gpt-6-sol' } }
     function Invoke-CodexProcess {

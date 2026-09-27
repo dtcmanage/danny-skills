@@ -148,7 +148,9 @@ function Invoke-RouterResearch {
         $alerts = [System.Collections.Generic.List[string]]::new()
         foreach ($alert in $lockAlerts) { $alerts.Add($alert) }
         $done = [System.Collections.Generic.List[string]]::new()
-        $fixed = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/research-prompt.md') -Raw
+        # The research session cannot read local files (Windows Codex runs without a sandbox that permits reads), so
+        # the profile schema travels inside the prompt instead of being referenced by path.
+        $fixed = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/research-prompt.md') -Raw) + "`n`n" + (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/profile-schema.md') -Raw)
         foreach ($id in $ids) {
             if ([string]$id -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]*$') { $alerts.Add('invalid-research-model-id'); continue }
             $lane = if ($id -like 'claude-*') { 'claude' } else { 'codex' }
@@ -156,9 +158,12 @@ function Invoke-RouterResearch {
             if ($Context) { $prompt += "`n" + (New-PromptEnvelope -Label 'RESEARCH CONTEXT' -Content $Context) }
             [void](Update-RouterLockOwned -Path $lock -Token $token -Action heartbeat)
             try {
+                $raw = $null
                 $raw = Invoke-RouterResearchCall -Model $id -Prompt $prompt
                 if (-not $raw) { throw 'empty research response' }
-                $profile = [string]$raw | ConvertFrom-Json -Depth 40
+                $text = ([string]$raw).Trim()
+                if ($text -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $text = $Matches[1] }
+                $profile = $text | ConvertFrom-Json -Depth 40
                 if (-not (Test-RouterProfile $profile) -or $profile.model -cne $id -or $profile.lane -cne $lane) { throw 'invalid research profile' }
                 $profile.researched_at = $Now.ToString('yyyy-MM-dd')
                 $profilesDir = Join-Path $state 'profiles'
@@ -169,7 +174,17 @@ function Invoke-RouterResearch {
                 try { [IO.File]::WriteAllText($temp,$json,[Text.UTF8Encoding]::new($false)); [IO.File]::Move($temp,$path,$true) }
                 finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
                 $done.Add($id)
-            } catch { $alerts.Add("research-profile-invalid:$id") }
+            } catch {
+                $alerts.Add("research-profile-invalid:$id")
+                # Keep the rejected answer so a failed run can be diagnosed without re-spending a research call.
+                try {
+                    $failDir = Join-Path $state 'research-failures'
+                    New-Item -ItemType Directory -Path $failDir -Force | Out-Null
+                    $detail = "error: $($_.Exception.Message)`n" + [string]$raw
+                    if ($detail.Length -gt 20000) { $detail = $detail.Substring(0, 20000) }
+                    [IO.File]::WriteAllText((Join-Path $failDir ($id + '.txt')), $detail, [Text.UTF8Encoding]::new($false))
+                } catch { }
+            }
             [void](Update-RouterLockOwned -Path $lock -Token $token -Action heartbeat)
         }
         Use-RouterQueueMutex -StateDir $state -Action {
