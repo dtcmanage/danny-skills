@@ -5,8 +5,23 @@ $ErrorActionPreference = 'Stop'
 
 function Get-RouterAnthropicModelIds {
     param([Parameter(Mandatory)][string]$Html)
-    return @([regex]::Matches($Html, '\bclaude-(?=[a-z0-9-]*\d)[a-z0-9]+(?:-[a-z0-9]+)*\b', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase) |
-        ForEach-Object { $_.Value.ToLowerInvariant() } | Sort-Object -Unique)
+    $ids = [System.Collections.Generic.List[string]]::new()
+    $apiRowFound = $false
+    foreach ($table in [regex]::Matches($Html, '<table\b[^>]*>.*?</table>', 'Singleline, IgnoreCase')) {
+        foreach ($row in [regex]::Matches($table.Value, '<tr\b[^>]*>.*?</tr>', 'Singleline, IgnoreCase')) {
+            $heading = [regex]::Match($row.Value, '<th\b[^>]*>(.*?)</th>', 'Singleline, IgnoreCase')
+            if (-not $heading.Success) { continue }
+            $label = [System.Net.WebUtility]::HtmlDecode(([regex]::Replace($heading.Groups[1].Value, '<[^>]+>', '')).Trim())
+            if ($label -ne 'Claude API ID') { continue }
+            $apiRowFound = $true
+            foreach ($cell in [regex]::Matches($row.Value, '<td\b[^>]*>(.*?)</td>', 'Singleline, IgnoreCase')) {
+                $id = [System.Net.WebUtility]::HtmlDecode(([regex]::Replace($cell.Groups[1].Value, '<[^>]+>', '')).Trim())
+                if ($id -cmatch '^claude-[a-z]+-\d+(-\d+)?(-\d{8})?$') { $ids.Add($id) }
+            }
+        }
+    }
+    if (-not $apiRowFound -or $ids.Count -eq 0) { throw 'ANTHROPIC_API_ID_TABLE_NOT_FOUND' }
+    return @($ids | Sort-Object -Unique)
 }
 
 function Get-RouterVendorModels {

@@ -61,9 +61,13 @@ try {
     Assert-True ($r.alerts -contains 'catalog-check-error:unknown' -and $r.errors.Count -eq 1) 'unknown source type skipped with alert'
     $script:RouterModelCheckVendorsPath = $null
 
-    $html = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/anthropic-models.html') -Raw
+    $html = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/anthropic-models-live-20260927.html') -Raw
     $ids = @(Get-RouterAnthropicModelIds -Html $html)
-    Assert-True ($ids.Count -eq 2 -and $ids -contains 'claude-opus-4-6' -and $ids -contains 'claude-sonnet-4-5') 'Anthropic parser reads saved fixture page'
+    $expected = @('claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001') | Sort-Object
+    Assert-True (($ids -join ',') -ceq ($expected -join ',')) 'Anthropic parser reads only current Claude API IDs from live fixture'
+    $missingTableFailed = $false
+    try { Get-RouterAnthropicModelIds -Html '<p>claude-opus-5-5</p>' | Out-Null } catch { $missingTableFailed = $_.Exception.Message -match 'ANTHROPIC_API_ID_TABLE_NOT_FOUND' }
+    Assert-True $missingTableFailed 'Anthropic parser errors when API ID table is absent'
 
     function Invoke-RouterModelCheck { throw 'synthetic check exception' }
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude
