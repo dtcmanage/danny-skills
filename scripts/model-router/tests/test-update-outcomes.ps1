@@ -16,7 +16,7 @@ function Write-Provenance([string]$Run, [string]$Chunk, [int]$Attempt, [string]$
     @{ pass=$Pass; tier=$Tier; resolved_model=$Model; attempt=$Attempt; at=$At; failure_category=$Failure; category=$Category; chunk_id=$Chunk } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir $name)
 }
 function Run-Update { Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources }
-function Read-Records { @(Get-Content -LiteralPath (Join-Path $script:state 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json }) }
+function Read-Records { @(Get-Content -LiteralPath (Join-Path $script:state 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -DateKind String }) }
 
 $saved = $env:DT_MODEL_ROUTER_STATE
 $temp = Join-Path $env:TEMP ('model-router-outcomes-' + [guid]::NewGuid().ToString('N'))
@@ -108,6 +108,31 @@ try {
     @([pscustomobject]@{ category='routine-coding'; lane='claude'; model=$rows[2].model; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' }) | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $script:state 'drift-flags.json')
     $none = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     Assert-True ($none.model -eq $rows[2].model -and @($none.alerts | Where-Object { $_ -like 'drift-no-alternative:*' }).Count -eq 1) 'no eligible alternative retains pick and alerts'
+
+    $timestampState = Join-Path $temp 'timestamp-state'
+    $timestampRepo = Join-Path $temp 'timestamp-repo'
+    [IO.Directory]::CreateDirectory($timestampState) | Out-Null
+    [IO.Directory]::CreateDirectory($timestampRepo) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $timestampState
+    $script:state = $timestampState
+    $script:repo = $timestampRepo
+    @($timestampRepo) | ConvertTo-Json | Set-Content -LiteralPath $script:sources
+    Write-Provenance 'timestamps' 'midnight' 1 'claude-opus-5[1m]' $true '2026-07-16T21:52:00Z'
+    Write-Provenance 'timestamps' 'dst-before' 1 'claude-opus-4[1m]' $true '2026-03-08T06:59:00Z'
+    Write-Provenance 'timestamps' 'dst-after' 1 'claude-opus-5' $true '2026-03-08T07:01:00Z'
+    $acceptanceDir = Join-Path $timestampRepo '.dt-build/timestamps'
+    @{ milestone_id='accepted'; model='claude-opus-5[1m]'; status='PASS'; recorded_at_utc='2026-11-01T06:01:00Z' } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $acceptanceDir 'acceptance-rows.jsonl')
+    Run-Update | Out-Null
+    $timestamps = Read-Records
+    Assert-True ((@($timestamps | Where-Object key -eq 'timestamps:midnight:1')[0].at) -ceq '2026-07-16T21:52:00.0000000Z') 'provenance UTC timestamp remains exact near midnight'
+    Assert-True ((@($timestamps | Where-Object key -eq 'timestamps:dst-before:1')[0].at) -ceq '2026-03-08T06:59:00.0000000Z' -and (@($timestamps | Where-Object key -eq 'timestamps:dst-after:1')[0].at) -ceq '2026-03-08T07:01:00.0000000Z') 'provenance UTC timestamps remain exact across DST'
+    Assert-True ((@($timestamps | Where-Object key -eq 'timestamps:accepted:1')[0].at) -ceq '2026-11-01T06:01:00.0000000Z') 'acceptance UTC timestamp remains exact across DST'
+    Assert-True ((@($timestamps | Where-Object key -eq 'timestamps:midnight:1')[0].model) -ceq 'claude-opus-5' -and (@($timestamps | Where-Object key -eq 'timestamps:dst-before:1')[0].model) -ceq 'claude-opus-4' -and (@($timestamps | Where-Object key -eq 'timestamps:accepted:1')[0].model) -ceq 'claude-opus-5') 'context tag removed without changing model version'
+    $unspecified = [datetime]::SpecifyKind([datetime]'2026-07-16T21:52:00', [DateTimeKind]::Unspecified)
+    $unspecifiedAt = ConvertTo-RouterOutcomeUtcTimestamp $unspecified
+    Assert-True ($unspecifiedAt -ceq '2026-07-16T21:52:00.0000000Z') 'UTC-named unspecified DateTime is UTC'
+    $offsetAt = ConvertTo-RouterOutcomeUtcTimestamp ([datetimeoffset]'2026-07-16T17:52:00-04:00')
+    Assert-True ($offsetAt -ceq '2026-07-16T21:52:00.0000000Z') 'DateTimeOffset preserves its offset'
 
     $env:DT_MODEL_ROUTER_STATE = Join-Path $temp 'live-state'
     $real = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/outcome-sources.json') -Raw | ConvertFrom-Json

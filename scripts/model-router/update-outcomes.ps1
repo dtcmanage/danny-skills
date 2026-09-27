@@ -14,10 +14,22 @@ function ConvertTo-RouterOutcomeModel {
     param([string]$Model, [object]$Table)
     if (-not $Model) { return '' }
     $Model = $Model -replace '\s*\(.*$',''
+    $Model = $Model -replace '\s*\[\d+[kKmM]\]$',''
     if ($Model -notin @('opus','sonnet','haiku')) { return $Model }
     $ids = @($Table.categories.'routine-coding'.claude.candidates | Where-Object { $_.model -match "^claude-$Model-" } | Sort-Object strength_rank)
     if ($ids.Count) { return [string]$ids[0].model }
     return $Model
+}
+
+function ConvertTo-RouterOutcomeUtcTimestamp {
+    param([object]$Value)
+    if ($Value -is [datetimeoffset]) { return $Value.UtcDateTime.ToString('o') }
+    if ($Value -is [datetime]) {
+        $date = [datetime]$Value
+        if ($date.Kind -eq [DateTimeKind]::Unspecified) { $date = [datetime]::SpecifyKind($date, [DateTimeKind]::Utc) }
+        return $date.ToUniversalTime().ToString('o')
+    }
+    return ([datetimeoffset]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)).UtcDateTime.ToString('o')
 }
 
 function Get-RouterOutcomeCategory {
@@ -70,7 +82,7 @@ function Update-RouterOutcomes {
                     if ($records.Contains($key)) { continue }
                     $at = Get-RouterOutcomeValue $item @('at','accepted_at_utc','recorded_at_utc','model_cache_fetched_at')
                     if (-not $at) { $at = $file.LastWriteTimeUtc.ToString('o') }
-                    try { $at = ([datetimeoffset]::Parse([string]$at)).ToUniversalTime().ToString('o') } catch { $at = $file.LastWriteTimeUtc.ToString('o') }
+                    try { $at = ConvertTo-RouterOutcomeUtcTimestamp $at } catch { $at = $file.LastWriteTimeUtc.ToString('o') }
                     $tier = [string](Get-RouterOutcomeValue $item @('tier'))
                     $lane = [string](Get-RouterOutcomeValue $item @('lane'))
                     if ($lane -notin @('codex','claude')) { $lane = if ($model -match '^claude-') { 'claude' } else { 'codex' } }
@@ -94,7 +106,7 @@ function Update-RouterOutcomes {
                     if (-not $model) { continue }
                     $at = Get-RouterOutcomeValue $item @('accepted_at_utc','recorded_at_utc','at')
                     if (-not $at) { $at = (Get-Item -LiteralPath $acceptance).LastWriteTimeUtc.ToString('o') }
-                    try { $at = ([datetimeoffset]::Parse([string]$at)).ToUniversalTime().ToString('o') } catch { continue }
+                    try { $at = ConvertTo-RouterOutcomeUtcTimestamp $at } catch { continue }
                     $tier = [string](Get-RouterOutcomeValue $item @('tier'))
                     $lane = [string](Get-RouterOutcomeValue $item @('lane'))
                     if ($lane -notin @('codex','claude')) { $lane = if ($model -match '^claude-') { 'claude' } else { 'codex' } }
