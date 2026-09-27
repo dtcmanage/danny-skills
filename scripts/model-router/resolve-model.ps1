@@ -47,6 +47,54 @@ function Get-RouterAgentAlias {
     return $match.Groups[1].Value
 }
 
+function Resolve-RouterBridgeModel {
+    # Bridge mode (source 'seed', no research table yet): ignore eligibility and route exactly
+    # as dt-build did before the router, from references/model-router/bridge-map.json.
+    # Escalation moves one rung up the lane ladder; a frontier rung is reachable only that way.
+    param(
+        [Parameter(Mandatory)][string]$Category,
+        [Parameter(Mandatory)][string]$Lane,
+        [bool]$IsProtected,
+        [string]$EscalateFrom,
+        [object]$Catalog,
+        [Parameter(Mandatory)][System.Collections.Generic.List[string]]$Alerts
+    )
+    $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/bridge-map.json') -Raw | ConvertFrom-Json -Depth 10
+    $laneMap = $map.lanes.$Lane
+    $mapped = [string]$laneMap.categories.$Category
+    if (-not $mapped) { throw "BRIDGE_MAP: no $Category/$Lane mapping" }
+    $ladder = @($laneMap.ladder)
+    $ids = @($ladder | ForEach-Object { [string]$_.model })
+    $label = if ($IsProtected) { "$Category/$Lane protected" } else { "$Category/$Lane" }
+    if ($EscalateFrom) {
+        $index = [array]::IndexOf($ids, $EscalateFrom)
+        if ($index -lt 0) { $model = $mapped; $mapping = "escalation source $EscalateFrom is not on the $Lane ladder; $label -> $mapped" }
+        elseif ($index -eq $ids.Count - 1) { $model = $EscalateFrom; $mapping = "escalation from ${EscalateFrom}: already at the top of the $Lane ladder; same model retained" }
+        else { $model = $ids[$index + 1]; $mapping = "escalation $EscalateFrom -> $model (one rung up the $Lane ladder)" }
+    } else { $model = $mapped; $mapping = "$label -> $mapped" }
+    if ($Lane -eq 'codex' -and $Category -ne 'image-generation') {
+        $parsed = Get-CodexModelCatalog -Catalog $Catalog
+        if (-not (Test-RouterCodexSelectable -ParsedCatalog $parsed -Model $model)) {
+            $Alerts.Add("UNSELECTABLE_CODEX_MODEL: $model")
+            $start = [array]::IndexOf($ids, $model)
+            # Next rung up first, then down; image and unknown ids have no ladder position.
+            $order = [System.Collections.Generic.List[int]]::new()
+            if ($start -ge 0) {
+                for ($i = $start + 1; $i -lt $ids.Count; $i++) { $order.Add($i) }
+                for ($i = $start - 1; $i -ge 0; $i--) { $order.Add($i) }
+            }
+            $replacement = $null
+            foreach ($i in $order) {
+                if ($ladder[$i].frontier -and -not $EscalateFrom) { continue } # never a frontier first pick
+                if (Test-RouterCodexSelectable -ParsedCatalog $parsed -Model $ids[$i]) { $replacement = $ids[$i]; break }
+            }
+            if ($replacement) { $mapping += "; $model is not selectable, next ladder rung $replacement"; $model = $replacement }
+            else { $mapping += "; $model is not selectable and no ladder rung is" }
+        }
+    }
+    return [pscustomobject]@{ model = $model; reason = "bridge mode (no research table yet): $mapping" }
+}
+
 function Resolve-RouterModel {
     param(
         [Parameter(Mandatory)][string]$Category,
@@ -70,8 +118,15 @@ function Resolve-RouterModel {
     }
     $read = Read-RouterTable -TablePath $TablePath
     $laneTable = $read.table.categories.$Category.$Lane
-    if ($read.source -eq 'seed') { $alerts.Add('router-seed-table-in-use') }
+    if ($read.table.source -eq 'seed') { $alerts.Add('router-seed-table-in-use') }
     if ($read.validation_error) { $alerts.Add("router-live-table-invalid: $($read.validation_error)") }
+    $isProtected = [bool]$Protected -or $Category -eq 'long-form-writing'
+    if ($read.table.source -eq 'seed') {
+        $bridge = Resolve-RouterBridgeModel -Category $Category -Lane $Lane -IsProtected $isProtected -EscalateFrom $EscalateFrom -Catalog $Catalog -Alerts $alerts
+        $result = [pscustomobject]@{ model = $bridge.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $bridge.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $bridge.reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @($bridge.model) }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts -ChatToStderr:$ChatToStderr | Out-Null }
+        return $result
+    }
     $all = @($laneTable.candidates | Sort-Object strength_rank | Where-Object { $_.grade -in @('strong','capable') -and @($_.citations | Where-Object { $_.independent -eq $true }).Count -gt 0 })
     if ($Lane -eq 'codex' -and $Category -ne 'image-generation') {
         $parsed = Get-CodexModelCatalog -Catalog $Catalog
@@ -88,7 +143,6 @@ function Resolve-RouterModel {
     $eligible = $all
     $nonfrontier = @($eligible | Where-Object { -not $_.frontier })
     if ($nonfrontier.Count -gt 0) { $eligible = $nonfrontier }
-    $isProtected = [bool]$Protected -or $Category -eq 'long-form-writing'
     if ($eligible.Count -eq 0) {
         if ($read.table.source -ne 'seed') { $alerts.Add("no-eligible:$Category`:$Lane") }
         $result = [pscustomobject]@{ model = $laneTable.fallback; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $laneTable.fallback } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = 'No eligible candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }

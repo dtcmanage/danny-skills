@@ -133,6 +133,14 @@ try {
     Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'legacy tier-only caller did not route through the router (mechanical fallback)'
     Assert-True ((Resolve-CodexModel -Category planning -PreferredModel 'gpt-5.6-sol' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-5.6-sol') 'selectable explicit override was not honored'
     Assert-Throws { Resolve-CodexModel -Category planning -PreferredModel 'dead' -CachePath $cachePath -Strict } 'not selectable' 'strict resolver accepted an unselectable override'
+    # Bridge mode (seed table, no research yet): dt-review keeps its pre-router picks.
+    $researchTablePath = Join-Path $routerState 'router-table.json'
+    $researchTableText = Get-Content -Raw -LiteralPath $researchTablePath
+    Remove-Item -LiteralPath $researchTablePath -Force
+    try {
+        Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'bridge mode: complex review (planning, protected) did not keep gpt-6-sol'
+        Assert-True ((Resolve-CodexModel -Category planning -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'bridge mode: light review (planning) did not keep gpt-6-sol'
+    } finally { Write-Utf8 $researchTablePath $researchTableText }
 
     # Claude CLI envelope parser records the exact model version and fails closed on a
     # family mismatch or a missing model report.
@@ -189,11 +197,21 @@ $promptText = [Console]::In.ReadToEnd()
     Write-Utf8 $heldOutputCli @'
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)
 $childArgs = @('-NoProfile', '-Command', 'Start-Sleep -Seconds 5')
-Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNewWindow -WorkingDirectory $env:TEMP
+$child = Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNewWindow -WorkingDirectory $env:TEMP -PassThru
+Set-Content -LiteralPath (Join-Path $PSScriptRoot 'held-output-child.pid') -Value $child.Id
 '@ + "`n"
     $outputWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $heldOutputResult = Invoke-CodexProcess -CodexPath $heldOutputCli -Arguments @('--noop') -Prompt '' -WorkingDirectory $testRoot -TimeoutMs 1000
     $outputWatch.Stop()
+    # Stop the orphaned grandchild so it cannot outlive the suite holding a caller's output file.
+    $heldChildPidFile = Join-Path $testRoot 'held-output-child.pid'
+    if (Test-Path -LiteralPath $heldChildPidFile) {
+        $heldChild = Get-Process -Id ([int](Get-Content -Raw -LiteralPath $heldChildPidFile).Trim()) -ErrorAction SilentlyContinue
+        if ($heldChild) {
+            Stop-Process -Id $heldChild.Id -Force -ErrorAction SilentlyContinue
+            [void]$heldChild.WaitForExit(5000)
+        }
+    }
     Assert-True $heldOutputResult.timed_out 'inherited output handle did not consume the shared deadline'
     Assert-True ($outputWatch.ElapsedMilliseconds -lt 3000) 'output drain exceeded deadline plus bounded cleanup grace'
 

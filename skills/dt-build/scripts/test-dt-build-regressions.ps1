@@ -49,6 +49,21 @@ try {
         Assert-True (-not ($unsupported.artifacts -contains $case.Prefix)) ("unsupported suffix was truncated to {0}" -f $case.Prefix)
     }
 
+    # A nested-path command target (e.g. `pwsh -File skills/dt-build/scripts/...`)
+    # must never be truncated to a bare `scripts/...`/`tests/...` tail. That
+    # truncated tail is what the acceptance gate looks for on disk, does not
+    # find, and falsely reports as a missing artifact -- blocking a milestone
+    # whose named scripts are actually present.
+    $truncationText = 'Run `pwsh -NoProfile -File skills/dt-build/scripts/test-x.ps1` then ' +
+        '`pwsh -NoProfile -File skills/dt-review/tests/run-tests.ps1` and confirm both exit 0.'
+    $truncationExtracted = Extract-NamedArtifacts -Text $truncationText
+    Assert-True ($truncationExtracted.commands.Count -eq 2) "nested-path pwsh commands were not extracted exactly twice"
+    Assert-True ($truncationExtracted.commands -contains 'pwsh -NoProfile -File skills/dt-build/scripts/test-x.ps1') "full command naming skills/dt-build/scripts/test-x.ps1 was not preserved"
+    Assert-True ($truncationExtracted.commands -contains 'pwsh -NoProfile -File skills/dt-review/tests/run-tests.ps1') "full command naming skills/dt-review/tests/run-tests.ps1 was not preserved"
+    Assert-True (-not ($truncationExtracted.artifacts -contains 'scripts/test-x.ps1')) "nested path was truncated to scripts/test-x.ps1"
+    Assert-True (-not ($truncationExtracted.artifacts -contains 'tests/run-tests.ps1')) "nested path was truncated to tests/run-tests.ps1"
+    Assert-True ($truncationExtracted.artifacts.Count -eq 0) "nested-path command produced an unexpected (possibly truncated) artifact"
+
     # The shared helper and the gate's dependency-free inline copy are one
     # contract. Compare their parsed function extents so either copy drifting
     # alone fails this regression suite.
@@ -79,7 +94,7 @@ try {
     Assert-True ($helperFunction.Extent.Text -ceq $inlineFunction.Extent.Text) "shared and inline artifact extractor function bodies drifted"
 
     # Model router state is isolated: a temp state folder, a fresh catalog-check stamp (no
-    # network), a fake alert transport (no real alert can be sent), and a fixture table.
+    # network), and a fake alert transport (no real alert can be sent).
     $routerState = Join-Path $tempRoot 'router-state'
     New-Item -ItemType Directory -Path $routerState -Force | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $routerState
@@ -92,20 +107,8 @@ if ([string]$request['uri'] -like '*/guilds/*') { return [pscustomobject]@{ owne
 return [pscustomobject]@{ id = 'fake' }
 '@
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
-    $routerTable = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'references\model-router\seed-table.json') | ConvertFrom-Json -Depth 30
-    $routerTable.source = 'research'
-    $routerTable.generated_at = '2026-09-27'
-    foreach ($fixtureRow in @(
-        @('complex-coding', 'codex', 'gpt-6-sol', 'strong', 10), @('complex-coding', 'codex', 'gpt-6-luna', 'capable', 2),
-        @('mechanical', 'codex', 'gpt-6-luna', 'capable', 2),
-        @('routine-coding', 'claude', 'claude-opus-5-5', 'strong', 10), @('routine-coding', 'claude', 'claude-sonnet-5', 'capable', 2))) {
-        $candidate = @($routerTable.categories.($fixtureRow[0]).($fixtureRow[1]).candidates | Where-Object { $_.model -eq $fixtureRow[2] })[0]
-        $candidate.grade = $fixtureRow[3]
-        $candidate.citations = @([pscustomobject]@{ source = 'Fixture'; url = 'https://example.org/fixture'; independent = $true; note = 'Fixture' })
-        $candidate.est_burn = $fixtureRow[4]
-        $candidate.est_seconds = 10
-    }
-    Write-Utf8 -Path (Join-Path $routerState 'router-table.json') -Content ($routerTable | ConvertTo-Json -Depth 30)
+    # No router-table.json: the router runs in bridge mode (seed table, no research yet) and
+    # must reproduce dt-build's pre-router picks.
 
     # Codex picks come from the model router (legacy tiers map to categories: complex ->
     # complex-coding protected, standard -> routine-coding, light -> mechanical) and must be
@@ -125,14 +128,20 @@ return [pscustomobject]@{ id = 'fake' }
   {"slug":"gpt-reserve","visibility":"hide","priority":3,"upgrade":null}
 ]}
 '@
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "complex tier (complex-coding, protected) did not select the strongest eligible router candidate"
-    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "standard tier (routine-coding, no eligible candidate) did not select the router lane fallback"
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') "light tier (mechanical) did not select the router pick"
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "bridge mode: complex tier (complex-coding, protected) did not keep the pre-router gpt-6-sol pick"
+    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "bridge mode: standard tier (routine-coding) did not keep the pre-router gpt-6-sol pick"
+    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') "bridge mode: light tier (mechanical) did not keep the pre-router gpt-6-luna pick"
+    if (-not (Get-Command Resolve-RouterModel -ErrorAction SilentlyContinue)) { . (Join-Path $repoRoot 'scripts\model-router\resolve-model.ps1') }
+    foreach ($claudeTier in @(@('complex', 'claude-opus-5-5'), @('standard', 'claude-sonnet-5'), @('light', 'claude-haiku-4-5-20251001'))) {
+        $mappedTier = ConvertTo-RouterCategoryFromTier -Tier $claudeTier[0]
+        $claudePick = Resolve-RouterModel -Category $mappedTier.category -Lane claude -Protected:$mappedTier.protected -SkipModelCheck
+        Assert-True ($claudePick.model -eq $claudeTier[1] -and $claudePick.reason -match '^bridge mode \(no research table yet\)') "bridge mode: Claude $($claudeTier[0]) tier did not keep the pre-router $($claudeTier[1]) pick"
+    }
     Assert-True ((@(Get-CodexModelLadder -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)) -join ',') -eq 'gpt-6-sol,gpt-6-luna') "frontier model leaked into the automatic ladder"
     Assert-True ((Resolve-CodexModel -Tier complex -PreferredModel 'gpt-6-astra' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-6-astra') "explicit frontier override was not honored"
     $retiringCache = Join-Path $tempRoot 'models-retiring.json'
     Write-Utf8 -Path $retiringCache -Content '{"models":[{"slug":"gpt-6-sol","visibility":"list","priority":1,"upgrade":{"model":"gpt-6-luna"}},{"slug":"gpt-6-luna","visibility":"list","priority":2,"upgrade":null}]}'
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) -eq 'gpt-6-luna') "resolver selected a model carrying a retirement notice"
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) -eq 'gpt-6-luna') "bridge mode: resolver selected a model carrying a retirement notice instead of the next selectable ladder rung"
     $overrideRejected = $false
     try { [void](Resolve-CodexModel -Tier standard -PreferredModel 'gone-model' -CachePath $cachePath -Strict) }
     catch { $overrideRejected = $true }

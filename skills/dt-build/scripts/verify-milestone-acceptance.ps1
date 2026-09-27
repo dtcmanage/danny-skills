@@ -107,7 +107,7 @@ function Extract-NamedArtifacts {
         if ($candidate -match '^(pytest|python|pwsh|powershell|node|npm|bun)\b') {
             $commands.Add($candidate) | Out-Null
             # Also extract any file paths inside it.
-            $pathMatches = [regex]::Matches($candidate, '(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
+            $pathMatches = [regex]::Matches($candidate, '(?<![A-Za-z0-9_./\\-])(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
             foreach ($p in $pathMatches) { $artifacts.Add($p.Value) | Out-Null }
             continue
         }
@@ -126,7 +126,7 @@ function Extract-NamedArtifacts {
     foreach ($m in $inlineCmd) {
         $cmd = $m.Groups[1].Value.Trim()
         if (-not ($commands -contains $cmd)) { $commands.Add($cmd) | Out-Null }
-        $pathMatches = [regex]::Matches($cmd, '(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
+        $pathMatches = [regex]::Matches($cmd, '(?<![A-Za-z0-9_./\\-])(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
         foreach ($p in $pathMatches) {
             if (-not ($artifacts -contains $p.Value)) { $artifacts.Add($p.Value) | Out-Null }
         }
@@ -175,6 +175,20 @@ function Normalize-Command {
     return $Command
 }
 
+function Remove-TempFileQuietly {
+    # A test's orphaned grandchild can still hold the redirected output file after the
+    # command exits. Cleanup must never change the verdict: retry briefly, then leave it.
+    param([string]$Path)
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force -ErrorAction Stop }
+            return
+        } catch {
+            if ($attempt -lt 5) { Start-Sleep -Milliseconds 200 }
+        }
+    }
+}
+
 function Invoke-NamedCommand {
     param([string]$WorkingTree, [string]$Command, [int]$TimeoutMs)
     # Redirect to files instead of synchronously draining stdout and then stderr.
@@ -220,8 +234,8 @@ function Invoke-NamedCommand {
         }
     } finally {
         if ($proc) { $proc.Dispose() }
-        if (Test-Path -LiteralPath $stdoutFile) { Remove-Item -LiteralPath $stdoutFile -Force }
-        if (Test-Path -LiteralPath $stderrFile) { Remove-Item -LiteralPath $stderrFile -Force }
+        Remove-TempFileQuietly -Path $stdoutFile
+        Remove-TempFileQuietly -Path $stderrFile
     }
 }
 

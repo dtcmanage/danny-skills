@@ -164,6 +164,7 @@ $report
     $parsed = $null; try { $parsed = $r.stdout | ConvertFrom-Json } catch { }
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $parsed -and $parsed.category -eq 'code-review') 'claude wrapper -Json keeps stdout one JSON object'
     Assert-True ($r.stderr -match 'ROUTER_ALERT: ' -and (Get-TransportCount) -gt $beforeSends) 'wrapper passes -SendAlerts and prints the ROUTER_ALERT line (fake transport)'
+    Assert-True (([regex]::Matches($r.stderr, 'ROUTER_ALERT_TEST_TRANSPORT_ACTIVE')).Count -eq 1) 'test transport seam writes its stderr marker once per process'
     $claudeText = Get-Content -Raw -LiteralPath (Join-Path $buildScripts 'invoke-claude-chunk.ps1')
     Assert-True ($claudeText -notmatch "'(opus|sonnet|haiku)'" -and $claudeText -match 'Resolve-RouterModel -Category \$Category -Lane claude') 'claude wrapper has no fixed tier map'
 
@@ -212,7 +213,9 @@ $report
     New-Rollout (Join-Path $spendCodex 'sessions/2026/09/27/rollout-sol.jsonl') 'gpt-6-sol' @(@(1, 20), @(3, 27))
     $emptyClaude = Join-Path $temp 'spend-claude-empty'
     New-Item -ItemType Directory -Path $emptyClaude | Out-Null
-    $spend = Test-FrontierSpend -RunStartedAt $start -RunId 'run-a' -CodexHome $spendCodex -ClaudeHome $emptyClaude -Transport $fake 6>$null
+    $spend = Test-FrontierSpend -RunStartedAt $start -RunId 'run-a' -RemainingMilestones 3 -CodexHome $spendCodex -ClaudeHome $emptyClaude -Transport $fake 6>$null
+    $spendPost = @($script:spendRequests | Where-Object { [string]$_['uri'] -like '*/messages' } | Select-Object -Last 1)
+    Assert-True ($spendPost.Count -eq 1 -and [string]$spendPost[0]['body'] -match 'Remaining work: 3 milestone\(s\)' -and $spend.remaining_milestones -eq 3) 'frontier-spend alert message shows remaining work'
     Assert-True ($spend.codex.frontier_points -eq 10 -and $spend.codex.total_points -eq 13) 'codex frontier points attributed from rate_limits.primary.used_percent'
     Assert-True ($spend.alert_fired -and $spend.alert_key -eq 'frontier-spend:run-a' -and @($spend.lanes_over) -contains 'codex' -and $script:spendRequests.Count -gt 0) 'frontier-spend alert fires at 10 points'
     $count = $script:spendRequests.Count

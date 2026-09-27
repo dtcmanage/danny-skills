@@ -1,6 +1,7 @@
 param(
     [Alias('RunStartedAt')][datetime]$RouterSpendCliRunStartedAt,
     [Alias('RunId')][string]$RouterSpendCliRunId,
+    [Alias('RemainingMilestones')][Nullable[int]]$RouterSpendCliRemainingMilestones,
     [Alias('Json')][switch]$RouterSpendCliJson
 )
 Set-StrictMode -Version Latest
@@ -116,6 +117,8 @@ function Test-FrontierSpend {
     param(
         [Parameter(Mandatory)][datetime]$RunStartedAt,
         [Parameter(Mandatory)][string]$RunId,
+        # Milestones still to build, shown in the alert as the remaining work.
+        [Nullable[int]]$RemainingMilestones,
         [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }),
         [string]$ClaudeHome = $(if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }),
         [string]$TablePath,
@@ -133,11 +136,12 @@ function Test-FrontierSpend {
     $key = "frontier-spend:$RunId"
     $alert = $null
     if ($over.Count -gt 0) {
-        $message = "Frontier models have used $($codex.frontier_points) points of the weekly Codex limit and an estimated $($claude.estimated_points) points of the weekly Claude budget in run $RunId (Codex total since run start: $($codex.total_points) points). The run continues on the same models."
+        $remaining = if ($null -ne $RemainingMilestones) { "$RemainingMilestones milestone(s)" } else { 'not reported' }
+        $message = "Frontier models have used $($codex.frontier_points) points of the weekly Codex limit and an estimated $($claude.estimated_points) points of the weekly Claude budget in run $RunId (Codex total since run start: $($codex.total_points) points). Remaining work: $remaining. The run continues on the same models."
         $alert = Send-RouterAlert -Key $key -Message $message -Transport $Transport -ChatToStderr:$ChatToStderr
     }
     return [pscustomobject]@{
-        run_id = $RunId; run_started_at = $since.ToString('o'); threshold_points = $threshold; alert_key = $key
+        run_id = $RunId; remaining_milestones = $RemainingMilestones; run_started_at = $since.ToString('o'); threshold_points = $threshold; alert_key = $key
         codex = $codex; claude = $claude; lanes_over = @($over.ToArray())
         alert_fired = ($null -ne $alert -and [bool]$alert.sent -and -not [bool]$alert.deduped)
         alert = $alert
@@ -145,6 +149,6 @@ function Test-FrontierSpend {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Test-FrontierSpend -RunStartedAt $RouterSpendCliRunStartedAt -RunId $RouterSpendCliRunId -ChatToStderr:$RouterSpendCliJson
+    $result = Test-FrontierSpend -RunStartedAt $RouterSpendCliRunStartedAt -RunId $RouterSpendCliRunId -RemainingMilestones $RouterSpendCliRemainingMilestones -ChatToStderr:$RouterSpendCliJson
     if ($RouterSpendCliJson) { $result | ConvertTo-Json -Depth 8 -Compress } else { $result }
 }

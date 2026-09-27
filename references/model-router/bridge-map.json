@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "purpose": "Bridge mode: while the resolved router table's source is 'seed' (no research table yet), the resolver ignores eligibility and routes exactly as dt-build did before the model router. Ladders run weakest to strongest; a frontier rung is reached only by escalation, never as a first pick.",
+  "lanes": {
+    "codex": {
+      "ladder": [
+        { "model": "gpt-6-luna", "frontier": false },
+        { "model": "gpt-6-sol", "frontier": false },
+        { "model": "gpt-6-astra", "frontier": true }
+      ],
+      "categories": {
+        "complex-coding": "gpt-6-sol",
+        "routine-coding": "gpt-6-sol",
+        "code-review": "gpt-6-sol",
+        "ui-frontend": "gpt-6-sol",
+        "planning": "gpt-6-sol",
+        "deep-research": "gpt-6-sol",
+        "long-form-writing": "gpt-6-sol",
+        "mechanical": "gpt-6-luna",
+        "image-generation": "gpt-image-2"
+      }
+    },
+    "claude": {
+      "ladder": [
+        { "model": "claude-haiku-4-5-20251001", "frontier": false },
+        { "model": "claude-sonnet-5", "frontier": false },
+        { "model": "claude-opus-5-5", "frontier": false },
+        { "model": "claude-fable-5-1", "frontier": true }
+      ],
+      "categories": {
+        "complex-coding": "claude-opus-5-5",
+        "planning": "claude-opus-5-5",
+        "long-form-writing": "claude-opus-5-5",
+        "routine-coding": "claude-sonnet-5",
+        "code-review": "claude-sonnet-5",
+        "ui-frontend": "claude-sonnet-5",
+        "deep-research": "claude-sonnet-5",
+        "mechanical": "claude-haiku-4-5-20251001"
+      }
+    }
+  }
+}

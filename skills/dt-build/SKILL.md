@@ -102,7 +102,16 @@ Claude Fable) run only when no non-frontier model is eligible, or as an explicit
 recorded reason. The wrappers take `-Category`, `-Protected`, and `-EscalateFrom`; a legacy `-Tier` alone
 maps `complex` -> `complex-coding` protected, `standard` -> `routine-coding`, `light` -> `mechanical`.
 
-**Escalation.** A failed attempt retries one step up that category's ranked list: pass
+**Bridge mode (no research table yet).** While the router's table source is `seed`, the router ignores
+eligibility and routes exactly as dt-build did before the router, from
+`references/model-router/bridge-map.json`: Codex `gpt-6-sol` for every coding, review, planning, research, and
+writing category and `gpt-6-luna` for `mechanical`; Claude `opus` for `complex-coding`, `planning`, and
+`long-form-writing`, `sonnet` for `routine-coding`, `code-review`, `ui-frontend`, and `deep-research`, `haiku`
+for `mechanical`. The router reason starts `bridge mode (no research table yet):`. Once a research table
+exists, the evidence rules above apply unchanged.
+
+**Escalation.** A failed attempt retries one step up that category's ranked list (in bridge mode, one rung up
+the lane ladder: `gpt-6-luna` -> `gpt-6-sol` -> `gpt-6-astra`; haiku -> sonnet -> opus -> fable): pass
 `-EscalateFrom <the model that failed>` to the wrapper (on claude-host, resolve with
 `resolve-model.ps1 -Category <c> -Lane claude -EscalateFrom <model> -Json`). Escalation IS the second
 attempt and stays inside the two-attempt budget.
@@ -124,8 +133,9 @@ dispatch through `scripts/invoke-claude-chunk.ps1` instead. Relay any `ROUTER_AL
 the next step. Never leave a finished agent idle. Codex wrapper sessions already exit when done.
 
 **Frontier spend (alert only).** At each milestone boundary (after step 6.i), run
-`pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1 -RunStartedAt <run start, ISO> -RunId <RUN_ID> -Json`.
-It alerts Danny once per run when frontier models reach 10 points of a weekly limit; relay its
+`pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1 -RunStartedAt <run start, ISO> -RunId <RUN_ID> -RemainingMilestones <n> -Json`.
+It alerts Danny once per run when frontier models reach 10 points of a weekly limit, with spend so far and the
+remaining milestone count; relay its
 `ROUTER_ALERT:` line if one prints. It never changes a model and never stops the run.
 
 **Mandatory model-selection report (hard dispatch gate).** Immediately before every substantive subagent
@@ -291,7 +301,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 - Run the roadmap's environment, API, database, browser, credential-source, and toolchain probes against the
   actual target environment whenever the design depends on them.
 - Classify failures as `environment`, `tooling`, `contract_revision`, or `implementation`. Only an
-  `implementation` failure consumes the two-attempt automatic-agent budget. Persist the category and evidence.
+  `implementation` failure consumes the two-attempt automatic-agent budget. Persist the failure class and evidence.
 - A design-required live database/browser/API replay is build acceptance unless the roadmap explicitly labels
   it as a later ship gate. Mock/unit parity alone cannot mark the build COMPLETE.
 
@@ -331,6 +341,8 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   worktree. Do not hand-roll `codex exec` or `claude -p`. Automatic implementation failures consume at most two attempts;
   environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
   restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
+  After collecting the subagent's report, stop that subagent (TaskStop on claude-host) before the next step;
+  never leave a finished agent idle.
 - c1. **Handle a checkpoint return.** If the report's `CONTINUATION_STATE` names a path, follow "Continue
   in a fresh session" above before any verification; verify only when a report returns `NONE`.
 - c2. **Hold the milestone scope lock.** Every build/fix prompt carries the scope-lock block from
@@ -350,6 +362,9 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   and downgrade status. This append-only row is the final ledger's source of truth.
 - h. **Update the integration branch** (`<integration-branch>` from `build-plan.md`) via compare-and-swap through `scripts/branch-cas-update.ps1` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
 - i. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (e–g) and the integration branch is updated (h), rewrite `_build-state.md` in the project's planning folder (the folder holding `plan-draft.md` / `design-final*.md` / `roadmap.md`, typically `<project>/design/`) as an atomic full-file rewrite from the canonical template `skills/dt-pipeline/templates/build-state-template.md` — reference that template, never duplicate its shape here. Record phase, current milestone, completed list (this milestone appended with its commit SHA), in-flight work, last commit SHA, uncommitted artifacts, and next step. This file is distinct from the run-folder `build-state.md` (dt-build's internal run scaffold from step 4): `_build-state.md` is the crash-resume checkpoint dt-pipeline and Danny read.
+  Then run the frontier-spend check (alert only): `pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1
+  -RunStartedAt <run start, ISO> -RunId <RUN_ID> -RemainingMilestones <milestones not yet accepted> -Json`, and
+  relay its `ROUTER_ALERT:` line if one prints.
 
 - j. **Triage discovered enhancements.** The orchestrator collects every `DISCOVERED_ENHANCEMENTS` entry
   from the milestone's chunk reports plus any out-of-scope findings from the verifier, and decides each one

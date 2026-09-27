@@ -56,7 +56,15 @@ function Invoke-RouterAlertRequest {
     if ([datetime]::UtcNow -ge $Deadline) { throw 'Alert batch deadline exceeded' }
     if ($Transport) { return & $Transport $Request }
     # Test seam for child processes that cannot receive a scriptblock: a script path that acts as the transport.
-    if ($env:DT_MODEL_ROUTER_ALERT_TRANSPORT) { return & $env:DT_MODEL_ROUTER_ALERT_TRANSPORT $Request }
+    if ($env:DT_MODEL_ROUTER_ALERT_TRANSPORT) {
+        # One stderr marker per process so a leaked test transport is visible. AppDomain data
+        # survives the file being dot-sourced again in the same process.
+        if (-not [AppDomain]::CurrentDomain.GetData('DtModelRouterTestTransportNoticed')) {
+            [AppDomain]::CurrentDomain.SetData('DtModelRouterTestTransportNoticed', $true)
+            [Console]::Error.WriteLine('ROUTER_ALERT_TEST_TRANSPORT_ACTIVE')
+        }
+        return & $env:DT_MODEL_ROUTER_ALERT_TRANSPORT $Request
+    }
     return Invoke-RouterAlertTransport -Request $Request -Deadline $Deadline
 }
 
@@ -81,7 +89,7 @@ function Write-RouterAlertLogWithRetry {
 function Get-RouterAlertMessage {
     param([string]$Key)
     switch -Regex -CaseSensitive ($Key) {
-        '^router-seed-table-in-use$' { return "Model router is using its starter table; picks use each lane's default model until the research step builds a real table." }
+        '^router-seed-table-in-use$' { return 'Model router has no research table yet, so routing matches the pre-router defaults until research runs.' }
         '^new-model:(.+)$' { return "Model router found a new model: $($Matches[1]). Research is needed before it can be selected." }
         '^model-missing:(.+)$' { return "Model router can no longer find model $($Matches[1]) in the vendor catalog." }
         '^catalog-check-timeout$' { return 'Model router catalog check timed out; it will retry later.' }

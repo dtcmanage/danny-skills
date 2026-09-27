@@ -153,7 +153,47 @@ try {
     $image = Resolve-RouterModel -SkipModelCheck -Category image-generation -Lane codex -Catalog ([pscustomobject]@{ models = @() })
     Assert-True ($image.model -eq 'gpt-image-2' -and @($image.alerts | Where-Object { $_ -match 'UNSELECTABLE|fallback_unselectable' }).Count -eq 0) 'image advice bypasses chat catalog'
     $env:DT_MODEL_ROUTER_STATE = $temp
+
+    # Bridge mode: no research table (seed source) routes exactly as dt-build did pre-router.
+    Remove-Item -LiteralPath $fixturePath -Force
+    $bridgeCatalog = [pscustomobject]@{ models = @(
+        [pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; description = 'frontier' },
+        [pscustomobject]@{ slug = 'gpt-6-sol'; visibility = 'list' },
+        [pscustomobject]@{ slug = 'gpt-6-luna'; visibility = 'list' }) }
+    $bridgeExpected = [ordered]@{
+        'complex-coding' = @('gpt-6-sol','claude-opus-5-5'); 'routine-coding' = @('gpt-6-sol','claude-sonnet-5')
+        'code-review' = @('gpt-6-sol','claude-sonnet-5'); 'ui-frontend' = @('gpt-6-sol','claude-sonnet-5')
+        'planning' = @('gpt-6-sol','claude-opus-5-5'); 'deep-research' = @('gpt-6-sol','claude-sonnet-5')
+        'long-form-writing' = @('gpt-6-sol','claude-opus-5-5'); 'mechanical' = @('gpt-6-luna','claude-haiku-4-5-20251001')
+        'image-generation' = @('gpt-image-2',$null) }
+    foreach ($category in $bridgeExpected.Keys) {
+        foreach ($lane in @('codex','claude')) {
+            $want = $bridgeExpected[$category][$(if ($lane -eq 'codex') { 0 } else { 1 })]
+            if ($null -eq $want) { continue }
+            $pick = Resolve-RouterModel -SkipModelCheck -Category $category -Lane $lane -Catalog $bridgeCatalog
+            Assert-True ($pick.model -eq $want -and $pick.reason -match '^bridge mode \(no research table yet\): ' -and $pick.table_source -eq 'seed' -and @($pick.alerts | Where-Object { $_ -eq 'router-seed-table-in-use' }).Count -eq 1) "bridge pick $category/$lane -> $want"
+        }
+    }
+    $protectedBridge = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Protected -Catalog $bridgeCatalog
+    Assert-True ($protectedBridge.model -eq 'gpt-6-sol' -and $protectedBridge.protected) 'bridge complex-coding protected -> gpt-6-sol'
+    foreach ($step in @(@('codex','gpt-6-luna','gpt-6-sol'), @('codex','gpt-6-sol','gpt-6-astra'), @('claude','claude-haiku-4-5-20251001','claude-sonnet-5'), @('claude','claude-sonnet-5','claude-opus-5-5'), @('claude','claude-opus-5-5','claude-fable-5-1'))) {
+        $up = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $step[0] -EscalateFrom $step[1] -Catalog $bridgeCatalog
+        Assert-True ($up.model -eq $step[2] -and $up.reason -match 'one rung up') "bridge escalation $($step[1]) -> $($step[2])"
+    }
+    foreach ($top in @(@('codex','gpt-6-astra'), @('claude','claude-fable-5-1'))) {
+        $same = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $top[0] -EscalateFrom $top[1] -Catalog $bridgeCatalog
+        Assert-True ($same.model -eq $top[1] -and $same.reason -match 'already at the top') "bridge escalation at top keeps $($top[1]) and says so"
+    }
+    $noSol = [pscustomobject]@{ models = @([pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; description = 'frontier' }, [pscustomobject]@{ slug = 'gpt-6-luna'; visibility = 'list' }) }
+    $down = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane codex -Catalog $noSol
+    Assert-True ($down.model -eq 'gpt-6-luna' -and @($down.alerts | Where-Object { $_ -eq 'UNSELECTABLE_CODEX_MODEL: gpt-6-sol' }).Count -eq 1) 'bridge unselectable pick falls to next ladder rung with alert, never a frontier first pick'
+    $escalatedPastGap = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane codex -EscalateFrom 'gpt-6-luna' -Catalog $noSol
+    Assert-True ($escalatedPastGap.model -eq 'gpt-6-astra') 'bridge escalation may reach the frontier rung when the next rung is unselectable'
+    Assert-True ((Get-RouterAlertMessage -Key 'router-seed-table-in-use') -match 'pre-router defaults until research runs') 'seed alert says routing matches pre-router defaults'
+
     Save-Fixture (New-Fixture) $fixturePath
+    $research = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude
+    Assert-True ($research.table_source -eq 'live' -and $research.reason -notmatch 'bridge mode' -and @($research.alerts | Where-Object { $_ -eq 'router-seed-table-in-use' }).Count -eq 0) 'research-sourced table uses evidence rules, not bridge mode'
     $a = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude | ConvertTo-Json -Depth 12 -Compress
     $b = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude | ConvertTo-Json -Depth 12 -Compress
     Assert-True ($a -ceq $b) 'identical input produces identical JSON'
