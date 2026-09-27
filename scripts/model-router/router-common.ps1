@@ -58,7 +58,7 @@ function Test-RouterTable {
                 }
                 foreach ($number in @('est_burn','est_seconds','pass_rate')) {
                     $value = $candidate.$number
-                    if ($null -ne $value -and ($value -isnot [valuetype] -or $value -is [bool] -or [double]$value -lt 0 -or ($number -eq 'pass_rate' -and [double]$value -gt 1))) { $errors.Add("$($number.ToUpper()): $where/$id") }
+                    if ($null -ne $value -and ($value -isnot [valuetype] -or $value -is [bool] -or -not [double]::IsFinite([double]$value) -or [double]$value -lt 0 -or [double]$value -gt 1000000000000.0 -or ($number -eq 'pass_rate' -and [double]$value -gt 1))) { $errors.Add("$($number.ToUpper()): $where/$id") }
                 }
                 if ($candidate.pass_samples -isnot [long] -or $candidate.pass_samples -lt 0) { $errors.Add("PASS_SAMPLES: $where/$id") }
                 if ($id -eq $fallback -and $candidate.frontier -eq $false) { $fallbackFound = $true }

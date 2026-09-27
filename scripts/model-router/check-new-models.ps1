@@ -118,7 +118,7 @@ function Invoke-RouterModelCheck {
             Write-RouterJsonAtomic -Path $registryPath -Value @($listing.ToArray())
         } else {
             $registry = @(Get-Content -LiteralPath $registryPath -Raw | ConvertFrom-Json)
-            $queue = if (Test-Path -LiteralPath $queuePath) { @(Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json) } else { @() }
+            $queue = @(if (Test-Path -LiteralPath $queuePath) { Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json })
             $current = @{}; foreach ($item in $listing) { $current["$($item.vendor)/$($item.id)"] = $item }
             $old = @{}; foreach ($item in $registry) { $old["$($item.vendor)/$($item.id)"] = $item }
             foreach ($item in $listing) {
@@ -136,6 +136,25 @@ function Invoke-RouterModelCheck {
             if ($result.new_models.Count) { Write-RouterJsonAtomic -Path $queuePath -Value @($queue) }
         }
         Write-RouterJsonAtomic -Path $stamp -Value @{ checked_at = $result.checked_at }
+        if (Test-Path -LiteralPath $queuePath) {
+            $pending = @(Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json)
+            if ($pending.Count) {
+                $retryStamp = Join-Path $state 'last-research-launch.json'
+                $due = $true
+                if (Test-Path -LiteralPath $retryStamp) {
+                    try { $lastLaunch = Get-Content -LiteralPath $retryStamp -Raw | ConvertFrom-Json; $due = (($Now - [datetime]$lastLaunch.launched_at).TotalHours -ge 24) } catch { }
+                }
+                if ($due) {
+                    try {
+                        if (-not (Get-Command Start-RouterResearchDetached -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'run-router-research.ps1') }
+                        $launch = Start-RouterResearchDetached -Now $Now
+                        foreach ($alert in @($launch.alerts)) { $result.alerts += [string]$alert }
+                        if ($launch.launched) { Write-RouterJsonAtomic -Path $retryStamp -Value @{ launched_at = $Now.ToString('o') } }
+                        else { $result.alerts += 'research-already-running' }
+                    } catch { $result.alerts += 'research-launch-error' }
+                }
+            }
+        }
         return [pscustomobject]$result
     } finally {
         foreach ($job in $jobs) { if ($job.State -notin @('Completed','Failed','Stopped')) { Stop-Job -Job $job }; Remove-Job -Job $job -Force }

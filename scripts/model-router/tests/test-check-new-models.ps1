@@ -18,6 +18,8 @@ New-Item -ItemType Directory -Path $temp | Out-Null
 $now = [datetime]'2026-09-27T12:00:00Z'
 try {
     Reset-State
+    $script:launchCount = 0
+    $script:RouterResearchLauncher = { param($exe,$arguments) $script:launchCount++ }
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }
     @{ checked_at = $now.AddHours(-1).ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'last-check.json')
     $script:RouterModelCheckFetcher = { param($vendor) throw 'network should not run' }
@@ -33,6 +35,7 @@ try {
     $r = Invoke-RouterModelCheck -Now $now.AddHours(13)
     $queue = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'pending-research.json') -Raw | ConvertFrom-Json)
     Assert-True ($r.new_models -contains 'gpt-6-new' -and $r.alerts -contains 'new-model:gpt-6-new' -and $queue[0].id -eq 'gpt-6-new') 'new model queued and alerted'
+    Assert-True ($script:launchCount -eq 1) 'new queue launches detached research once'
     $registry = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
     Assert-True ((@($registry | Where-Object id -eq 'gpt-6-new')[0]).status -eq 'unprofiled') 'new model remains unprofiled'
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
@@ -41,6 +44,12 @@ try {
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-new' } else { 'claude-sonnet-4-5' } }
     $r = Invoke-RouterModelCheck -Now $now.AddHours(26)
     Assert-True ($r.missing_models -contains 'gpt-6-sol' -and $r.alerts -contains 'model-missing:gpt-6-sol') 'missing model alerted'
+    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research.lock') -Force
+    $r = Invoke-RouterModelCheck -Now $now.AddHours(39)
+    Assert-True ($r.new_models.Count -eq 0 -and $script:launchCount -eq 2) 'pending queue retries in next daily window without new models'
+    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research.lock') -Force
+    $r = Invoke-RouterModelCheck -Force -Now $now.AddHours(40)
+    Assert-True ($script:launchCount -eq 2) 'pending queue launch limited to once per 24 hours'
 
     $registryPath = Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json'
     $before = [IO.File]::ReadAllText($registryPath)
