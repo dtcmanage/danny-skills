@@ -15,6 +15,10 @@ $temp = Join-Path $env:TEMP ('model-router-alert-test-' + [guid]::NewGuid().ToSt
 [System.IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 try {
+    Remove-Variable -Name RouterAlertSecretCache -Scope Script -ErrorAction SilentlyContinue
+    $probeError = ''
+    try { $null = Invoke-RouterAlertTransport -Request @{ kind = 'secret'; name = 'router-selftest-nonexistent-secret' } -Deadline ([datetime]::UtcNow.AddSeconds(20)) } catch { $probeError = $_.Exception.Message }
+    Assert-True ($probeError -notmatch 'has not been set') 'real secret path runs under StrictMode without an uninitialized cache error'
     $script:requests = [System.Collections.Generic.List[object]]::new()
     $script:failDm = $false
     $script:failEmail = $false

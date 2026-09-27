@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 function Invoke-RouterAlertTransport {
     param([object]$Request, [datetime]$Deadline = [datetime]::MaxValue)
     if ($Request.kind -eq 'secret') {
-        if (-not $script:RouterAlertSecretCache) { $script:RouterAlertSecretCache = @{} }
+        if (-not (Get-Variable -Name RouterAlertSecretCache -Scope Script -ErrorAction SilentlyContinue) -or $null -eq $script:RouterAlertSecretCache) { $script:RouterAlertSecretCache = @{} }
         if ($script:RouterAlertSecretCache.ContainsKey($Request.name)) {
             $cached = $script:RouterAlertSecretCache[$Request.name]
             if ($null -eq $cached) { throw 'Secret lookup failed' }
