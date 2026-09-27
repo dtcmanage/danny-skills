@@ -8,6 +8,7 @@
         { "model": "gpt-6-sol", "frontier": false },
         { "model": "gpt-6-astra", "frontier": true }
       ],
+      "protected": "gpt-6-sol",
       "categories": {
         "complex-coding": "gpt-6-sol",
         "routine-coding": "gpt-6-sol",
@@ -27,6 +28,7 @@
         { "model": "claude-opus-5-5", "frontier": false },
         { "model": "claude-fable-5-1", "frontier": true }
       ],
+      "protected": "claude-opus-5-5",
       "categories": {
         "complex-coding": "claude-opus-5-5",
         "planning": "claude-opus-5-5",

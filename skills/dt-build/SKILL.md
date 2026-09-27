@@ -90,7 +90,8 @@ orchestrator gives each chunk exactly one router category and records it in `bui
 | Chunk | Category | Protected |
 | :-- | :-- | :-- |
 | Load-bearing (`scripts/identify-load-bearing.ps1` flagged it) or security-sensitive / live-write | `complex-coding` | yes (`-Protected`) |
-| Ordinary implementation, including routine mechanical work | `routine-coding` | no |
+| Ordinary implementation | `routine-coding` | no |
+| Routine mechanical work (boilerplate, config, renames, straightforward tests, preflight) | `mechanical` | no |
 | UI / front-end chunk | `ui-frontend` | no (yes when also load-bearing) |
 | Independent verifier (step 6.d) and final combined-diff review (step 6.5) | `code-review` | yes only for a load-bearing milestone |
 
@@ -107,8 +108,15 @@ eligibility and routes exactly as dt-build did before the router, from
 `references/model-router/bridge-map.json`: Codex `gpt-6-sol` for every coding, review, planning, research, and
 writing category and `gpt-6-luna` for `mechanical`; Claude `opus` for `complex-coding`, `planning`, and
 `long-form-writing`, `sonnet` for `routine-coding`, `code-review`, `ui-frontend`, and `deep-research`, `haiku`
-for `mechanical`. The router reason starts `bridge mode (no research table yet):`. Once a research table
-exists, the evidence rules above apply unchanged.
+for `mechanical`. A `-Protected` call in any category resolves instead to the lane's protected pick
+(`claude-opus-5-5` on Claude, `gpt-6-sol` on Codex), matching the pre-router tier behavior where load-bearing
+and security-sensitive work ran on the complex tier regardless of the chunk's category. The router reason
+starts `bridge mode (no research table yet):`. Once a research table exists, the evidence rules above apply
+unchanged.
+
+Bridge mode reproduces the pre-router tier behavior exactly, including protected work running on the top
+non-frontier model on each lane; bridge escalation may reach a frontier model (`gpt-6-astra`, `claude-fable-5-1`)
+only on a retry, never as a first pick.
 
 **Escalation.** A failed attempt retries one step up that category's ranked list (in bridge mode, one rung up
 the lane ladder: `gpt-6-luna` -> `gpt-6-sol` -> `gpt-6-astra`; haiku -> sonnet -> opus -> fable): pass

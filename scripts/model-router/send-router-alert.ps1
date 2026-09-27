@@ -98,6 +98,7 @@ function Get-RouterAlertMessage {
         '^drift:' { return "Model router detected table drift: $Key" }
         '^router-live-table-invalid' { return 'Model router live table is invalid; it is using the starter table.' }
         '^fallback_unselectable' { return "Model router fallback cannot be selected: $Key" }
+        '^UNSELECTABLE_CODEX_MODEL:\s*(.+)$' { return "Model $($Matches[1]) is not selectable in the Codex catalog; the router used the next option." }
         default { return $Key }
     }
 }

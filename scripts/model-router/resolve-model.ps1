@@ -63,6 +63,11 @@ function Resolve-RouterBridgeModel {
     $laneMap = $map.lanes.$Lane
     $mapped = [string]$laneMap.categories.$Category
     if (-not $mapped) { throw "BRIDGE_MAP: no $Category/$Lane mapping" }
+    if ($IsProtected) {
+        $protectedPick = [string]$laneMap.protected
+        if (-not $protectedPick) { throw "BRIDGE_MAP: no protected pick for $Lane" }
+        $mapped = $protectedPick
+    }
     $ladder = @($laneMap.ladder)
     $ids = @($ladder | ForEach-Object { [string]$_.model })
     $label = if ($IsProtected) { "$Category/$Lane protected" } else { "$Category/$Lane" }

@@ -176,6 +176,10 @@ try {
     }
     $protectedBridge = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Protected -Catalog $bridgeCatalog
     Assert-True ($protectedBridge.model -eq 'gpt-6-sol' -and $protectedBridge.protected) 'bridge complex-coding protected -> gpt-6-sol'
+    foreach ($case in @(@('code-review','codex','gpt-6-sol'), @('code-review','claude','claude-opus-5-5'), @('routine-coding','claude','claude-opus-5-5'), @('mechanical','codex','gpt-6-sol'))) {
+        $protectedCase = Resolve-RouterModel -SkipModelCheck -Category $case[0] -Lane $case[1] -Protected -Catalog $bridgeCatalog
+        Assert-True ($protectedCase.model -eq $case[2] -and $protectedCase.protected) "bridge $($case[0])/$($case[1]) protected -> $($case[2])"
+    }
     foreach ($step in @(@('codex','gpt-6-luna','gpt-6-sol'), @('codex','gpt-6-sol','gpt-6-astra'), @('claude','claude-haiku-4-5-20251001','claude-sonnet-5'), @('claude','claude-sonnet-5','claude-opus-5-5'), @('claude','claude-opus-5-5','claude-fable-5-1'))) {
         $up = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $step[0] -EscalateFrom $step[1] -Catalog $bridgeCatalog
         Assert-True ($up.model -eq $step[2] -and $up.reason -match 'one rung up') "bridge escalation $($step[1]) -> $($step[2])"

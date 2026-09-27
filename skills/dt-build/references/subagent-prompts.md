@@ -34,8 +34,9 @@ Lane routing:
 - Repo-wide navigation, UI judgment, and workspace-memory work are the Claude lane's named strengths.
 - Give every chunk one model-router category at roadmap time, on either lane:
   `complex-coding` with `-Protected` for load-bearing or security-sensitive / live-write
-  chunks; `routine-coding` for all other implementation; `ui-frontend` for UI chunks;
-  `code-review` for verifiers and the final combined-diff review. The router
+  chunks; `routine-coding` for other implementation; `mechanical` for routine mechanical
+  work (boilerplate, config, renames, straightforward tests, preflight); `ui-frontend`
+  for UI chunks; `code-review` for verifiers and the final combined-diff review. The router
   (`scripts/model-router/resolve-model.ps1`) picks the model; never name a slug or a
   tier alias. Protected must be earned: it needs a load-bearing flag or a
   security-sensitive or live-write milestone, named in the selection reason.
