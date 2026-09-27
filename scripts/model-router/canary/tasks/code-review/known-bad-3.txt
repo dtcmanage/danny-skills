@@ -1,0 +1,1 @@
+Line 13 uses OR. The actual bug is on line 11: it allows banned admins.

@@ -20,6 +20,10 @@ try {
         & python (Join-Path $task.FullName 'grader.py') (Join-Path $task.FullName 'known-bad.txt') | Out-Null
         Assert-True ($LASTEXITCODE -ne 0) "$($task.Name) known-bad fails"
     }
+    foreach ($badAnswer in @(Get-ChildItem -LiteralPath (Join-Path $taskRoot 'code-review') -Filter 'known-bad-*.txt')) {
+        & python (Join-Path $taskRoot 'code-review/grader.py') $badAnswer.FullName | Out-Null
+        Assert-True ($LASTEXITCODE -ne 0) "code-review $($badAnswer.Name) fails"
+    }
     @([pscustomobject]@{ id='gpt-6-new'; lane='codex'; status='unprofiled' },[pscustomobject]@{ id='claude-new'; lane='claude'; status='unprofiled' }) | ConvertTo-Json | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json')
     @([pscustomobject]@{ model='claude-flagged'; category='code-review'; lane='claude' }) | ConvertTo-Json | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'drift-flags.json')
     $scope = @(Get-CanaryScope)
@@ -28,6 +32,10 @@ try {
     $fake = { param($model,$lane,$task,$prompt,$run) $script:invocations++; if ($task -eq 'pelican') { return '<svg/>' }; return [IO.File]::ReadAllText((Join-Path $taskRoot "$task/known-good.txt")) }
     $dry = Invoke-RouterCanary -Models @('gpt-6-luna') -DryRun -Invoker $fake
     Assert-True ($script:invocations -eq 0 -and $dry.burn.input_tokens -gt 0 -and $dry.scope.Count -eq 1) 'dry run calls no model and reports burn'
+    $snapshot = Get-CanaryBurn -Scope @([pscustomobject]@{ model='claude-haiku-4-5-20251001'; lane='claude'; tasks=@('code-review') })
+    Assert-True ($snapshot.unpriced.Count -eq 0 -and $snapshot.rows[0].api_equivalent_usd -gt 0 -and $snapshot.rows[0].input_tokens -eq 171000) 'dated Haiku snapshot priced with Claude cache-write overhead'
+    $zeroTask = Get-CanaryBurn -Scope @([pscustomobject]@{ model='gpt-image-2'; lane='codex'; tasks=@() }, [pscustomobject]@{ model='unknown-model-x'; lane='codex'; tasks=@('code-review') })
+    Assert-True ((@($zeroTask.unpriced) -join ',') -eq 'unknown-model-x' -and $zeroTask.priced_usd -eq 0) 'zero-call models are not listed as unpriced; all-unpriced scope sums to 0'
     $first = Invoke-RouterCanary -Models @('gpt-6-luna') -Invoker $fake -Now ([datetime]'2026-09-27T10:00:00Z')
     Assert-True ($first.results.Count -eq 3 -and $script:invocations -eq 4 -and @($first.results | Where-Object { -not $_.pass }).Count -eq 0) 'three graded runs per model-task plus pelican'
     $rows = @(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ConvertFrom-Json)

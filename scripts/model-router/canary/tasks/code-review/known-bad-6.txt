@@ -1,0 +1,1 @@
+Line 13 has the wrong OR operator and allows comments about banned users.

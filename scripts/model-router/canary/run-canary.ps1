@@ -7,7 +7,11 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../../invoke-codex-process.ps1')
 . (Join-Path $PSScriptRoot '../../claude-cli-result.ps1')
 
-$script:CanaryInputTokens = 1200
+# Read-only first-turn measurements on 2026-09-27: codex exec about 23k input
+# tokens; claude -p 25k-57k cache-creation input tokens. Use the upper Claude
+# bound to include CLI fixed overhead in each call's estimate.
+$script:CanaryCodexInputTokens = 23000
+$script:CanaryClaudeCacheWriteTokens = 57000
 $script:CanaryOutputTokens = 600
 $script:CanaryRuns = 3
 $script:CanaryTimeoutMs = 120000
@@ -60,19 +64,31 @@ function Get-CanaryScope {
     return @($scope)
 }
 
+function Get-CanaryPriceKey {
+    param([string]$Model,[object]$PriceModels)
+    if (-not $Model) { return $null }
+    foreach ($key in @($PriceModels.PSObject.Properties.Name | Sort-Object { $_.Length } -Descending)) {
+        if ($Model.Equals($key,[StringComparison]::Ordinal) -or $Model.StartsWith(($key + '-'),[StringComparison]::Ordinal)) { return $key }
+    }
+    return $null
+}
+
 function Get-CanaryBurn {
     param([object[]]$Scope)
     $prices = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json
     $rows = foreach ($item in $Scope) {
         $count = @($item.tasks).Count * $script:CanaryRuns
-        $price = $prices.models.PSObject.Properties[[string]$item.model]
+        $priceKey = Get-CanaryPriceKey -Model ([string]$item.model) -PriceModels $prices.models
+        $price = if ($priceKey) { $prices.models.PSObject.Properties[$priceKey] } else { $null }
+        $inputTokens = if ($item.lane -eq 'claude') { $script:CanaryClaudeCacheWriteTokens } else { $script:CanaryCodexInputTokens }
+        $inputRate = if (-not $price) { $null } elseif ($item.lane -eq 'claude') { $price.Value.prices_usd_per_mtok.cache_write } else { $price.Value.prices_usd_per_mtok.input }
         $usd = $null
-        if ($price -and $null -ne $price.Value.prices_usd_per_mtok.input -and $null -ne $price.Value.prices_usd_per_mtok.output) {
-            $usd = [Math]::Round(($count * ($script:CanaryInputTokens * [double]$price.Value.prices_usd_per_mtok.input + $script:CanaryOutputTokens * [double]$price.Value.prices_usd_per_mtok.output) / 1000000),6)
+        if ($price -and $null -ne $inputRate -and $null -ne $price.Value.prices_usd_per_mtok.output) {
+            $usd = [Math]::Round(($count * ($inputTokens * [double]$inputRate + $script:CanaryOutputTokens * [double]$price.Value.prices_usd_per_mtok.output) / 1000000),6)
         }
-        [pscustomobject]@{ model=$item.model; tasks=@($item.tasks).Count; runs=$count; input_tokens=$count*$script:CanaryInputTokens; output_tokens=$count*$script:CanaryOutputTokens; api_equivalent_usd=$usd }
+        [pscustomobject]@{ model=$item.model; tasks=@($item.tasks).Count; runs=$count; input_tokens=$count*$inputTokens; output_tokens=$count*$script:CanaryOutputTokens; api_equivalent_usd=$usd }
     }
-    return [pscustomobject]@{ assumptions=[pscustomobject]@{ runs_per_task=$script:CanaryRuns; input_tokens_per_task=$script:CanaryInputTokens; output_tokens_per_task=$script:CanaryOutputTokens }; rows=@($rows); input_tokens=(@($rows | Measure-Object input_tokens -Sum)[0].Sum); output_tokens=(@($rows | Measure-Object output_tokens -Sum)[0].Sum); priced_usd=[Math]::Round([double](@($rows | Where-Object { $null -ne $_.api_equivalent_usd } | Measure-Object api_equivalent_usd -Sum)[0].Sum),6); unpriced=@($rows | Where-Object { $null -eq $_.api_equivalent_usd } | ForEach-Object model) }
+    return [pscustomobject]@{ assumptions=[pscustomobject]@{ runs_per_task=$script:CanaryRuns; codex_input_tokens_per_task=$script:CanaryCodexInputTokens; claude_cache_write_tokens_per_task=$script:CanaryClaudeCacheWriteTokens; output_tokens_per_task=$script:CanaryOutputTokens }; rows=@($rows); input_tokens=[long](@($rows | ForEach-Object { [long]$_.input_tokens }) | Measure-Object -Sum).Sum; output_tokens=[long](@($rows | ForEach-Object { [long]$_.output_tokens }) | Measure-Object -Sum).Sum; priced_usd=[Math]::Round([double](@($rows | Where-Object { $null -ne $_.api_equivalent_usd } | ForEach-Object { [double]$_.api_equivalent_usd }) | Measure-Object -Sum).Sum,6); unpriced=@($rows | Where-Object { $_.runs -gt 0 -and $null -eq $_.api_equivalent_usd } | ForEach-Object model) }
 }
 
 function Invoke-CanaryModel {
