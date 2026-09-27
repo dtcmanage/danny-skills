@@ -611,3 +611,5 @@ finally {
     Remove-Item Env:DT_FAKE_CODEX_MODE -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+exit 0
