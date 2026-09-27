@@ -184,7 +184,7 @@ function Send-RouterAlerts {
         $key = if ($alert -is [string]) { $alert } else { [string]$alert.key }
         $message = if ($alert -is [string]) { Get-RouterAlertMessage -Key $key } else { [string]$alert.message }
         if ([datetime]::UtcNow -ge $deadline) { [pscustomobject]@{ key = $key; sent = $false; channel = 'none'; deduped = $false; error = 'busy'; log_error = $null } }
-        else { Send-RouterAlert -Key $key -Message $message -Severity $(if ($key -eq 'research-stale-lock-cleared') { 'info' } else { 'warn' }) -Transport $Transport -Deadline $deadline }
+        else { Send-RouterAlert -Key $key -Message $message -Severity $(if ($key -eq 'research-stale-lock-cleared' -or $key -like 'drift-cleared:*') { 'info' } else { 'warn' }) -Transport $Transport -Deadline $deadline }
     }
 }
 

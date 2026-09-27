@@ -121,6 +121,26 @@ function Resolve-RouterModel {
             }
         }
     }
+    $driftApplied = $false
+    $flags = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-flags.json') | Where-Object { $_.category -eq $Category -and $_.lane -eq $Lane })
+    if ($isProtected -and -not $EscalateFrom) {
+        foreach ($flag in $flags) {
+            if ($byStrength[0].model -eq $flag.model) { $alerts.Add("drift-no-alternative:$($flag.model):$Category`:$Lane") }
+        }
+    }
+    if (-not $EscalateFrom -and -not $isProtected) {
+        foreach ($flag in $flags) {
+            $position = -1
+            for ($i = 0; $i -lt $rankedCandidates.Count; $i++) { if ($rankedCandidates[$i].model -eq $flag.model) { $position = $i; break } }
+            if ($position -lt 0) { continue }
+            if ($position + 1 -ge $rankedCandidates.Count) { $alerts.Add("drift-no-alternative:$($flag.model):$Category`:$Lane"); continue }
+            $moveUp = $rankedCandidates[$position + 1]
+            if ($moveUp.grade -notin @('strong','capable') -or -not @($moveUp.citations | Where-Object independent).Count) { $alerts.Add("drift-no-alternative:$($flag.model):$Category`:$Lane"); continue }
+            $rankedCandidates[$position + 1] = $rankedCandidates[$position]
+            $rankedCandidates[$position] = $moveUp
+            if ($position -eq 0) { $driftApplied = $true }
+        }
+    }
     $ranked = @($rankedCandidates.ToArray() | ForEach-Object { $_.model })
     if ($EscalateFrom) {
         $from = @($all | Where-Object { $_.model -eq $EscalateFrom })
@@ -133,6 +153,7 @@ function Resolve-RouterModel {
     } elseif ($isProtected) { $chosen = $byStrength[0]; $reason = 'Protected: strongest eligible candidate.' }
     elseif (@($byStrength | Where-Object { $null -eq $_.est_burn }).Count) { $chosen = $rankedCandidates[0]; $reason = 'Uncalibrated burn: strength-rank order.' }
     else { $chosen = $rankedCandidates[0]; $reason = 'Lowest expected retry-adjusted burn; 10% time tie-break.' }
+    if ($driftApplied) { $reason += ' Drift demotion moved a flagged model down one eligible position.' }
     if ($chosen.frontier) { $reason += ' No non-frontier eligible.' }
     $result = [pscustomobject]@{ model = $chosen.model; category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
     if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts | Out-Null }
