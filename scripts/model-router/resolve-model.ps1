@@ -5,12 +5,14 @@ param(
     [string]$EscalateFrom,
     [object]$Catalog,
     [string]$TablePath,
+    [switch]$SkipModelCheck,
     [switch]$Json
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 . (Join-Path $PSScriptRoot '../resolve-codex-model.ps1')
+. (Join-Path $PSScriptRoot 'check-new-models.ps1')
 
 function Get-RouterFailureProbability {
     param([object]$Candidate)
@@ -39,13 +41,20 @@ function Resolve-RouterModel {
         [switch]$Protected,
         [string]$EscalateFrom,
         [object]$Catalog,
-        [string]$TablePath
+        [string]$TablePath,
+        [switch]$SkipModelCheck
     )
     if ($Category -notin @(Get-RouterCategories)) { throw "CATEGORY: Unknown category '$Category'" }
     if ($Category -eq 'image-generation' -and $Lane -ne 'codex') { throw 'LANE: image-generation has only codex' }
+    $alerts = [System.Collections.Generic.List[string]]::new()
+    if (-not $SkipModelCheck) {
+        try {
+            $check = Invoke-RouterModelCheck
+            foreach ($alert in @($check.alerts)) { $alerts.Add([string]$alert) }
+        } catch { $alerts.Add("catalog-check-error:resolver: $($_.Exception.Message)") }
+    }
     $read = Read-RouterTable -TablePath $TablePath
     $laneTable = $read.table.categories.$Category.$Lane
-    $alerts = [System.Collections.Generic.List[string]]::new()
     if ($read.source -eq 'seed') { $alerts.Add('router-seed-table-in-use') }
     if ($read.validation_error) { $alerts.Add("router-live-table-invalid: $($read.validation_error)") }
     $all = @($laneTable.candidates | Sort-Object strength_rank | Where-Object { $_.grade -in @('strong','capable') -and @($_.citations | Where-Object { $_.independent -eq $true }).Count -gt 0 })
@@ -123,6 +132,6 @@ function Resolve-RouterModel {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Resolve-RouterModel -Category $Category -Lane $Lane -Protected:$Protected -EscalateFrom $EscalateFrom -Catalog $Catalog -TablePath $TablePath
+    $result = Resolve-RouterModel -Category $Category -Lane $Lane -Protected:$Protected -EscalateFrom $EscalateFrom -Catalog $Catalog -TablePath $TablePath -SkipModelCheck:$SkipModelCheck
     if ($Json) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
 }

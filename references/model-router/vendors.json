@@ -1,0 +1,4 @@
+[
+  { "id": "openai", "lane": "codex", "source": "codex-catalog" },
+  { "id": "anthropic", "lane": "claude", "source": "anthropic-models-page", "url": "https://docs.claude.com/en/docs/about-claude/models/overview" }
+]
