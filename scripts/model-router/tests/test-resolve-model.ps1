@@ -147,6 +147,8 @@ try {
     Assert-True ((Get-Content -LiteralPath (Join-Path $isolatedState '.gitignore') -Raw).Trim() -eq 'custom') 'existing state gitignore is preserved'
     $image = Resolve-RouterModel -SkipModelCheck -Category image-generation -Lane codex -Catalog ([pscustomobject]@{ models = @() })
     Assert-True ($image.model -eq 'gpt-image-2' -and @($image.alerts | Where-Object { $_ -match 'UNSELECTABLE|fallback_unselectable' }).Count -eq 0) 'image advice bypasses chat catalog'
+    $imageProtected = Resolve-RouterModel -SkipModelCheck -Category image-generation -Lane codex -Protected -Catalog ([pscustomobject]@{ models = @() })
+    Assert-True ($imageProtected.model -eq 'gpt-image-2') 'protected flag never swaps the image model for a chat model'
     $env:DT_MODEL_ROUTER_STATE = $temp
 
     # Bridge mode: no research table (seed source) routes exactly as dt-build did pre-router.

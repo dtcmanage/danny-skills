@@ -145,6 +145,13 @@ try {
     Assert-True (-not $r.skipped -and $r.errors.Count -eq 0) 'corrupt last-check.json treated as absent; check runs instead of throwing'
 
     Reset-State
+    $script:RouterModelCheckFetcher = $null
+    Write-Output 'LIVE: real vendor check, read-only upstream'
+    $r = Invoke-RouterModelCheck -Force -TimeoutSeconds 30
+    $live = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
+    Assert-True (-not $r.timed_out -and $r.errors.Count -eq 0 -and @($live | Where-Object vendor -eq 'openai').Count -gt 0 -and @($live | Where-Object vendor -eq 'anthropic').Count -gt 0) 'LIVE: both vendors return models within 30 seconds'
+
+    Reset-State
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }
     [void](Invoke-RouterModelCheck -Force)
     $cachePath = Join-Path $temp 'models.json'

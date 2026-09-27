@@ -73,7 +73,7 @@ function Resolve-RouterBridgeModel {
     $laneMap = $map.lanes.$Lane
     $mapped = [string]$laneMap.categories.$Category
     if (-not $mapped) { throw "BRIDGE_MAP: no $Category/$Lane mapping" }
-    if ($IsProtected) {
+    if ($IsProtected -and $Category -ne 'image-generation') {
         $protectedPick = [string]$laneMap.protected
         if (-not $protectedPick) { throw "BRIDGE_MAP: no protected pick for $Lane" }
         $mapped = $protectedPick
@@ -142,7 +142,7 @@ function Resolve-RouterModel {
     if ($read.table.source -ne 'research' -or $read.table.coverage -ne 'full') {
         $bridge = Resolve-RouterBridgeModel -Category $Category -Lane $Lane -IsProtected $isProtected -EscalateFrom $EscalateFrom -Catalog $Catalog -Alerts $alerts
         $result = [pscustomobject]@{ model = $bridge.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $bridge.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $bridge.reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @($bridge.model) }
-        if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts -ChatToStderr:$ChatToStderr | Out-Null }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
         return $result
     }
     $all = @($laneTable.candidates | Sort-Object strength_rank | Where-Object { $_.grade -in @('strong','capable') -and @($_.citations | Where-Object { $_.independent -eq $true }).Count -gt 0 })
@@ -164,7 +164,7 @@ function Resolve-RouterModel {
     if ($eligible.Count -eq 0) {
         if ($read.table.source -ne 'seed') { $alerts.Add("no-eligible:$Category`:$Lane") }
         $result = [pscustomobject]@{ model = $laneTable.fallback; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $laneTable.fallback } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = 'No eligible candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }
-        if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts -ChatToStderr:$ChatToStderr | Out-Null }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
         return $result
     }
     $byStrength = @($eligible | Sort-Object strength_rank)
@@ -239,7 +239,7 @@ function Resolve-RouterModel {
     if ($driftApplied) { $reason += ' Drift demotion moved a flagged model down one eligible position.' }
     if ($chosen.frontier) { $reason += ' No non-frontier eligible.' }
     $result = [pscustomobject]@{ model = $chosen.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $chosen.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
-    if ($SendAlerts) { Send-RouterAlerts -Alerts $result.alerts -ChatToStderr:$ChatToStderr | Out-Null }
+    if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
     return $result
 }
 

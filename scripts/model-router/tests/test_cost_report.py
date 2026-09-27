@@ -434,3 +434,13 @@ def test_cost_report_refreshes_all_sessions_with_fake_sweep(tmp_path, exit_code)
     assert json.loads(marker.read_text(encoding="utf-8")) == ["--all-sessions", "--quiet"]
     assert ("usage sweep failed" in result.stdout) is bool(exit_code)
     assert (tmp_path / "state" / "cost-reports" / "latest.md").exists()
+
+def test_python_state_writers_create_gitignore(tmp_path, cu):
+    for module, sub in ((cr, "a"), (cu, "b")):
+        state = module.ensure_state_gitignore(tmp_path / sub)
+        assert (state / ".gitignore").read_text(encoding="utf-8") == "*\n"
+    keep = tmp_path / "c"
+    keep.mkdir()
+    (keep / ".gitignore").write_text("custom\n", encoding="utf-8")
+    cr.ensure_state_gitignore(keep)
+    assert (keep / ".gitignore").read_text(encoding="utf-8") == "custom\n"

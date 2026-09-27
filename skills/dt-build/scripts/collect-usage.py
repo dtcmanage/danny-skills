@@ -290,6 +290,19 @@ def codex_row(path: Path, raw: bytes) -> dict | None:
     }
 
 
+def ensure_state_gitignore(state: Path) -> Path:
+    """Mirror Get-RouterStateDir: runtime state is per machine and never synced by git."""
+    state.mkdir(parents=True, exist_ok=True)
+    ignore = state / ".gitignore"
+    if not ignore.exists():
+        try:
+            with ignore.open("x", encoding="utf-8", newline="\n") as fh:
+                fh.write("*\n")
+        except FileExistsError:
+            pass
+    return state
+
+
 def get_router_state_dir() -> Path:
     """Mirror Get-RouterStateDir in scripts/model-router/router-common.ps1: env override,
     else the model-router/state folder next to the main checkout (same result from the
@@ -499,7 +512,7 @@ def run_all_sessions(quiet: bool = False) -> None:
     Codex session on this machine (not gated by the dt-build orchestrator/chunk markers),
     for the model-router cost report. Writes into the router state dir, never into the
     dt-build usage-ledger/dashboard outputs, and never changes the default mode's output."""
-    state_dir = get_router_state_dir()
+    state_dir = ensure_state_gitignore(get_router_state_dir())
     state_dir.mkdir(parents=True, exist_ok=True)
     cache_path = state_dir / "all-sessions-cache.json"
     out_path = state_dir / "usage-all-sessions.jsonl"
