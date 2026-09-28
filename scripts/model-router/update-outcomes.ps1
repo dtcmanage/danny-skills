@@ -33,6 +33,13 @@ function ConvertTo-RouterOutcomeUtcTimestamp {
     return ([datetimeoffset]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)).UtcDateTime.ToString('o')
 }
 
+function Get-RouterV1OutcomeCategory {
+    # The v1 table has no math or analysis rows; the resolver routes both as planning, so v1 counting does too.
+    param([string]$Category)
+    if ($Category -in @('math','analysis')) { return 'planning' }
+    return $Category
+}
+
 function Get-RouterOutcomeCategory {
     param([object]$Record, [string]$Tier, [string]$Name, [string[]]$Categories = @('mechanical','routine-coding','complex-coding','ui-frontend','code-review','planning','deep-research','math','analysis','long-form-writing','image-generation'))
     $category = Get-RouterOutcomeValue $Record @('category')
@@ -141,7 +148,7 @@ function Update-RouterOutcomes {
     foreach ($cp in $table.categories.PSObject.Properties) {
         foreach ($lp in $cp.Value.PSObject.Properties) {
             foreach ($candidate in $lp.Value.candidates) {
-                $sample = @($eligible | Where-Object { $_.category -eq $cp.Name -and $_.lane -eq $lp.Name -and $_.model -eq $candidate.model -and ([datetime]$_.at) -ge $nowUtc.AddDays(-90) -and ([datetime]$_.at) -le $nowUtc })
+                $sample = @($eligible | Where-Object { (Get-RouterV1OutcomeCategory ([string]$_.category)) -eq $cp.Name -and $_.lane -eq $lp.Name -and $_.model -eq $candidate.model -and ([datetime]$_.at) -ge $nowUtc.AddDays(-90) -and ([datetime]$_.at) -le $nowUtc })
                 if ($sample.Count -lt 10) { continue }
                 $rate = @($sample | Where-Object pass).Count / $sample.Count
                 if ($candidate.pass_samples -ne $sample.Count -or $candidate.pass_rate -ne $rate) { $candidate.pass_samples = [long]$sample.Count; $candidate.pass_rate = [double]$rate; $updated++ }
@@ -220,6 +227,11 @@ function Update-RouterOutcomes {
             }
             [IO.File]::WriteAllText($reportPath,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
             Write-RouterOutcomeJson (Join-Path $dir 'latest.json') ([pscustomobject]@{proposal=$proposalPath;report=$reportPath})
+        } elseif (@($marks | Where-Object { $roster.jobs.($_.job).backup }).Count -eq 0) {
+            # Drift has cleared: a pending drift swap must not stay approvable.
+            $latestPath = Join-Path (Join-Path $state 'roster-proposals') 'latest.json'
+            $latest = Read-RouterJsonObject -Path $latestPath
+            if ($latest -and $latest.PSObject.Properties['proposal'] -and [string]$latest.proposal -like '*-drift.json') { Remove-Item -LiteralPath $latestPath -Force }
         }
         if ($SendAlerts -and $alerts.Count) { Send-RouterAlerts -Alerts @($alerts.ToArray()) -ChatToStderr:$RouterOutcomesCliJson | Out-Null }
         return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; table_updates=$updated; drift_flags=$marks.Count; alerts=@($alerts.ToArray()); proposal=$proposalPath }
@@ -231,14 +243,14 @@ function Update-RouterOutcomes {
     foreach ($cp in $table.categories.PSObject.Properties) {
         foreach ($lp in $cp.Value.PSObject.Properties) {
             foreach ($candidate in $lp.Value.candidates) {
-                $group = @($eligible | Where-Object { $_.category -eq $cp.Name -and $_.lane -eq $lp.Name -and $_.model -eq $candidate.model })
+                $group = @($eligible | Where-Object { (Get-RouterV1OutcomeCategory ([string]$_.category)) -eq $cp.Name -and $_.lane -eq $lp.Name -and $_.model -eq $candidate.model })
                 $recent = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-30) -and ([datetime]$_.at) -le $nowUtc })
                 $prior = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-120) -and ([datetime]$_.at) -lt $nowUtc.AddDays(-30) })
                 if ($recent.Count -lt 10 -or $prior.Count -lt 10) { continue }
                 $recentRate = @($recent | Where-Object pass).Count / $recent.Count
                 $priorRate = @($prior | Where-Object pass).Count / $prior.Count
                 if (($priorRate - $recentRate) -lt (0.15 - 1e-9)) { continue }
-                $old = @($priorFlags | Where-Object { $_.category -eq $cp.Name -and $_.lane -eq $lp.Name -and $_.model -eq $candidate.model })
+                $old = @($priorFlags | Where-Object { (Get-RouterV1OutcomeCategory ([string]$_.category)) -eq $cp.Name -and $_.lane -eq $lp.Name -and $_.model -eq $candidate.model })
                 $flaggedAt = if ($old.Count) { $old[0].flagged_at } else { $nowUtc.ToString('o') }
                 $flags.Add([pscustomobject]@{ category=$cp.Name; lane=$lp.Name; model=$candidate.model; recent_rate=$recentRate; prior_rate=$priorRate; flagged_at=$flaggedAt })
                 if (-not $old.Count) { $alerts.Add("drift:$($candidate.model):$($cp.Name):$($lp.Name):$($nowUtc.ToString('yyyyMM'))") }

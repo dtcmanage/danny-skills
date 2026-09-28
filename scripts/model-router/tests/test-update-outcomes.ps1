@@ -162,6 +162,7 @@ try {
     for ($i=21; $i -le 50; $i++) { Write-Provenance "roster-recent-$i" 'M01' 1 'gpt-6-sol' $true '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
     $rosterClear = Run-Update
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json')).Count -eq 0 -and @($rosterClear.alerts | Where-Object { $_.key -like 'drift-cleared:*' }).Count -eq 1) 'cleared roster drift removes mark and alerts once'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $rosterState 'roster-proposals/latest.json'))) 'cleared drift withdraws the pending drift swap proposal'
 
     $sequenceState = Join-Path $temp 'sequence-state'; $sequenceRepo = Join-Path $temp 'sequence-repo'
     [IO.Directory]::CreateDirectory($sequenceState) | Out-Null
@@ -172,6 +173,7 @@ try {
     for ($i=1; $i -le 20; $i++) { Write-Provenance "analysis-recent-$i" 'M01' 1 'claude-opus-5-5' ($i -le 17) '2026-09-25T12:00:00Z' 'standard' '' 'analysis' }
     Run-Update | Out-Null
     Assert-True (@(Read-Records | Where-Object { $_.category -eq 'analysis' }).Count -eq 30) 'analysis imported before roster retains recorded category'
+    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-flags.json') | Where-Object { $_.category -eq 'planning' -and $_.model -eq 'claude-opus-5-5' }).Count -eq 1) 'v1 path counts analysis outcomes as planning'
     $roster | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $sequenceState 'roster.json')
     $analysisDrift = Run-Update
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json') | Where-Object job -eq 'deep-thinker').Count -eq 1) 'pre-roster analysis records count toward deep-thinker drift'
