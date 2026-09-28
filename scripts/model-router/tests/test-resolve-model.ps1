@@ -360,7 +360,7 @@ try {
     }
     foreach ($frontierStep in @(@('codex','gpt-6-astra'),@('claude','claude-fable-5-1'))) {
         $pick = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $frontierStep[0] -EscalateFrom $frontierStep[1] -Catalog $bridgeCatalog
-        Assert-True ($pick.model -ne $frontierStep[1] -and $pick.model -notin @('gpt-6-astra','claude-fable-5-5')) "bridge frontier escalation source $($frontierStep[0]) returns non-frontier"
+        Assert-True ($pick.model -ne $frontierStep[1] -and $pick.model -notin @('gpt-6-astra','claude-fable-5-1')) "bridge frontier escalation source $($frontierStep[0]) returns non-frontier"
     }
     $noSol = [pscustomobject]@{ models = @([pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; description = 'frontier' }, [pscustomobject]@{ slug = 'gpt-6-luna'; visibility = 'list' }) }
     $down = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane codex -Catalog $noSol
