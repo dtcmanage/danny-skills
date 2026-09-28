@@ -14,7 +14,6 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 . (Join-Path $PSScriptRoot 'vendor-limits.ps1')
 . (Join-Path $PSScriptRoot '../resolve-codex-model.ps1')
-. (Join-Path $PSScriptRoot 'check-new-models.ps1')
 . (Join-Path $PSScriptRoot 'send-router-alert.ps1')
 . (Join-Path $PSScriptRoot 'run-router-research.ps1')
 
@@ -238,14 +237,6 @@ function Resolve-RouterModel {
     $lookupCategory = if ($Category -in @('math','analysis')) { 'planning' } else { $Category }
     $EscalateFrom = Resolve-RouterEscalationAlias -EscalateFrom $EscalateFrom -Lane $Lane
     $alerts = [System.Collections.Generic.List[string]]::new()
-    if (-not $SkipModelCheck) {
-        try {
-            $check = Invoke-RouterModelCheck
-            foreach ($alert in @($check.alerts)) { $alerts.Add([string]$alert) }
-        } catch { $alerts.Add("catalog-check-error:resolver: $($_.Exception.Message)") }
-    }
-    $checkAlerts = @($alerts.ToArray())
-    if ($checkAlerts.Count) { Send-RouterAlerts -Alerts $checkAlerts -ChatToStderr | Out-Null }
     if ($rosterRead.validation_error) { $alerts.Add("router-roster-invalid: $($rosterRead.validation_error)") }
     $read = Read-RouterTable -TablePath $TablePath
     if ($rosterRead.validation_error) { $read.validation_error = (@($read.validation_error,$rosterRead.validation_error) | Where-Object { $_ }) -join '; ' }
@@ -256,7 +247,7 @@ function Resolve-RouterModel {
     if ($read.table.source -ne 'research' -or $read.table.coverage -ne 'full' -or ($read.table.evidence_routing_approved -ne $true -and -not $IgnoreApproval)) {
         $bridge = Resolve-RouterBridgeModel -Category $lookupCategory -Lane $Lane -IsProtected $isProtected -EscalateFrom $EscalateFrom -Catalog $Catalog -Alerts $alerts
         $result = [pscustomobject]@{ model = $bridge.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $bridge.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $bridge.reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @($bridge.model) }
-        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts) -ChatToStderr:$ChatToStderr | Out-Null }
         return (Complete-RouterResult -Result $result -Job $job -RosterSource default)
     }
     $bridgePick = Resolve-RouterBridgeModel -Category $lookupCategory -Lane $Lane -IsProtected $isProtected -Catalog $Catalog -Alerts $alerts
@@ -277,7 +268,7 @@ function Resolve-RouterModel {
             $alerts.Add("fallback_unselectable: $($laneTable.fallback)")
         }
         $result = [pscustomobject]@{ model = $held.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $held.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $(if ($EscalateFrom -or $held.model -ne $bridgePick.model) { $held.reason } else { 'incumbent kept: no confirmed evidence' }); table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @($held.model) }
-        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts) -ChatToStderr:$ChatToStderr | Out-Null }
         return (Complete-RouterResult -Result $result -Job $job -RosterSource default)
     }
     $incumbent = $incumbentRow[0]
@@ -303,7 +294,7 @@ function Resolve-RouterModel {
     if ($eligible.Count -eq 0) {
         if ($read.table.source -ne 'seed') { $alerts.Add("no-eligible:$Category`:$Lane") }
         $result = [pscustomobject]@{ model = $laneTable.fallback; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $laneTable.fallback } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = 'No eligible candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }
-        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts) -ChatToStderr:$ChatToStderr | Out-Null }
         return (Complete-RouterResult -Result $result -Job $job -RosterSource default)
     }
     $byStrength = @($eligible | Sort-Object strength_rank)
@@ -374,7 +365,7 @@ function Resolve-RouterModel {
     $rankedCandidates = $qualifying
     if ($rankedCandidates.Count -eq 0) {
         $result = [pscustomobject]@{ model = $laneTable.fallback; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $laneTable.fallback } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = 'No qualifying selectable non-frontier candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }
-        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts) -ChatToStderr:$ChatToStderr | Out-Null }
         return (Complete-RouterResult -Result $result -Job $job -RosterSource default)
     }
     $driftApplied = $false
@@ -410,7 +401,7 @@ function Resolve-RouterModel {
     }
     if ($driftApplied) { $reason += ' Drift demotion moved off a flagged model.' }
     $result = [pscustomobject]@{ model = $chosen.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $chosen.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
-    if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts) -ChatToStderr:$ChatToStderr | Out-Null }
     return (Complete-RouterResult -Result $result -Job $job -RosterSource default)
 }
 

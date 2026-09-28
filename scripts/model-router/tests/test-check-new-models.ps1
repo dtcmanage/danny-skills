@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../resolve-model.ps1')
+. (Join-Path $PSScriptRoot '../check-new-models.ps1')
 
 $script:passed = 0
 function Assert-True([bool]$Condition, [string]$Name) {
@@ -45,15 +46,15 @@ try {
     $r = Invoke-RouterModelCheck -Now $now -Force
     Assert-True (-not $r.skipped -and $r.new_models.Count -eq 0) 'Force runs and bootstrap reports no new models'
     $registry = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
-    Assert-True ($registry.Count -eq 2 -and -not (Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'pending-research.json'))) 'bootstrap writes registry without research queue'
+    Assert-True ($registry.Count -eq 2 -and -not (Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'research-queue.json'))) 'bootstrap writes registry without research queue'
 
 
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol'; 'gpt-6-new' } else { 'claude-sonnet-4-5' } }
     $r = Invoke-RouterModelCheck -Now $now.AddHours(13)
-    $queue = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'pending-research.json') -Raw | ConvertFrom-Json)
-    Assert-True ($r.new_models -contains 'gpt-6-new' -and $r.alerts -contains 'new-model:gpt-6-new' -and $queue[0].id -eq 'gpt-6-new') 'new model queued and alerted'
-    Assert-True ($script:launchCount -eq 1) 'new queue launches detached research once'
-    Assert-True ($script:canaryLaunchCount -eq 1) 'new models launch detached post-release canary after research'
+    $queue = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research-queue.json') -Raw | ConvertFrom-Json)
+    Assert-True ($r.new_models -contains 'gpt-6-new' -and $r.alerts -contains 'new-model:gpt-6-new' -and @($queue | Where-Object { $_.model -eq 'gpt-6-new' -and $_.trigger -eq 'release' }).Count -eq 1) 'new model queued and alerted'
+    Assert-True ($script:launchCount -eq 0 -and @($queue | Where-Object trigger -eq 'confirmation').Count -eq 1) 'new queue waits for offline cadence and includes confirmation'
+    Assert-True ($script:canaryLaunchCount -eq 1) 'new models launch detached post-release canary'
     $registry = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
     Assert-True ((@($registry | Where-Object id -eq 'gpt-6-new')[0]).status -eq 'unprofiled') 'new model remains unprofiled'
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
@@ -62,12 +63,10 @@ try {
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-new' } else { 'claude-sonnet-4-5' } }
     $r = Invoke-RouterModelCheck -Now $now.AddHours(26)
     Assert-True ($r.missing_models -contains 'gpt-6-sol' -and $r.alerts -contains 'model-missing:gpt-6-sol') 'missing model alerted'
-    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research.lock') -Force
     $r = Invoke-RouterModelCheck -Now $now.AddHours(39)
-    Assert-True ($r.new_models.Count -eq 0 -and $script:launchCount -eq 2) 'pending queue retries in next daily window without new models'
-    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research.lock') -Force
+    Assert-True ($r.new_models.Count -eq 0 -and $script:launchCount -eq 0) 'model check leaves research to offline cadence'
     $r = Invoke-RouterModelCheck -Force -Now $now.AddHours(40)
-    Assert-True ($script:launchCount -eq 2) 'pending queue launch limited to once per 24 hours'
+    Assert-True ($script:launchCount -eq 0) 'model check never launches research'
 
     $registryPath = Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json'
     $before = [IO.File]::ReadAllText($registryPath)
@@ -91,7 +90,7 @@ try {
     Reset-State
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }
     [void](Invoke-RouterModelCheck -Force -Now $now)
-    $queuePath = Join-Path $env:DT_MODEL_ROUTER_STATE 'pending-research.json'
+    $queuePath = Join-Path $env:DT_MODEL_ROUTER_STATE 'research-queue.json'
     [IO.File]::WriteAllText($queuePath,'')
     $registryPath = Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json'
     $registryBefore = [IO.File]::ReadAllText($registryPath)
@@ -105,8 +104,7 @@ try {
     Assert-True ($mutexBlocked -and [IO.File]::ReadAllText($registryPath) -ceq $registryBefore -and [IO.File]::ReadAllText($queuePath) -eq '') 'queue write waits on the shared queue mutex and loses nothing when blocked'
     $r = Invoke-RouterModelCheck -Force -Now $now
     $queue = @(Read-RouterJsonArray -Path $queuePath)
-    Assert-True ($r.new_models -contains 'gpt-6-queued' -and $queue.Count -eq 1 -and $queue[0].id -eq 'gpt-6-queued') 'empty queue file treated as empty queue when new model is queued'
-    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research.lock') -Force -ErrorAction SilentlyContinue
+    Assert-True ($r.new_models -contains 'gpt-6-queued' -and $queue.Count -eq 2 -and @($queue | Where-Object { $_.model -eq 'gpt-6-queued' -and $_.trigger -eq 'release' }).Count -eq 1) 'empty queue file treated as empty queue when new model is queued'
 
     $html = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'fixtures/anthropic-models-live-20260927.html') -Raw
     $ids = @(Get-RouterAnthropicModelIds -Html $html)
@@ -118,7 +116,7 @@ try {
 
     function Invoke-RouterModelCheck { throw 'synthetic check exception' }
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude
-    Assert-True ($pick.model -and @($pick.alerts | Where-Object { $_ -match '^catalog-check-error:resolver:' }).Count -eq 1) 'resolver alerts and returns model when check throws'
+    Assert-True ($pick.model -and @($pick.alerts | Where-Object { $_ -match '^catalog-check-error:resolver:' }).Count -eq 0) 'resolver makes no model check call'
     Remove-Item Function:Invoke-RouterModelCheck
     . (Join-Path $PSScriptRoot '../check-new-models.ps1')
 
@@ -161,8 +159,7 @@ try {
     try {
         [void](Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict)
         [void](Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict)
-        $delivered = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.event -eq 'delivered' -and $_.key -eq 'new-model:gpt-6-new' })
-        Assert-True ($delivered.Count -eq 1) 'Resolve-CodexModel sends new-model alert once without SendAlerts'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research-queue.json'))) 'Resolve-CodexModel lookup does not check for releases'
     } finally { $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transportPath }
     Write-Output "SUMMARY: $script:passed passed"
 } finally {

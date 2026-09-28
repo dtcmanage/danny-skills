@@ -1,4 +1,4 @@
-param([Alias('Models')][string[]]$RouterResearchCliModels, [Alias('ModelsFile')][string]$RouterResearchCliModelsFile, [Alias('All')][switch]$RouterResearchCliAll, [Alias('Context')][string]$RouterResearchCliContext, [Alias('DetachedChild')][switch]$RouterResearchCliDetachedChild, [Alias('LockToken')][string]$RouterResearchCliLockToken, [Alias('Json')][switch]$RouterResearchCliJson, [Alias('Categories')][string[]]$RouterResearchCliCategories, [Alias('CandidateModels')][string[]]$RouterResearchCliCandidateModels, [Alias('Trigger')][ValidateSet('release','confirmation','refresh','manual')][string]$RouterResearchCliTrigger = 'manual', [Alias('Lane')][ValidateSet('codex','claude')][string]$RouterResearchCliLane = 'codex')
+param([Alias('Models')][string[]]$RouterResearchCliModels, [Alias('ModelsFile')][string]$RouterResearchCliModelsFile, [Alias('All')][switch]$RouterResearchCliAll, [Alias('Context')][string]$RouterResearchCliContext, [Alias('DetachedChild')][switch]$RouterResearchCliDetachedChild, [Alias('LockToken')][string]$RouterResearchCliLockToken, [Alias('Json')][switch]$RouterResearchCliJson, [Alias('Categories')][string[]]$RouterResearchCliCategories, [Alias('CandidateModels')][string[]]$RouterResearchCliCandidateModels, [Alias('Trigger')][ValidateSet('release','confirmation','followup','refresh','manual')][string]$RouterResearchCliTrigger = 'manual', [Alias('Lane')][ValidateSet('codex','claude')][string]$RouterResearchCliLane = 'codex')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
@@ -195,7 +195,7 @@ function Get-RouterStaleReadingModels {
 }
 
 function Invoke-RouterCategoryResearch {
-    param([Parameter(Mandatory)][string[]]$Categories, [Parameter(Mandatory)][string[]]$Models, [ValidateSet('release','confirmation','refresh','manual')][string]$Trigger = 'manual', [ValidateSet('codex','claude')][string]$Lane = 'codex', [string]$Context, [datetime]$Now = (Get-Date))
+    param([Parameter(Mandatory)][string[]]$Categories, [Parameter(Mandatory)][string[]]$Models, [ValidateSet('release','confirmation','followup','refresh','manual')][string]$Trigger = 'manual', [ValidateSet('codex','claude')][string]$Lane = 'codex', [string]$Context, [datetime]$Now = (Get-Date))
     $state = Get-RouterStateDir
     $lock = Join-Path $state 'research.lock'
     $entry = Enter-RouterResearchLock -Path $lock -Now $Now

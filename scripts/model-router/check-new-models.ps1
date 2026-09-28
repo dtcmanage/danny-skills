@@ -115,7 +115,6 @@ function Invoke-RouterModelCheck {
         $result.checked_at = $Now.ToString('o')
         if ($result.errors.Count) { return [pscustomobject]$result }
         $registryPath = Join-Path $state 'known-models.json'
-        $queuePath = Join-Path $state 'pending-research.json'
         $registryExisted = Test-Path -LiteralPath $registryPath
         $registry = @(Read-RouterJsonArray -Path $registryPath)
         if (-not $registryExisted -or $registry.Count -eq 0) {
@@ -127,7 +126,7 @@ function Invoke-RouterModelCheck {
             $old = @{}; foreach ($item in $registry) { $old["$($item.vendor)/$($item.id)"] = $item }
             foreach ($item in $listing) {
                 if (-not $old.ContainsKey("$($item.vendor)/$($item.id)")) {
-                    $item.status = 'unprofiled'; $registry += $item; $queued.Add([pscustomobject]@{ id = $item.id; vendor = $item.vendor; lane = $item.lane; detected_at = $result.checked_at })
+                    $item.status = 'unprofiled'; $registry += $item; $queued.Add($item)
                     $result.new_models += $item.id; $result.alerts += "new-model:$($item.id)"
                 }
             }
@@ -136,30 +135,17 @@ function Invoke-RouterModelCheck {
                     $item.status = 'missing'; $result.missing_models += $item.id; $result.alerts += "model-missing:$($item.id)"
                 }
             }
-            # Queue first, under the mutex the research runner uses for its final re-read, so a failed write loses nothing.
-            if ($queued.Count) { Use-RouterQueueMutex -StateDir $state -Action { Write-RouterJsonAtomic -Path $queuePath -Value @(@(Read-RouterJsonArray -Path $queuePath) + $queued.ToArray()) } }
+            if ($queued.Count) {
+                if (-not (Get-Command Add-RouterResearchQueueItem -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'run-router-cadence.ps1') }
+                foreach ($new in $queued) {
+                    $categories = @(Get-RouterCadenceCategories -Model ([string]$new.id))
+                    [void](Add-RouterResearchQueueItem -Model $new.id -Trigger release -Categories $categories -DueAt $Now -Reason 'new-model-release')
+                    [void](Add-RouterResearchQueueItem -Model $new.id -Trigger confirmation -Categories $categories -DueAt $Now.AddDays(7) -Reason 'day-seven-confirmation')
+                }
+            }
             Write-RouterJsonAtomic -Path $registryPath -Value @($registry)
         }
         Write-RouterJsonAtomic -Path $stamp -Value @{ checked_at = $result.checked_at }
-        if (Test-Path -LiteralPath $queuePath) {
-            $pending = @(Read-RouterJsonArray -Path $queuePath)
-            if ($pending.Count) {
-                $retryStamp = Join-Path $state 'last-research-launch.json'
-                $due = $true
-                if (Test-Path -LiteralPath $retryStamp) {
-                    try { $lastLaunch = Get-Content -LiteralPath $retryStamp -Raw | ConvertFrom-Json; $due = (($Now - [datetime]$lastLaunch.launched_at).TotalHours -ge 24) } catch { }
-                }
-                if ($due) {
-                    try {
-                        if (-not (Get-Command Start-RouterResearchDetached -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'run-router-research.ps1') }
-                        $launch = Start-RouterResearchDetached -Now $Now
-                        foreach ($alert in @($launch.alerts)) { $result.alerts += [string]$alert }
-                        if ($launch.launched) { Write-RouterJsonAtomic -Path $retryStamp -Value @{ launched_at = $Now.ToString('o') } }
-                        else { $result.alerts += 'research-already-running' }
-                    } catch { $result.alerts += 'research-launch-error' }
-                }
-            }
-        }
         if (@($result.new_models).Count) {
             try {
                 if (-not (Get-Command Start-RouterCanaryDetached -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'canary/run-canary.ps1') }
