@@ -316,10 +316,12 @@ function Resolve-RouterModel {
         if ($alternatives.Count) { $chosen = $alternatives[0]; $driftApplied = $true }
         else {
             $step = Get-RouterDriftStep -Category $Category -Lane $Lane -Model $flaggedModel -Catalog $Catalog -Skip $flagged
+            # Evidence mode: never step onto a model the research confirms as weak for this category.
+            if ($step -and @($laneTable.candidates | Where-Object { $_.model -eq $step -and $_.confirmed_grade -eq 'weak' }).Count) { $step = $null }
             if ($step) { $chosen = [pscustomobject]@{ model = $step; frontier = $false }; $driftApplied = $true }
             else { $alerts.Add("drift-no-alternative:$($flaggedModel):$Category`:$Lane") }
         }
-        if ($driftApplied) { $ranked = @($chosen.model) + @($ranked | Where-Object { $_ -ne $chosen.model }) }
+        if ($driftApplied) { $ranked = @($chosen.model) + @($ranked | Where-Object { $_ -ne $chosen.model -and $flagged -notcontains $_ }) }
     }
     if ($driftApplied) { $reason += ' Drift demotion moved off a flagged model.' }
     if ($chosen.frontier) { $reason += ' No non-frontier eligible.' }

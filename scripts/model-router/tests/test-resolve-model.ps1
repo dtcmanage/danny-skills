@@ -147,6 +147,13 @@ try {
     $lunaCatalog = [pscustomobject]@{ models = @([pscustomobject]@{ slug = 'gpt-6-luna'; visibility = 'list' },[pscustomobject]@{ slug = 'gpt-6-sol'; visibility = 'list' },[pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; description = 'frontier' }) }
     $driftedLuna = Resolve-RouterModel -SkipModelCheck -Category mechanical -Lane codex -Catalog $lunaCatalog
     Assert-True ($driftedLuna.model -ne 'gpt-6-luna' -and -not $driftedLuna.model.EndsWith('astra') -and $driftedLuna.reason -match 'drift demotion') 'flagged mechanical Luna is demoted off Luna'
+    $weakBackup = $table | ConvertTo-Json -Depth 40
+    foreach ($row in @($table.categories.mechanical.codex.candidates | Where-Object { $_.model -ne 'gpt-6-luna' })) { $row.grade = 'weak'; $row.confirmed_grade = 'weak' }
+    Save-Fixture $table $fixturePath
+    $weakStep = Resolve-RouterModel -SkipModelCheck -Category mechanical -Lane codex -Catalog $lunaCatalog
+    Assert-True ($weakStep.model -ne 'gpt-6-sol' -and @($weakStep.alerts | Where-Object { $_ -like 'drift-no-alternative:*' }).Count -ge 1 -or $weakStep.model -eq 'gpt-6-luna') 'drift never steps onto a model confirmed weak for the category'
+    $table = $weakBackup | ConvertFrom-Json -Depth 40
+    Save-Fixture $table $fixturePath
     Remove-Item -LiteralPath (Join-Path $temp 'drift-flags.json')
     . (Join-Path $PSScriptRoot '../send-router-alert.ps1')
     $writing = Resolve-RouterModel -SkipModelCheck -Category long-form-writing -Lane claude
@@ -168,6 +175,13 @@ try {
     $legacyTable | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $legacyPath
     & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Revoke -TablePath $legacyPath | Out-Null
     Assert-True ((Get-Content -LiteralPath $legacyPath -Raw | ConvertFrom-Json).evidence_routing_approved -eq $false) 'approval script handles a pre-approval-step table'
+    foreach ($mode in @('-Show','-Approve')) {
+        $legacyTable | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $legacyPath
+        $legacyOk = $true
+        try { if ($mode -eq '-Show') { & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Show -TablePath $legacyPath | Out-Null } else { & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Approve -TablePath $legacyPath | Out-Null } } catch { $legacyOk = $false }
+        Assert-True $legacyOk "approval script $mode works on a pre-approval-step table"
+    }
+    Assert-True (@((Get-Content -LiteralPath $legacyPath -Raw | ConvertFrom-Json -Depth 40).approved_picks).Count -eq 34) 'legacy table approval stores every pick'
     $table = New-Fixture
     $r = $table.categories.'routine-coding'.claude.candidates
     Enable-Candidate $r[1] 'strong' 8 30

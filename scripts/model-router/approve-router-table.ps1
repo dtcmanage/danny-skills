@@ -14,7 +14,7 @@ if (-not (Test-Path -LiteralPath $path)) { throw "Router table not found: $path"
 $table = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 40
 # Tables written before the approval step lack these fields; treat them as not approved.
 foreach ($field in @('evidence_routing_approved','approved_picks')) {
-    if (-not $table.PSObject.Properties[$field]) { $table | Add-Member -NotePropertyName $field -NotePropertyValue $(if ($field -eq 'approved_picks') { @() } else { $false }) }
+    if (-not $table.PSObject.Properties[$field]) { $table | Add-Member -NotePropertyName $field -NotePropertyValue $(if ($field -eq 'approved_picks') { ,([object[]]@()) } else { $false }) }
 }
 $errors = @(Test-RouterTable -Table $table)
 if ($errors.Count) { throw "Invalid router table: $($errors -join '; ')" }
