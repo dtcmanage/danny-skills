@@ -225,6 +225,12 @@ $report
     $spendPost = @($script:spendRequests | Where-Object { [string]$_['uri'] -like '*/messages' } | Select-Object -Last 1)
     Assert-True ($spendPost.Count -eq 1 -and [string]$spendPost[0]['body'] -match 'Remaining work: 3 milestone\(s\)' -and $spend.remaining_milestones -eq 3) 'frontier-spend alert message shows remaining work'
     Assert-True ($spend.codex.frontier_points -eq 10 -and $spend.codex.total_points -eq 13) 'codex frontier points attributed from rate_limits.primary.used_percent'
+    $liveLog = Join-Path $spendCodex 'sessions/2026/09/27/rollout-frontier.jsonl'
+    $writer = [IO.FileStream]::new($liveLog,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite)
+    try {
+        $liveSpend = Get-RouterCodexFrontierSpend -Since ([datetimeoffset]$start) -CodexHome $spendCodex -Frontier (Get-RouterFrontierModels)
+        Assert-True ($liveSpend.frontier_points -eq 10) 'frontier spend reads a Codex log held open for writing'
+    } finally { $writer.Dispose() }
     Assert-True ($spend.alert_fired -and $spend.alert_key -eq 'frontier-spend:run-a' -and @($spend.lanes_over) -contains 'codex' -and $script:spendRequests.Count -gt 0) 'frontier-spend alert fires at 10 points'
     $count = $script:spendRequests.Count
     $again = Test-FrontierSpend -RunStartedAt $start -RunId 'run-a' -CodexHome $spendCodex -ClaudeHome $emptyClaude -Transport $fake 6>$null

@@ -1,0 +1,1 @@
+{"type":"event_msg","timestamp":"2026-09-27T10:00:00Z","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":12,"window_minutes":10080,"resets_at":2147483647}}}}

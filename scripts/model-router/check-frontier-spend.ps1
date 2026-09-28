@@ -47,6 +47,17 @@ function ConvertTo-RouterSpendTime {
     return $null
 }
 
+function Read-RouterSpendLines {
+    param([Parameter(Mandatory)][string]$Path)
+    $stream = $null; $reader = $null
+    try {
+        $stream = [IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        $reader = [IO.StreamReader]::new($stream)
+        while ($null -ne ($line = $reader.ReadLine())) { $line }
+    } catch [IO.IOException], [UnauthorizedAccessException] { return }
+    finally { if ($null -ne $reader) { $reader.Dispose() } elseif ($null -ne $stream) { $stream.Dispose() } }
+}
+
 function Get-RouterCodexFrontierSpend {
     # Same fields collect-usage.py reads: turn_context.payload.model and
     # token_count.payload.rate_limits.primary.used_percent (the weekly window).
@@ -56,7 +67,7 @@ function Get-RouterCodexFrontierSpend {
     if (Test-Path -LiteralPath $sessions) {
         foreach ($file in @(Get-ChildItem -LiteralPath $sessions -Recurse -File -Filter 'rollout-*.jsonl' | Where-Object { $_.LastWriteTimeUtc -ge $Since.UtcDateTime })) {
             $model = $null
-            foreach ($line in [IO.File]::ReadLines($file.FullName)) {
+            foreach ($line in (Read-RouterSpendLines -Path $file.FullName)) {
                 try { $row = $line | ConvertFrom-Json -Depth 20 } catch { continue }
                 if ($null -eq $row -or -not $row.PSObject.Properties['payload'] -or $null -eq $row.payload) { continue }
                 $payload = $row.payload
@@ -91,7 +102,7 @@ function Get-RouterClaudeFrontierSpend {
     $projects = Join-Path $ClaudeHome 'projects'
     if (Test-Path -LiteralPath $projects) {
         foreach ($file in @(Get-ChildItem -LiteralPath $projects -Recurse -File -Filter '*.jsonl' | Where-Object { $_.LastWriteTimeUtc -ge $Since.UtcDateTime })) {
-            foreach ($line in [IO.File]::ReadLines($file.FullName)) {
+            foreach ($line in (Read-RouterSpendLines -Path $file.FullName)) {
                 try { $row = $line | ConvertFrom-Json -Depth 30 } catch { continue }
                 if ($null -eq $row -or -not $row.PSObject.Properties['type'] -or $row.type -ne 'assistant') { continue }
                 if (-not $row.PSObject.Properties['message'] -or $null -eq $row.message) { continue }

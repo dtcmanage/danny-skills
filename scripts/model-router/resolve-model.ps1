@@ -12,6 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
+. (Join-Path $PSScriptRoot 'vendor-limits.ps1')
 . (Join-Path $PSScriptRoot '../resolve-codex-model.ps1')
 . (Join-Path $PSScriptRoot 'check-new-models.ps1')
 . (Join-Path $PSScriptRoot 'send-router-alert.ps1')
