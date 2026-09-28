@@ -16,7 +16,7 @@ function Write-Utf8([string]$Path, [string]$Content) {
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $buildScripts = Join-Path $repoRoot 'skills/dt-build/scripts'
 $saved = @{}
-foreach ($name in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','CODEX_HOME','DT_FAKE_CLAUDE_MODE')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+foreach ($name in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CODEX_SESSIONS','CODEX_HOME','DT_FAKE_CLAUDE_MODE','DT_FAKE_CODEX_MODE')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $temp = Join-Path $env:TEMP ('model-router-wiring-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
@@ -25,6 +25,8 @@ try {
     $state = Join-Path $temp 'state'
     New-Item -ItemType Directory -Path $state | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $state
+    $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'empty-sessions'
+    New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_CODEX_SESSIONS | Out-Null
     Write-Utf8 (Join-Path $state 'last-check.json') (@{ checked_at = (Get-Date).ToString('o') } | ConvertTo-Json)
     $transportLog = Join-Path $temp 'transport.log'
     $fakeTransport = Join-Path $temp 'fake-transport.ps1'
@@ -112,6 +114,7 @@ return [pscustomobject]@{ id = 'fake-message' }
 if (`$args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if (`$args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path `$env:CODEX_HOME 'models_cache.json'); exit 0 }
 [IO.File]::AppendAllText('$launchLog', "codex`n")
+if (`$env:DT_FAKE_CODEX_MODE -eq 'limit') { [Console]::Error.WriteLine('usage limit reached; try again at 2026-10-01T12:30:00Z'); exit 1 }
 `$outIndex = [Array]::IndexOf([object[]]`$args, '--output-last-message')
 [void][Console]::In.ReadToEnd()
 [IO.File]::WriteAllText([string]`$args[`$outIndex + 1], @'
@@ -137,12 +140,20 @@ $report
     Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6-astra' -and $r.prov.router_reason -match '^Explicit -Model override') 'codex wrapper -Model override honored and disclosed'
     $r = Invoke-CodexWrapper 'codex-bad-override' @('-Tier','standard','-Model','gone-model')
     Assert-True ($r.exit -ne 0) 'codex wrapper unselectable -Model fails closed'
+    $env:DT_FAKE_CODEX_MODE = 'limit'
+    $r = Invoke-CodexWrapper 'codex-limit' @('-Tier','standard')
+    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.termination_reason -match '^ROUTER_LIMIT: codex ' -and $r.prov.vendor_block.vendor -eq 'codex') 'codex refusal records vendor block and environment failure'
+    $env:DT_FAKE_CODEX_MODE = $null
+    $r = Invoke-CodexWrapper 'codex-blocked-override' @('-Tier','standard','-Model','gpt-6-astra')
+    Assert-True ($r.exit -ne 0 -and $r.prov.router_status -eq 'wait') 'blocked vendor stops explicit Codex override'
+    Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
 
     # 3. Claude chunk wrapper: router Claude lane, no fixed tier map.
     $fakeClaude = Join-Path $temp 'fake-claude.ps1'
     Write-Utf8 $fakeClaude @"
 if (`$args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
 [IO.File]::AppendAllText('$launchLog', "claude`n")
+if (`$env:DT_FAKE_CLAUDE_MODE -eq 'limit') { [Console]::Error.WriteLine('You have reached your usage limit. Resets at 2026-10-01T15:00:00-04:00'); exit 1 }
 [void][Console]::In.ReadToEnd()
 `$ran = [string]`$args[[Array]::IndexOf([object[]]`$args, '--model') + 1]
 `$usage = [ordered]@{}; `$usage[`$ran] = @{ inputTokens = 1; outputTokens = 1; costUSD = 0.01 }
@@ -168,6 +179,13 @@ $report
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.escalated_from -eq 'claude-sonnet-5') 'claude wrapper -EscalateFrom moves one step up'
     $r = Invoke-ClaudeWrapper 'claude-override' @('-Category','planning','-Model','claude-fable-5-1')
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-fable-5-1' -and $r.prov.router_reason -match '^Explicit -Model override') 'claude wrapper -Model override honored and disclosed'
+    $env:DT_FAKE_CLAUDE_MODE = 'limit'
+    $r = Invoke-ClaudeWrapper 'claude-limit' @('-Tier','standard')
+    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.termination_reason -match '^ROUTER_LIMIT: claude ' -and $r.prov.vendor_block.vendor -eq 'claude') 'claude refusal records vendor block and environment failure'
+    $env:DT_FAKE_CLAUDE_MODE = $null
+    $r = Invoke-ClaudeWrapper 'claude-blocked-override' @('-Tier','standard','-Model','claude-fable-5-1')
+    Assert-True ($r.exit -ne 0 -and $r.prov.router_status -eq 'wait') 'blocked vendor stops explicit Claude override'
+    Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
     $beforeSends = Get-TransportCount
     $tablePath = Join-Path $state 'router-table.json'
     $validTable = Get-Content -LiteralPath $tablePath -Raw
@@ -205,6 +223,12 @@ $report
     $codexTop = Invoke-CodexWrapper 'codex-top' @('-Category','analysis','-EscalateFrom','gpt-6-sol')
     $claudeTop = Invoke-ClaudeWrapper 'claude-top' @('-Category','analysis','-EscalateFrom','claude-opus-5-5')
     Assert-True ($codexTop.exit -eq 0 -and $codexTop.prov.resolved_model -eq 'gpt-6-sol' -and $claudeTop.exit -eq 0 -and $claudeTop.prov.requested_model -eq 'claude-opus-5-5') 'wrappers cannot retry past top non-frontier model'
+    $driftPath = Join-Path $state 'drift-marks.json'
+    Write-Utf8 $driftPath (@(@{ job='coder'; model='gpt-6-sol' }, @{ job='coder'; model='claude-opus-5-5' }) | ConvertTo-Json -Depth 4)
+    $codexDriftOverride = Invoke-CodexWrapper 'codex-drift-override' @('-Category','complex-coding','-Model','gpt-6-astra')
+    $claudeDriftOverride = Invoke-ClaudeWrapper 'claude-drift-override' @('-Category','complex-coding','-Model','claude-fable-5-1')
+    Assert-True ($codexDriftOverride.exit -eq 0 -and $codexDriftOverride.prov.resolved_model -eq 'gpt-6-astra' -and $claudeDriftOverride.exit -eq 0 -and $claudeDriftOverride.prov.requested_model -eq 'claude-fable-5-1') 'explicit overrides bypass constrained roster drift waits'
+    Remove-Item -LiteralPath $driftPath
     $blockedUntil = [datetimeoffset]::UtcNow.AddHours(1).ToString('o')
     Write-Utf8 (Join-Path $state 'vendor-blocks.json') (@(
         @{ vendor='codex'; reset_at_utc=$blockedUntil },

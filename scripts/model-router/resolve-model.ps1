@@ -234,6 +234,11 @@ function Resolve-RouterModel {
         if ((Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue) -and (Get-RouterVendorBlocked -Vendor $Lane) -and $entry.backup_vendor) { $Lane = [string]$entry.backup_vendor }
     }
     if ($Category -eq 'image-generation' -and $Lane -ne 'codex') { throw 'LANE: image-generation has only codex' }
+    if (Get-RouterVendorBlocked -Vendor $Lane) {
+        $reason = "Wait: $Lane at its usage limit; no available model for $job."
+        $wait = [pscustomobject]@{ model=$null; agent_alias=$null; category=$Category; lane=$Lane; protected=([bool]$Protected -or $Category -eq 'long-form-writing'); reason=$reason; table_source=$null; table_date=$null; validation_error=$rosterRead.validation_error; alerts=@(); ranked=@() }
+        return (Complete-RouterResult -Result $wait -Job $job -RosterSource default)
+    }
     $lookupCategory = if ($Category -in @('math','analysis')) { 'planning' } else { $Category }
     $EscalateFrom = Resolve-RouterEscalationAlias -EscalateFrom $EscalateFrom -Lane $Lane
     $alerts = [System.Collections.Generic.List[string]]::new()

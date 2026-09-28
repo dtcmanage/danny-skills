@@ -115,7 +115,11 @@ ROUTER_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd
 ROUTER_PICK=""
 if [ -f "$ROUTER_SCRIPT" ] && command -v pwsh >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
   ROUTER_PICK="$(pwsh -NoProfile -File "$(wpath "$ROUTER_SCRIPT")" -Category image-generation -Lane codex -Json 2>/dev/null \
-    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);process.stdout.write(r.model+" ("+r.reason+")")}catch(e){}})' 2>/dev/null || true)"
+    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);process.stdout.write(r.status+"|"+r.model+" ("+r.reason+")")}catch(e){}})' 2>/dev/null || true)"
+fi
+if [[ "$ROUTER_PICK" == wait\|* ]]; then
+  echo "[dt-image-gen] ERROR: model router says image generation must wait: ${ROUTER_PICK#wait|}" >&2
+  exit 1
 fi
 echo "[dt-image-gen] model router (advisory, category image-generation): ${ROUTER_PICK:-unavailable}; engine stays gpt-image-2" >&2
 

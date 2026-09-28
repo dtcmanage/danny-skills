@@ -18,6 +18,16 @@ $transport = Join-Path $temp 'fake-transport.ps1'
 Set-Content -LiteralPath $transport -Value 'param($request) return [pscustomobject]@{ id = "fake" }'
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transport
 try {
+    $codexIso = Test-RouterLimitRefusal -Vendor codex -Text 'ERROR: usage limit reached; try again at 2026-10-01T12:30:00Z.'
+    Assert-True ($codexIso.refused -and $codexIso.reset_at_utc -eq '2026-10-01T12:30:00.0000000+00:00') 'Codex usage refusal parses try-again time'
+    $codexEpoch = Test-RouterLimitRefusal -Vendor codex -Text 'rate_limit_exceeded: resets_at=1790857800'
+    Assert-True ($codexEpoch.refused -and [datetimeoffset]$codexEpoch.reset_at_utc -eq [datetimeoffset]::FromUnixTimeSeconds(1790857800)) 'Codex rate limit parses epoch reset'
+    $codexJson = Test-RouterLimitRefusal -Vendor codex -Text '{"error":"rate_limit_exceeded","resets_at":"2026-10-01T12:30:00Z"}'
+    Assert-True ($codexJson.refused -and $codexJson.reset_at_utc -eq '2026-10-01T12:30:00.0000000+00:00') 'Codex JSON refusal parses quoted reset field'
+    $claudeIso = Test-RouterLimitRefusal -Vendor claude -Text 'You have reached your usage limit. Resets at 2026-10-01T15:00:00-04:00'
+    Assert-True ($claudeIso.refused -and $claudeIso.reset_at_utc -eq '2026-10-01T19:00:00.0000000+00:00') 'Claude usage refusal parses local offset'
+    Assert-True ((Test-RouterLimitRefusal -Vendor claude -Text 'Usage limit reached.').refused) 'Claude refusal without reset uses default block duration'
+    Assert-True (-not (Test-RouterLimitRefusal -Vendor codex -Text 'Completed 100 requests successfully.').refused) 'ordinary output is not a limit refusal'
     Assert-True ($null -eq (Get-RouterCodexUsage) -and -not (Get-RouterVendorBlocked -Vendor codex)) 'no logs leave Codex available'
     $fixture = Join-Path $PSScriptRoot 'fixtures/codex-sessions/2026/09/28/rollout-usage.jsonl'
     $file = Join-Path $sessions '2026/09/28/rollout-usage.jsonl'
@@ -57,11 +67,23 @@ try {
     $entries = @(Read-RouterJsonArray -Path (Join-Path $state 'vendor-blocks.json'))
     Assert-True ($entries.Count -eq 1 -and $entries[0].reason -eq 'replacement') 'next write prunes expired blocks'
     $null = Add-RouterVendorBlock -Vendor claude -ResetAtUtc ([datetimeoffset]::UtcNow.AddMinutes(-1)) -Reason 'expired Claude'
+    $catalog = [pscustomobject]@{ models=@([pscustomobject]@{slug='gpt-6-sol';visibility='list'}) }
+    $null = Add-RouterVendorBlock -Vendor codex -Reason 'v1 Codex limit'
+    $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Catalog $catalog
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.roster_source -eq 'default') 'pre-approval constrained blocked Codex waits'
+    $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $catalog
+    Assert-True ($pick.status -eq 'ok' -and $pick.vendor -eq 'claude') 'pre-approval blocked first choice uses backup'
+    $pick = Resolve-RouterModel -SkipModelCheck -Category image-generation -Catalog $catalog
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model) 'pre-approval blocked image generation waits'
+    $null = Add-RouterVendorBlock -Vendor claude -Reason 'v1 Claude limit'
+    $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $catalog
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model) 'pre-approval both blocked waits'
+    $null = Add-RouterVendorBlock -Vendor codex -ResetAtUtc ([datetimeoffset]::UtcNow.AddMinutes(-1)) -Reason 'clear Codex'
+    $null = Add-RouterVendorBlock -Vendor claude -ResetAtUtc ([datetimeoffset]::UtcNow.AddMinutes(-1)) -Reason 'clear Claude'
     $roster = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 20
     $roster.approved = $true; $roster.approved_at = [datetimeoffset]::UtcNow.ToString('o')
     $roster | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $state 'roster.json')
     [IO.File]::WriteAllText($file,$lines[1] + "`n")
-    $catalog = [pscustomobject]@{ models=@([pscustomobject]@{slug='gpt-6-sol';visibility='list'}) }
     $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $catalog
     Assert-True ($pick.roster_source -eq 'state' -and $pick.model -eq 'claude-opus-5-5' -and $pick.vendor -eq 'claude') 'approved roster sends blocked Codex coder to Claude backup'
     $null = Add-RouterVendorBlock -Vendor claude -Reason 'limit refused'

@@ -79,6 +79,27 @@ function Add-RouterVendorBlock {
     return $block
 }
 
+function Test-RouterLimitRefusal {
+    param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor, [Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $pattern = if ($Vendor -eq 'codex') {
+        '(?i)(?:rate[_ -]?limit|usage[_ -]?limit|too many requests|quota exceeded|limit reached|usage limit reached)'
+    } else {
+        '(?i)(?:usage[_ -]?limit|rate[_ -]?limit|you(?:.ve| have) (?:reached|hit) (?:your )?limit|limit reached|out of (?:messages|usage))'
+    }
+    $refused = $Text -match $pattern
+    $reset = $null
+    if ($refused) {
+        $time = [regex]::Match($Text, '(?im)(?:resets?_at|resets? at|try again at|available again at)["'']?\s*[=:]?\s*["'']?([0-9]{10}|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)')
+        if ($time.Success) {
+            $value = $time.Groups[1].Value.Trim().TrimEnd('.',',',';')
+            $parsed = [datetimeoffset]::MinValue
+            if ([datetimeoffset]::TryParse($value, [ref]$parsed)) { $reset = $parsed.ToUniversalTime().ToString('o') }
+            elseif ($value -match '^\d{10}$') { $reset = [datetimeoffset]::FromUnixTimeSeconds([long]$value).ToString('o') }
+        }
+    }
+    return [pscustomobject]@{ refused=[bool]$refused; reset_at_utc=$reset }
+}
+
 function Get-RouterVendorBlocked {
     param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor)
     $now = [datetimeoffset]::UtcNow

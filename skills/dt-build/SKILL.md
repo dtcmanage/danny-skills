@@ -211,6 +211,8 @@ own lane and fail closed on `wait`. The roster decides the vendor, including whe
 work to the backup. Handoffs that stay as they were: image generation on Codex, and dt-review's
 cross-family rounds.
 
+On `ROUTER_LIMIT`, re-resolve the piece without `-Lane` and dispatch once on the returned backup; this retry does not consume the two-attempt budget.
+
 Both wrappers keep the same contract: prompt over stdin, pinned model, provenance JSON, structured-report
 shape check. `invoke-claude-chunk.ps1` starts a slim session (`--strict-mcp-config`, built-in file and
 shell tools only, no Agent tool); pass `-ReadOnly` for verifier and review chunks. Codex is the most-used

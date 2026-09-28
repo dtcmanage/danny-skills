@@ -142,7 +142,7 @@ try {
     $routerPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected -EscalateFrom $escalatedFrom -Catalog $modelCatalog -SendAlerts -ChatToStderr:$Json
 }
 catch { throw "CODEX_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
-if ($routerPick.status -eq 'wait') {
+if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or (Get-RouterVendorBlocked -Vendor codex))) {
     $waitReason = "ROUTER_WAIT: $($routerPick.reason)"
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         $waitProvenance = [pscustomobject]@{
@@ -322,6 +322,7 @@ try {
         $failureReason = "CODEX_INVOKE_FAIL: codex exec exited $exitCode. Redacted stream: $streamPath"
         $failureCategory = 'tooling'
     }
+
     elseif ([string]::IsNullOrWhiteSpace($lastMessage)) {
         $failureReason = "CODEX_INVOKE_FAIL: codex exec returned no final message. Redacted stream: $streamPath"
         $failureCategory = 'model-output'
@@ -335,6 +336,18 @@ try {
         if ($shapeErrors.Count -gt 0) {
             $failureReason = "CODEX_OUTPUT_INVALID: $($shapeErrors -join '; '). Redacted output: $OutputPath"
             $failureCategory = 'model-output'
+        }
+    }
+
+    $limitBlock = $null
+    if (-not $timedOut -and $exitCode -ne 0) {
+        $refusal = Test-RouterLimitRefusal -Vendor codex -Text $streamText
+        if ($refusal.refused) {
+            $blockArgs = @{ Vendor='codex'; Reason='usage-limit refusal from codex exec' }
+            if ($refusal.reset_at_utc) { $blockArgs.ResetAtUtc = [datetimeoffset]$refusal.reset_at_utc }
+            $limitBlock = Add-RouterVendorBlock @blockArgs
+            $failureReason = "ROUTER_LIMIT: codex at its usage limit until $($limitBlock.reset_at_utc)"
+            $failureCategory = 'environment'
         }
     }
 
@@ -397,6 +410,7 @@ try {
         output_path            = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
         stream_log_path        = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }
         failure_category       = $failureCategory
+        vendor_block           = $limitBlock
         termination_reason     = $failureReason
         output_shape_errors    = @($shapeErrors)
     }
