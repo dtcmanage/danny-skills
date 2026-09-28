@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.16.0
+
+- Roster dispatch: delegated work resolves by category without a lane and routes to the returned vendor; math and analysis categories; wrappers fail closed on router wait; no frontier escalation (model router v2).
+
 ## 2.15.2
 
 - Model router: research grades must be confirmed by two runs, the current pick keeps its place without evidence, older models need a higher grade, protected work only moves up, and evidence routing waits for approval.
