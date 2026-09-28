@@ -34,7 +34,7 @@ function ConvertTo-RouterOutcomeUtcTimestamp {
 }
 
 function Get-RouterOutcomeCategory {
-    param([object]$Record, [string]$Tier, [string]$Name, [string[]]$Categories = @(Get-RouterCategories))
+    param([object]$Record, [string]$Tier, [string]$Name, [string[]]$Categories = @('mechanical','routine-coding','complex-coding','ui-frontend','code-review','planning','deep-research','math','analysis','long-form-writing','image-generation'))
     $category = Get-RouterOutcomeValue $Record @('category')
     if ($category -in $Categories) { return [string]$category }
     if ($Name -match '(?i)(verif|review)') { return 'code-review' }
@@ -42,8 +42,15 @@ function Get-RouterOutcomeCategory {
     return 'routine-coding'
 }
 
+function Write-RouterOutcomeJson {
+    param([string]$Path, [object]$Value)
+    $temp = Join-Path (Split-Path -Parent $Path) ('.router-outcomes.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try { [IO.File]::WriteAllText($temp,(ConvertTo-Json -InputObject $Value -Depth 40),[Text.UTF8Encoding]::new($false)); [IO.File]::Move($temp,$Path,$true) }
+    finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}
+
 function Update-RouterOutcomes {
-    param([datetime]$Now = (Get-Date), [string]$SourcesPath)
+    param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts)
     $state = Get-RouterStateDir
     [IO.Directory]::CreateDirectory($state) | Out-Null
     if (-not $SourcesPath) { $SourcesPath = Join-Path $PSScriptRoot '../../references/model-router/outcome-sources.json' }
@@ -51,7 +58,6 @@ function Update-RouterOutcomes {
     $tablePath = Join-Path $state 'router-table.json'
     $table = (Read-RouterTable -TablePath $tablePath).table
     $rosterRead = Read-RouterRoster
-    $outcomeCategories = if ($rosterRead.source -eq 'state') { @($rosterRead.roster.category_jobs.PSObject.Properties.Name) } else { @(Get-RouterCategories) }
     $outcomePath = Join-Path $state 'outcomes.jsonl'
     $records = [ordered]@{}
     if (Test-Path -LiteralPath $outcomePath) {
@@ -90,7 +96,7 @@ function Update-RouterOutcomes {
                     $lane = [string](Get-RouterOutcomeValue $item @('lane'))
                     if ($lane -notin @('codex','claude')) { $lane = if ($model -match '^claude-') { 'claude' } else { 'codex' } }
                     $pass = Get-RouterOutcomeValue $item @('pass')
-                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier $file.Name $outcomeCategories); attempt=[int]$attempt; pass=($pass -eq $true -or [string]$pass -eq 'true'); escalated=($file.Name -match '(?i)(?:-|_)(retry|fix|resume)'); failure_category=(Get-RouterOutcomeValue $item @('failure_category')); source='dt-build'; tier=$tier }
+                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier $file.Name); attempt=[int]$attempt; pass=($pass -eq $true -or [string]$pass -eq 'true'); escalated=($file.Name -match '(?i)(?:-|_)(retry|fix|resume)'); failure_category=(Get-RouterOutcomeValue $item @('failure_category')); source='dt-build'; tier=$tier }
                     $newCount++
                 }
                 $acceptance = Join-Path $folder 'acceptance-rows.jsonl'
@@ -113,7 +119,7 @@ function Update-RouterOutcomes {
                     $tier = [string](Get-RouterOutcomeValue $item @('tier'))
                     $lane = [string](Get-RouterOutcomeValue $item @('lane'))
                     if ($lane -notin @('codex','claude')) { $lane = if ($model -match '^claude-') { 'claude' } else { 'codex' } }
-                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier ([string]$chunk) $outcomeCategories); attempt=[int]$attempt; pass=([string](Get-RouterOutcomeValue $item @('status')) -eq 'PASS'); escalated=$false; failure_category=(Get-RouterOutcomeValue $item @('failure_category')); source='dt-build'; tier=$tier }
+                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier ([string]$chunk)); attempt=[int]$attempt; pass=([string](Get-RouterOutcomeValue $item @('status')) -eq 'PASS'); escalated=$false; failure_category=(Get-RouterOutcomeValue $item @('failure_category')); source='dt-build'; tier=$tier }
                     $newCount++
                 }
             }
@@ -153,26 +159,34 @@ function Update-RouterOutcomes {
         $roster = $rosterRead.roster
         $marksPath = Join-Path $state 'drift-marks.json'
         $priorMarks = @(Read-RouterJsonArray -Path $marksPath)
+        $declinesPath = Join-Path $state 'drift-declines.json'
+        $priorDeclines = @(Read-RouterJsonArray -Path $declinesPath)
+        $declines = [System.Collections.Generic.List[object]]::new()
         $marks = [System.Collections.Generic.List[object]]::new()
         $alerts = [System.Collections.Generic.List[object]]::new()
-        $swaps = [System.Collections.Generic.List[object]]::new()
+        $newMarks = 0
         foreach ($job in @(Get-RouterJobs)) {
             $entry = $roster.jobs.$job
             $categories = @($roster.category_jobs.PSObject.Properties | Where-Object { $_.Value -eq $job } | ForEach-Object Name)
             $group = @($eligible | Where-Object { $_.model -eq $entry.first -and $_.category -in $categories -and $_.lane -eq $entry.first_vendor })
             $recent = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-30) -and ([datetime]$_.at) -le $nowUtc })
             $prior = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-120) -and ([datetime]$_.at) -lt $nowUtc.AddDays(-30) })
-            if ($recent.Count -lt 10 -or $prior.Count -lt 10) { continue }
-            $recentRate = @($recent | Where-Object pass).Count / $recent.Count
-            $priorRate = @($prior | Where-Object pass).Count / $prior.Count
-            if (($priorRate - $recentRate) -lt (0.15 - 1e-9)) { continue }
+            $drifting = $false
+            if ($recent.Count -ge 10 -and $prior.Count -ge 10) {
+                $recentRate = @($recent | Where-Object pass).Count / $recent.Count
+                $priorRate = @($prior | Where-Object pass).Count / $prior.Count
+                $drifting = (($priorRate - $recentRate) -ge (0.15 - 1e-9))
+            }
+            if (-not $drifting) { continue }
+            $declined = @($priorDeclines | Where-Object { $_.job -eq $job -and $_.model -eq $entry.first })
+            if ($declined.Count) { $declines.Add($declined[0]); continue }
             $old = @($priorMarks | Where-Object { $_.job -eq $job -and $_.model -eq $entry.first })
             $marks.Add([pscustomobject]@{ model=$entry.first; job=$job; marked_at=$(if ($old.Count) { $old[0].marked_at } else { $nowUtc.ToString('o') }); recent_rate=$recentRate; prior_rate=$priorRate })
             if (-not $old.Count) {
+                $newMarks++
                 $key = "drift:$($entry.first):${job}:$($nowUtc.ToString('yyyyMM'))"
                 if ($entry.backup) {
                     $alerts.Add([pscustomobject]@{key=$key;message="Model $($entry.first) is drifting for $job. The job now uses its backup $($entry.backup). Proposed change: swap first and backup."})
-                    $swaps.Add([pscustomobject]@{job=$job;from=$entry.first;to=$entry.backup})
                 } else { $alerts.Add([pscustomobject]@{key=$key;message="Model $($entry.first) is drifting for $job. No backup is approved; the first choice remains in use."}) }
             }
         }
@@ -181,13 +195,15 @@ function Update-RouterOutcomes {
                 $alerts.Add([pscustomobject]@{key="drift-cleared:$($old.model):$($old.job):$($nowUtc.ToString('yyyyMM'))";message="Drift cleared for $($old.job) on $($old.model); the first choice is restored."})
             }
         }
-        [IO.File]::WriteAllText($marksPath,(ConvertTo-Json -InputObject @($marks.ToArray()) -Depth 10),[Text.UTF8Encoding]::new($false))
+        Write-RouterOutcomeJson $marksPath @($marks.ToArray())
+        if ($priorDeclines.Count -or $declines.Count) { Write-RouterOutcomeJson $declinesPath @($declines.ToArray()) }
         $proposalPath = $null
-        if ($swaps.Count) {
+        if ($newMarks -gt 0 -and @($marks | Where-Object { $roster.jobs.($_.job).backup }).Count) {
             $proposal = $roster | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
             $proposal.generated_at = $nowUtc.ToString('o'); $proposal.approved = $false; $proposal.approved_at = $null
-            foreach ($swap in $swaps) {
-                $target = $proposal.jobs.($swap.job)
+            foreach ($mark in $marks) {
+                $target = $proposal.jobs.($mark.job)
+                if (-not $target.backup) { continue }
                 $first = $target.first; $vendor = $target.first_vendor
                 $target.first = $target.backup; $target.first_vendor = $target.backup_vendor
                 $target.backup = $first; $target.backup_vendor = $vendor
@@ -203,9 +219,9 @@ function Update-RouterOutcomes {
                 $lines += "| $job | $($roster.jobs.$job.first) | $($proposal.jobs.$job.first) | $evidence | $($proposal.jobs.$job.backup) |"
             }
             [IO.File]::WriteAllText($reportPath,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
-            [IO.File]::WriteAllText((Join-Path $dir 'latest.json'),(ConvertTo-Json -InputObject ([pscustomobject]@{proposal=$proposalPath;report=$reportPath}) -Compress),[Text.UTF8Encoding]::new($false))
+            Write-RouterOutcomeJson (Join-Path $dir 'latest.json') ([pscustomobject]@{proposal=$proposalPath;report=$reportPath})
         }
-        if ($alerts.Count) { Send-RouterAlerts -Alerts @($alerts.ToArray()) -ChatToStderr:$RouterOutcomesCliJson | Out-Null }
+        if ($SendAlerts -and $alerts.Count) { Send-RouterAlerts -Alerts @($alerts.ToArray()) -ChatToStderr:$RouterOutcomesCliJson | Out-Null }
         return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; table_updates=$updated; drift_flags=$marks.Count; alerts=@($alerts.ToArray()); proposal=$proposalPath }
     }
     $flagsPath = Join-Path $state 'drift-flags.json'
@@ -231,10 +247,11 @@ function Update-RouterOutcomes {
     }
     foreach ($old in $priorFlags) { if (-not @($flags | Where-Object { $_.category -eq $old.category -and $_.lane -eq $old.lane -and $_.model -eq $old.model }).Count) { $alerts.Add("drift-cleared:$($old.model):$($old.category):$($old.lane):$($nowUtc.ToString('yyyyMM'))") } }
     [IO.File]::WriteAllText($flagsPath,(ConvertTo-Json -InputObject @($flags.ToArray()) -Depth 10),[Text.UTF8Encoding]::new($false))
+    if ($SendAlerts -and $alerts.Count) { Send-RouterAlerts -Alerts @($alerts.ToArray()) -ChatToStderr:$RouterOutcomesCliJson | Out-Null }
     return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; table_updates=$updated; drift_flags=$flags.Count; alerts=@($alerts.ToArray()) }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Update-RouterOutcomes -Now $RouterOutcomesCliNow -SourcesPath $RouterOutcomesCliSourcesPath
+    $result = Update-RouterOutcomes -Now $RouterOutcomesCliNow -SourcesPath $RouterOutcomesCliSourcesPath -SendAlerts
     if ($RouterOutcomesCliJson) { $result | ConvertTo-Json -Compress -Depth 10 } else { $result }
 }

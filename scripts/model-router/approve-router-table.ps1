@@ -22,9 +22,11 @@ function Write-RouterApprovalJson {
 if ($Roster) {
     if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift) -ne 1) { throw 'Choose exactly one roster action.' }
     if ($DeclineDrift -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
+    if ($Job -and -not $DeclineDrift) { throw '-Job requires -Roster -DeclineDrift.' }
     $state = Get-RouterStateDir
     $rosterPath = Join-Path $state 'roster.json'
     $marksPath = Join-Path $state 'drift-marks.json'
+    $declinesPath = Join-Path $state 'drift-declines.json'
     $dir = Join-Path $state 'roster-proposals'
     [IO.Directory]::CreateDirectory($dir) | Out-Null
     $latest = Read-RouterJsonObject -Path (Join-Path $dir 'latest.json')
@@ -54,7 +56,10 @@ if ($Roster) {
         $before = (Read-RouterRoster).roster
         Write-RouterApprovalJson $rosterPath $proposal
         $changed = @(Get-RouterJobs | Where-Object { $before.jobs.$_.first -ne $proposal.jobs.$_.first })
-        if ($changed.Count) { Write-RouterApprovalJson $marksPath @((Read-RouterJsonArray -Path $marksPath) | Where-Object { $_.job -notin $changed }) }
+        if ($changed.Count) {
+            Write-RouterApprovalJson $marksPath @((Read-RouterJsonArray -Path $marksPath) | Where-Object { $_.job -notin $changed })
+            Write-RouterApprovalJson $declinesPath @((Read-RouterJsonArray -Path $declinesPath) | Where-Object { $_.job -notin $changed })
+        }
         'Roster approved.' | Write-Output
     } elseif ($Revoke) {
         if (-not (Test-Path -LiteralPath $rosterPath)) { throw 'No roster to revoke.' }
@@ -63,12 +68,19 @@ if ($Roster) {
         Write-RouterApprovalJson $rosterPath $current
         'Roster revoked.' | Write-Output
     } else {
+        $current = Read-RouterRoster
+        $model = [string]$current.roster.jobs.$Job.first
+        $declines = @((Read-RouterJsonArray -Path $declinesPath) | Where-Object { $_.job -ne $Job -or $_.model -ne $model })
+        $declines += [pscustomobject]@{model=$model;job=$Job;declined_at=(Get-Date).ToUniversalTime().ToString('o')}
+        Write-RouterApprovalJson $declinesPath $declines
         Write-RouterApprovalJson $marksPath @((Read-RouterJsonArray -Path $marksPath) | Where-Object { $_.job -ne $Job })
         "Drift declined for $Job." | Write-Output
     }
     return
 }
 
+if ($Seed -or $DeclineDrift) { throw '-Seed and -DeclineDrift require -Roster.' }
+if ($Job) { throw '-Job requires -Roster -DeclineDrift.' }
 if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke) -ne 1) { throw 'Choose exactly one of -Show, -Approve, or -Revoke.' }
 $path = if ($TablePath) { $TablePath } else { Join-Path (Get-RouterStateDir) 'router-table.json' }
 if (-not (Test-Path -LiteralPath $path)) { throw "Router table not found: $path" }

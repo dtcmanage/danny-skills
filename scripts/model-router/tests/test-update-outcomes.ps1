@@ -25,7 +25,14 @@ $temp = Join-Path $env:TEMP ('model-router-outcomes-' + [guid]::NewGuid().ToStri
 $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'sessions'
 [IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_CODEX_SESSIONS) | Out-Null
 $stub = Join-Path $temp 'transport.ps1'
-Set-Content -LiteralPath $stub -Value 'param($request) return [pscustomobject]@{id="stub"}'
+Set-Content -LiteralPath $stub -Value @'
+param($request)
+if ($request.kind -eq 'secret') { return 'fake-secret' }
+if ($request.uri -like '*/oauth2/applications/@me') { return [pscustomobject]@{owner=[pscustomobject]@{id='owner'}} }
+if ($request.uri -like '*/users/@me/channels') { return [pscustomobject]@{id='dm'} }
+if ($request.uri -like '*/messages') { Add-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'deliveries.log') -Value $request.body }
+return [pscustomobject]@{id='stub'}
+'@
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $stub
 $script:state = Join-Path $temp 'state'
 $script:repo = Join-Path $temp 'sample-repo'
@@ -105,6 +112,10 @@ try {
     Write-Provenance 'prior-10' 'M01' 1 'sonnet' $true '2026-08-01T12:00:00Z'
     $drift = Run-Update
     Assert-True ($drift.drift_flags -eq 1 -and @($drift.alerts | Where-Object { $_ -like 'drift:*' }).Count -eq 1) 'drift at exactly 15 points with 10 plus 20 samples'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $script:state 'alert-log.jsonl'))) 'dot-sourced v1 update returns alert without delivery'
+    Remove-Item -LiteralPath (Join-Path $script:state 'drift-flags.json')
+    $cli = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../update-outcomes.ps1') -Now $script:now -SourcesPath $script:sources -Json 2>&1) -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and $cli -match 'ROUTER_ALERT:' -and (Test-Path -LiteralPath (Join-Path $script:state 'deliveries.log'))) 'v1 CLI sends alert through transport and prints chat line'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $script:state 'drift-marks.json'))) 'no approved roster keeps v1 drift flags'
     $demoted = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     Assert-True ($demoted.model -eq 'claude-opus-5-5' -and $demoted.reason -match 'Drift demotion') 'resolver demotes flagged candidate (confirmed incumbent steps one rung up the ladder)'
@@ -140,13 +151,59 @@ try {
     $latest = Read-RouterJsonObject -Path (Join-Path $rosterState 'roster-proposals/latest.json')
     $swap = Read-RouterJsonObject -Path ([string]$latest.proposal)
     Assert-True ($marks.Count -eq 1 -and $marks[0].job -eq 'coder' -and $marks[0].model -eq 'gpt-6-sol' -and [math]::Abs($marks[0].recent_rate - 0.85) -lt 0.00001) 'approved roster drift marks first choice across job categories'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $rosterState 'alert-log.jsonl'))) 'dot-sourced roster update returns alert without delivery'
     Assert-True (@($rosterDrift.alerts | Where-Object { $_.key -eq 'drift:gpt-6-sol:coder:202609' -and $_.message -match 'uses its backup' -and $_.message -match 'swap first and backup' }).Count -eq 1) 'roster drift yields one backup and swap alert'
     Assert-True ($swap.jobs.coder.first -eq 'claude-opus-5-5' -and $swap.jobs.coder.backup -eq 'gpt-6-sol' -and (Test-Path -LiteralPath $latest.report)) 'drift writes swap proposal and report'
     Assert-True ((Get-FileHash -LiteralPath (Join-Path $rosterState 'roster.json') -Algorithm SHA256).Hash -eq $rosterHash) 'drift leaves approved roster unchanged'
     Assert-True (@((Run-Update).alerts).Count -eq 0) 'repeat drift emits no duplicate alert'
+    Remove-Item -LiteralPath (Join-Path $rosterState 'drift-marks.json')
+    $cli = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../update-outcomes.ps1') -Now $script:now -SourcesPath $script:sources -Json 2>&1) -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and $cli -match 'ROUTER_ALERT:' -and (Test-Path -LiteralPath (Join-Path $rosterState 'deliveries.log'))) 'roster CLI sends alert through transport and prints chat line'
     for ($i=21; $i -le 50; $i++) { Write-Provenance "roster-recent-$i" 'M01' 1 'gpt-6-sol' $true '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
     $rosterClear = Run-Update
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json')).Count -eq 0 -and @($rosterClear.alerts | Where-Object { $_.key -like 'drift-cleared:*' }).Count -eq 1) 'cleared roster drift removes mark and alerts once'
+
+    $sequenceState = Join-Path $temp 'sequence-state'; $sequenceRepo = Join-Path $temp 'sequence-repo'
+    [IO.Directory]::CreateDirectory($sequenceState) | Out-Null
+    [IO.Directory]::CreateDirectory($sequenceRepo) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $sequenceState; $script:state = $sequenceState; $script:repo = $sequenceRepo
+    @($sequenceRepo) | ConvertTo-Json | Set-Content -LiteralPath $script:sources
+    for ($i=1; $i -le 10; $i++) { Write-Provenance "analysis-prior-$i" 'M01' 1 'claude-opus-5-5' $true '2026-08-01T12:00:00Z' 'standard' '' 'analysis' }
+    for ($i=1; $i -le 20; $i++) { Write-Provenance "analysis-recent-$i" 'M01' 1 'claude-opus-5-5' ($i -le 17) '2026-09-25T12:00:00Z' 'standard' '' 'analysis' }
+    Run-Update | Out-Null
+    Assert-True (@(Read-Records | Where-Object { $_.category -eq 'analysis' }).Count -eq 30) 'analysis imported before roster retains recorded category'
+    $roster | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $sequenceState 'roster.json')
+    $analysisDrift = Run-Update
+    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json') | Where-Object job -eq 'deep-thinker').Count -eq 1) 'pre-roster analysis records count toward deep-thinker drift'
+    for ($i=1; $i -le 10; $i++) { Write-Provenance "coder-prior-$i" 'M01' 1 'gpt-6-sol' $true '2026-08-01T12:00:00Z' 'complex' '' 'complex-coding' }
+    for ($i=1; $i -le 20; $i++) { Write-Provenance "coder-recent-$i" 'M01' 1 'gpt-6-sol' ($i -le 17) '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
+    Run-Update | Out-Null
+    $latest = Read-RouterJsonObject -Path (Join-Path $sequenceState 'roster-proposals/latest.json')
+    $both = Read-RouterJsonObject -Path ([string]$latest.proposal)
+    Assert-True ($both.jobs.coder.first -eq 'claude-opus-5-5' -and $both.jobs.'deep-thinker'.first -eq 'gpt-6-sol' -and ((Get-Content -LiteralPath $latest.report -Raw) -match 'deep-thinker.*drift threshold met')) 'new proposal swaps every current mark and reports each'
+    for ($i=1; $i -le 10; $i++) { Write-Provenance "writer-prior-$i" 'M01' 1 'claude-opus-5-5' $true '2026-08-01T12:00:00Z' 'standard' '' 'long-form-writing' }
+    for ($i=1; $i -le 20; $i++) { Write-Provenance "writer-recent-$i" 'M01' 1 'claude-opus-5-5' ($i -le 17) '2026-09-25T12:00:00Z' 'standard' '' 'long-form-writing' }
+    Run-Update | Out-Null
+    $latest = Read-RouterJsonObject -Path (Join-Path $sequenceState 'roster-proposals/latest.json')
+    $allSwapped = Read-RouterJsonObject -Path ([string]$latest.proposal)
+    Assert-True ($allSwapped.jobs.coder.first -eq 'claude-opus-5-5' -and $allSwapped.jobs.writer.first -eq 'gpt-6-sol' -and ((Get-Content -LiteralPath $latest.report -Raw) -match 'coder.*drift threshold met') -and ((Get-Content -LiteralPath $latest.report -Raw) -match 'writer.*drift threshold met')) 'writer drift proposal retains coder swap and reports both'
+    $approval = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster -DeclineDrift -Job coder 2>&1) -join "`n"
+    $marksBefore = @(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json'))
+    $proposalBefore = (Get-FileHash -LiteralPath (Join-Path $sequenceState 'roster-proposals/latest.json') -Algorithm SHA256).Hash
+    $afterDecline = Run-Update
+    $marksAfter = @(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json'))
+    $coderRoute = Resolve-RouterModel -Category complex-coding -SkipModelCheck
+    Assert-True ($LASTEXITCODE -eq 0 -and $marksBefore.Count -eq 2 -and $marksAfter.Count -eq 2 -and @($marksAfter | Where-Object job -eq 'coder').Count -eq 0 -and $coderRoute.model -eq 'gpt-6-sol' -and -not $afterDecline.proposal -and (Get-FileHash -LiteralPath (Join-Path $sequenceState 'roster-proposals/latest.json') -Algorithm SHA256).Hash -eq $proposalBefore) 'decline survives update without re-mark or new proposal'
+    for ($i=21; $i -le 50; $i++) { Write-Provenance "coder-recent-$i" 'M01' 1 'gpt-6-sol' $true '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
+    Run-Update | Out-Null
+    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-declines.json')).Count -eq 0) 'decline removed when model drift clears'
+    for ($i=51; $i -le 200; $i++) { Write-Provenance "coder-recent-$i" 'M01' 1 'gpt-6-sol' $false '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
+    Run-Update | Out-Null
+    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json') | Where-Object job -eq 'coder').Count -eq 1) 'new drift after clearance is marked again'
+    Remove-Item -LiteralPath (Join-Path $sequenceState 'drift-marks.json')
+    Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -SendAlerts | Out-Null
+    $delivered = @(Get-Content -LiteralPath (Join-Path $sequenceState 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.key -eq 'drift:gpt-6-sol:coder:202609' -and $_.event -eq 'delivered' })
+    Assert-True ((Test-Path -LiteralPath (Join-Path $sequenceState 'deliveries.log')) -and $delivered.Count -eq 1) 'explicit SendAlerts delivers dot-sourced roster alert'
 
     $timestampState = Join-Path $temp 'timestamp-state'
     $timestampRepo = Join-Path $temp 'timestamp-repo'

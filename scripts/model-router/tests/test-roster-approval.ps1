@@ -39,12 +39,19 @@ try {
     $output = @(Invoke-Approval -Options @('-Approve')) -join "`n"
     Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'ROSTER_MODEL_CAP' -and (Get-Content -LiteralPath (Join-Path $temp 'roster.json') -Raw | ConvertFrom-Json).approved -eq $false) 'over-cap proposal refused with error'
     $proposal = Read-Seed
+    $proposal.jobs.coder.first = 'unknown-model'
+    $proposal | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $latest.proposal
+    $output = @(Invoke-Approval -Options @('-Approve')) -join "`n"
+    Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'ROSTER_MODEL_VENDOR: coder/first') 'invalid non-cap proposal names model error'
+    $proposal = Read-Seed
     $proposal | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $latest.proposal
     $null = Invoke-Approval -Options @('-Approve')
     @([pscustomobject]@{model='gpt-6-sol';job='coder';marked_at='2026-09-28T00:00:00Z'}) | ConvertTo-Json -AsArray | Set-Content -LiteralPath (Join-Path $temp 'drift-marks.json')
     Assert-True ((Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog).model -eq 'claude-opus-5-5') 'drift mark uses backup'
     $null = Invoke-Approval -Options @('-DeclineDrift','-Job','coder')
     Assert-True ((@(Read-RouterJsonArray -Path (Join-Path $temp 'drift-marks.json')).Count -eq 0) -and (Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog).model -eq 'gpt-6-sol') 'decline drift removes mark and restores first choice'
+    $declines = @(Read-RouterJsonArray -Path (Join-Path $temp 'drift-declines.json'))
+    Assert-True ($declines.Count -eq 1 -and $declines[0].model -eq 'gpt-6-sol' -and $declines[0].job -eq 'coder' -and $declines[0].declined_at) 'decline persists model and job'
     @([pscustomobject]@{model='gpt-6-sol';job='coder';marked_at='2026-09-28T00:00:00Z'},[pscustomobject]@{model='gpt-6-luna';job='fast';marked_at='2026-09-28T00:00:00Z'}) | ConvertTo-Json -AsArray | Set-Content -LiteralPath (Join-Path $temp 'drift-marks.json')
     $proposal = Read-Seed
     $proposal.jobs.coder.first = 'claude-opus-5-5'; $proposal.jobs.coder.first_vendor = 'claude'
@@ -53,6 +60,11 @@ try {
     $null = Invoke-Approval -Options @('-Approve')
     $marks = @(Read-RouterJsonArray -Path (Join-Path $temp 'drift-marks.json'))
     Assert-True ($marks.Count -eq 1 -and $marks[0].job -eq 'fast') 'approval clears marks only for changed first choice'
+    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $temp 'drift-declines.json')).Count -eq 0) 'approval clears decline when first choice changes'
+    foreach ($options in @(@('-Seed'),@('-DeclineDrift','-Job','coder'),@('-Roster','-Show','-Job','coder'))) {
+        $output = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') @options 2>&1) -join "`n"
+        Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'require') "ignored switch rejected: $($options -join ' ')"
+    }
     Write-Output "PASS: $script:passed tests"
 } finally {
     $env:DT_MODEL_ROUTER_STATE = $priorState
