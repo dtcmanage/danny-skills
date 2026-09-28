@@ -31,6 +31,11 @@ $priorState = $env:DT_MODEL_ROUTER_STATE
 $temp = Join-Path $env:TEMP ("model-router-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
+$priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
+$transportLog = Join-Path $temp 'transport.log'
+$stubTransport = Join-Path $temp 'stub-transport.ps1'
+Set-Content -LiteralPath $stubTransport -Value ("param(`$request)`nAdd-Content -LiteralPath '" + $transportLog + "' -Value 'called'`nreturn [pscustomobject]@{ id = 'stub' }") -Encoding utf8
+$env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $stubTransport
 try {
     $fixturePath = Join-Path $temp 'router-table.json'
     $seed = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/seed-table.json') -Raw | ConvertFrom-Json -Depth 30
@@ -238,7 +243,7 @@ try {
     $r[3].confirmed_grade = 'unknown'
     Save-Fixture $table $fixturePath
     $frontierOnly = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude
-    Assert-True ($frontierOnly.model -eq $table.categories.'routine-coding'.claude.fallback -and $frontierOnly.reason -eq 'No eligible candidate; lane fallback.') 'frontier-only research candidates use lane fallback'
+    Assert-True ($frontierOnly.model -eq $r[2].model -and $frontierOnly.model -ne $r[0].model) 'frontier-only research evidence keeps the weak incumbent, never the frontier model'
     Enable-Candidate $r[1] 'capable' 1000 100
     Enable-Candidate $r[2] 'capable' 10 10
     Save-Fixture $table $fixturePath
@@ -353,7 +358,7 @@ try {
         $same = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $top[0] -EscalateFrom $top[1] -Catalog $bridgeCatalog
         Assert-True ($same.model -eq $top[1] -and $same.reason -match 'already at the top') "bridge escalation at top keeps $($top[1]) and says so"
     }
-    foreach ($frontierStep in @(@('codex','gpt-6-astra'),@('claude','claude-fable-5-5'))) {
+    foreach ($frontierStep in @(@('codex','gpt-6-astra'),@('claude','claude-fable-5-1'))) {
         $pick = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $frontierStep[0] -EscalateFrom $frontierStep[1] -Catalog $bridgeCatalog
         Assert-True ($pick.model -ne $frontierStep[1] -and $pick.model -notin @('gpt-6-astra','claude-fable-5-5')) "bridge frontier escalation source $($frontierStep[0]) returns non-frontier"
     }
@@ -376,8 +381,10 @@ try {
     $a = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude | ConvertTo-Json -Depth 12 -Compress
     $b = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude | ConvertTo-Json -Depth 12 -Compress
     Assert-True ($a -ceq $b) 'identical input produces identical JSON'
+    Assert-True (-not (Test-Path -LiteralPath $transportLog)) 'no test reached the alert transport'
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
     $env:DT_MODEL_ROUTER_STATE = $priorState
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport
     Remove-Item -LiteralPath $temp -Recurse -Force
 }
