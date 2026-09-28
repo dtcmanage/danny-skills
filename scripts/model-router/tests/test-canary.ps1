@@ -60,7 +60,7 @@ try {
     Assert-True ($script:launchCalls -eq 1 -and $watch.ElapsedMilliseconds -lt 3000) 'post-release trigger is detached and non-blocking'
     . (Join-Path $PSScriptRoot '../register-router-schedules.ps1')
     $scheduled = @(Register-RouterSchedules)
-    Assert-True ($scheduled.Count -eq 2 -and @($scheduled | Where-Object { $_.launcher -like '*run-hidden.vbs' }).Count -eq 2) 'schedule dry run lists both hidden-launcher tasks without registration'
+    Assert-True ($scheduled.Count -eq 4 -and @($scheduled | Where-Object { $_.launcher -like '*run-hidden.vbs' }).Count -eq 4) 'schedule dry run lists all four hidden-launcher tasks without registration'
     Write-Output "PASS: $script:passed canary assertions"
 } finally {
     $env:DT_MODEL_ROUTER_STATE = $priorState
