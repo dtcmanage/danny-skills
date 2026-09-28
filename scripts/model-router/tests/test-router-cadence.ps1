@@ -97,6 +97,18 @@ try {
     [void](Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger confirmation -Categories @('complex-coding') -DueAt $now -Reason 'confirmation-first-verdict')
     [void](Invoke-RouterCadence -Now $now)
     Assert-True (@(Read-RouterJsonArray -Path $queuePath | Where-Object trigger -eq 'followup').Count -eq 1) 'first conclusive confirmation queues one followup'
+    # A model that already won another job still gets a follow-up for its first win in a new job.
+    $followups = @(Read-RouterJsonArray -Path $queuePath | Where-Object trigger -ne 'followup')
+    Use-RouterQueueMutex -StateDir $temp -Action { Write-RouterJsonAtomic -Path $queuePath -Value $followups }
+    [IO.File]::AppendAllText((Join-Path $temp 'roster-proposals/verdicts.jsonl'),((([pscustomobject]@{pass_id='older';job='deep-thinker';slot='backup';result='gpt-6-new'}) | ConvertTo-Json -Compress) + "`n"))
+    function Write-RouterCadenceConfirmationVerdicts { param($Item,$PassId) [IO.File]::AppendAllText((Join-Path $temp 'roster-proposals/verdicts.jsonl'),((([pscustomobject]@{pass_id=$PassId;job='writer';slot='first';result='gpt-6-new'}) | ConvertTo-Json -Compress) + "`n")) }
+    [void](Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger confirmation -Categories @('long-form-writing') -DueAt $now -Reason 'confirmation-new-job')
+    [void](Invoke-RouterCadence -Now $now)
+    Assert-True (@(Read-RouterJsonArray -Path $queuePath | Where-Object trigger -eq 'followup').Count -eq 1) 'first win in a new job queues a followup even after a win in another job'
+    $script:modelChecks = 0
+    function Invoke-RouterModelCheck { param([switch]$Force,$Now) $script:modelChecks++; return [pscustomobject]@{new_models=@()} }
+    [void](Invoke-RouterCadence -Now $now)
+    Assert-True ($script:modelChecks -eq 1) 'full overnight run also checks for new models'
 
     function Invoke-RouterModelCheck { param([switch]$Force,$Now) return [pscustomobject]@{new_models=@()} }
     $script:researchCalls.Clear()

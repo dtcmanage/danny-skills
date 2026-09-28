@@ -104,7 +104,8 @@ function Invoke-RouterCadence {
     $state = Get-RouterStateDir
     $queuePath = Join-Path $state 'research-queue.json'
     $added = 0
-    if ($CheckOnly) { $check = Invoke-RouterModelCheck -Force -Now $Now; $added += @($check.new_models).Count }
+    # Both daily runs (01:00 full, 13:00 check-only) check for new models, so releases are seen twice a day.
+    $check = Invoke-RouterModelCheck -Force -Now $Now; $added += @($check.new_models).Count
     $added += Add-RouterCadenceRefreshes -Now $Now
     $zone = [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')
     $eastern = [TimeZoneInfo]::ConvertTime($Now,$zone)
@@ -134,9 +135,10 @@ function Invoke-RouterCadence {
         $verdictPath = Join-Path $state 'roster-proposals/verdicts.jsonl'
         $verdicts = @(if (Test-Path -LiteralPath $verdictPath) { Get-Content -LiteralPath $verdictPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
         foreach ($confirmation in $confirmations) {
+            # Per job and slot: a first conclusive win for any job queues the follow-up, even if the model already won another job.
             $current = @($verdicts | Where-Object { $_.pass_id -ceq $confirmation.pass_id -and $_.result -ceq $confirmation.item.model })
-            $earlier = @($verdicts | Where-Object { $_.pass_id -cne $confirmation.pass_id -and $_.result -ceq $confirmation.item.model })
-            if ($current.Count -and -not $earlier.Count) {
+            $firstWins = @($current | Where-Object { $win = $_; -not @($verdicts | Where-Object { $_.pass_id -cne $confirmation.pass_id -and $_.result -ceq $confirmation.item.model -and $_.job -ceq $win.job -and $_.slot -ceq $win.slot }).Count })
+            if ($firstWins.Count) {
                 if (Add-RouterResearchQueueItem -Model $confirmation.item.model -Trigger followup -Categories @($confirmation.item.categories) -DueAt $Now.AddDays(7) -Reason 'first-conclusive-confirmation') { $added++ }
             }
         }
