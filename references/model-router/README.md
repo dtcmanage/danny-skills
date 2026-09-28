@@ -21,6 +21,7 @@ The resolver uses the roster only once `<state>/roster.json` is approved; until 
 Research runs per category (`run-router-research.ps1 -Categories`), reading the named sources in `benchmark-sources.json` and storing readings under `<state>/readings/`. `build-roster.ps1` turns readings into a proposal: two independent comparable leads and no trail win a category; the job's primary category decides a multi-category job; a change needs two consecutive conclusive passes that covered the job; the fast job clears a quality floor, then the lower list price wins. A change sends one Discord DM and writes a report under `<state>/roster-proposals/`.
 
 Manage the roster with `approve-router-table.ps1 -Roster`: `-Seed` (first proposal from today's picks), `-Show`, `-Approve` (switches routing to the roster), `-Revoke` (back to v1), and `-DeclineDrift -Job <job>` (keep the first choice after a drift alert). Drift on a first choice sends that job to its approved backup until Danny approves the swap proposal or declines it.
+Use `-Approve -Jobs fast,coder` to approve only named jobs when a full proposal exceeds the five-model cap.
 
 At ship, register the Windows Scheduled Tasks from the **main checkout** with `pwsh -NoProfile -File scripts/model-router/register-router-schedules.ps1 -Apply`. They run the monthly canary on day 1 at 04:00 ET, the weekly cost report on Monday at 07:00 ET, the full research cadence daily at 01:00 ET, and the model-release check daily at 13:00 ET. Do not register them from a build worktree.
 

@@ -22,7 +22,7 @@ function Add-RouterResearchQueueItem {
     if (-not $categoriesSorted.Count) { return $false }
     $state = Get-RouterStateDir
     $queuePath = Join-Path $state 'research-queue.json'
-    $added = $false
+    $added = [pscustomobject]@{ value=$false }
     Use-RouterQueueMutex -StateDir $state -Action {
         $queue = @(Read-RouterJsonArray -Path $queuePath)
         $key = $categoriesSorted -join '|'
@@ -30,10 +30,10 @@ function Add-RouterResearchQueueItem {
         if (-not $exists) {
             $item = [pscustomobject]@{ id=[guid]::NewGuid().ToString('N'); model=$Model; trigger=$Trigger; categories=$categoriesSorted; due_at=$DueAt.ToString('o'); reason=$Reason }
             Write-RouterJsonAtomic -Path $queuePath -Value @($queue + $item)
-            $added = $true
+            $added.value = $true
         }
     }
-    return $added
+    return $added.value
 }
 
 function Get-RouterCadenceJobCategories {

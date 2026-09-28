@@ -187,7 +187,12 @@ function Build-RouterRosterProposal {
     $alertChanges = @($changes | ForEach-Object { [pscustomobject]@{job=$_.job;slot=$_.slot;from=$_.from;to=$_.to} })
     $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $alertChanges -Compress -Depth 20)))).ToLowerInvariant()
     $first = $changes[0]
-    Send-RouterAlerts -Alerts @([pscustomobject]@{key="roster-proposal:$hash";message="Model list change proposed: $($first.job) $($first.from) -> $($first.to). Report: $reportPath"}) | Out-Null
+    $alertMessage = "Model list change proposed: $($first.job) $($first.from) -> $($first.to). Report: $reportPath"
+    if ($overCap) {
+        $jobs = @($conflicts | ForEach-Object job | Sort-Object -Unique) -join ','
+        $alertMessage += " Over cap; a choice is needed for conflicting jobs: $jobs. Run approve-router-table.ps1 -Roster -Approve -Jobs $jobs."
+    }
+    Send-RouterAlerts -Alerts @([pscustomobject]@{key="roster-proposal:$hash";message=$alertMessage}) | Out-Null
     return [pscustomobject]@{changed=$true;pass_id=$passId;changes=@($changes);proposal=$jsonPath;report=$reportPath;over_cap=$overCap;conflicts=$conflicts;validation_errors=$errors}
 }
 

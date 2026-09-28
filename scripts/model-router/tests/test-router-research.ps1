@@ -70,6 +70,36 @@ try {
     }
     $null = Invoke-RouterCategoryResearch -Categories @('routine-coding') -Models @('gpt-new','claude-opus-5-5') -NewModel 'gpt-new' -Trigger release -Lane claude
     Assert-True ($script:releaseCalls.Count -eq 2 -and $script:releaseCalls[1].lane -eq 'claude' -and $script:releaseCalls[1].prompt -match 'Follow-up benchmarks only: Terminal-Bench' -and $script:releaseCalls[1].prompt -match 'claude-opus-5-5') 'non-comparable follow-up scoped inside same pass through claude hook'
+    Assert-True ($script:releaseCalls[1].prompt -match 'Candidate models: [^\r\n]*gpt-new' -and $script:releaseCalls[1].prompt -notmatch 'gpt-image-2|gpt-6-luna') 'release follow-up includes new model and only category job models'
+    $script:releaseCalls.Clear()
+    $script:RouterResearchInvoker = {
+        param($category,$lane,$prompt)
+        $script:releaseCalls.Add([pscustomobject]@{lane=$lane;prompt=$prompt})
+        if ($script:releaseCalls.Count -eq 1) { $fixture = Fixture $category 'gpt-new' '2026-10-04' 89; $fixture.readings[0].version = '3'; return ($fixture | ConvertTo-Json -Depth 20) }
+        $fixture = Fixture $category 'gpt-new' '2026-10-05' 90
+        $fixture.readings[0].version = '3'
+        $fixture.readings[0].results += [pscustomobject]@{model='claude-opus-5-5';score=80;tasks=[long]100;margin=$null}
+        return ($fixture | ConvertTo-Json -Depth 20)
+    }
+    $followPass = Invoke-RouterCategoryResearch -Categories @('routine-coding') -Models @('gpt-new','claude-opus-5-5') -NewModel 'gpt-new' -Trigger release -Lane claude
+    Assert-True ($followPass.failed_categories.Count -eq 0 -and $script:releaseCalls.Count -eq 2) 'follow-up result including new model validates'
+    $script:releaseCalls.Clear()
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:releaseCalls.Add([pscustomobject]@{lane=$lane;prompt=$prompt}); if ($script:releaseCalls.Count -eq 1) { $fixture = Fixture $category 'gpt-new' '2026-10-06' 91; $fixture.readings[0].version = '4'; return ($fixture | ConvertTo-Json -Depth 20) }; return 'invalid follow-up' }
+    $failedFollow = Invoke-RouterCategoryResearch -Categories @('routine-coding') -Models @('gpt-new','claude-opus-5-5') -NewModel 'gpt-new' -Trigger release -Lane claude
+    $retained = Get-Content (Join-Path $temp 'readings/routine-coding.json') -Raw | ConvertFrom-Json
+    Assert-True ($failedFollow.failed_categories.Count -eq 0 -and $failedFollow.notes.Count -gt 0 -and @($retained.readings | Where-Object { $_.date -eq '2026-10-06' -and @($_.results | Where-Object model -eq 'gpt-new').Count -gt 0 }).Count -gt 0) 'failed follow-up retains first-call reading and records note'
+    $script:releaseCalls.Clear()
+    $script:RouterResearchInvoker = {
+        param($category,$lane,$prompt)
+        $script:releaseCalls.Add([pscustomobject]@{lane=$lane;prompt=$prompt})
+        $fixture = Fixture $category 'gpt-new' '2026-10-07' 92
+        $fixture.readings[0].version = '5'
+        $fixture.readings[0].results += [pscustomobject]@{model='claude-opus-5-5';score=80;tasks=[long]100;margin=$null}
+        $fixture.readings[0].results += [pscustomobject]@{model='gpt-6-sol';score=79;tasks=[long]100;margin=$null}
+        return ($fixture | ConvertTo-Json -Depth 20)
+    }
+    $null = Invoke-RouterCategoryResearch -Categories @('routine-coding') -Models @('gpt-new','claude-opus-5-5') -NewModel 'gpt-new' -Trigger release -Lane claude
+    Assert-True ($script:releaseCalls.Count -eq 1) 'first-call comparable roster reading needs no follow-up'
     $stale = @(Get-RouterStaleReadingModels -Now ([datetime]'2027-05-01'))
     Assert-True ($stale -contains 'gpt-6-sol') 'stale model detected'
     $script:RouterResearchInvoker = { param($model,$prompt) return 'invalid' }

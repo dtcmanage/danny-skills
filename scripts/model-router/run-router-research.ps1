@@ -169,10 +169,9 @@ function Get-RouterNonComparableModels {
     if ($null -eq $NewReadings) { return @() }
     $newKeys = @($NewReadings.readings | Where-Object { @($_.results | Where-Object model -CEQ $NewModel).Count -gt 0 } | ForEach-Object { "$($_.benchmark)`n$($_.version)`n$($_.harness)" })
     if (-not $newKeys.Count) { return @() }
-    if ($null -eq $stored) { return @($RosterModels | Where-Object { $_ -cne $NewModel }) }
     foreach ($model in $RosterModels) {
         if ($model -ceq $NewModel) { continue }
-        $shared = @($stored.readings | Where-Object { ("$($_.benchmark)`n$($_.version)`n$($_.harness)" -cin $newKeys) -and @($_.results | Where-Object model -CEQ $model).Count -gt 0 })
+        $shared = @(@($stored, $NewReadings) | Where-Object { $_ } | ForEach-Object { $_.readings } | Where-Object { ("$($_.benchmark)`n$($_.version)`n$($_.harness)" -cin $newKeys) -and @($_.results | Where-Object model -CEQ $model).Count -gt 0 })
         if ($shared.Count -eq 0) { $model }
     }
 }
@@ -210,6 +209,7 @@ function Invoke-RouterCategoryResearch {
         $sources = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/benchmark-sources.json') -Raw | ConvertFrom-Json -Depth 20
         $fixed = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/research-category-prompt.md') -Raw) + "`n`n" + (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/readings-schema.md') -Raw)
         $failed = [Collections.Generic.List[string]]::new()
+        $notes = [Collections.Generic.List[string]]::new()
         foreach ($category in $Categories) {
             if (-not $sources.PSObject.Properties[$category] -or $category -cnotmatch '^[a-z-]+$') { throw "Unknown research category: $category" }
             $pending = @(@{ models = @($Models); benchmarks = @() })
@@ -221,18 +221,22 @@ function Invoke-RouterCategoryResearch {
                 if ($request.benchmarks.Count) { $prompt += "`nFollow-up benchmarks only: " + ($request.benchmarks -join ', ') }
                 if ($Context) { $prompt += "`n" + (New-PromptEnvelope -Label 'RESEARCH CONTEXT' -Content $Context) }
                 [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action heartbeat)
-                $raw = Invoke-RouterCategoryCall -Category $category -Lane $Lane -Prompt $prompt
+                $raw = ''
                 try {
+                    $raw = Invoke-RouterCategoryCall -Category $category -Lane $Lane -Prompt $prompt
                     $body = ([string]$raw).Trim()
                     if ($body -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $body = $Matches[1] }
                     $parsed = $body | ConvertFrom-Json -Depth 40
                     if (-not (Test-RouterReadings -Readings $parsed -Category $category -Models $request.models)) { throw 'Invalid category readings' }
                 } catch {
+                    if ($i -eq 0 -and -not $raw) { throw }
                     $failDir = Join-Path $state 'research-failures'; New-Item -ItemType Directory -Path $failDir -Force | Out-Null
                     $detail = "error: $($_.Exception.Message)`n" + [string]$raw
                     if ($detail.Length -gt 20000) { $detail = $detail.Substring(0,20000) }
                     [IO.File]::WriteAllText((Join-Path $failDir ($category + '@' + (Get-Date).ToString('yyyyMMddTHHmmssfff') + '.txt')),$detail,[Text.UTF8Encoding]::new($false))
-                    $failed.Add($category); break
+                    if ($i -gt 0) { $notes.Add("$category follow-up failed: $($_.Exception.Message)") }
+                    else { $failed.Add($category) }
+                    break
                 }
                 foreach ($source in $parsed.sources_checked) { $checked.Add([pscustomobject]@{ name=$source.name; comparable_results_found=$source.comparable_results_found; note=$source.note }) }
                 foreach ($reading in $parsed.readings) {
@@ -240,10 +244,12 @@ function Invoke-RouterCategoryResearch {
                 }
                 if ($Trigger -eq 'release' -and $i -eq 0 -and $NewModel) {
                     $temporary = [pscustomobject]@{ category=$category; readings=@($combined.ToArray()) }
-                    $rosterModels = @((Read-RouterRoster).roster.jobs.PSObject.Properties | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ -and $_ -cne $NewModel } | Sort-Object -Unique)
+                    $roster = (Read-RouterRoster).roster
+                    $job = Get-RouterCategoryJob -Category $category
+                    $rosterModels = @(@($roster.jobs.$job.first, $roster.jobs.$job.backup) | Where-Object { $_ -and $_ -cne $NewModel } | Sort-Object -Unique)
                     $keys = @($combined | ForEach-Object { "$($_.benchmark)`n$($_.version)`n$($_.harness)" })
                     $missing = @(Get-RouterNonComparableModels -Category $category -NewModel $NewModel -RosterModels $rosterModels -NewReadings $temporary)
-                    if ($missing.Count -and $keys.Count) { $pending += @{ models=$missing; benchmarks=@($combined | ForEach-Object benchmark | Sort-Object -Unique) } }
+                    if ($missing.Count -and $keys.Count) { $pending += @{ models=@($NewModel) + $missing; benchmarks=@($combined | ForEach-Object benchmark | Sort-Object -Unique) } }
                 }
             }
             if ($failed -contains $category) { continue }
@@ -276,7 +282,7 @@ function Invoke-RouterCategoryResearch {
             $saved = [pscustomobject]@{ category=$category; sources_checked=@($incoming.sources_checked); readings=@($all.ToArray()) }
             [IO.File]::WriteAllText($target,(ConvertTo-Json -InputObject $saved -Depth 40),[Text.UTF8Encoding]::new($false))
         }
-        $record = [pscustomobject]@{ pass_id=$passId; trigger=$Trigger; categories=@($Categories); models=@($Models); started_at=$Now.ToString('o'); completed_at=(Get-Date).ToString('o'); failed_categories=@($failed.ToArray()) }
+        $record = [pscustomobject]@{ pass_id=$passId; trigger=$Trigger; categories=@($Categories); models=@($Models); started_at=$Now.ToString('o'); completed_at=(Get-Date).ToString('o'); failed_categories=@($failed.ToArray()); notes=@($notes.ToArray()) }
         [IO.File]::AppendAllText((Join-Path $readingsDir 'passes.jsonl'),((ConvertTo-Json -InputObject $record -Compress -Depth 10) + "`n"),[Text.UTF8Encoding]::new($false))
         return $record
     } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }; [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action release) }

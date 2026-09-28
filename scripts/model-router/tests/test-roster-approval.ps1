@@ -43,6 +43,8 @@ try {
     $null = Invoke-Approval -Options @('-Approve','-Jobs','fast')
     $subset = Get-Content -LiteralPath (Join-Path $temp 'roster.json') -Raw | ConvertFrom-Json
     Assert-True ($LASTEXITCODE -eq 0 -and $subset.approved -and $subset.jobs.fast.backup -eq 'claude-sonnet-5' -and $subset.jobs.writer.backup -eq 'gpt-6-sol') 'subset within cap approves only selected job'
+    $output = @(Invoke-Approval -Options @('-Approve','-Jobs','fast,writer')) -join "`n"
+    Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'ROSTER_MODEL_CAP' -and $output -notmatch 'Unknown roster job') 'comma separated Jobs via File evaluates both selected jobs against cap'
     $proposal = Read-Seed
     $proposal.jobs.coder.first = 'unknown-model'
     $proposal | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $latest.proposal

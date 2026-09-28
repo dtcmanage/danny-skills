@@ -114,7 +114,8 @@ return [pscustomobject]@{ id = 'fake-message' }
 if (`$args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if (`$args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path `$env:CODEX_HOME 'models_cache.json'); exit 0 }
 [IO.File]::AppendAllText('$launchLog', "codex`n")
-if (`$env:DT_FAKE_CODEX_MODE -eq 'limit') { [Console]::Error.WriteLine('usage limit reached; try again at 2026-10-01T12:30:00Z'); exit 1 }
+if (`$env:DT_FAKE_CODEX_MODE -eq 'limit') { [Console]::Error.WriteLine('ERROR: usage limit reached; try again at 2026-10-01T12:30:00Z'); exit 1 }
+if (`$env:DT_FAKE_CODEX_MODE -eq 'source-text') { [Console]::Error.WriteLine('Failed to compile rate_limits/usage_limit.ps1: rate limiting middleware'); exit 1 }
 `$outIndex = [Array]::IndexOf([object[]]`$args, '--output-last-message')
 [void][Console]::In.ReadToEnd()
 [IO.File]::WriteAllText([string]`$args[`$outIndex + 1], @'
@@ -147,6 +148,10 @@ $report
     $r = Invoke-CodexWrapper 'codex-blocked-override' @('-Tier','standard','-Model','gpt-6-astra')
     Assert-True ($r.exit -ne 0 -and $r.prov.router_status -eq 'wait') 'blocked vendor stops explicit Codex override'
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
+    $env:DT_FAKE_CODEX_MODE = 'source-text'
+    $r = Invoke-CodexWrapper 'codex-source-text' @('-Tier','standard')
+    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'tooling' -and -not $r.prov.vendor_block) 'Codex failed output with limit identifiers does not block vendor'
+    $env:DT_FAKE_CODEX_MODE = $null
 
     # 3. Claude chunk wrapper: router Claude lane, no fixed tier map.
     $fakeClaude = Join-Path $temp 'fake-claude.ps1'
@@ -154,6 +159,8 @@ $report
 if (`$args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
 [IO.File]::AppendAllText('$launchLog', "claude`n")
 if (`$env:DT_FAKE_CLAUDE_MODE -eq 'limit') { [Console]::Error.WriteLine('You have reached your usage limit. Resets at 2026-10-01T15:00:00-04:00'); exit 1 }
+if (`$env:DT_FAKE_CLAUDE_MODE -eq 'max-turns') { Write-Output (@{ type='result'; subtype='error_max_turns'; is_error=`$true; result='Source mentions rate limit reached'; modelUsage=@{} } | ConvertTo-Json -Compress); exit 0 }
+if (`$env:DT_FAKE_CLAUDE_MODE -eq 'json-limit') { Write-Output (@{ type='result'; subtype='error_during_execution'; is_error=`$true; result='Claude AI usage limit reached|1790857800'; modelUsage=@{} } | ConvertTo-Json -Compress); exit 0 }
 [void][Console]::In.ReadToEnd()
 `$ran = [string]`$args[[Array]::IndexOf([object[]]`$args, '--model') + 1]
 `$usage = [ordered]@{}; `$usage[`$ran] = @{ inputTokens = 1; outputTokens = 1; costUSD = 0.01 }
@@ -185,6 +192,14 @@ $report
     $env:DT_FAKE_CLAUDE_MODE = $null
     $r = Invoke-ClaudeWrapper 'claude-blocked-override' @('-Tier','standard','-Model','claude-fable-5-1')
     Assert-True ($r.exit -ne 0 -and $r.prov.router_status -eq 'wait') 'blocked vendor stops explicit Claude override'
+    Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
+    $env:DT_FAKE_CLAUDE_MODE = 'max-turns'
+    $r = Invoke-ClaudeWrapper 'claude-max-turns' @('-Tier','standard')
+    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'tooling' -and -not $r.prov.vendor_block) 'Claude max-turns result mentioning rate limit does not block vendor'
+    $env:DT_FAKE_CLAUDE_MODE = 'json-limit'
+    $r = Invoke-ClaudeWrapper 'claude-json-limit' @('-Tier','standard')
+    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.vendor_block.vendor -eq 'claude') 'Claude JSON error result records vendor block'
+    $env:DT_FAKE_CLAUDE_MODE = $null
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
     $beforeSends = Get-TransportCount
     $tablePath = Join-Path $state 'router-table.json'

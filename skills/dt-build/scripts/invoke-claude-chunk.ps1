@@ -340,7 +340,19 @@ try {
 
     $limitBlock = $null
     if (-not $timedOut -and ($exitCode -ne 0 -or $cliResultError -or ($cliResult -and $cliResult.is_error))) {
-        $refusal = Test-RouterLimitRefusal -Vendor claude -Text (($stderr, $stdout) -join "`n")
+        $claudeErrorText = $stderr
+        try {
+            $errorEnvelope = $stdout | ConvertFrom-Json -Depth 40 -ErrorAction Stop
+            if ($errorEnvelope.PSObject.Properties['error'] -and $errorEnvelope.error) {
+                $claudeErrorText += "`n" + [string]$errorEnvelope.error
+            }
+            if ($errorEnvelope.PSObject.Properties['is_error'] -and $errorEnvelope.is_error -and
+                $errorEnvelope.PSObject.Properties['result'] -and
+                (-not $errorEnvelope.PSObject.Properties['subtype'] -or $errorEnvelope.subtype -ne 'error_max_turns')) {
+                $claudeErrorText += "`n" + [string]$errorEnvelope.result
+            }
+        } catch { }
+        $refusal = Test-RouterLimitRefusal -Vendor claude -Text $claudeErrorText
         if ($refusal.refused) {
             $blockArgs = @{ Vendor='claude'; Reason='usage-limit refusal from claude -p' }
             if ($refusal.reset_at_utc) { $blockArgs.ResetAtUtc = [datetimeoffset]$refusal.reset_at_utc }

@@ -33,8 +33,9 @@ try {
     Assert-True (@($queue | Where-Object trigger -eq 'confirmation')[0].due_at -eq $now.AddDays(7).AddHours(1).ToString('o')) 'confirmation is due seven days later'
     Assert-True (@($queue | Where-Object trigger -eq 'release')[0].categories -notcontains 'image-generation') 'non-image Codex release excludes illustrator'
     $categories = @('mechanical')
-    [void](Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger release -Categories $categories -DueAt $now -Reason 'one')
-    [void](Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger release -Categories $categories -DueAt $now -Reason 'two')
+    $firstAdded = Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger release -Categories $categories -DueAt $now -Reason 'one'
+    $secondAdded = Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger release -Categories $categories -DueAt $now -Reason 'two'
+    Assert-True ($firstAdded -and -not $secondAdded) 'queue add returns true once and false for duplicate'
     Assert-True (@(Read-RouterJsonArray -Path $queuePath).Count -eq 3) 'queue deduplicates model trigger and categories'
 
     function Get-RouterStaleReadingModels { param($Months,$Now) return @('gpt-6-sol') }

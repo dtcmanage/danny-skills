@@ -81,20 +81,32 @@ function Add-RouterVendorBlock {
 
 function Test-RouterLimitRefusal {
     param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor, [Parameter(Mandatory)][AllowEmptyString()][string]$Text)
-    $pattern = if ($Vendor -eq 'codex') {
-        '(?i)(?:rate[_ -]?limit|usage[_ -]?limit|too many requests|quota exceeded|limit reached|usage limit reached)'
-    } else {
-        '(?i)(?:usage[_ -]?limit|rate[_ -]?limit|you(?:.ve| have) (?:reached|hit) (?:your )?limit|limit reached|out of (?:messages|usage))'
+    $errorText = $Text
+    $resetText = $Text
+    if ($Vendor -eq 'codex') {
+        $lines = @([regex]::Matches($Text, '(?im)^\s*(?:ERROR:\s*|rate_limit_exceeded\b[^\r\n]*)([^\r\n]*)') | ForEach-Object Value)
+        $errorText = if ($lines.Count) { $lines[-1] } else { '' }
+        $resetText = $errorText
+        if (-not $errorText) {
+            try {
+                $event = $Text.Trim() | ConvertFrom-Json -ErrorAction Stop
+                if ($event.PSObject.Properties['error']) { $errorText = ConvertTo-Json -InputObject $event.error -Compress -Depth 8; $resetText = $Text }
+                elseif ($event.PSObject.Properties['type'] -and $event.type -eq 'error' -and $event.PSObject.Properties['message']) { $errorText = [string]$event.message; $resetText = $Text }
+            } catch { }
+        }
     }
-    $refused = $Text -match $pattern
+    $refused = $errorText -match '(?i)(?:usage limit (?:reached|exceeded)|(?:you(?:.ve| have) reached your usage limit)|rate limit (?:reached|exceeded)|rate_limit_exceeded|quota exceeded|too many requests|Claude AI usage limit reached)'
     $reset = $null
     if ($refused) {
-        $time = [regex]::Match($Text, '(?im)(?:resets?_at|resets? at|try again at|available again at)["'']?\s*[=:]?\s*["'']?([0-9]{10}|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)')
+        $time = [regex]::Match($resetText, '(?im)(?:resets?_at|resets? at|try again at|available again at|Claude AI usage limit reached\|)["'']?\s*[=:]?\s*["'']?([0-9]{10}|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)')
         if ($time.Success) {
             $value = $time.Groups[1].Value.Trim().TrimEnd('.',',',';')
             $parsed = [datetimeoffset]::MinValue
             if ([datetimeoffset]::TryParse($value, [ref]$parsed)) { $reset = $parsed.ToUniversalTime().ToString('o') }
             elseif ($value -match '^\d{10}$') { $reset = [datetimeoffset]::FromUnixTimeSeconds([long]$value).ToString('o') }
+        }
+        if (-not $reset -and $Vendor -eq 'codex' -and $errorText -match '(?i)try again in\s+(\d+)\s+days?\s+(\d+)\s+hours?\s+(\d+)\s+minutes?') {
+            $reset = [datetimeoffset]::UtcNow.AddDays([double]$Matches[1]).AddHours([double]$Matches[2]).AddMinutes([double]$Matches[3]).ToString('o')
         }
     }
     return [pscustomobject]@{ refused=[bool]$refused; reset_at_utc=$reset }
