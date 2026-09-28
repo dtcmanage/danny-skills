@@ -110,7 +110,9 @@ function Build-RouterRosterProposal {
     $passes = @(if (Test-Path -LiteralPath $passesPath) { Get-Content -LiteralPath $passesPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
     if (-not $passes.Count) { return [pscustomobject]@{changed=$false;pass_id=$null;changes=@();proposal=$null;report=$null} }
     $passId = [string]$passes[-1].pass_id
-    $coveredJobs = @(@($passes[-1].categories) | Where-Object { $_ -in @(Get-RouterCategories) } | ForEach-Object { Get-RouterCategoryJob -Category $_ } | Sort-Object -Unique)
+    # Map through the 11-category job map (not the v1 table's category list, which lacks math and analysis); unknown names are skipped.
+    $passCategories = if ($passes[-1].PSObject.Properties['categories']) { @($passes[-1].categories) } else { @() }
+    $coveredJobs = @($passCategories | ForEach-Object { try { Get-RouterCategoryJob -Category ([string]$_) } catch { } } | Where-Object { $_ } | Sort-Object -Unique)
     $readings = @{}
     foreach ($file in @(Get-ChildItem -LiteralPath $readDir -Filter '*.json' -File -ErrorAction SilentlyContinue)) { $data = Read-RouterJsonObject $file.FullName; if ($data -and $data.PSObject.Properties['readings']) { $readings[$file.BaseName] = $data } }
     $prices = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json -Depth 20

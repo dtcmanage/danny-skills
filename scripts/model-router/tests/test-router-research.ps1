@@ -45,6 +45,10 @@ try {
     $null = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6-sol') -Lane claude
     $stored = Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json
     Assert-True ($stored.readings.Count -eq 2 -and @($stored.readings | Where-Object { $_.effort_class -eq 'high' -and $_.results[0].score -eq 91 }).Count -eq 1 -and @($stored.readings | Where-Object { $_.effort_class -eq 'low' -and $_.results[0].score -eq 92 }).Count -eq 1) 'different effort classes retain separate readings'
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) $fixture = Fixture $category 'gpt-6-sol' '2026-10-03' 99; $fixture.readings[0].effort_class = 'low'; $fixture.readings[0].independent = -not [bool]$fixture.readings[0].independent; return ($fixture | ConvertTo-Json -Depth 20) }
+    $null = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6-sol') -Lane claude
+    $stored = Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json
+    Assert-True ($stored.readings.Count -eq 3 -and @($stored.readings | Where-Object { $_.effort_class -eq 'low' -and $_.results[0].score -eq 92 }).Count -eq 1) 'a reading with a different independence flag never overwrites or inherits another'
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) return 'refused' }
     $pass = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6-sol')
     Assert-True ($pass.failed_categories -contains 'complex-coding' -and @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt').Count -eq 1 -and ((Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json).readings[0].results[0].score -eq 91)) 'invalid saved and stored reading untouched'

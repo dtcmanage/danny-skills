@@ -87,6 +87,10 @@ try {
     Assert-True ((Get-RouterProposalJobVerdict -Job fast -Incumbent 'gpt-6-luna' -Readings $older -Prices $priced -Frontier $frontier).result -ne 'gpt-5.6-luna') 'older generation cannot win on price'
     $backupReadings=@{'complex-coding'=[pscustomobject]@{readings=@((New-Reading 'b1' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'b2' 'claude-opus-5-5' 70 'gpt-6-sol' 50))}}
     foreach ($row in $backupReadings['complex-coding'].readings) { $row.results += [pscustomobject]@{model='gpt-5.6-sol';score=99;margin=$null} }
+    $decoyRow = New-Reading 'b3' 'gpt-5.6-sol' 99 'gpt-6-sol' 50
+    $decoyRow.results += [pscustomobject]@{model='claude-opus-5-5';score=50;margin=$null}
+    $backupReadings['complex-coding'].readings = @($backupReadings['complex-coding'].readings) + $decoyRow
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $backupReadings -Prices $prices -Frontier $frontier).result -eq 'gpt-5.6-sol') 'same-vendor decoy wins when no vendor filter applies'
     Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Vendor claude -Readings $backupReadings -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'backup candidate restricted to opposite vendor'
     $multi=@((New-Reading 'q1' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'q2' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'q3' 'claude-opus-5-5' 70 'gpt-6-sol' 50))
     foreach ($row in $multi[0..1]) { $row.results += [pscustomobject]@{model='claude-sonnet-5';score=70;margin=$null} }
@@ -136,6 +140,15 @@ try {
     Add-Pass 'u3'; $covered=Build-RouterRosterProposal
     Assert-True ($covered.changed -and @($covered.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' -and $_.to -eq 'claude-opus-5-5' }).Count -eq 1) 'two coder-covered passes confirm change despite intervening mechanical pass'
     $coverageAlertKey=$script:alerts[-1].key; $coverageEvidence=$covered.changes[0].evidence
+    $scenario=Join-Path $temp 'scenario-analysis'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
+    Save-Category -Category analysis -Rows @((New-Reading 'a1' 'gpt-6-sol' 70 'claude-opus-5-5' 50),(New-Reading 'a2' 'gpt-6-sol' 70 'claude-opus-5-5' 50))
+    Add-Pass 'an1' @('analysis'); $null=Build-RouterRosterProposal
+    Add-Pass 'an2' @('analysis'); $analysisOnly=Build-RouterRosterProposal
+    Assert-True ($analysisOnly.changed -and @($analysisOnly.changes | Where-Object { $_.job -eq 'deep-thinker' -and $_.slot -eq 'first' -and $_.to -eq 'gpt-6-sol' }).Count -eq 1) 'analysis-only passes count for the deep-thinker job'
+    [IO.File]::AppendAllText((Join-Path $script:readDir 'passes.jsonl'),((ConvertTo-Json -InputObject ([pscustomobject]@{pass_id='legacy'}) -Compress) + "`n"))
+    $legacy=Build-RouterRosterProposal
+    Assert-True (-not $legacy.changed) 'pass record without categories covers no job and does not throw'
     $scenario=Join-Path $temp 'scenario-flip'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6-sol' 50))
