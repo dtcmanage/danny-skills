@@ -5,6 +5,32 @@ function Get-RouterCategories {
     return @('complex-coding','routine-coding','code-review','ui-frontend','planning','deep-research','long-form-writing','mechanical','image-generation')
 }
 
+function Test-RouterReadings {
+    param([object]$Readings, [Parameter(Mandatory)][string]$Category, [Parameter(Mandatory)][string[]]$Models)
+    if ($Readings -isnot [pscustomobject] -or -not $Readings.PSObject.Properties['category'] -or $Readings.category -cne $Category -or $Readings.sources_checked -isnot [array] -or $Readings.readings -isnot [array]) { return $false }
+    foreach ($source in $Readings.sources_checked) {
+        if ($null -eq $source) { return $false }
+        if (@('name','comparable_results_found','note' | Where-Object { -not $source.PSObject.Properties[$_] }).Count) { return $false }
+        if ($source -isnot [pscustomobject] -or $source.name -isnot [string] -or $source.comparable_results_found -isnot [bool] -or $source.note -isnot [string]) { return $false }
+    }
+    foreach ($reading in $Readings.readings) {
+        if ($null -eq $reading) { return $false }
+        if (@('benchmark','version','date','harness','effort_class','independent','url','results' | Where-Object { -not $reading.PSObject.Properties[$_] }).Count) { return $false }
+        if ($reading -isnot [pscustomobject] -or $reading.benchmark -isnot [string] -or -not $reading.benchmark -or $reading.version -isnot [string] -or $reading.date -isnot [string] -or $reading.harness -isnot [string] -or $reading.effort_class -isnot [string] -or $reading.independent -isnot [bool] -or $reading.url -isnot [string] -or $reading.results -isnot [array]) { return $false }
+        $parsed = [datetimeoffset]::MinValue
+        if (-not [datetimeoffset]::TryParse($reading.date,[ref]$parsed)) { return $false }
+        foreach ($result in $reading.results) {
+            if ($null -eq $result) { return $false }
+            if (@('model','score','tasks','margin' | Where-Object { -not $result.PSObject.Properties[$_] }).Count) { return $false }
+            if ($result -isnot [pscustomobject] -or $result.model -isnot [string] -or $Models -cnotcontains $result.model) { return $false }
+            if ($result.score -isnot [valuetype] -or $result.score -is [bool] -or -not [double]::IsFinite([double]$result.score)) { return $false }
+            if ($null -ne $result.tasks -and ($result.tasks -isnot [long] -or $result.tasks -lt 0)) { return $false }
+            if ($null -ne $result.margin -and ($result.margin -isnot [valuetype] -or $result.margin -is [bool] -or -not [double]::IsFinite([double]$result.margin))) { return $false }
+        }
+    }
+    return $true
+}
+
 function Get-RouterJobs { return @('fast','coder','deep-thinker','writer','illustrator') }
 
 function Get-RouterCategoryJob {

@@ -1,4 +1,4 @@
-param([Alias('Models')][string[]]$RouterResearchCliModels, [Alias('ModelsFile')][string]$RouterResearchCliModelsFile, [Alias('All')][switch]$RouterResearchCliAll, [Alias('Context')][string]$RouterResearchCliContext, [Alias('DetachedChild')][switch]$RouterResearchCliDetachedChild, [Alias('LockToken')][string]$RouterResearchCliLockToken, [Alias('Json')][switch]$RouterResearchCliJson)
+param([Alias('Models')][string[]]$RouterResearchCliModels, [Alias('ModelsFile')][string]$RouterResearchCliModelsFile, [Alias('All')][switch]$RouterResearchCliAll, [Alias('Context')][string]$RouterResearchCliContext, [Alias('DetachedChild')][switch]$RouterResearchCliDetachedChild, [Alias('LockToken')][string]$RouterResearchCliLockToken, [Alias('Json')][switch]$RouterResearchCliJson, [Alias('Categories')][string[]]$RouterResearchCliCategories, [Alias('CandidateModels')][string[]]$RouterResearchCliCandidateModels, [Alias('Trigger')][ValidateSet('release','confirmation','refresh','manual')][string]$RouterResearchCliTrigger = 'manual', [Alias('Lane')][ValidateSet('codex','claude')][string]$RouterResearchCliLane = 'codex')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
@@ -121,6 +121,155 @@ function Invoke-RouterResearchCall {
         if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw 'Research process failed or timed out.' }
         return (Get-Content -LiteralPath $out -Raw)
     } finally { if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force } }
+}
+
+function Invoke-RouterCategoryCall {
+    param([string]$Category, [string]$Lane, [string]$Prompt)
+    if ((Get-Variable RouterResearchInvoker -Scope Script -ErrorAction SilentlyContinue) -and $script:RouterResearchInvoker) { return (& $script:RouterResearchInvoker $Category $Lane $Prompt) }
+    if ($Lane -eq 'codex') {
+        $codex = (Get-Command codex -ErrorAction Stop).Source
+        $out = Join-Path $env:TEMP ('router-category-' + [guid]::NewGuid().ToString('N') + '.json')
+        try {
+            $result = Invoke-CodexProcess -CodexPath $codex -Arguments @('--ask-for-approval','never','exec','--ignore-user-config','-c','web_search="live"','--sandbox','read-only','--cd',$PSScriptRoot,'--output-last-message',$out,'-') -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $script:RouterResearchCallTimeoutMs
+            if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw 'Category research process failed or timed out.' }
+            return [IO.File]::ReadAllText($out)
+        } finally { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
+    }
+    $psi = [Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = (Get-Command claude -ErrorAction Stop).Source
+    foreach ($arg in @('-p','--allowedTools','WebSearch,WebFetch','--output-format','json')) { [void]$psi.ArgumentList.Add($arg) }
+    $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $process = [Diagnostics.Process]::Start($psi)
+    try {
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $errors = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.Write($Prompt); $process.StandardInput.Close()
+        if (-not $process.WaitForExit($script:RouterResearchCallTimeoutMs)) { $process.Kill($true); throw 'Category research timed out.' }
+        if ($process.ExitCode -ne 0) { throw ('Category research failed: ' + $errors.Result) }
+        $response = $output.Result | ConvertFrom-Json -Depth 40
+        if ($response.PSObject.Properties['result']) { return [string]$response.result }
+        return [string]$output.Result
+    } finally { $process.Dispose() }
+}
+
+function Get-RouterNonComparableModels {
+    param([Parameter(Mandatory)][string]$Category, [Parameter(Mandatory)][string]$NewModel, [Parameter(Mandatory)][string[]]$RosterModels, [object]$NewReadings)
+    $stored = Read-RouterJsonObject -Path (Join-Path (Join-Path (Get-RouterStateDir) 'readings') ($Category + '.json'))
+    if ($null -eq $NewReadings) { $NewReadings = $stored }
+    if ($null -eq $NewReadings) { return @() }
+    $newKeys = @($NewReadings.readings | Where-Object { @($_.results | Where-Object model -CEQ $NewModel).Count -gt 0 } | ForEach-Object { "$($_.benchmark)`n$($_.version)`n$($_.harness)" })
+    if (-not $newKeys.Count) { return @() }
+    if ($null -eq $stored) { return @($RosterModels | Where-Object { $_ -cne $NewModel }) }
+    foreach ($model in $RosterModels) {
+        if ($model -ceq $NewModel) { continue }
+        $shared = @($stored.readings | Where-Object { ("$($_.benchmark)`n$($_.version)`n$($_.harness)" -cin $newKeys) -and @($_.results | Where-Object model -CEQ $model).Count -gt 0 })
+        if ($shared.Count -eq 0) { $model }
+    }
+}
+
+function Get-RouterStaleReadingModels {
+    param([int]$Months = 6, [datetime]$Now = (Get-Date))
+    $roster = (Read-RouterRoster).roster
+    $models = @($roster.jobs.PSObject.Properties | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ } | Sort-Object -Unique)
+    $dir = Join-Path (Get-RouterStateDir) 'readings'
+    foreach ($model in $models) {
+        $dates = @()
+        if (Test-Path -LiteralPath $dir) {
+            foreach ($file in @(Get-ChildItem -LiteralPath $dir -File -Filter '*.json')) {
+                $stored = Read-RouterJsonObject -Path $file.FullName
+                if ($stored) { $dates += @($stored.readings | Where-Object { @($_.results | Where-Object model -CEQ $model).Count -gt 0 } | ForEach-Object { [datetime]$_.date }) }
+            }
+        }
+        if ($dates.Count -eq 0 -or (@($dates | Sort-Object -Descending)[0] -lt $Now.AddMonths(-$Months))) { $model }
+    }
+}
+
+function Invoke-RouterCategoryResearch {
+    param([Parameter(Mandatory)][string[]]$Categories, [Parameter(Mandatory)][string[]]$Models, [ValidateSet('release','confirmation','refresh','manual')][string]$Trigger = 'manual', [ValidateSet('codex','claude')][string]$Lane = 'codex', [string]$Context, [datetime]$Now = (Get-Date))
+    $state = Get-RouterStateDir
+    $lock = Join-Path $state 'research.lock'
+    $entry = Enter-RouterResearchLock -Path $lock -Now $Now
+    if (-not $entry.acquired) { throw 'ROUTER_LOCK_BUSY' }
+    $readingsDir = Join-Path $state 'readings'
+    $passId = [guid]::NewGuid().ToString('N')
+    $stage = Join-Path $readingsDir ('.pass-' + $passId)
+    try {
+        New-Item -ItemType Directory -Path $readingsDir -Force | Out-Null
+        Get-ChildItem -LiteralPath $readingsDir -Directory -Filter '.pass-*' | Remove-Item -Recurse -Force
+        New-Item -ItemType Directory -Path $stage | Out-Null
+        $sources = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/benchmark-sources.json') -Raw | ConvertFrom-Json -Depth 20
+        $fixed = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/research-category-prompt.md') -Raw) + "`n`n" + (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/readings-schema.md') -Raw)
+        $failed = [Collections.Generic.List[string]]::new()
+        foreach ($category in $Categories) {
+            if (-not $sources.PSObject.Properties[$category] -or $category -cnotmatch '^[a-z-]+$') { throw "Unknown research category: $category" }
+            $pending = @(@{ models = @($Models); benchmarks = @() })
+            $combined = [Collections.Generic.List[object]]::new()
+            $checked = [Collections.Generic.List[object]]::new()
+            for ($i = 0; $i -lt $pending.Count; $i++) {
+                $request = $pending[$i]
+                $prompt = $fixed + "`nCategory: $category`nCandidate models: " + ($request.models -join ', ') + "`nSources: " + (ConvertTo-Json -InputObject @($sources.$category) -Depth 10 -Compress)
+                if ($request.benchmarks.Count) { $prompt += "`nFollow-up benchmarks only: " + ($request.benchmarks -join ', ') }
+                if ($Context) { $prompt += "`n" + (New-PromptEnvelope -Label 'RESEARCH CONTEXT' -Content $Context) }
+                [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action heartbeat)
+                $raw = Invoke-RouterCategoryCall -Category $category -Lane $Lane -Prompt $prompt
+                try {
+                    $body = ([string]$raw).Trim()
+                    if ($body -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $body = $Matches[1] }
+                    $parsed = $body | ConvertFrom-Json -Depth 40
+                    if (-not (Test-RouterReadings -Readings $parsed -Category $category -Models $request.models)) { throw 'Invalid category readings' }
+                } catch {
+                    $failDir = Join-Path $state 'research-failures'; New-Item -ItemType Directory -Path $failDir -Force | Out-Null
+                    $detail = "error: $($_.Exception.Message)`n" + [string]$raw
+                    if ($detail.Length -gt 20000) { $detail = $detail.Substring(0,20000) }
+                    [IO.File]::WriteAllText((Join-Path $failDir ($category + '@' + (Get-Date).ToString('yyyyMMddTHHmmssfff') + '.txt')),$detail,[Text.UTF8Encoding]::new($false))
+                    $failed.Add($category); break
+                }
+                foreach ($source in $parsed.sources_checked) { $checked.Add([pscustomobject]@{ name=$source.name; comparable_results_found=$source.comparable_results_found; note=$source.note }) }
+                foreach ($reading in $parsed.readings) {
+                    $combined.Add([pscustomobject]@{ benchmark=$reading.benchmark; version=$reading.version; date=$reading.date; harness=$reading.harness; effort_class=$reading.effort_class; independent=$reading.independent; url=$reading.url; results=@($reading.results | ForEach-Object { [pscustomobject]@{ model=$_.model; score=$_.score; tasks=$_.tasks; margin=$_.margin } }) })
+                }
+                if ($Trigger -eq 'release' -and $i -eq 0 -and $Models.Count -eq 1) {
+                    $temporary = [pscustomobject]@{ category=$category; readings=@($combined.ToArray()) }
+                    $rosterModels = @((Read-RouterRoster).roster.jobs.PSObject.Properties | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ -and $_ -cne $Models[0] } | Sort-Object -Unique)
+                    $keys = @($combined | ForEach-Object { "$($_.benchmark)`n$($_.version)`n$($_.harness)" })
+                    $missing = @(Get-RouterNonComparableModels -Category $category -NewModel $Models[0] -RosterModels $rosterModels -NewReadings $temporary)
+                    if ($missing.Count -and $keys.Count) { $pending += @{ models=$missing; benchmarks=@($combined | ForEach-Object benchmark | Sort-Object -Unique) } }
+                }
+            }
+            if ($failed -contains $category) { continue }
+            $payload = [pscustomobject]@{ category=$category; sources_checked=@($checked.ToArray()); readings=@($combined.ToArray()) }
+            [IO.File]::WriteAllText((Join-Path $stage ($category + '.json')),(ConvertTo-Json -InputObject $payload -Depth 40),[Text.UTF8Encoding]::new($false))
+        }
+        foreach ($category in $Categories) {
+            $staged = Join-Path $stage ($category + '.json')
+            if (-not (Test-Path -LiteralPath $staged)) { continue }
+            $incoming = Get-Content -LiteralPath $staged -Raw | ConvertFrom-Json -Depth 40
+            $target = Join-Path $readingsDir ($category + '.json')
+            $previous = Read-RouterJsonObject -Path $target
+            $all = [Collections.Generic.List[object]]::new()
+            if ($previous) { foreach ($reading in $previous.readings) { $all.Add($reading) } }
+            foreach ($reading in $incoming.readings) {
+                foreach ($result in $reading.results) {
+                    $found = $false
+                    foreach ($existing in $all) {
+                        if ($existing.benchmark -ceq $reading.benchmark -and $existing.version -ceq $reading.version -and $existing.harness -ceq $reading.harness) {
+                            $prior = @($existing.results | Where-Object model -CEQ $result.model)
+                            if ($prior.Count) {
+                                if ([datetime]$reading.date -gt [datetime]$existing.date) { $existing.results = @($existing.results | Where-Object model -CNE $result.model) + $result; $existing.date = $reading.date }
+                            } else { $existing.results = @($existing.results) + $result }
+                            $found = $true; break
+                        }
+                    }
+                    if (-not $found) { $all.Add([pscustomobject]@{ benchmark=$reading.benchmark; version=$reading.version; date=$reading.date; harness=$reading.harness; effort_class=$reading.effort_class; independent=$reading.independent; url=$reading.url; results=@($result) }) }
+                }
+            }
+            $saved = [pscustomobject]@{ category=$category; sources_checked=@($incoming.sources_checked); readings=@($all.ToArray()) }
+            [IO.File]::WriteAllText($target,(ConvertTo-Json -InputObject $saved -Depth 40),[Text.UTF8Encoding]::new($false))
+        }
+        $record = [pscustomobject]@{ pass_id=$passId; trigger=$Trigger; categories=@($Categories); models=@($Models); started_at=$Now.ToString('o'); completed_at=(Get-Date).ToString('o'); failed_categories=@($failed.ToArray()) }
+        [IO.File]::AppendAllText((Join-Path $readingsDir 'passes.jsonl'),((ConvertTo-Json -InputObject $record -Compress -Depth 10) + "`n"),[Text.UTF8Encoding]::new($false))
+        return $record
+    } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }; [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action release) }
 }
 
 function Invoke-RouterResearch {
@@ -261,6 +410,11 @@ function Start-RouterResearchDetached {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
+    if ($RouterResearchCliCategories -and $RouterResearchCliCategories.Count) {
+        $result = Invoke-RouterCategoryResearch -Categories $RouterResearchCliCategories -Models $RouterResearchCliCandidateModels -Trigger $RouterResearchCliTrigger -Lane $RouterResearchCliLane -Context $RouterResearchCliContext
+        if ($RouterResearchCliJson) { $result | ConvertTo-Json -Depth 20 -Compress } else { $result }
+        return
+    }
     $models = $RouterResearchCliModels
     if ($RouterResearchCliModelsFile) { $models = @(Read-RouterResearchModelsFile -Path $RouterResearchCliModelsFile) }
     $result = Invoke-RouterResearch -Models $models -All:$RouterResearchCliAll -Context $RouterResearchCliContext -DetachedChild:$RouterResearchCliDetachedChild -LockToken $RouterResearchCliLockToken
