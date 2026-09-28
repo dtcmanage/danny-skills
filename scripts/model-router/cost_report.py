@@ -696,7 +696,7 @@ def top_models(work_by_model: list[dict], n: int = 3) -> list[dict]:
 def render_headline(report: dict) -> str:
     total_api = sum(vw.api_equivalent_usd for vw in report["vendors"].values())
     total_sub = sum(vw.subscription_usd for vw in report["vendors"].values())
-    line = f"Your plans covered ${round(total_api)} of work for ${round(total_sub)} in subscription cost"
+    line = f"Your plans covered ${round(total_api):,} of work for ${round(total_sub):,} in subscription cost"
     if total_api < total_sub:
         line += " (API pricing would have been cheaper this week)"
     return line + "."
@@ -710,8 +710,8 @@ def render_vendor_lines(vendors: dict) -> list[str]:
         if not vw:
             continue
         lines.append(
-            f"- {labels[host]}: ${round(vw.api_equivalent_usd)} of work (at API prices) "
-            f"on a ${round(vw.subscription_usd)}/wk plan"
+            f"- {labels[host]}: ${round(vw.api_equivalent_usd):,} of work (at API prices) "
+            f"on a ${round(vw.subscription_usd):,}/wk plan"
         )
     return lines
 
@@ -747,7 +747,7 @@ def render_frontier_line(report: dict, frontier_models: dict) -> str:
     frontier = report["frontier"]
     if frontier["model_ids"]:
         names = ", ".join(friendly_model_name(m) for m in frontier["model_ids"])
-        return f"{label}: used - {names}, ${round(frontier['api_equivalent_usd'])} of work at API prices"
+        return f"{label}: used - {names}, ${round(frontier['api_equivalent_usd']):,} of work at API prices"
     return f"{label}: not used"
 
 

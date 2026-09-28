@@ -581,6 +581,9 @@ def test_headline_math_subscription_ahead_and_api_cheaper():
         "Your plans covered $20 of work for $92 in subscription cost "
         "(API pricing would have been cheaper this week)."
     )
+    large = _synth_report(claude_api=2019.4, claude_sub=46.0, codex_api=1546.8, codex_sub=46.0)
+    assert cr.render_headline(large) == "Your plans covered $3,566 of work for $92 in subscription cost."
+    assert cr.render_vendor_lines(large["vendors"])[0] == "- Claude: $2,019 of work (at API prices) on a $46/wk plan"
 
 
 def test_vendor_lines_omit_absent_vendor():
