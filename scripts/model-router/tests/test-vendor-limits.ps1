@@ -45,6 +45,12 @@ try {
     Assert-True ((Test-RouterLimitRefusal -Vendor claude -Text "5-hour limit reached - resets 3pm").refused) 'Claude 5-hour limit message is a refusal'
     Assert-True ((Test-RouterLimitRefusal -Vendor claude -Text "You've hit your limit - resets 3pm").refused) 'Claude hit-your-limit message is a refusal'
     Assert-True (-not (Test-RouterLimitRefusal -Vendor codex -Text 'ERROR: tests failed: test_rate_limit_exceeded_returns_429').refused) 'test identifiers containing rate_limit_exceeded are not refusals'
+    $dated = Test-RouterLimitRefusal -Vendor codex -Text "ERROR: You've hit your usage limit. Upgrade to Pro or try again at Oct 2nd, 2027 3:04 PM."
+    Assert-True ($dated.refused -and ([datetimeoffset]$dated.reset_at_utc).ToLocalTime().ToString('yyyy-MM-dd HH:mm') -eq '2027-10-02 15:04') 'Codex English dated reset parses as local time'
+    $clockOnly = Test-RouterLimitRefusal -Vendor codex -Text "ERROR: You've hit your usage limit. Try again at 3:04 PM."
+    $delta = ([datetimeoffset]$clockOnly.reset_at_utc - [datetimeoffset]::UtcNow).TotalHours
+    Assert-True ($clockOnly.refused -and $delta -gt 0 -and $delta -le 24 -and ([datetimeoffset]$clockOnly.reset_at_utc).ToLocalTime().ToString('HH:mm') -eq '15:04') 'Codex clock-only reset is the next occurrence'
+    Assert-True ((Test-RouterLimitRefusal -Vendor codex -Text 'ERROR: Your workspace is out of credits.').refused -and (Test-RouterLimitRefusal -Vendor codex -Text "ERROR: You've hit your spend cap set by the owner of your workspace.").refused) 'Codex workspace credit and spend-cap messages are refusals'
     Assert-True ($null -eq (Get-RouterCodexUsage) -and -not (Get-RouterVendorBlocked -Vendor codex)) 'no logs leave Codex available'
     $fixture = Join-Path $PSScriptRoot 'fixtures/codex-sessions/2026/09/28/rollout-usage.jsonl'
     $file = Join-Path $sessions '2026/09/28/rollout-usage.jsonl'

@@ -96,7 +96,7 @@ function Test-RouterLimitRefusal {
         }
     }
     # Vendor phrasing (Codex CLI prints "You've hit your usage limit"); identifiers such as test_rate_limit_exceeded_x do not count.
-    $refused = $errorText -match '(?i)(?:usage limit (?:reached|exceeded)|you(?:[''\u2019]ve| have) (?:hit|reached) your (?:usage )?limit|\b\d+-hour limit reached|weekly limit reached|rate limit (?:reached|exceeded)|would exceed the rate limit|(?<![A-Za-z0-9_])rate_limit_(?:exceeded|error)(?![A-Za-z0-9_])|quota exceeded|too many requests|Claude AI usage limit reached)'
+    $refused = $errorText -match '(?i)(?:usage limit (?:reached|exceeded)|you(?:[''\u2019]ve| have) (?:hit|reached) your (?:usage )?limit|\b\d+-hour limit reached|weekly limit reached|rate limit (?:reached|exceeded)|would exceed the rate limit|(?<![A-Za-z0-9_])rate_limit_(?:exceeded|error)(?![A-Za-z0-9_])|quota exceeded|too many requests|workspace is out of credits|hit your spend cap|Claude AI usage limit reached)'
     $reset = $null
     if ($refused) {
         $time = [regex]::Match($resetText, '(?im)(?:resets?_at|resets? at|try again at|available again at|Claude AI usage limit reached\|)["'']?\s*[=:]?\s*["'']?([0-9]{10}|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)')
@@ -105,6 +105,22 @@ function Test-RouterLimitRefusal {
             $parsed = [datetimeoffset]::MinValue
             if ([datetimeoffset]::TryParse($value, [ref]$parsed)) { $reset = $parsed.ToUniversalTime().ToString('o') }
             elseif ($value -match '^\d{10}$') { $reset = [datetimeoffset]::FromUnixTimeSeconds([long]$value).ToString('o') }
+        }
+        if (-not $reset) {
+            # Codex CLI wording: "Try again at Oct 2nd, 2026 3:04 PM." or "Try again at 3:04 PM." (local time).
+            $english = [regex]::Match($resetText, '(?i)try again at\s+(?:([A-Z][a-z]{2,8})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\s+)?(\d{1,2}:\d{2}\s*[AP]M)')
+            if ($english.Success) {
+                $clock = [datetime]::MinValue
+                $culture = [Globalization.CultureInfo]::InvariantCulture
+                if ($english.Groups[1].Success) {
+                    $text = '{0} {1} {2} {3}' -f $english.Groups[1].Value, $english.Groups[2].Value, $english.Groups[3].Value, ($english.Groups[4].Value -replace '\s+', ' ')
+                    if ([datetime]::TryParse($text, $culture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$clock)) { $reset = ([datetimeoffset]$clock).ToUniversalTime().ToString('o') }
+                } elseif ([datetime]::TryParse(($english.Groups[4].Value -replace '\s+', ' '), $culture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$clock)) {
+                    $at = [datetime]::Today.Add($clock.TimeOfDay)
+                    if ($at -le [datetime]::Now) { $at = $at.AddDays(1) }
+                    $reset = ([datetimeoffset]$at).ToUniversalTime().ToString('o')
+                }
+            }
         }
         $relative = [regex]::Match($errorText, '(?i)try again in\s+((?:\d+\s+(?:days?|hours?|minutes?)[,\s]*(?:and\s+)?)+)')
         if (-not $reset -and $relative.Success) {
