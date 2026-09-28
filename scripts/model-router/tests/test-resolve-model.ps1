@@ -92,6 +92,21 @@ try {
     Enable-Candidate $mechanicalHaiku 'strong' 1 5
     Save-Fixture $table $fixturePath
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category mechanical -Lane claude -Protected).model -eq 'claude-opus-5-5') 'protected Claude mechanical retains stronger Opus despite Haiku grade and cost'
+    # Real 2026-09-27 research ranks the small models first for mechanical work; protected work must still stay put.
+    $tableBackup = $table | ConvertTo-Json -Depth 40
+    $opusRank = $mechanicalOpus.strength_rank; $mechanicalOpus.strength_rank = $mechanicalHaiku.strength_rank; $mechanicalHaiku.strength_rank = $opusRank
+    $solRank = $mechanicalSol.strength_rank; $mechanicalSol.strength_rank = $mechanicalLuna.strength_rank; $mechanicalLuna.strength_rank = $solRank
+    foreach ($laneTable in @($table.categories.mechanical.claude, $table.categories.mechanical.codex)) {
+        $laneTable.fallback = @($laneTable.candidates | Where-Object { -not $_.frontier } | Sort-Object strength_rank)[0].model
+    }
+    $mechanicalOpus.confirmed_grade = 'weak'; $mechanicalOpus.grade = 'weak'
+    Enable-Candidate $mechanicalLuna 'strong' 1 5
+    Save-Fixture $table $fixturePath
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category mechanical -Lane claude -Protected).model -eq 'claude-opus-5-5') 'protected Claude work never moves to a smaller model even when research ranks it first'
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category mechanical -Lane codex -Protected).model -eq 'gpt-6-sol') 'protected Codex work never moves to a smaller model even when research ranks it first'
+    Assert-True ((Get-RouterModelTier -Model 'claude-haiku-4-5-20251001') -lt (Get-RouterModelTier -Model 'claude-sonnet-5') -and (Get-RouterModelTier -Model 'gpt-6-luna') -lt (Get-RouterModelTier -Model 'gpt-5.6-sol') -and $null -eq (Get-RouterModelTier -Model 'gpt-5.5')) 'fixed model size order'
+    $table = $tableBackup | ConvertFrom-Json -Depth 40
+    Save-Fixture $table $fixturePath
     $sonnet = @($table.categories.'routine-coding'.claude.candidates | Where-Object model -eq 'claude-sonnet-5')[0]
     $haiku = @($table.categories.'routine-coding'.claude.candidates | Where-Object model -eq 'claude-haiku-4-5-20251001')[0]
     $opus = @($table.categories.'routine-coding'.claude.candidates | Where-Object model -eq 'claude-opus-5-5')[0]
@@ -127,7 +142,11 @@ try {
     @{ category = 'complex-coding'; lane = 'codex'; model = 'gpt-6-sol' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $temp 'drift-flags.json')
     $driftCatalog = [pscustomobject]@{ models = @([pscustomobject]@{ slug = 'gpt-6-sol'; visibility = 'list' },[pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; description = 'frontier' }) }
     $driftedUnknown = Resolve-RouterModel -SkipModelCheck -SendAlerts -Category complex-coding -Lane codex -Catalog $driftCatalog
-    Assert-True ($driftedUnknown.model -eq 'gpt-6-astra' -and $driftedUnknown.reason -match 'escalation') 'unknown incumbent obeys drift demotion'
+    Assert-True ($driftedUnknown.model -eq 'gpt-6-sol' -and $driftedUnknown.alerts -contains 'drift-no-alternative:gpt-6-sol:complex-coding:codex') 'drift never demotes to a frontier rung as a first pick'
+    @{ category = 'mechanical'; lane = 'codex'; model = 'gpt-6-luna' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $temp 'drift-flags.json')
+    $lunaCatalog = [pscustomobject]@{ models = @([pscustomobject]@{ slug = 'gpt-6-luna'; visibility = 'list' },[pscustomobject]@{ slug = 'gpt-6-sol'; visibility = 'list' },[pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; description = 'frontier' }) }
+    $driftedLuna = Resolve-RouterModel -SkipModelCheck -Category mechanical -Lane codex -Catalog $lunaCatalog
+    Assert-True ($driftedLuna.model -ne 'gpt-6-luna' -and -not $driftedLuna.model.EndsWith('astra') -and $driftedLuna.reason -match 'drift demotion') 'flagged mechanical Luna is demoted off Luna'
     Remove-Item -LiteralPath (Join-Path $temp 'drift-flags.json')
     . (Join-Path $PSScriptRoot '../send-router-alert.ps1')
     $writing = Resolve-RouterModel -SkipModelCheck -Category long-form-writing -Lane claude
@@ -143,6 +162,12 @@ try {
     Assert-True ($approved.evidence_routing_approved -and @($approved.approved_picks).Count -eq 34) 'approval stores all ordinary and protected picks'
     & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Revoke -TablePath $fixturePath | Out-Null
     Assert-True (-not (Get-Content -LiteralPath $fixturePath -Raw | ConvertFrom-Json).evidence_routing_approved) 'revoke restores bridge gate'
+    $legacyTable = Get-Content -LiteralPath $fixturePath -Raw | ConvertFrom-Json -Depth 40
+    $legacyTable.PSObject.Properties.Remove('evidence_routing_approved'); $legacyTable.PSObject.Properties.Remove('approved_picks')
+    $legacyPath = Join-Path $temp 'legacy-router-table.json'
+    $legacyTable | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $legacyPath
+    & (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Revoke -TablePath $legacyPath | Out-Null
+    Assert-True ((Get-Content -LiteralPath $legacyPath -Raw | ConvertFrom-Json).evidence_routing_approved -eq $false) 'approval script handles a pre-approval-step table'
     $table = New-Fixture
     $r = $table.categories.'routine-coding'.claude.candidates
     Enable-Candidate $r[1] 'strong' 8 30

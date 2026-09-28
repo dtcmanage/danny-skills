@@ -58,6 +58,32 @@ function Resolve-RouterEscalationAlias {
     return $EscalateFrom
 }
 
+function Get-RouterModelTier {
+    # Fixed size order used where "stronger" must not depend on per-category research scores:
+    # protected work may only move up this order, and drift demotion steps up it.
+    param([string]$Model)
+    if ($Model -match '^claude-(haiku|sonnet|opus|fable)-') { return @{ haiku = 0; sonnet = 1; opus = 2; fable = 3 }[$Matches[1]] }
+    if ($Model -match '^gpt-[0-9.]+-(luna|terra|sol|astra)$') { return @{ luna = 0; terra = 1; sol = 2; astra = 3 }[$Matches[1]] }
+    return $null
+}
+
+function Get-RouterDriftStep {
+    # Next non-frontier, selectable rung above a drift-flagged model on the lane ladder; $null when none.
+    param([string]$Category, [string]$Lane, [string]$Model, [object]$Catalog, [string[]]$Skip = @())
+    $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/bridge-map.json') -Raw | ConvertFrom-Json -Depth 10
+    $ladder = @($map.lanes.$Lane.ladder)
+    $ids = @($ladder | ForEach-Object { [string]$_.model })
+    $index = [array]::IndexOf($ids, $Model)
+    if ($index -lt 0) { return $null }
+    for ($j = $index + 1; $j -lt $ids.Count; $j++) {
+        if ($ladder[$j].frontier) { return $null }
+        if ($Skip -contains $ids[$j]) { continue }
+        if ($Lane -eq 'codex' -and $Category -ne 'image-generation' -and -not (Test-RouterCodexSelectable -ParsedCatalog (Get-CodexModelCatalog -Catalog $Catalog) -Model $ids[$j])) { continue }
+        return $ids[$j]
+    }
+    return $null
+}
+
 function Resolve-RouterBridgeModel {
     # Bridge first picks match pre-router tiers until full research coverage is available.
     # Escalation moves one rung up the lane ladder; a frontier rung is reachable only that way.
@@ -154,8 +180,9 @@ function Resolve-RouterModel {
         if (-not $EscalateFrom) {
             $drift = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-flags.json') | Where-Object { $_.category -eq $Category -and $_.lane -eq $Lane -and $_.model -eq $held.model })
             if ($drift.Count) {
-                $demoted = Resolve-RouterBridgeModel -Category $Category -Lane $Lane -IsProtected $isProtected -EscalateFrom $held.model -Catalog $Catalog -Alerts $alerts
-                if ($demoted.model -ne $held.model) { $held = $demoted }
+                $allFlagged = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-flags.json') | Where-Object { $_.category -eq $Category -and $_.lane -eq $Lane } | ForEach-Object { [string]$_.model })
+                $step = Get-RouterDriftStep -Category $Category -Lane $Lane -Model $held.model -Catalog $Catalog -Skip $allFlagged
+                if ($step) { $held = [pscustomobject]@{ model = $step; reason = "drift demotion: $($held.model) -> $step (one rung up the $Lane ladder, never a frontier rung)" } }
                 else { $alerts.Add("drift-no-alternative:$($held.model):$Category`:$Lane") }
             }
         }
@@ -236,7 +263,11 @@ function Resolve-RouterModel {
     foreach ($candidate in $rankedCandidates) {
         if ($candidate.model -eq $incumbentId) { $qualifying.Add($candidate); continue }
         if ($candidate.frontier -or $candidate.confirmed_grade -notin @('strong','capable')) { continue }
-        if ($isProtected -and $candidate.strength_rank -ge $incumbent.strength_rank) { continue }
+        if ($isProtected) {
+            $candidateTier = Get-RouterModelTier -Model ([string]$candidate.model)
+            $incumbentTier = Get-RouterModelTier -Model $incumbentId
+            if ($null -eq $candidateTier -or $null -eq $incumbentTier -or $candidateTier -le $incumbentTier) { continue }
+        }
         $gradeComparison = (Get-RouterGradeRank $candidate.confirmed_grade) - (Get-RouterGradeRank $incumbent.confirmed_grade)
         if ($gradeComparison -lt 0) { continue }
         $generation = Get-RouterModelGeneration -Model $candidate.model
@@ -262,25 +293,7 @@ function Resolve-RouterModel {
         return $result
     }
     $driftApplied = $false
-    $flags = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-flags.json') | Where-Object { $_.category -eq $Category -and $_.lane -eq $Lane })
-    if ($isProtected -and -not $EscalateFrom) {
-        foreach ($flag in $flags) {
-            if ($byStrength[0].model -eq $flag.model) { $alerts.Add("drift-no-alternative:$($flag.model):$Category`:$Lane") }
-        }
-    }
-    if (-not $EscalateFrom -and -not $isProtected) {
-        foreach ($flag in $flags) {
-            $position = -1
-            for ($i = 0; $i -lt $rankedCandidates.Count; $i++) { if ($rankedCandidates[$i].model -eq $flag.model) { $position = $i; break } }
-            if ($position -lt 0) { continue }
-            if ($position + 1 -ge $rankedCandidates.Count) { $alerts.Add("drift-no-alternative:$($flag.model):$Category`:$Lane"); continue }
-            $moveUp = $rankedCandidates[$position + 1]
-            if ($moveUp.confirmed_grade -notin @('strong','capable') -or -not @($moveUp.citations | Where-Object independent).Count) { $alerts.Add("drift-no-alternative:$($flag.model):$Category`:$Lane"); continue }
-            $rankedCandidates[$position + 1] = $rankedCandidates[$position]
-            $rankedCandidates[$position] = $moveUp
-            if ($position -eq 0) { $driftApplied = $true }
-        }
-    }
+    $flagged = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-flags.json') | Where-Object { $_.category -eq $Category -and $_.lane -eq $Lane } | ForEach-Object { [string]$_.model })
     $ranked = @($rankedCandidates.ToArray() | ForEach-Object { $_.model })
     if ($EscalateFrom) {
         $from = @($all | Where-Object { $_.model -eq $EscalateFrom })
@@ -293,7 +306,22 @@ function Resolve-RouterModel {
     } elseif ($isProtected) { $chosen = $rankedCandidates[0]; $reason = 'Protected: strongest qualifying candidate.' }
     elseif (@($byStrength | Where-Object { $null -eq $_.est_burn }).Count) { $chosen = $rankedCandidates[0]; $reason = 'Uncalibrated burn: strength-rank order.' }
     else { $chosen = $rankedCandidates[0]; $reason = 'Lowest expected retry-adjusted burn; 10% time tie-break.' }
-    if ($driftApplied) { $reason += ' Drift demotion moved a flagged model down one eligible position.' }
+    if (-not $EscalateFrom -and $flagged -contains [string]$chosen.model) {
+        # Drift: a flagged pick yields to the next qualifying unflagged candidate, then to the incumbent,
+        # then one rung up the ladder; never to a frontier model.
+        $flaggedModel = [string]$chosen.model
+        $alternatives = @()
+        if (-not $isProtected) { $alternatives += @($rankedCandidates | Where-Object { $_.model -ne $flaggedModel -and $flagged -notcontains [string]$_.model -and -not $_.frontier }) }
+        if ($incumbentSelectable -and $incumbentId -ne $flaggedModel -and $flagged -notcontains $incumbentId) { $alternatives += @($incumbent) }
+        if ($alternatives.Count) { $chosen = $alternatives[0]; $driftApplied = $true }
+        else {
+            $step = Get-RouterDriftStep -Category $Category -Lane $Lane -Model $flaggedModel -Catalog $Catalog -Skip $flagged
+            if ($step) { $chosen = [pscustomobject]@{ model = $step; frontier = $false }; $driftApplied = $true }
+            else { $alerts.Add("drift-no-alternative:$($flaggedModel):$Category`:$Lane") }
+        }
+        if ($driftApplied) { $ranked = @($chosen.model) + @($ranked | Where-Object { $_ -ne $chosen.model }) }
+    }
+    if ($driftApplied) { $reason += ' Drift demotion moved off a flagged model.' }
     if ($chosen.frontier) { $reason += ' No non-frontier eligible.' }
     $result = [pscustomobject]@{ model = $chosen.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $chosen.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
     if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }

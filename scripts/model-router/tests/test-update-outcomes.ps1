@@ -99,7 +99,7 @@ try {
     $drift = Run-Update
     Assert-True ($drift.drift_flags -eq 1 -and @($drift.alerts | Where-Object { $_ -like 'drift:*' }).Count -eq 1) 'drift at exactly 15 points with 10 plus 20 samples'
     $demoted = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
-    Assert-True ($demoted.model -eq $rows[2].model -and $demoted.alerts -contains "drift-no-alternative:$($rows[2].model):routine-coding:claude") 'drift keeps incumbent when no qualifying challenger exists'
+    Assert-True ($demoted.model -eq 'claude-opus-5-5' -and $demoted.reason -match 'Drift demotion') 'resolver demotes flagged candidate (confirmed incumbent steps one rung up the ladder)'
     $protected = Resolve-RouterModel -Category routine-coding -Lane claude -Protected -SkipModelCheck
     Assert-True ($protected.model -eq $rows[1].model) 'protected pick remains strongest under drift'
     for ($i=21; $i -le 50; $i++) { Write-Provenance "recent-$i" 'M01' 1 'sonnet' ($i -le 46) '2026-09-25T12:00:00Z' }
@@ -110,9 +110,9 @@ try {
     $fixture.categories.'routine-coding'.claude.candidates[1].grade = 'unknown'
     $fixture.categories.'routine-coding'.claude.candidates[1].confirmed_grade = 'unknown'
     $fixture | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $script:state 'router-table.json')
-    @([pscustomobject]@{ category='routine-coding'; lane='claude'; model=$rows[2].model; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' }) | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $script:state 'drift-flags.json')
+    @([pscustomobject]@{ category='routine-coding'; lane='claude'; model=$rows[2].model; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' },[pscustomobject]@{ category='routine-coding'; lane='claude'; model='claude-opus-5-5'; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' }) | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $script:state 'drift-flags.json')
     $none = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
-    Assert-True ($none.model -eq $rows[2].model -and @($none.alerts | Where-Object { $_ -like 'drift-no-alternative:*' }).Count -eq 1) 'no eligible alternative retains pick and alerts'
+    Assert-True ($none.model -eq $rows[2].model -and @($none.alerts | Where-Object { $_ -like 'drift-no-alternative:*' }).Count -eq 1) 'no eligible alternative (next rung also flagged, top rung frontier) retains pick and alerts'
 
     $timestampState = Join-Path $temp 'timestamp-state'
     $timestampRepo = Join-Path $temp 'timestamp-repo'

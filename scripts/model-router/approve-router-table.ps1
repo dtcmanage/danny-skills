@@ -12,6 +12,10 @@ if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke) -ne 1) { throw
 $path = if ($TablePath) { $TablePath } else { Join-Path (Get-RouterStateDir) 'router-table.json' }
 if (-not (Test-Path -LiteralPath $path)) { throw "Router table not found: $path" }
 $table = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 40
+# Tables written before the approval step lack these fields; treat them as not approved.
+foreach ($field in @('evidence_routing_approved','approved_picks')) {
+    if (-not $table.PSObject.Properties[$field]) { $table | Add-Member -NotePropertyName $field -NotePropertyValue $(if ($field -eq 'approved_picks') { @() } else { $false }) }
+}
 $errors = @(Test-RouterTable -Table $table)
 if ($errors.Count) { throw "Invalid router table: $($errors -join '; ')" }
 
