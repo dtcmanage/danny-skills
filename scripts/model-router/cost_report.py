@@ -14,6 +14,7 @@ Deterministic, no network calls, no model calls. Read-only against the usage led
 from __future__ import annotations
 
 import argparse
+from fnmatch import fnmatchcase
 import html
 import json
 import os
@@ -28,6 +29,7 @@ UTC = timezone.utc
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PRICES_PATH = REPO_ROOT / "references" / "model-router" / "api-prices.json"
+FRONTIER_MODELS_PATH = REPO_ROOT / "references" / "model-router" / "frontier-models.json"
 
 # host (as recorded by collect-usage.py) -> report vendor label and the pricing-vendor tag
 # used in api-prices.json.
@@ -301,10 +303,12 @@ def build_vendor_week(host: str, iso_year: int, iso_week: int, rows: list[dict],
 
 
 def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: dict,
-                          today_et: date | None = None) -> list[dict]:
+                          today_et: date | None = None,
+                          frontier_path: Path = FRONTIER_MODELS_PATH) -> list[dict]:
     """One report dict per ISO week seen in either the usage rows or the codex rate-limit
     readings, each holding a VendorWeek per vendor that had any signal that week."""
     today_et = today_et or datetime.now(tz=ET_ZONE).date()
+    frontier_models = json.loads(frontier_path.read_text(encoding="utf-8"))
     week_keys: set[tuple[int, int]] = set()
     rows_by_week_host: dict[tuple[int, int, str], list[dict]] = {}
     for row in usage_rows:
@@ -336,7 +340,42 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
             vendors[host] = build_vendor_week(host, iso_year, iso_week, rows, rate_rows_for_week, prices, today_et)
         if not vendors:
             continue
-        reports.append({"iso_year": iso_year, "iso_week": iso_week, "label": week_label(iso_year, iso_week), "vendors": vendors})
+        work: dict[str, dict] = {}
+        frontier_sessions: set[tuple[str, str]] = set()
+        frontier_ids: set[str] = set()
+        frontier_cost = 0.0
+        for host in ("claude", "codex"):
+            for row in rows_by_week_host.get((iso_year, iso_week, host), []):
+                model = row.get("model") or "unset"
+                session = (host, row.get("session_id") or "")
+                item = work.setdefault(model, {"model": model, "sessions": set(), "calls": 0,
+                                               "api_equivalent_usd": 0.0, "priced": False})
+                item["sessions"].add(session)
+                item["calls"] += row.get("calls") or 0
+                cost, _ = price_usage_row(row, prices)
+                if cost is not None:
+                    item["api_equivalent_usd"] += cost
+                    item["priced"] = True
+                is_frontier = (model in frontier_models.get("codex_models", []) if host == "codex"
+                               else any(fnmatchcase(model, pattern) for pattern in frontier_models.get("claude_patterns", [])))
+                if is_frontier:
+                    frontier_ids.add(model)
+                    frontier_sessions.add(session)
+                    if cost is not None:
+                        frontier_cost += cost
+        priced_total = sum(item["api_equivalent_usd"] for item in work.values() if item["priced"])
+        work_by_model = [
+            {"model": item["model"], "sessions": len(item["sessions"]), "calls": item["calls"],
+             "api_equivalent_usd": item["api_equivalent_usd"] if item["priced"] else None,
+             "share_pct": 100 * item["api_equivalent_usd"] / priced_total if item["priced"] and priced_total else None}
+            for item in work.values()
+        ]
+        work_by_model.sort(key=lambda item: (item["api_equivalent_usd"] is None,
+                                              -(item["api_equivalent_usd"] or 0), item["model"]))
+        reports.append({"iso_year": iso_year, "iso_week": iso_week, "label": week_label(iso_year, iso_week),
+                        "vendors": vendors, "work_by_model": work_by_model,
+                        "frontier": {"api_equivalent_usd": frontier_cost, "sessions": len(frontier_sessions),
+                                     "model_ids": sorted(frontier_ids)}})
     return reports
 
 
@@ -389,6 +428,19 @@ def render_markdown(report: dict) -> str:
         else:
             lines.append("- Blocked time (quota at 100%): no limit data available (Claude session logs expose no account-level quota-used field)")
         lines.append("")
+    lines.extend(["## Work by model", ""])
+    for item in report["work_by_model"]:
+        cost = fmt_usd(item["api_equivalent_usd"]) if item["api_equivalent_usd"] is not None else "unpriced"
+        share = f"{item['share_pct']:.1f}%" if item["share_pct"] is not None else "n/a"
+        lines.append(f"- {item['model']}: {item['sessions']} sessions, {item['calls']} calls, "
+                     f"{cost} API-equivalent, {share} of priced cost")
+    frontier = report["frontier"]
+    if frontier["model_ids"]:
+        lines.append(f"Frontier models used: {', '.join(frontier['model_ids'])}, "
+                     f"{fmt_usd(frontier['api_equivalent_usd'])} API-equivalent across {frontier['sessions']} sessions")
+    else:
+        lines.append("Frontier models: none this week")
+    lines.append("")
     return "\n".join(lines) + "\n"
 
 
@@ -425,6 +477,20 @@ def render_html(report: dict) -> str:
 <p>Unpriced usage (excluded from total):</p><ul>{unpriced_html}</ul>
 </div>""")
 
+    model_rows = []
+    for item in report["work_by_model"]:
+        cost = fmt_usd(item["api_equivalent_usd"]) if item["api_equivalent_usd"] is not None else "unpriced"
+        share = f"{item['share_pct']:.1f}%" if item["share_pct"] is not None else "n/a"
+        model_rows.append(f"<li>{html.escape(item['model'])}: {item['sessions']} sessions, {item['calls']} calls, "
+                          f"{cost} API-equivalent, {share} of priced cost</li>")
+    frontier = report["frontier"]
+    if frontier["model_ids"]:
+        ids = html.escape(", ".join(frontier["model_ids"]))
+        frontier_line = (f"Frontier models used: {ids}, {fmt_usd(frontier['api_equivalent_usd'])} "
+                         f"API-equivalent across {frontier['sessions']} sessions")
+    else:
+        frontier_line = "Frontier models: none this week"
+
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Model-router cost report {html.escape(report['label'])}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -443,6 +509,7 @@ p{{margin:6px 0}} ul{{margin:4px 0 8px 18px;padding:0}}
 <h1>Model-router weekly cost report - {html.escape(report['label'])}</h1>
 <p class='label'>Subscription vs API-equivalent cost, priced at published vendor list rates. Reflects only sessions found in the swept logs -- never a certified full-account total.</p>
 {''.join(cards)}
+<section><h2>Work by model</h2><ul>{''.join(model_rows)}</ul><p>{frontier_line}</p></section>
 </body></html>"""
 
 

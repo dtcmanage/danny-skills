@@ -121,6 +121,67 @@ def test_unpriced_bucket_reported_by_vendor_week():
     assert vw.unpriced_tokens_by_model["claude-nonexistent-model"]["input"] == 100
 
 
+def test_work_by_model_shares_and_unpriced_rows(tmp_path):
+    frontier_path = tmp_path / "frontier.json"
+    frontier_path.write_text('{"codex_models": [], "claude_patterns": []}', encoding="utf-8")
+    rows = [
+        {"host": "claude", "session_id": "shared", "model": "claude-test-model", "date_et": "2026-09-21",
+         "calls": 2, "tokens": {"input": 1_000_000}},
+        {"host": "claude", "session_id": "shared", "model": "claude-test-model", "date_et": "2026-09-22",
+         "calls": 1, "tokens": {"input": 1_000_000}},
+        {"host": "codex", "session_id": "shared", "model": "gpt-test-model", "date_et": "2026-09-21",
+         "calls": 4, "tokens": {"input": 1_000_000}},
+        {"host": "codex", "session_id": "other", "model": "gpt-unknown", "date_et": "2026-09-21",
+         "calls": 3, "tokens": {"input": 1_000_000}},
+    ]
+    report = cr.build_weekly_reports(rows, [], SYNTH_PRICES, date(2026, 9, 27), frontier_path)[0]
+    by_model = {item["model"]: item for item in report["work_by_model"]}
+    assert [item["model"] for item in report["work_by_model"]] == [
+        "claude-test-model", "gpt-test-model", "gpt-unknown"]
+    assert by_model["claude-test-model"]["sessions"] == 1
+    assert by_model["claude-test-model"]["calls"] == 3
+    assert by_model["gpt-test-model"]["sessions"] == 1
+    assert by_model["gpt-test-model"]["calls"] == 4
+    assert sum(item["share_pct"] for item in report["work_by_model"] if item["share_pct"] is not None) == pytest.approx(100)
+    assert by_model["gpt-unknown"]["api_equivalent_usd"] is None
+    assert by_model["gpt-unknown"]["share_pct"] is None
+    assert "gpt-unknown: 1 sessions, 3 calls, unpriced" in cr.render_markdown(report)
+    assert "gpt-unknown: 1 sessions, 3 calls, unpriced" in cr.render_html(report)
+
+
+def test_frontier_exact_id_and_claude_glob_from_file(tmp_path):
+    frontier_path = tmp_path / "frontier.json"
+    frontier_path.write_text(json.dumps({"codex_models": ["gpt-test-model"],
+                                         "claude_patterns": ["claude-test-*"]}), encoding="utf-8")
+    rows = [
+        {"host": "codex", "session_id": "same", "model": "gpt-test-model", "date_et": "2026-09-21",
+         "calls": 1, "tokens": {"input": 1_000_000}},
+        {"host": "claude", "session_id": "same", "model": "claude-test-model", "date_et": "2026-09-21",
+         "calls": 1, "tokens": {"input": 1_000_000}},
+        {"host": "codex", "session_id": "other", "model": "gpt-test-model-suffix", "date_et": "2026-09-21",
+         "calls": 1, "tokens": {"input": 1_000_000}},
+    ]
+    report = cr.build_weekly_reports(rows, [], SYNTH_PRICES, date(2026, 9, 27), frontier_path)[0]
+    assert report["frontier"]["model_ids"] == ["claude-test-model", "gpt-test-model"]
+    assert report["frontier"]["sessions"] == 2
+    assert report["frontier"]["api_equivalent_usd"] == pytest.approx(20)
+    for rendered in (cr.render_markdown(report), cr.render_html(report)):
+        assert "Work by model" in rendered
+        assert "Frontier models used: claude-test-model, gpt-test-model, $20.00 API-equivalent across 2 sessions" in rendered
+
+
+def test_no_frontier_models_line_in_both_formats(tmp_path):
+    frontier_path = tmp_path / "frontier.json"
+    frontier_path.write_text('{"codex_models": [], "claude_patterns": []}', encoding="utf-8")
+    rows = [{"host": "codex", "session_id": "s1", "model": "gpt-test-model", "date_et": "2026-09-21",
+             "calls": 1, "tokens": {"input": 1_000_000}}]
+    report = cr.build_weekly_reports(rows, [], SYNTH_PRICES, date(2026, 9, 27), frontier_path)[0]
+    for rendered in (cr.render_markdown(report), cr.render_html(report)):
+        assert "Work by model" in rendered
+        assert "gpt-test-model: 1 sessions, 1 calls" in rendered
+        assert "Frontier models: none this week" in rendered
+
+
 # ---------------------------------------------------------------------------
 # Week boundaries in ET
 # ---------------------------------------------------------------------------
