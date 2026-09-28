@@ -159,22 +159,27 @@ function Resolve-RouterRosterPick {
     $reason = "roster job $job first choice"
     $alerts = [System.Collections.Generic.List[string]]::new()
     if ($Lane -and $Lane -ne $first.vendor) { $chosen = $backup; $other = $first; $reason = "roster job $job lane $Lane" }
-    if ($EscalateFrom) {
+    if ($EscalateFrom -and -not $Lane) {
         $sourceVendor = if ($EscalateFrom -like 'gpt-*') { 'codex' } elseif ($EscalateFrom -like 'claude-*' -or $EscalateFrom -match '^(haiku|sonnet|opus|fable)(\[1m\])?$') { 'claude' } else { $null }
         if ($sourceVendor -and $chosen -and $chosen.vendor -ne $sourceVendor) { $other = $chosen; $chosen = if ($first.vendor -eq $sourceVendor) { $first } else { $backup } }
     }
     if ($null -eq $chosen) { $reason = 'No Claude image model is available.' }
     $localCatalog = $Catalog
     if ($null -eq $localCatalog) { try { $localCatalog = Get-CodexModelCatalog } catch { $localCatalog = $null } }
-    if ($chosen -and $chosen -eq $first -and $chosen.vendor -eq 'codex' -and $Category -ne 'image-generation' -and $null -ne $localCatalog -and -not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
-        $alerts.Add("roster-model-unselectable:$($chosen.model)"); $chosen = $other; $other = $null; $reason = "Backup used: $($first.model) unselectable."
-    }
     if ($chosen -and -not $Lane -and -not $EscalateFrom) {
-        $marks = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-marks.json') | Where-Object { $_.model -eq $chosen.model -and $_.job -eq $job })
-        if ($marks.Count) { $old = $chosen; $chosen = $other; $reason = "Backup used: $($old.model) drifting." }
+        $marks = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-marks.json') | Where-Object { $_.PSObject.Properties['model'] -and $_.PSObject.Properties['job'] -and $_.model -eq $chosen.model -and $_.job -eq $job })
+        if ($marks.Count) {
+            if ($other) { $old = $chosen; $chosen = $other; $other = $old; $reason = "Backup used: $($old.model) drifting." }
+            else { $alerts.Add("roster-drift-no-backup:$($chosen.model)"); $reason = "Roster model $($chosen.model) drifting; no backup available." }
+        }
+    } elseif ($chosen -and $Lane) {
+        $marks = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-marks.json') | Where-Object { $_.PSObject.Properties['model'] -and $_.PSObject.Properties['job'] -and $_.model -eq $chosen.model -and $_.job -eq $job })
+        if ($marks.Count) { $reason = "Wait: $($chosen.model) drifting on constrained lane $Lane."; $chosen = $null }
     }
     if ($chosen -and $EscalateFrom) {
-        $from = Resolve-RouterEscalationAlias -EscalateFrom $EscalateFrom -Lane $chosen.vendor
+        $sourceVendor = if ($EscalateFrom -like 'gpt-*') { 'codex' } elseif ($EscalateFrom -like 'claude-*' -or $EscalateFrom -match '^(haiku|sonnet|opus|fable)(\[1m\])?$') { 'claude' } else { $null }
+        $source = if ($Lane -and $sourceVendor -ne $Lane) { $chosen.model } else { $EscalateFrom }
+        $from = Resolve-RouterEscalationAlias -EscalateFrom $source -Lane $chosen.vendor
         $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/bridge-map.json') -Raw | ConvertFrom-Json -Depth 10
         $ids = @($map.lanes.($chosen.vendor).ladder | Where-Object { -not $_.frontier } | ForEach-Object { [string]$_.model })
         $at = [array]::IndexOf($ids,$from)
@@ -186,9 +191,16 @@ function Resolve-RouterRosterPick {
     if ($chosen -and (Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue)) {
         if (Get-RouterVendorBlocked -Vendor $chosen.vendor) {
             $blockedVendor = $chosen.vendor
-            if ($other -and -not (Get-RouterVendorBlocked -Vendor $other.vendor)) { $chosen = $other; $reason = "Backup used: $blockedVendor at its usage limit." }
+            if (-not $Lane -and $other -and -not (Get-RouterVendorBlocked -Vendor $other.vendor)) { $chosen = $other; $reason = "Backup used: $blockedVendor at its usage limit." }
             else { $chosen = $null; $reason = "Wait: $blockedVendor at its usage limit; no available model for $job." }
         }
+    }
+    if ($chosen -and $chosen.vendor -eq 'codex' -and $Category -ne 'image-generation' -and $null -ne $localCatalog -and -not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
+        $unselectable = $chosen.model
+        $alerts.Add("roster-model-unselectable:$unselectable")
+        if (-not $Lane -and $other -and $other.vendor -ne 'codex' -and -not ((Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue) -and (Get-RouterVendorBlocked -Vendor $other.vendor))) {
+            $chosen = $other; $reason = "Backup used: $unselectable unselectable."
+        } else { $chosen = $null; $reason = "Wait: $unselectable unselectable on constrained or unavailable lane." }
     }
     $model = if ($chosen) { $chosen.model } else { $null }
     $result = [pscustomobject]@{ model=$model; agent_alias=$null; category=$Category; lane=$null; protected=$IsProtected; reason=$reason; table_source=$null; table_date=$null; validation_error=$Read.validation_error; alerts=@($alerts.ToArray()); ranked=$(if ($model) { @($model) } else { @() }) }
@@ -210,7 +222,11 @@ function Resolve-RouterModel {
     )
     $job = Get-RouterCategoryJob -Category $Category
     $rosterRead = Read-RouterRoster
-    if ($rosterRead.source -eq 'state') { return (Resolve-RouterRosterPick -Read $rosterRead -Category $Category -Lane $Lane -IsProtected ([bool]$Protected -or $Category -eq 'long-form-writing') -EscalateFrom $EscalateFrom -Catalog $Catalog) }
+    if ($rosterRead.source -eq 'state') {
+        $result = Resolve-RouterRosterPick -Read $rosterRead -Category $Category -Lane $Lane -IsProtected ([bool]$Protected -or $Category -eq 'long-form-writing') -EscalateFrom $EscalateFrom -Catalog $Catalog
+        if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts) -ChatToStderr:$ChatToStderr | Out-Null }
+        return $result
+    }
     if (-not $Lane) {
         $entry = $rosterRead.roster.jobs.$job
         $Lane = [string]$entry.first_vendor
@@ -220,7 +236,6 @@ function Resolve-RouterModel {
     $lookupCategory = if ($Category -in @('math','analysis')) { 'planning' } else { $Category }
     $EscalateFrom = Resolve-RouterEscalationAlias -EscalateFrom $EscalateFrom -Lane $Lane
     $alerts = [System.Collections.Generic.List[string]]::new()
-    if ($rosterRead.validation_error) { $alerts.Add("router-roster-invalid: $($rosterRead.validation_error)") }
     if (-not $SkipModelCheck) {
         try {
             $check = Invoke-RouterModelCheck
@@ -229,6 +244,7 @@ function Resolve-RouterModel {
     }
     $checkAlerts = @($alerts.ToArray())
     if ($checkAlerts.Count) { Send-RouterAlerts -Alerts $checkAlerts -ChatToStderr | Out-Null }
+    if ($rosterRead.validation_error) { $alerts.Add("router-roster-invalid: $($rosterRead.validation_error)") }
     $read = Read-RouterTable -TablePath $TablePath
     if ($rosterRead.validation_error) { $read.validation_error = (@($read.validation_error,$rosterRead.validation_error) | Where-Object { $_ }) -join '; ' }
     $laneTable = $read.table.categories.$lookupCategory.$Lane
@@ -281,7 +297,7 @@ function Resolve-RouterModel {
     }
     $eligible = @($all | Where-Object { -not $_.frontier })
     $incumbentSelectable = $Category -eq 'image-generation' -or $Lane -ne 'codex' -or (Test-RouterCodexSelectable -ParsedCatalog $parsed -Model $incumbentId)
-    if ($incumbentSelectable -and -not $incumbent.frontier -and @($eligible | Where-Object { $_.model -eq $incumbentId }).Count -eq 0) { $eligible = @($incumbent) + $eligible }
+    if ($incumbentSelectable -and -not $incumbent.frontier -and ($isProtected -or $incumbent.confirmed_grade -in @('strong','capable')) -and @($eligible | Where-Object { $_.model -eq $incumbentId }).Count -eq 0) { $eligible = @($incumbent) + $eligible }
     if ($eligible.Count -eq 0) {
         if ($read.table.source -ne 'seed') { $alerts.Add("no-eligible:$Category`:$Lane") }
         $result = [pscustomobject]@{ model = $laneTable.fallback; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $laneTable.fallback } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = 'No eligible candidate; lane fallback.'; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = @() }
@@ -363,10 +379,10 @@ function Resolve-RouterModel {
     $flagged = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-flags.json') | Where-Object { $_.category -eq $Category -and $_.lane -eq $Lane } | ForEach-Object { [string]$_.model })
     $ranked = @($rankedCandidates.ToArray() | ForEach-Object { $_.model })
     if ($EscalateFrom) {
-        $from = @($eligible | Where-Object { $_.model -eq $EscalateFrom })
+        $from = @($all | Where-Object { -not $_.frontier -and $_.model -eq $EscalateFrom })
         if ($from.Count -eq 0) { $chosen = $byStrength[0]; $reason = 'Escalation source not eligible; strongest eligible candidate.' }
         else {
-            $stronger = @($eligible | Where-Object { $_.strength_rank -lt $from[0].strength_rank } | Sort-Object strength_rank)
+            $stronger = @($all | Where-Object { -not $_.frontier -and $_.strength_rank -lt $from[0].strength_rank } | Sort-Object strength_rank)
             if ($stronger.Count) { $chosen = $stronger[-1]; $reason = 'Escalation: next stronger eligible candidate.' }
             else { $chosen = $from[0]; $reason = 'Escalation: no stronger eligible candidate; same model retained.' }
         }
@@ -391,7 +407,6 @@ function Resolve-RouterModel {
         if ($driftApplied) { $ranked = @($chosen.model) + @($ranked | Where-Object { $_ -ne $chosen.model -and $flagged -notcontains $_ }) }
     }
     if ($driftApplied) { $reason += ' Drift demotion moved off a flagged model.' }
-    if ($chosen.frontier) { $reason += ' No non-frontier eligible.' }
     $result = [pscustomobject]@{ model = $chosen.model; agent_alias = $(if ($Lane -eq 'claude') { Get-RouterAgentAlias -Model $chosen.model } else { $null }); category = $Category; lane = $Lane; protected = $isProtected; reason = $reason; table_source = $read.source; table_date = $read.table.generated_at; validation_error = $read.validation_error; alerts = @($alerts.ToArray()); ranked = $ranked }
     if ($SendAlerts) { Send-RouterAlerts -Alerts @($result.alerts | Where-Object { $_ -notin $checkAlerts }) -ChatToStderr:$ChatToStderr | Out-Null }
     return (Complete-RouterResult -Result $result -Job $job -RosterSource default)
@@ -412,6 +427,8 @@ function Get-RouterPicksSnapshot {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    $result = Resolve-RouterModel -Category $RouterResolveCliCategory -Lane $RouterResolveCliLane -Protected:$RouterResolveCliProtected -EscalateFrom $RouterResolveCliEscalateFrom -Catalog $RouterResolveCliCatalog -TablePath $RouterResolveCliTablePath -SkipModelCheck:$RouterResolveCliSkipModelCheck -SendAlerts:$RouterResolveCliSendAlerts -ChatToStderr:$RouterResolveCliJson
+    $resolveArgs = @{ Category = $RouterResolveCliCategory; Protected = $RouterResolveCliProtected; EscalateFrom = $RouterResolveCliEscalateFrom; Catalog = $RouterResolveCliCatalog; TablePath = $RouterResolveCliTablePath; SkipModelCheck = $RouterResolveCliSkipModelCheck; SendAlerts = $RouterResolveCliSendAlerts; ChatToStderr = $RouterResolveCliJson }
+    if ($PSBoundParameters.ContainsKey('RouterResolveCliLane')) { $resolveArgs.Lane = $RouterResolveCliLane }
+    $result = Resolve-RouterModel @resolveArgs
     if ($RouterResolveCliJson) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
 }

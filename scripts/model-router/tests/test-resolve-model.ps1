@@ -234,12 +234,19 @@ try {
     Enable-Candidate $r[0] 'strong' 100 100
     Save-Fixture $table $fixturePath
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude).model -eq $r[2].model) 'unknown incumbent stays despite frontier-only evidence'
+    $r[2].grade = 'weak'; $r[2].confirmed_grade = 'weak'
+    $r[3].confirmed_grade = 'unknown'
+    Save-Fixture $table $fixturePath
+    $frontierOnly = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude
+    Assert-True ($frontierOnly.model -eq $table.categories.'routine-coding'.claude.fallback -and $frontierOnly.reason -eq 'No eligible candidate; lane fallback.') 'frontier-only research candidates use lane fallback'
     Enable-Candidate $r[1] 'capable' 1000 100
     Enable-Candidate $r[2] 'capable' 10 10
     Save-Fixture $table $fixturePath
     $nonFrontierPick = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude
     Assert-True ($nonFrontierPick.model -ne $r[0].model -and $nonFrontierPick.ranked -notcontains $r[0].model) 'frontier excluded with non-frontier eligible'
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $r[1].model).model -eq $r[1].model) 'escalation from strongest non-frontier stays at ceiling'
+    $frontierSource = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $r[0].model
+    Assert-True ($frontierSource.model -ne $r[0].model -and $frontierSource.model -eq $r[1].model) 'research escalation from frontier returns strongest non-frontier candidate'
 
     $writing = $table.categories.'long-form-writing'.claude.candidates
     Enable-Candidate $writing[0] 'strong' 1 1
@@ -345,6 +352,10 @@ try {
     foreach ($top in @(@('codex','gpt-6-sol'), @('claude','claude-opus-5-5'))) {
         $same = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $top[0] -EscalateFrom $top[1] -Catalog $bridgeCatalog
         Assert-True ($same.model -eq $top[1] -and $same.reason -match 'already at the top') "bridge escalation at top keeps $($top[1]) and says so"
+    }
+    foreach ($frontierStep in @(@('codex','gpt-6-astra'),@('claude','claude-fable-5-5'))) {
+        $pick = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $frontierStep[0] -EscalateFrom $frontierStep[1] -Catalog $bridgeCatalog
+        Assert-True ($pick.model -ne $frontierStep[1] -and $pick.model -notin @('gpt-6-astra','claude-fable-5-5')) "bridge frontier escalation source $($frontierStep[0]) returns non-frontier"
     }
     $noSol = [pscustomobject]@{ models = @([pscustomobject]@{ slug = 'gpt-6-astra'; visibility = 'list'; description = 'frontier' }, [pscustomobject]@{ slug = 'gpt-6-luna'; visibility = 'list' }) }
     $down = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane codex -Catalog $noSol
