@@ -26,7 +26,7 @@
   ],
   "metadata": {
     "changelog": [
-      "0.15.0 model router v2: one cross-vendor roster with other-vendor backups, vendor limit detection, per-category benchmark research, roster proposals with approval, drift fallback, offline research cadence, no frontier escalation, math and analysis categories; version policy ownership declared for the new router files; dt-build 2.16.0, dt-review 1.14.3, dt-image-gen 0.2.3, dt-writing-draft 0.1.8, dt-writing-edit 0.2.6.",
+      "0.15.0 model router v2: one cross-vendor roster with other-vendor backups, vendor limit detection with backup retry on a usage-limit refusal, per-category benchmark research, roster proposals with approval, drift fallback, offline research cadence, no frontier escalation, math and analysis categories; version policy ownership declared for the new router files; dt-build 2.16.0, dt-review 1.14.3, dt-image-gen 0.2.3, dt-writing-draft 0.1.8, dt-writing-edit 0.2.6.",
       "0.14.0 model router evidence routing hardened (confirmed grades, incumbent rule, generation tie rule, protected moves up only, drift guards) with an approval step (approve-router-table.ps1); version policy ownership declared for the approval script; dt-build 2.15.2, dt-review 1.14.2, dt-image-gen 0.2.2, dt-writing-draft 0.1.7, dt-writing-edit 0.2.5.",
       "0.13.1 model router research sends the profile schema inside the prompt; dt-build 2.15.1, dt-review 1.14.1, dt-image-gen 0.2.1, dt-writing-draft 0.1.6, dt-writing-edit 0.2.4.",
       "0.13.0 model router shared runtime and operator guide; version policy ownership declarations; dt-build 2.15.0, dt-review 1.14.0, dt-roadmap 1.2.3, dt-image-gen 0.2.0, dt-writing-draft 0.1.5, dt-writing-edit 0.2.3.",
