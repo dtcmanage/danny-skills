@@ -68,6 +68,13 @@ try {
     $script:RouterResearchSuppressAlerts = $true
     $v1 = Invoke-RouterResearch -Models @('gpt-6-sol')
     Assert-True ($v1.alerts -contains 'research-profile-invalid:gpt-6-sol') 'v1 per-model mode still handles invalid profile'
+    $frontier = @((Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json).codex_models) + @('claude-fable-5-1')
+    $codexArgs = @(Get-RouterCategoryCallArguments -Lane codex -OutPath 'out.json')
+    $codexModel = $codexArgs[[array]::IndexOf($codexArgs,'--model') + 1]
+    Assert-True ($codexArgs -contains '--model' -and $codexModel -and $frontier -notcontains $codexModel) 'codex category research pins an explicit non-frontier model'
+    $claudeArgs = @(Get-RouterCategoryCallArguments -Lane claude -OutPath '')
+    $claudeModel = $claudeArgs[[array]::IndexOf($claudeArgs,'--model') + 1]
+    Assert-True ($claudeArgs -contains '--model' -and $claudeModel -like 'claude-*' -and $frontier -notcontains $claudeModel) 'claude category research pins an explicit non-frontier model'
     Write-Output "TOTAL: $script:passed passed"
 } finally {
     $env:DT_MODEL_ROUTER_STATE = $priorState; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorAlerts; $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorSessions

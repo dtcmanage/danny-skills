@@ -123,6 +123,16 @@ function Invoke-RouterResearchCall {
     } finally { if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force } }
 }
 
+function Get-RouterCategoryCallArguments {
+    # Research always runs on an explicit router pick; an unpinned call would fall back to a CLI default that may be a frontier model.
+    param([string]$Lane, [string]$OutPath)
+    if (-not (Get-Command Resolve-RouterModel -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'resolve-model.ps1') }
+    $pick = Resolve-RouterModel -Category deep-research -Lane $Lane -SkipModelCheck
+    if (-not $pick.model -or ($pick.PSObject.Properties['status'] -and $pick.status -eq 'wait')) { throw "Category research has no available $Lane model: $($pick.reason)" }
+    if ($Lane -eq 'codex') { return @('--ask-for-approval','never','exec','--ignore-user-config','-c','web_search="live"','--sandbox','read-only','--cd',$PSScriptRoot,'--model',$pick.model,'--output-last-message',$OutPath,'-') }
+    return @('-p','--model',$pick.model,'--allowedTools','WebSearch,WebFetch','--output-format','json')
+}
+
 function Invoke-RouterCategoryCall {
     param([string]$Category, [string]$Lane, [string]$Prompt)
     if ((Get-Variable RouterResearchInvoker -Scope Script -ErrorAction SilentlyContinue) -and $script:RouterResearchInvoker) { return (& $script:RouterResearchInvoker $Category $Lane $Prompt) }
@@ -130,14 +140,14 @@ function Invoke-RouterCategoryCall {
         $codex = (Get-Command codex -ErrorAction Stop).Source
         $out = Join-Path $env:TEMP ('router-category-' + [guid]::NewGuid().ToString('N') + '.json')
         try {
-            $result = Invoke-CodexProcess -CodexPath $codex -Arguments @('--ask-for-approval','never','exec','--ignore-user-config','-c','web_search="live"','--sandbox','read-only','--cd',$PSScriptRoot,'--output-last-message',$out,'-') -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $script:RouterResearchCallTimeoutMs
+            $result = Invoke-CodexProcess -CodexPath $codex -Arguments (Get-RouterCategoryCallArguments -Lane codex -OutPath $out) -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $script:RouterResearchCallTimeoutMs
             if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw 'Category research process failed or timed out.' }
             return [IO.File]::ReadAllText($out)
         } finally { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
     }
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = (Get-Command claude -ErrorAction Stop).Source
-    foreach ($arg in @('-p','--allowedTools','WebSearch,WebFetch','--output-format','json')) { [void]$psi.ArgumentList.Add($arg) }
+    foreach ($arg in @(Get-RouterCategoryCallArguments -Lane claude -OutPath '')) { [void]$psi.ArgumentList.Add($arg) }
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $process = [Diagnostics.Process]::Start($psi)
     try {
