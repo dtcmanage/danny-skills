@@ -195,7 +195,7 @@ function Get-RouterStaleReadingModels {
 }
 
 function Invoke-RouterCategoryResearch {
-    param([Parameter(Mandatory)][string[]]$Categories, [Parameter(Mandatory)][string[]]$Models, [ValidateSet('release','confirmation','followup','refresh','manual')][string]$Trigger = 'manual', [ValidateSet('codex','claude')][string]$Lane = 'codex', [string]$Context, [datetime]$Now = (Get-Date))
+    param([Parameter(Mandatory)][string[]]$Categories, [Parameter(Mandatory)][string[]]$Models, [string]$NewModel, [ValidateSet('release','confirmation','followup','refresh','manual')][string]$Trigger = 'manual', [ValidateSet('codex','claude')][string]$Lane = 'codex', [string]$Context, [datetime]$Now = (Get-Date))
     $state = Get-RouterStateDir
     $lock = Join-Path $state 'research.lock'
     $entry = Enter-RouterResearchLock -Path $lock -Now $Now
@@ -238,11 +238,11 @@ function Invoke-RouterCategoryResearch {
                 foreach ($reading in $parsed.readings) {
                     $combined.Add([pscustomobject]@{ benchmark=$reading.benchmark; version=$reading.version; date=$reading.date; harness=$reading.harness; effort_class=$reading.effort_class; independent=$reading.independent; url=$reading.url; results=@($reading.results | ForEach-Object { [pscustomobject]@{ model=$_.model; score=$_.score; tasks=$_.tasks; margin=$_.margin } }) })
                 }
-                if ($Trigger -eq 'release' -and $i -eq 0 -and $Models.Count -eq 1) {
+                if ($Trigger -eq 'release' -and $i -eq 0 -and $NewModel) {
                     $temporary = [pscustomobject]@{ category=$category; readings=@($combined.ToArray()) }
-                    $rosterModels = @((Read-RouterRoster).roster.jobs.PSObject.Properties | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ -and $_ -cne $Models[0] } | Sort-Object -Unique)
+                    $rosterModels = @((Read-RouterRoster).roster.jobs.PSObject.Properties | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ -and $_ -cne $NewModel } | Sort-Object -Unique)
                     $keys = @($combined | ForEach-Object { "$($_.benchmark)`n$($_.version)`n$($_.harness)" })
-                    $missing = @(Get-RouterNonComparableModels -Category $category -NewModel $Models[0] -RosterModels $rosterModels -NewReadings $temporary)
+                    $missing = @(Get-RouterNonComparableModels -Category $category -NewModel $NewModel -RosterModels $rosterModels -NewReadings $temporary)
                     if ($missing.Count -and $keys.Count) { $pending += @{ models=$missing; benchmarks=@($combined | ForEach-Object benchmark | Sort-Object -Unique) } }
                 }
             }

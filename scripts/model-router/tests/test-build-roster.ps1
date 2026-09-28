@@ -173,6 +173,14 @@ try {
     Add-Pass 'fast-p1' @('mechanical'); $null=Build-RouterRosterProposal
     Add-Pass 'fast-p2' @('mechanical'); $fastTwo=Build-RouterRosterProposal
     Assert-True (-not $fastTwo.changed) 'priced opus ties dated haiku across two mechanical passes without a proposal'
+    $scenario=Join-Path $temp 'scenario-seed'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster -Seed | Out-Null
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster -Approve | Out-Null
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6-sol' 50))
+    Add-Pass 'seed-p1'; $null=Build-RouterRosterProposal
+    Add-Pass 'seed-p2'; $seedTwo=Build-RouterRosterProposal
+    Assert-True ($seedTwo.changed -and (Test-Path -LiteralPath $seedTwo.proposal)) 'approved seed accepts two covered passes without optional pass_id'
     Write-Output "TOTAL PASS: $script:passed"
 } finally {
     $env:DT_MODEL_ROUTER_STATE=$priorState; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT=$priorAlert; $env:DT_MODEL_ROUTER_CODEX_SESSIONS=$priorSessions

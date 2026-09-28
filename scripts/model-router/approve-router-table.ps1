@@ -6,7 +6,8 @@ param(
     [switch]$Roster,
     [switch]$Seed,
     [switch]$DeclineDrift,
-    [string]$Job
+    [string]$Job,
+    [string[]]$Jobs
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -23,6 +24,7 @@ if ($Roster) {
     if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift) -ne 1) { throw 'Choose exactly one roster action.' }
     if ($DeclineDrift -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
     if ($Job -and -not $DeclineDrift) { throw '-Job requires -Roster -DeclineDrift.' }
+    if ($Jobs -and -not $Approve) { throw '-Jobs requires -Roster -Approve.' }
     $state = Get-RouterStateDir
     $rosterPath = Join-Path $state 'roster.json'
     $marksPath = Join-Path $state 'drift-marks.json'
@@ -50,10 +52,19 @@ if ($Roster) {
     } elseif ($Approve) {
         if (-not $latest -or -not $latest.PSObject.Properties['proposal'] -or -not (Test-Path -LiteralPath ([string]$latest.proposal))) { throw 'No roster proposal to approve.' }
         $proposal = Get-Content -LiteralPath ([string]$latest.proposal) -Raw | ConvertFrom-Json -Depth 40
+        $before = (Read-RouterRoster).roster
+        if ($Jobs) {
+            $unknown = @($Jobs | Where-Object { $_ -notin @(Get-RouterJobs) } | Sort-Object -Unique)
+            if ($unknown.Count) { throw "Unknown roster jobs: $($unknown -join ', ')" }
+            $selected = $before | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+            foreach ($name in @($Jobs | Sort-Object -Unique)) {
+                $selected.jobs.$name = $proposal.jobs.$name | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+            }
+            $proposal = $selected
+        }
         $proposal.approved = $true; $proposal.approved_at = (Get-Date).ToUniversalTime().ToString('o')
         $errors = @(Test-RouterRoster -Roster $proposal)
         if ($errors.Count) { throw "Invalid roster proposal: $($errors -join '; ')" }
-        $before = (Read-RouterRoster).roster
         Write-RouterApprovalJson $rosterPath $proposal
         $changed = @(Get-RouterJobs | Where-Object { $before.jobs.$_.first -ne $proposal.jobs.$_.first })
         if ($changed.Count) {
@@ -81,6 +92,7 @@ if ($Roster) {
 
 if ($Seed -or $DeclineDrift) { throw '-Seed and -DeclineDrift require -Roster.' }
 if ($Job) { throw '-Job requires -Roster -DeclineDrift.' }
+if ($Jobs) { throw '-Jobs requires -Roster -Approve.' }
 if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke) -ne 1) { throw 'Choose exactly one of -Show, -Approve, or -Revoke.' }
 $path = if ($TablePath) { $TablePath } else { Join-Path (Get-RouterStateDir) 'router-table.json' }
 if (-not (Test-Path -LiteralPath $path)) { throw "Router table not found: $path" }

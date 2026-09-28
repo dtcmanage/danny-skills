@@ -179,15 +179,18 @@ function Update-RouterOutcomes {
             $recent = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-30) -and ([datetime]$_.at) -le $nowUtc })
             $prior = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-120) -and ([datetime]$_.at) -lt $nowUtc.AddDays(-30) })
             $drifting = $false
+            $recentRate = if ($recent.Count -ge 10) { @($recent | Where-Object pass).Count / $recent.Count } else { $null }
             if ($recent.Count -ge 10 -and $prior.Count -ge 10) {
-                $recentRate = @($recent | Where-Object pass).Count / $recent.Count
                 $priorRate = @($prior | Where-Object pass).Count / $prior.Count
                 $drifting = (($priorRate - $recentRate) -ge (0.15 - 1e-9))
             }
-            if (-not $drifting) { continue }
             $declined = @($priorDeclines | Where-Object { $_.job -eq $job -and $_.model -eq $entry.first })
-            if ($declined.Count) { $declines.Add($declined[0]); continue }
+            if ($declined.Count -and $drifting) { $declines.Add($declined[0]); continue }
             $old = @($priorMarks | Where-Object { $_.job -eq $job -and $_.model -eq $entry.first })
+            if (-not $drifting) {
+                if ($old.Count -and ($recent.Count -lt 10 -or (($old[0].prior_rate - $recentRate) -ge (0.15 - 1e-9)))) { $marks.Add($old[0]) }
+                continue
+            }
             $marks.Add([pscustomobject]@{ model=$entry.first; job=$job; marked_at=$(if ($old.Count) { $old[0].marked_at } else { $nowUtc.ToString('o') }); recent_rate=$recentRate; prior_rate=$priorRate })
             if (-not $old.Count) {
                 $newMarks++

@@ -18,7 +18,7 @@ $script:CanaryTimeoutMs = 120000
 $script:RouterCanaryScriptPath = $PSCommandPath
 
 function Get-CanaryScope {
-    param([string[]]$OnlyModels)
+    param([string[]]$OnlyModels,[switch]$ExcludeFrontier)
     $state = Get-RouterStateDir
     $table = (Read-RouterTable).table
     $picked = @{}
@@ -52,6 +52,10 @@ function Get-CanaryScope {
         [void]$eligible[[string]$item.model].Add([string]$item.category)
     }
     $ids = @($picked.Keys + $new.Keys + $flagged.Keys | Sort-Object -Unique)
+    if ($ExcludeFrontier) {
+        $frontier = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json -Depth 20
+        $ids = @($ids | Where-Object { $id = $_; $frontier.codex_models -cnotcontains $id -and -not @($frontier.claude_patterns | Where-Object { $id -like $_ }).Count })
+    }
     if ($OnlyModels) { $ids = @($ids | Where-Object { $_ -in $OnlyModels }) }
     $tasks = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'tasks') -Directory | Where-Object Name -ne 'pelican')
     $scope = foreach ($id in $ids) {
@@ -130,8 +134,8 @@ function Invoke-CanaryModel {
 }
 
 function Invoke-RouterCanary {
-    param([string[]]$Models,[ValidateSet('monthly','post-release','manual')][string]$Reason='manual',[scriptblock]$Invoker,[switch]$DryRun,[datetime]$Now=(Get-Date))
-    $scope = @(Get-CanaryScope -OnlyModels $Models)
+    param([string[]]$Models,[ValidateSet('monthly','post-release','manual')][string]$Reason='manual',[scriptblock]$Invoker,[switch]$DryRun,[datetime]$Now=(Get-Date),[switch]$ExplicitModels)
+    $scope = @(Get-CanaryScope -OnlyModels $Models -ExcludeFrontier:($Reason -ne 'manual' -and -not $ExplicitModels))
     $burn = Get-CanaryBurn -Scope $scope
     if ($DryRun) { return [pscustomobject]@{ dry_run=$true; scope=$scope; burn=$burn } }
     $state = Get-RouterStateDir
@@ -228,6 +232,6 @@ if ($MyInvocation.InvocationName -ne '.') {
         try { $Models = @([IO.File]::ReadAllText($ModelsFile) | ConvertFrom-Json) }
         finally { Remove-Item -LiteralPath $ModelsFile -Force -ErrorAction SilentlyContinue }
     }
-    $result = Invoke-RouterCanary -Models $Models -Reason $Reason -DryRun:$DryRun
+    $result = Invoke-RouterCanary -Models $Models -Reason $Reason -DryRun:$DryRun -ExplicitModels:($PSBoundParameters.ContainsKey('Models') -and -not $ModelsFile)
     if ($Json) { $result | ConvertTo-Json -Depth 15 -Compress } else { $result }
 }

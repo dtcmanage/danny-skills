@@ -42,6 +42,15 @@ function Get-RouterCadenceJobCategories {
     return @($Roster.category_jobs.PSObject.Properties | Where-Object { $jobs -contains [string]$_.Value } | ForEach-Object Name | Sort-Object -Unique)
 }
 
+function Compare-RouterBenchmarkVersion {
+    param([string]$Left, [string]$Right)
+    $leftVersion = $null; $rightVersion = $null
+    if ([version]::TryParse($Left,[ref]$leftVersion) -and [version]::TryParse($Right,[ref]$rightVersion)) { return $leftVersion.CompareTo($rightVersion) }
+    $leftNumber = [decimal]0; $rightNumber = [decimal]0
+    if ([decimal]::TryParse($Left,[ref]$leftNumber) -and [decimal]::TryParse($Right,[ref]$rightNumber)) { return $leftNumber.CompareTo($rightNumber) }
+    return [string]::Compare($Left,$Right,[StringComparison]::OrdinalIgnoreCase)
+}
+
 function Add-RouterCadenceRefreshes {
     param([datetime]$Now = (Get-Date))
     $state = Get-RouterStateDir
@@ -65,7 +74,7 @@ function Add-RouterCadenceRefreshes {
             $outdated = $false
             foreach ($reading in @($stored.readings)) {
                 $versions = @($stored.readings | Where-Object { $_.benchmark -ceq $reading.benchmark } | ForEach-Object version | Sort-Object -Unique)
-                if (@($reading.results | Where-Object model -CEQ $model).Count -and @($versions | Where-Object { [string]::Compare($_,[string]$reading.version,[StringComparison]::OrdinalIgnoreCase) -gt 0 }).Count) { $outdated = $true; break }
+                if (@($reading.results | Where-Object model -CEQ $model).Count -and @($versions | Where-Object { (Compare-RouterBenchmarkVersion ([string]$_) ([string]$reading.version)) -gt 0 }).Count) { $outdated = $true; break }
             }
             if ($outdated -and (Add-RouterResearchQueueItem -Model $model -Trigger refresh -Categories @($category) -DueAt $Now -Reason 'benchmark-version')) { $added++ }
         }
@@ -112,35 +121,32 @@ function Invoke-RouterCadence {
     $ran = [Collections.Generic.List[object]]::new()
     if (-not $CheckOnly -and $eastern.Hour -lt 6) {
         $roster = (Read-RouterRoster).roster
-        $confirmations = [Collections.Generic.List[object]]::new()
         foreach ($item in @(Read-RouterJsonArray -Path $queuePath | Where-Object { [datetime]$_.due_at -le $Now } | Sort-Object due_at)) {
             $jobNames = @($item.categories | ForEach-Object { Get-RouterCategoryJob $_ } | Sort-Object -Unique)
             $models = @($item.model) + @($roster.jobs.PSObject.Properties | Where-Object { $jobNames -contains $_.Name } | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ -and $_ -cne $item.model } | Sort-Object -Unique)
             $usage = Get-RouterCodexUsage
             $lane = if ($usage -and [double]$usage.used_percent -gt 50) { 'claude' } else { 'codex' }
-            $record = Invoke-RouterCategoryResearch -Categories @($item.categories) -Models $models -Trigger $item.trigger -Lane $lane -Now $Now
+            $record = Invoke-RouterCategoryResearch -Categories @($item.categories) -Models $models -NewModel $(if ($item.trigger -eq 'release') { [string]$item.model } else { $null }) -Trigger $item.trigger -Lane $lane -Now $Now
             $passPath = Join-Path $state 'readings/passes.jsonl'
             $written = $record -and $record.PSObject.Properties['pass_id'] -and (Test-Path -LiteralPath $passPath) -and
                 @((Get-Content -LiteralPath $passPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 }) | Where-Object pass_id -EQ $record.pass_id).Count -gt 0
             if (-not $written) { continue }
             if ($item.trigger -eq 'confirmation') { Write-RouterCadenceConfirmationVerdicts -Item $item -PassId $record.pass_id }
+            [void](Build-RouterRosterProposal -Now $Now)
+            if ($item.trigger -eq 'confirmation') {
+                $verdictPath = Join-Path $state 'roster-proposals/verdicts.jsonl'
+                $verdicts = @(if (Test-Path -LiteralPath $verdictPath) { Get-Content -LiteralPath $verdictPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
+                $current = @($verdicts | Where-Object { $_.pass_id -ceq $record.pass_id -and $_.result -ceq $item.model })
+                $firstWins = @($current | Where-Object { $win = $_; -not @($verdicts | Where-Object { $_.pass_id -cne $record.pass_id -and $_.result -ceq $item.model -and $_.job -ceq $win.job -and $_.slot -ceq $win.slot }).Count })
+                if ($firstWins.Count) {
+                    if (Add-RouterResearchQueueItem -Model $item.model -Trigger followup -Categories @($item.categories) -DueAt $Now.AddDays(7) -Reason 'first-conclusive-confirmation') { $added++ }
+                }
+            }
             Use-RouterQueueMutex -StateDir $state -Action {
                 $remaining = @(Read-RouterJsonArray -Path $queuePath | Where-Object { $_.id -cne $item.id })
                 Write-RouterJsonAtomic -Path $queuePath -Value $remaining
             }
             $ran.Add([pscustomobject]@{ id=$item.id; pass_id=$record.pass_id; lane=$lane; trigger=$item.trigger })
-            if ($item.trigger -eq 'confirmation') { $confirmations.Add([pscustomobject]@{item=$item;pass_id=$record.pass_id}) }
-        }
-        if ($ran.Count) { [void](Build-RouterRosterProposal -Now $Now) }
-        $verdictPath = Join-Path $state 'roster-proposals/verdicts.jsonl'
-        $verdicts = @(if (Test-Path -LiteralPath $verdictPath) { Get-Content -LiteralPath $verdictPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
-        foreach ($confirmation in $confirmations) {
-            # Per job and slot: a first conclusive win for any job queues the follow-up, even if the model already won another job.
-            $current = @($verdicts | Where-Object { $_.pass_id -ceq $confirmation.pass_id -and $_.result -ceq $confirmation.item.model })
-            $firstWins = @($current | Where-Object { $win = $_; -not @($verdicts | Where-Object { $_.pass_id -cne $confirmation.pass_id -and $_.result -ceq $confirmation.item.model -and $_.job -ceq $win.job -and $_.slot -ceq $win.slot }).Count })
-            if ($firstWins.Count) {
-                if (Add-RouterResearchQueueItem -Model $confirmation.item.model -Trigger followup -Categories @($confirmation.item.categories) -DueAt $Now.AddDays(7) -Reason 'first-conclusive-confirmation') { $added++ }
-            }
         }
     }
     return [pscustomobject]@{ checked=$([bool]$CheckOnly); added=$added; ran=@($ran.ToArray()); pending=@(Read-RouterJsonArray -Path $queuePath).Count; eastern_time=$eastern.ToString('o') }

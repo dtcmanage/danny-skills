@@ -68,7 +68,7 @@ try {
         $model = if ($script:releaseCalls.Count -eq 1) { 'gpt-new' } else { ([regex]::Match($prompt,'Candidate models: ([^,\r\n]+)')).Groups[1].Value }
         return (Fixture $category $model '2026-10-02' 88 | ConvertTo-Json -Depth 20)
     }
-    $null = Invoke-RouterCategoryResearch -Categories @('routine-coding') -Models @('gpt-new') -Trigger release -Lane claude
+    $null = Invoke-RouterCategoryResearch -Categories @('routine-coding') -Models @('gpt-new','claude-opus-5-5') -NewModel 'gpt-new' -Trigger release -Lane claude
     Assert-True ($script:releaseCalls.Count -eq 2 -and $script:releaseCalls[1].lane -eq 'claude' -and $script:releaseCalls[1].prompt -match 'Follow-up benchmarks only: Terminal-Bench' -and $script:releaseCalls[1].prompt -match 'claude-opus-5-5') 'non-comparable follow-up scoped inside same pass through claude hook'
     $stale = @(Get-RouterStaleReadingModels -Now ([datetime]'2027-05-01'))
     Assert-True ($stale -contains 'gpt-6-sol') 'stale model detected'

@@ -156,7 +156,7 @@ function Build-RouterRosterProposal {
     $latest = Read-RouterJsonObject -Path (Join-Path $dir 'latest.json')
     if ($latest -and $latest.PSObject.Properties['proposal']) {
         $previous = Read-RouterJsonObject -Path ([string]$latest.proposal)
-        if ($previous -and $previous.pass_id -eq $passId -and (ConvertTo-Json -InputObject @($previous.changes) -Compress -Depth 20) -ceq (ConvertTo-Json -InputObject @($changes) -Compress -Depth 20)) {
+        if ($previous -and $previous.PSObject.Properties['pass_id'] -and $previous.pass_id -eq $passId -and (ConvertTo-Json -InputObject @($previous.changes) -Compress -Depth 20) -ceq (ConvertTo-Json -InputObject @($changes) -Compress -Depth 20)) {
             return [pscustomobject]@{changed=$false;pass_id=$passId;changes=@();proposal=$null;report=$null}
         }
     }

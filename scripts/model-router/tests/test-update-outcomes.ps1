@@ -156,6 +156,10 @@ try {
     Assert-True ($swap.jobs.coder.first -eq 'claude-opus-5-5' -and $swap.jobs.coder.backup -eq 'gpt-6-sol' -and (Test-Path -LiteralPath $latest.report)) 'drift writes swap proposal and report'
     Assert-True ((Get-FileHash -LiteralPath (Join-Path $rosterState 'roster.json') -Algorithm SHA256).Hash -eq $rosterHash) 'drift leaves approved roster unchanged'
     Assert-True (@((Run-Update).alerts).Count -eq 0) 'repeat drift emits no duplicate alert'
+    $savedNow = $script:now; $script:now = $savedNow.AddDays(40)
+    $aged = Run-Update
+    Assert-True ($aged.drift_flags -eq 1 -and @($aged.alerts).Count -eq 0 -and (Test-Path -LiteralPath (Join-Path $rosterState 'roster-proposals/latest.json'))) '40 days without new outcomes retains drift mark and proposal'
+    $script:now = $savedNow
     Remove-Item -LiteralPath (Join-Path $rosterState 'drift-marks.json')
     $cli = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../update-outcomes.ps1') -Now $script:now -SourcesPath $script:sources -Json 2>&1) -join "`n"
     Assert-True ($LASTEXITCODE -eq 0 -and $cli -match 'ROUTER_ALERT:' -and (Test-Path -LiteralPath (Join-Path $rosterState 'deliveries.log'))) 'roster CLI sends alert through transport and prints chat line'
