@@ -65,7 +65,25 @@ function Invoke-RouterAlertRequest {
         }
         return & $env:DT_MODEL_ROUTER_ALERT_TRANSPORT $Request
     }
+    $blocked = Get-RouterRealAlertBlockReason
+    if ($blocked) { throw "Real alert delivery blocked: $blocked" }
     return Invoke-RouterAlertTransport -Request $Request -Deadline $Deadline
+}
+
+# Tests that forget a fake transport must never reach Danny's real Discord or email. Real delivery
+# is refused under pytest or when the state folder lives in the temp directory, unless the one
+# deliberate live self-test opts in with DT_MODEL_ROUTER_LIVE_ALERT=1.
+function Get-RouterRealAlertBlockReason {
+    if ($env:DT_MODEL_ROUTER_LIVE_ALERT -eq '1') { return $null }
+    if ($env:PYTEST_CURRENT_TEST) { return 'running under pytest' }
+    if ($env:DT_MODEL_ROUTER_STATE) {
+        $state = [IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE).TrimEnd('\', '/')
+        $temp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+        if ($state -ieq $temp -or $state.StartsWith($temp + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            return 'state folder is in the temp directory'
+        }
+    }
+    return $null
 }
 
 function Write-RouterAlertLog {

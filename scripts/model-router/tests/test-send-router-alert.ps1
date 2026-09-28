@@ -172,6 +172,28 @@ return [pscustomobject]@{ id = 'fake-message' }
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     Assert-True ($pick.PSObject.Properties['alerts'] -and $script:requests.Count -eq $before) 'resolver SendAlerts off by default'
 
+    # Guard: a test with no fake transport and a temp state folder must not reach real delivery.
+    # PATH is emptied too, so even a broken guard cannot find az and send anything.
+    $priorPath = $env:PATH; $priorLive = $env:DT_MODEL_ROUTER_LIVE_ALERT; $priorPytest = $env:PYTEST_CURRENT_TEST; $priorTransport2 = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
+    try {
+        $env:DT_MODEL_ROUTER_LIVE_ALERT = $null; $env:PYTEST_CURRENT_TEST = $null; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $null
+        Assert-True ((Get-RouterRealAlertBlockReason) -eq 'state folder is in the temp directory') 'guard blocks real delivery for a temp state folder'
+        $guardError = ''
+        $env:PATH = ''
+        try { $null = Invoke-RouterAlertRequest -Request @{ kind = 'secret'; name = 'discord-bot-token' } } catch { $guardError = $_.Exception.Message }
+        $env:PATH = $priorPath
+        Assert-True ($guardError -like 'Real alert delivery blocked:*') 'real request refused before any transport runs'
+        $env:PYTEST_CURRENT_TEST = 'x'; $env:DT_MODEL_ROUTER_STATE = 'D:\not-temp\state'
+        Assert-True ((Get-RouterRealAlertBlockReason) -eq 'running under pytest') 'guard blocks real delivery under pytest'
+        $env:PYTEST_CURRENT_TEST = $null
+        Assert-True ($null -eq (Get-RouterRealAlertBlockReason)) 'guard allows the real state folder outside tests'
+        $env:DT_MODEL_ROUTER_STATE = $temp; $env:DT_MODEL_ROUTER_LIVE_ALERT = '1'
+        Assert-True ($null -eq (Get-RouterRealAlertBlockReason)) 'deliberate live self-test opts out of the guard'
+    } finally {
+        $env:PATH = $priorPath; $env:DT_MODEL_ROUTER_LIVE_ALERT = $priorLive; $env:PYTEST_CURRENT_TEST = $priorPytest
+        $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport2; $env:DT_MODEL_ROUTER_STATE = $temp
+    }
+
     if ($env:DT_MODEL_ROUTER_LIVE_ALERT -eq '1') {
         $live = Send-RouterAlert -Key ('router-alert-selftest-' + (Get-Date -Format 'yyyyMMdd')) -Message 'Model router alert self-test: this is the one test message from the build. No action needed.'
         Assert-True ($live.sent -and $live.channel -in @('discord','email')) 'LIVE: one real alert delivered'
