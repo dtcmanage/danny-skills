@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.2.4 (2026-09-28): Model router alerts refuse real delivery from tests.
+
 - 0.2.3 (2026-09-28): Shared model router v2: cross-vendor roster, vendor-limit backups, offline research cadence (model router).
 
 - 0.2.2 (2026-09-27): Model router: research grades must be confirmed by two runs, the current pick keeps its place without evidence, older models need a higher grade, protected work only moves up, and evidence routing waits for approval.

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.15.2 model router alerts refuse real delivery from tests (pytest or a temp state folder); dt-build 2.16.1, dt-review 1.14.4, dt-image-gen 0.2.4, dt-writing-draft 0.1.9, dt-writing-edit 0.2.7.",
       "0.15.1 model router weekly report also DMs a short plain-language summary with readable dollar amounts; version policy ownership declared for the new test file",
       "0.15.0 model router v2: one cross-vendor roster with other-vendor backups, vendor limit detection with backup retry on a usage-limit refusal, per-category benchmark research, roster proposals with approval, drift fallback, offline research cadence, no frontier escalation, math and analysis categories; version policy ownership declared for the new router files; dt-build 2.16.0, dt-review 1.14.3, dt-image-gen 0.2.3, dt-writing-draft 0.1.8, dt-writing-edit 0.2.6.",
       "0.14.0 model router evidence routing hardened (confirmed grades, incumbent rule, generation tie rule, protected moves up only, drift guards) with an approval step (approve-router-table.ps1); version policy ownership declared for the approval script; dt-build 2.15.2, dt-review 1.14.2, dt-image-gen 0.2.2, dt-writing-draft 0.1.7, dt-writing-edit 0.2.5.",

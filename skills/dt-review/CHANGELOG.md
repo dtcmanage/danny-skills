@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.14.4 (2026-09-28): Model router alerts refuse real delivery from tests.
+
 - 1.14.3 (2026-09-28): Frontier models run only on explicit request; no frontier escalation (model router v2).
 
 - 1.14.2 (2026-09-27): Model router: research grades must be confirmed by two runs, the current pick keeps its place without evidence, older models need a higher grade, protected work only moves up, and evidence routing waits for approval.

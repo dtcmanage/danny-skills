@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.16.1
+
+- Model router alerts refuse real delivery from tests.
+
 ## 2.16.0
 
 - Roster dispatch: delegated work resolves by category without a lane and routes to the returned vendor; math and analysis categories; wrappers fail closed on router wait; no frontier escalation (model router v2).
