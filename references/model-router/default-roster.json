@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-28T00:00:00Z",
+  "approved": false,
+  "approved_at": null,
+  "category_jobs": {
+    "mechanical": "fast",
+    "routine-coding": "coder",
+    "complex-coding": "coder",
+    "ui-frontend": "coder",
+    "code-review": "deep-thinker",
+    "planning": "deep-thinker",
+    "deep-research": "deep-thinker",
+    "math": "deep-thinker",
+    "analysis": "deep-thinker",
+    "long-form-writing": "writer",
+    "image-generation": "illustrator"
+  },
+  "jobs": {
+    "fast": { "first": "gpt-6-luna", "first_vendor": "codex", "backup": "claude-haiku-4-5-20251001", "backup_vendor": "claude" },
+    "coder": { "first": "gpt-6-sol", "first_vendor": "codex", "backup": "claude-opus-5-5", "backup_vendor": "claude" },
+    "deep-thinker": { "first": "claude-opus-5-5", "first_vendor": "claude", "backup": "gpt-6-sol", "backup_vendor": "codex" },
+    "writer": { "first": "claude-opus-5-5", "first_vendor": "claude", "backup": "gpt-6-sol", "backup_vendor": "codex" },
+    "illustrator": { "first": "gpt-image-2", "first_vendor": "codex", "backup": null, "backup_vendor": null }
+  }
+}

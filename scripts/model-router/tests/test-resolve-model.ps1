@@ -239,7 +239,7 @@ try {
     Save-Fixture $table $fixturePath
     $nonFrontierPick = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude
     Assert-True ($nonFrontierPick.model -ne $r[0].model -and $nonFrontierPick.ranked -notcontains $r[0].model) 'frontier excluded with non-frontier eligible'
-    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $r[1].model).model -eq $r[0].model) 'escalation from strongest non-frontier reaches frontier'
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $r[1].model).model -eq $r[1].model) 'escalation from strongest non-frontier stays at ceiling'
 
     $writing = $table.categories.'long-form-writing'.claude.candidates
     Enable-Candidate $writing[0] 'strong' 1 1
@@ -335,14 +335,14 @@ try {
         $protectedCase = Resolve-RouterModel -SkipModelCheck -Category $case[0] -Lane $case[1] -Protected -Catalog $bridgeCatalog
         Assert-True ($protectedCase.model -eq $case[2] -and $protectedCase.protected) "bridge $($case[0])/$($case[1]) protected -> $($case[2])"
     }
-    foreach ($step in @(@('codex','gpt-6-luna','gpt-6-sol'), @('codex','gpt-6-sol','gpt-6-astra'), @('claude','claude-haiku-4-5-20251001','claude-sonnet-5'), @('claude','claude-sonnet-5','claude-opus-5-5'), @('claude','claude-opus-5-5','claude-fable-5-1'))) {
+    foreach ($step in @(@('codex','gpt-6-luna','gpt-6-sol'), @('claude','claude-haiku-4-5-20251001','claude-sonnet-5'), @('claude','claude-sonnet-5','claude-opus-5-5'))) {
         $up = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $step[0] -EscalateFrom $step[1] -Catalog $bridgeCatalog
         Assert-True ($up.model -eq $step[2] -and $up.reason -match 'one rung up') "bridge escalation $($step[1]) -> $($step[2])"
     }
-    foreach ($aliasStep in @(@('haiku','claude-sonnet-5'), @('sonnet','claude-opus-5-5'), @('sonnet[1m]','claude-opus-5-5'), @('opus','claude-fable-5-1'), @('fable','claude-fable-5-1'))) {
+    foreach ($aliasStep in @(@('haiku','claude-sonnet-5'), @('sonnet','claude-opus-5-5'), @('sonnet[1m]','claude-opus-5-5'), @('opus','claude-opus-5-5'))) {
         Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane claude -EscalateFrom $aliasStep[0]).model -eq $aliasStep[1]) "bridge alias escalation $($aliasStep[0])"
     }
-    foreach ($top in @(@('codex','gpt-6-astra'), @('claude','claude-fable-5-1'))) {
+    foreach ($top in @(@('codex','gpt-6-sol'), @('claude','claude-opus-5-5'))) {
         $same = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $top[0] -EscalateFrom $top[1] -Catalog $bridgeCatalog
         Assert-True ($same.model -eq $top[1] -and $same.reason -match 'already at the top') "bridge escalation at top keeps $($top[1]) and says so"
     }
@@ -350,7 +350,7 @@ try {
     $down = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane codex -Catalog $noSol
     Assert-True ($down.model -eq 'gpt-6-luna' -and @($down.alerts | Where-Object { $_ -eq 'UNSELECTABLE_CODEX_MODEL: gpt-6-sol' }).Count -eq 1) 'bridge unselectable pick falls to next ladder rung with alert, never a frontier first pick'
     $escalatedPastGap = Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane codex -EscalateFrom 'gpt-6-luna' -Catalog $noSol
-    Assert-True ($escalatedPastGap.model -eq 'gpt-6-astra') 'bridge escalation may reach the frontier rung when the next rung is unselectable'
+    Assert-True ($escalatedPastGap.model -eq 'gpt-6-luna') 'bridge escalation never reaches frontier when next rung is unselectable'
     Assert-True ((Get-RouterAlertMessage -Key 'router-seed-table-in-use') -match 'pre-router defaults until research runs') 'seed alert says routing matches pre-router defaults'
 
     Save-Fixture (New-Fixture) $fixturePath
