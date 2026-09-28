@@ -113,7 +113,7 @@ try {
     Assert-True (-not $repeat.changed -and $script:alerts.Count -eq 1) 'repeat sends no alert'
     $proposal=Get-Content -LiteralPath $two.proposal -Raw | ConvertFrom-Json -Depth 30
     Assert-True ($proposal.over_cap -and @($proposal.conflicts | Where-Object job -eq 'coder').Count -ge 1 -and @($proposal.validation_errors | Where-Object { $_ -like 'ROSTER_MODEL_CAP:*' }).Count -eq 1 -and (@($proposal.validation_errors) -join ';') -ceq (@(Test-RouterRoster $proposal) -join ';')) 'over-cap proposal names conflict and reports every validation error'
-    Assert-True ($script:alerts[0].message -match 'choice is needed' -and $script:alerts[0].message -match 'coder' -and $script:alerts[0].message -match 'approve-router-table\.ps1 -Roster -Approve -Jobs ') 'over-cap alert names jobs and approval command'
+    Assert-True ($script:alerts[0].message -match 'choose which of these jobs' -and $script:alerts[0].message -match 'coder' -and $script:alerts[0].message -match 'approve-router-table\.ps1 -Roster -Approve -Jobs ') 'over-cap alert names jobs and approval command'
     Assert-True ($null -eq $proposal.jobs.illustrator.backup -and $null -eq $proposal.jobs.illustrator.backup_vendor) 'illustrator backup remains null'
     $scenario=Join-Path $temp 'scenario-ne'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null

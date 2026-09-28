@@ -35,6 +35,16 @@ try {
     $codexRelative = Test-RouterLimitRefusal -Vendor codex -Text 'ERROR: usage limit reached; try again in 2 days 3 hours 4 minutes'
     Assert-True ($codexRelative.refused -and ([datetimeoffset]$codexRelative.reset_at_utc - [datetimeoffset]::UtcNow).TotalMinutes -gt 3059 -and ([datetimeoffset]$codexRelative.reset_at_utc - [datetimeoffset]::UtcNow).TotalMinutes -le 3064) 'Codex relative reset parses'
     Assert-True (-not (Test-RouterLimitRefusal -Vendor codex -Text 'Completed 100 requests successfully.').refused) 'ordinary output is not a limit refusal'
+    # Wording the installed Codex CLI prints, and Claude API/CLI limit shapes.
+    $codexHit = Test-RouterLimitRefusal -Vendor codex -Text ("ERROR: You" + [char]0x2019 + "ve hit your usage limit. Upgrade to Pro or try again in 4 days 2 hours.")
+    Assert-True ($codexHit.refused -and ([datetimeoffset]$codexHit.reset_at_utc - [datetimeoffset]::UtcNow).TotalHours -gt 97.9 -and ([datetimeoffset]$codexHit.reset_at_utc - [datetimeoffset]::UtcNow).TotalHours -le 98.1) 'Codex hit-your-usage-limit message with partial relative reset'
+    Assert-True ((Test-RouterLimitRefusal -Vendor codex -Text "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits").refused) 'Codex hit-your-usage-limit with ASCII apostrophe'
+    $minutes = Test-RouterLimitRefusal -Vendor codex -Text "ERROR: You've hit your usage limit. Try again in 45 minutes."
+    Assert-True ($minutes.refused -and ([datetimeoffset]$minutes.reset_at_utc - [datetimeoffset]::UtcNow).TotalMinutes -gt 44 -and ([datetimeoffset]$minutes.reset_at_utc - [datetimeoffset]::UtcNow).TotalMinutes -le 46) 'Codex minutes-only relative reset'
+    Assert-True ((Test-RouterLimitRefusal -Vendor claude -Text 'API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed the rate limit for your organization"}}').refused) 'Claude 429 rate_limit_error is a refusal'
+    Assert-True ((Test-RouterLimitRefusal -Vendor claude -Text "5-hour limit reached - resets 3pm").refused) 'Claude 5-hour limit message is a refusal'
+    Assert-True ((Test-RouterLimitRefusal -Vendor claude -Text "You've hit your limit - resets 3pm").refused) 'Claude hit-your-limit message is a refusal'
+    Assert-True (-not (Test-RouterLimitRefusal -Vendor codex -Text 'ERROR: tests failed: test_rate_limit_exceeded_returns_429').refused) 'test identifiers containing rate_limit_exceeded are not refusals'
     Assert-True ($null -eq (Get-RouterCodexUsage) -and -not (Get-RouterVendorBlocked -Vendor codex)) 'no logs leave Codex available'
     $fixture = Join-Path $PSScriptRoot 'fixtures/codex-sessions/2026/09/28/rollout-usage.jsonl'
     $file = Join-Path $sessions '2026/09/28/rollout-usage.jsonl'

@@ -61,6 +61,10 @@ try {
     $interrupted = $false
     try { $null = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6-sol') } catch { $interrupted = $true }
     Assert-True ($interrupted -and @(Get-Content (Join-Path $temp 'readings/passes.jsonl')).Count -eq $priorPassCount -and @(Get-ChildItem (Join-Path $temp 'readings') -Directory -Filter '.pass-*').Count -eq 0) 'interrupted run has no pass record or stage'
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) if ($category -eq 'complex-coding') { return '' } return (Fixture $category 'gpt-6-sol' '2026-10-04' 70 | ConvertTo-Json -Depth 20) }
+    $emptyFirst = Invoke-RouterCategoryResearch -Categories @('complex-coding','routine-coding') -Models @('gpt-6-sol')
+    $lastPass = (Get-Content (Join-Path $temp 'readings/passes.jsonl') | Select-Object -Last 1) | ConvertFrom-Json
+    Assert-True (@($lastPass.failed_categories) -contains 'complex-coding' -and @($lastPass.failed_categories) -notcontains 'routine-coding' -and (Test-Path (Join-Path $temp 'readings/routine-coding.json'))) 'empty reply fails only its category and the pass continues'
     $script:releaseCalls = [Collections.Generic.List[object]]::new()
     $script:RouterResearchInvoker = {
         param($category,$lane,$prompt)

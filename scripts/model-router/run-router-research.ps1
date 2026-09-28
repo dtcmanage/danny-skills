@@ -222,14 +222,17 @@ function Invoke-RouterCategoryResearch {
                 if ($Context) { $prompt += "`n" + (New-PromptEnvelope -Label 'RESEARCH CONTEXT' -Content $Context) }
                 [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action heartbeat)
                 $raw = ''
+                $returned = $false
                 try {
                     $raw = Invoke-RouterCategoryCall -Category $category -Lane $Lane -Prompt $prompt
+                    $returned = $true
                     $body = ([string]$raw).Trim()
                     if ($body -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $body = $Matches[1] }
                     $parsed = $body | ConvertFrom-Json -Depth 40
                     if (-not (Test-RouterReadings -Readings $parsed -Category $category -Models $request.models)) { throw 'Invalid category readings' }
                 } catch {
-                    if ($i -eq 0 -and -not $raw) { throw }
+                    # A call that threw interrupts the pass (discarded, rerun later); an empty or invalid reply only fails this category.
+                    if ($i -eq 0 -and -not $returned) { throw }
                     $failDir = Join-Path $state 'research-failures'; New-Item -ItemType Directory -Path $failDir -Force | Out-Null
                     $detail = "error: $($_.Exception.Message)`n" + [string]$raw
                     if ($detail.Length -gt 20000) { $detail = $detail.Substring(0,20000) }

@@ -95,7 +95,8 @@ function Test-RouterLimitRefusal {
             } catch { }
         }
     }
-    $refused = $errorText -match '(?i)(?:usage limit (?:reached|exceeded)|(?:you(?:.ve| have) reached your usage limit)|rate limit (?:reached|exceeded)|rate_limit_exceeded|quota exceeded|too many requests|Claude AI usage limit reached)'
+    # Vendor phrasing (Codex CLI prints "You've hit your usage limit"); identifiers such as test_rate_limit_exceeded_x do not count.
+    $refused = $errorText -match '(?i)(?:usage limit (?:reached|exceeded)|you(?:[''\u2019]ve| have) (?:hit|reached) your (?:usage )?limit|\b\d+-hour limit reached|weekly limit reached|rate limit (?:reached|exceeded)|would exceed the rate limit|(?<![A-Za-z0-9_])rate_limit_(?:exceeded|error)(?![A-Za-z0-9_])|quota exceeded|too many requests|Claude AI usage limit reached)'
     $reset = $null
     if ($refused) {
         $time = [regex]::Match($resetText, '(?im)(?:resets?_at|resets? at|try again at|available again at|Claude AI usage limit reached\|)["'']?\s*[=:]?\s*["'']?([0-9]{10}|[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2})?(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:?[0-9]{2})?)')
@@ -105,8 +106,15 @@ function Test-RouterLimitRefusal {
             if ([datetimeoffset]::TryParse($value, [ref]$parsed)) { $reset = $parsed.ToUniversalTime().ToString('o') }
             elseif ($value -match '^\d{10}$') { $reset = [datetimeoffset]::FromUnixTimeSeconds([long]$value).ToString('o') }
         }
-        if (-not $reset -and $Vendor -eq 'codex' -and $errorText -match '(?i)try again in\s+(\d+)\s+days?\s+(\d+)\s+hours?\s+(\d+)\s+minutes?') {
-            $reset = [datetimeoffset]::UtcNow.AddDays([double]$Matches[1]).AddHours([double]$Matches[2]).AddMinutes([double]$Matches[3]).ToString('o')
+        $relative = [regex]::Match($errorText, '(?i)try again in\s+((?:\d+\s+(?:days?|hours?|minutes?)[,\s]*(?:and\s+)?)+)')
+        if (-not $reset -and $relative.Success) {
+            # Codex leaves out zero parts ("4 days 2 hours", "45 minutes"); sum whatever parts are present.
+            $at = [datetimeoffset]::UtcNow
+            foreach ($part in [regex]::Matches($relative.Groups[1].Value, '(?i)(\d+)\s+(day|hour|minute)')) {
+                $n = [double]$part.Groups[1].Value
+                switch ($part.Groups[2].Value.ToLowerInvariant()) { 'day' { $at = $at.AddDays($n) } 'hour' { $at = $at.AddHours($n) } 'minute' { $at = $at.AddMinutes($n) } }
+            }
+            $reset = $at.ToString('o')
         }
     }
     return [pscustomobject]@{ refused=[bool]$refused; reset_at_utc=$reset }
