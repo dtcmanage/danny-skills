@@ -142,6 +142,25 @@ try {
     $routerPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected -EscalateFrom $escalatedFrom -Catalog $modelCatalog -SendAlerts -ChatToStderr:$Json
 }
 catch { throw "CODEX_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
+if ($routerPick.status -eq 'wait') {
+    $waitReason = "ROUTER_WAIT: $($routerPick.reason)"
+    if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+        $waitProvenance = [pscustomobject]@{
+            pass = $false; preflight = [bool]$Preflight; tier = $Tier
+            category = $Category; protected = [bool]$routerPick.protected; escalated_from = $escalatedFrom
+            router_status = 'wait'; router_reason = $routerPick.reason
+            router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
+            job = $routerPick.job; vendor = $routerPick.vendor
+            requested_model = $Model; resolved_model = $null
+            selection_reason = if ($Preflight) { $null } else { $SelectionReason }
+            failure_category = 'environment'; termination_reason = $waitReason
+        }
+        $waitPath = [IO.Path]::GetFullPath("$OutputPath.provenance.json")
+        New-Item -ItemType Directory -Path (Split-Path -Parent $waitPath) -Force | Out-Null
+        [IO.File]::WriteAllText($waitPath, ($waitProvenance | ConvertTo-Json -Depth 5))
+    }
+    throw $waitReason
+}
 $isProtected = [bool]$routerPick.protected
 $preferred = if ([string]::IsNullOrWhiteSpace($Model)) { $null } else { $Model }
 if ($preferred) {
@@ -353,6 +372,8 @@ try {
         router_reason          = $routerReason
         router_table_source    = $routerPick.table_source
         router_table_date      = $routerPick.table_date
+        job                    = $routerPick.job
+        vendor                 = $routerPick.vendor
         requested_model        = $preferred
         resolved_model         = $resolvedModel
         model_ladder           = $modelLadder
@@ -398,6 +419,7 @@ catch {
             pass = $false; preflight = [bool]$Preflight; tier = $Tier
             category = $Category; protected = $isProtected; escalated_from = $escalatedFrom
             router_reason = $routerReason; router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
+            job = $routerPick.job; vendor = $routerPick.vendor
             requested_model = $preferred; resolved_model = $resolvedModel
             selection_reason = if ($Preflight) { $null } else { $SelectionReason }
             disclosure_line = $disclosureLine

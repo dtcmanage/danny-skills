@@ -107,9 +107,11 @@ return [pscustomobject]@{ id = 'fake-message' }
     Write-Utf8 $prompt "RUN_ID: wiring-run`nchunk_id: wiring-chunk`nattempt: 1`nfixture"
     $report = "DT_BUILD_REPORT_VERSION: 2`nRUN_ID: wiring-run`nchunk_id: wiring-chunk`nattempt: 1`nCHANGED_FILES:`nNONE`nCOMMANDS_AND_RESULTS:`nNONE`nUNRESOLVED_BLOCKERS:`nNONE`nDISCOVERED_ENHANCEMENTS:`nNONE"
     $fakeCodex = Join-Path $temp 'fake-codex.ps1'
+    $launchLog = Join-Path $temp 'model-launches.log'
     Write-Utf8 $fakeCodex @"
 if (`$args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if (`$args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path `$env:CODEX_HOME 'models_cache.json'); exit 0 }
+[IO.File]::AppendAllText('$launchLog', "codex`n")
 `$outIndex = [Array]::IndexOf([object[]]`$args, '--output-last-message')
 [void][Console]::In.ReadToEnd()
 [IO.File]::WriteAllText([string]`$args[`$outIndex + 1], @'
@@ -140,6 +142,7 @@ $report
     $fakeClaude = Join-Path $temp 'fake-claude.ps1'
     Write-Utf8 $fakeClaude @"
 if (`$args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
+[IO.File]::AppendAllText('$launchLog', "claude`n")
 [void][Console]::In.ReadToEnd()
 `$ran = [string]`$args[[Array]::IndexOf([object[]]`$args, '--model') + 1]
 `$usage = [ordered]@{}; `$usage[`$ran] = @{ inputTokens = 1; outputTokens = 1; costUSD = 0.01 }
@@ -163,6 +166,8 @@ $report
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.protected -eq $true) 'claude wrapper -Tier complex maps to complex-coding protected'
     $r = Invoke-ClaudeWrapper 'claude-escalate' @('-Category','complex-coding','-EscalateFrom','claude-sonnet-5')
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.escalated_from -eq 'claude-sonnet-5') 'claude wrapper -EscalateFrom moves one step up'
+    $r = Invoke-ClaudeWrapper 'claude-override' @('-Category','planning','-Model','claude-fable-5-1')
+    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-fable-5-1' -and $r.prov.router_reason -match '^Explicit -Model override') 'claude wrapper -Model override honored and disclosed'
     $beforeSends = Get-TransportCount
     $tablePath = Join-Path $state 'router-table.json'
     $validTable = Get-Content -LiteralPath $tablePath -Raw
@@ -175,6 +180,50 @@ $report
     Assert-True (([regex]::Matches($r.stderr, 'ROUTER_ALERT_TEST_TRANSPORT_ACTIVE')).Count -eq 1) 'test transport seam writes its stderr marker once per process'
     $claudeText = Get-Content -Raw -LiteralPath (Join-Path $buildScripts 'invoke-claude-chunk.ps1')
     Assert-True ($claudeText -notmatch "'(opus|sonnet|haiku)'" -and $claudeText -match 'Resolve-RouterModel -Category \$Category -Lane claude') 'claude wrapper has no fixed tier map'
+
+    # Approved roster: both wrappers keep their lane member, and a wait launches no model.
+    $rosterPath = Join-Path $state 'roster.json'
+    $roster = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'references/model-router/default-roster.json') | ConvertFrom-Json -Depth 20
+    $roster.approved = $true
+    $roster.approved_at = '2026-09-28T00:00:00Z'
+    Write-Utf8 $rosterPath ($roster | ConvertTo-Json -Depth 20)
+    $categories = @(Get-RouterDispatchCategories)
+    Assert-True ($categories.Count -eq 11 -and @(@('math','analysis') | Where-Object { $categories -notcontains $_ }).Count -eq 0) 'dispatch category list has all 11 including math and analysis'
+    foreach ($category in $categories | Where-Object { $_ -ne 'image-generation' }) {
+        $job = Get-RouterCategoryJob -Category $category
+        $codexMember = if ($roster.jobs.$job.first_vendor -eq 'codex') { $roster.jobs.$job.first } else { $roster.jobs.$job.backup }
+        $claudeMember = if ($roster.jobs.$job.first_vendor -eq 'claude') { $roster.jobs.$job.first } else { $roster.jobs.$job.backup }
+        Assert-True ((Resolve-CodexModel -Category $category -CachePath $cachePath -Strict) -eq $codexMember) "Resolve-CodexModel accepts $category"
+        $codexResult = Invoke-CodexWrapper "roster-codex-$category" @('-Category',$category)
+        $claudeResult = Invoke-ClaudeWrapper "roster-claude-$category" @('-Category',$category)
+        Assert-True ($codexResult.exit -eq 0 -and $codexResult.prov.resolved_model -eq $codexMember -and $codexResult.prov.job -eq $job -and $codexResult.prov.vendor -eq 'codex') "codex wrapper accepts $category and records roster job/vendor"
+        Assert-True ($claudeResult.exit -eq 0 -and $claudeResult.prov.requested_model -eq $claudeMember -and $claudeResult.prov.job -eq $job -and $claudeResult.prov.vendor -eq 'claude') "claude wrapper accepts $category and records roster job/vendor"
+    }
+    $topCodex = Resolve-RouterModel -Category analysis -Lane codex -EscalateFrom gpt-6-sol -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)
+    $topClaude = Resolve-RouterModel -Category analysis -Lane claude -EscalateFrom claude-opus-5-5
+    Assert-True ($topCodex.model -eq 'gpt-6-sol' -and $topClaude.model -eq 'claude-opus-5-5') 'escalation stops at top non-frontier model on both lanes'
+    $codexTop = Invoke-CodexWrapper 'codex-top' @('-Category','analysis','-EscalateFrom','gpt-6-sol')
+    $claudeTop = Invoke-ClaudeWrapper 'claude-top' @('-Category','analysis','-EscalateFrom','claude-opus-5-5')
+    Assert-True ($codexTop.exit -eq 0 -and $codexTop.prov.resolved_model -eq 'gpt-6-sol' -and $claudeTop.exit -eq 0 -and $claudeTop.prov.requested_model -eq 'claude-opus-5-5') 'wrappers cannot retry past top non-frontier model'
+    $blockedUntil = [datetimeoffset]::UtcNow.AddHours(1).ToString('o')
+    Write-Utf8 (Join-Path $state 'vendor-blocks.json') (@(
+        @{ vendor='codex'; reset_at_utc=$blockedUntil },
+        @{ vendor='claude'; reset_at_utc=$blockedUntil }
+    ) | ConvertTo-Json -Depth 4)
+    $launchesBefore = if (Test-Path -LiteralPath $launchLog) { @(Get-Content $launchLog).Count } else { 0 }
+    foreach ($category in $categories) {
+        $codexResult = Invoke-CodexWrapper "wait-codex-$category" @('-Category',$category)
+        $claudeResult = Invoke-ClaudeWrapper "wait-claude-$category" @('-Category',$category)
+        Assert-True ($codexResult.exit -ne 0 -and $codexResult.prov.router_status -eq 'wait' -and $codexResult.prov.failure_category -eq 'environment' -and $codexResult.prov.termination_reason -match '^ROUTER_WAIT: ' -and $codexResult.prov.job -eq (Get-RouterCategoryJob $category)) "codex wrapper accepts $category and fails closed on wait"
+        Assert-True ($claudeResult.exit -ne 0 -and $claudeResult.prov.router_status -eq 'wait' -and $claudeResult.prov.failure_category -eq 'environment' -and $claudeResult.prov.termination_reason -match '^ROUTER_WAIT: ' -and $claudeResult.prov.job -eq (Get-RouterCategoryJob $category)) "claude wrapper accepts $category and fails closed on wait"
+    }
+    $launchesAfter = if (Test-Path -LiteralPath $launchLog) { @(Get-Content $launchLog).Count } else { 0 }
+    Assert-True ($launchesAfter -eq $launchesBefore) 'blocked wrappers did not launch a model process'
+    $imageResolverError = ''; try { [void](Resolve-CodexModel -Category image-generation -CachePath $cachePath -Strict) } catch { $imageResolverError = $_.Exception.Message }
+    Assert-True ($imageResolverError -notmatch 'Unknown category' -and $imageResolverError -match 'No usable Codex model') 'Resolve-CodexModel accepts image-generation category'
+    Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json'), $rosterPath -Force
+    $buildSkill = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-build/SKILL.md')
+    Assert-True ($buildSkill -match 'resolve-model.ps1 -Category <c> -Json' -and $buildSkill -match 'matching its returned' -and $buildSkill -notmatch 'Lane default: stay in the orchestrator') 'dt-build uses roster dispatch without family lane default'
 
     # 4. Other consumers pass their fixed categories.
     $reviewRound = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/invoke-codex-round.ps1')

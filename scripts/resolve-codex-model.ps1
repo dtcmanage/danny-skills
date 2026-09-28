@@ -113,7 +113,7 @@ function Resolve-CodexModel {
         # Legacy tier; maps to a router category when -Category is absent.
         [ValidateSet('complex', 'standard', 'light')]
         [string]$Tier,
-        # Model-router category (scripts/model-router/router-common.ps1 Get-RouterCategories).
+        # Model-router dispatch category (scripts/model-router/router-common.ps1 Get-RouterDispatchCategories).
         [string]$Category,
         # Protected work: the router picks the strongest eligible candidate.
         [switch]$Protected,

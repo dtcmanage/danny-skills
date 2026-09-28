@@ -5,6 +5,10 @@ function Get-RouterCategories {
     return @('complex-coding','routine-coding','code-review','ui-frontend','planning','deep-research','long-form-writing','mechanical','image-generation')
 }
 
+function Get-RouterDispatchCategories {
+    return @('complex-coding','routine-coding','code-review','ui-frontend','planning','deep-research','math','analysis','long-form-writing','mechanical','image-generation')
+}
+
 function Test-RouterReadings {
     param([object]$Readings, [Parameter(Mandatory)][string]$Category, [Parameter(Mandatory)][string[]]$Models)
     if ($Readings -isnot [pscustomobject] -or -not $Readings.PSObject.Properties['category'] -or $Readings.category -cne $Category -or $Readings.sources_checked -isnot [array] -or $Readings.readings -isnot [array]) { return $false }

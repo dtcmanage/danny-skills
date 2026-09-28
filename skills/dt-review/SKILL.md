@@ -84,8 +84,8 @@ Model slugs are never hardcoded. Codex rounds resolve through the shared model r
 category `planning` (`Resolve-CodexModel -Category planning`, protected for complex reviews; see
 `scripts/model-router/resolve-model.ps1`). Preflight refreshes the live account catalog (`codex debug models`),
 and the router's pick must be selectable on it: a pick the catalog cannot select fails closed. Frontier models
-(e.g. GPT-6 Astra, Fable-tier cost) run only when the router's table leaves no non-frontier candidate, or as an
-explicit `-Model` override. `-Model` is a deliberate override only, and an unselectable override fails closed.
+(e.g. GPT-6 Astra, Fable-tier cost) run only on Danny's explicit request through `-Model` with a
+recorded reason; an unselectable override fails closed.
 
 ## References
 

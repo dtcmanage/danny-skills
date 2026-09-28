@@ -83,24 +83,29 @@ model gate. The orchestrator's job is dividing the roadmap into chunks, routing 
 category that fits it, judging failures, and escalating. The orchestrator never delegates its
 own model for implementation chunks.
 
-**Per-chunk category (both lanes).** Every model pick comes from the shared model router
+**Per-chunk category.** Every model pick comes from the shared model router
 (`scripts/model-router/resolve-model.ps1`), never from a tier map or a hardcoded slug. At roadmap time the
-orchestrator gives each chunk exactly one router category and records it in `build-plan.md`:
+orchestrator gives each delegated piece exactly one category, records it in `build-plan.md`, and
+resolves it without `-Lane`. Use `-Protected` only where the protected rule below permits it.
 
-| Chunk | Category | Protected |
-| :-- | :-- | :-- |
-| Load-bearing (`scripts/identify-load-bearing.ps1` flagged it) or security-sensitive / live-write | `complex-coding` | yes (`-Protected`) |
-| Ordinary implementation | `routine-coding` | no |
-| Routine mechanical work (boilerplate, config, renames, straightforward tests, preflight) | `mechanical` | no |
-| UI / front-end chunk | `ui-frontend` | no (yes when also load-bearing) |
-| Independent verifier (step 6.d) and final combined-diff review (step 6.5) | `code-review` | yes only for a load-bearing milestone |
+| Category | Use and example |
+| :-- | :-- |
+| `mechanical` | Repetitive extraction or edits; extract fields from a PDF. |
+| `routine-coding` | Ordinary implementation; add a form field. |
+| `complex-coding` | Load-bearing or security-sensitive code; change an authorization boundary. |
+| `ui-frontend` | Interface implementation; build a responsive dashboard panel. |
+| `code-review` | Independent verification; review a milestone diff. |
+| `planning` | Sequence a design; plan a migration. |
+| `deep-research` | Investigate sources; compare technical approaches. |
+| `math` | Proofs, calculations, formulas, or quantitative models; verify a return formula. |
+| `analysis` | Interpret data or documents and spot gaps; explain a performance table. |
+| `long-form-writing` | Substantial prose; draft a white paper. |
+| `image-generation` | Generate visual assets; create a banner illustration. |
 
-The router reads its category table, keeps candidates the live account catalog can actually select (Codex
-lane: `codex debug models`; Spark and retiring models never qualify), and returns the model plus a one-line
-reason. Unprotected work gets the lowest expected retry-adjusted cost among eligible candidates; protected
-work gets the strongest eligible candidate. Frontier models (a per-model table flag, e.g. GPT-6 Astra,
-Claude Fable) run only when no non-frontier model is eligible, or as an explicit `-Model` override with a
-recorded reason. The wrappers take `-Category`, `-Protected`, and `-EscalateFrom`; a legacy `-Tier` alone
+The router uses the approved cross-vendor roster when available; until approval, its v1 table and bridge
+mode remain active. Codex picks must be selectable in the live account catalog (`codex debug models`;
+Spark and retiring models never qualify). Frontier models run only on Danny's explicit request through
+`-Model` with a recorded reason. The wrappers take `-Category`, `-Protected`, and `-EscalateFrom`; a legacy `-Tier` alone
 maps `complex` -> `complex-coding` protected, `standard` -> `routine-coding`, `light` -> `mechanical`.
 
 **Bridge mode (no full research table yet).** Until the router's table source is `research` with `coverage=full`, the router ignores
@@ -111,17 +116,16 @@ writing category and `gpt-6-luna` for `mechanical`; Claude `opus` for `complex-c
 for `mechanical`. A `-Protected` call in any category resolves instead to the lane's protected pick
 (`claude-opus-5-5` on Claude, `gpt-6-sol` on Codex), matching the pre-router tier behavior where load-bearing
 and security-sensitive work ran on the complex tier regardless of the chunk's category. The router reason
-starts `bridge mode (no full research table yet):`. Once a full-coverage research table exists, the evidence rules above apply
-unchanged.
+starts `bridge mode (no full research table yet):`. While the roster remains unapproved, a full-coverage
+research table applies the v1 evidence rules.
 
 Bridge first picks match the pre-router tiers, including protected work running on the top
-non-frontier model on each lane; bridge escalation may reach a frontier model (`gpt-6-astra`, `claude-fable-5-1`)
-on a retry after the frontier-spend check, never as a first pick.
+non-frontier model on each lane; bridge escalation stops at that model.
 
-**Escalation.** A failed attempt retries one step up that category's ranked list (in bridge mode, one rung up
-the lane ladder: `gpt-6-luna` -> `gpt-6-sol` -> `gpt-6-astra`; haiku -> sonnet -> opus -> fable): pass
-`-EscalateFrom <the model that failed>` to the wrapper (on claude-host, resolve with
-`resolve-model.ps1 -Category <c> -Lane claude -EscalateFrom <model> -Json`). Escalation IS the second
+**Escalation.** A failed attempt retries one step up the lane's non-frontier ladder (Codex:
+`gpt-6-luna` -> `gpt-6-sol`; Claude: haiku -> sonnet -> opus) and stops at its top model: pass
+`-EscalateFrom <the model that failed>` to the selected wrapper (for host-native dispatch, resolve
+without `-Lane` and include `-EscalateFrom <model>`). Escalation IS the second
 attempt and stays inside the two-attempt budget.
 
 **Protected must be earned.** `-Protected` (and `complex-coding`) is allowed only when (a)
@@ -131,9 +135,8 @@ a reason. Verifiers of non-flagged milestones run `code-review` unprotected. (Me
 claude-host dispatches and 206 of 211 codex-host `claude -p` chunks ran on Opus.) Quota never lowers a pick:
 there is no weekly step-down; cost control comes only from not over-assigning.
 
-**Host-native Claude dispatch.** On claude-host, resolve with
-`pwsh -NoProfile -File scripts/model-router/resolve-model.ps1 -Category <c> -Lane claude [-Protected]
-[-EscalateFrom <model>] -SendAlerts -Json` and set the Agent tool's `model` to the result's `agent_alias`
+**Host-native Claude dispatch.** When the no-lane router pick has `vendor = claude` on claude-host,
+set the Agent tool's `model` to the result's `agent_alias`
 (`opus`, `sonnet`, `haiku`, or `fable`, mapped from the router's Claude model id). When `agent_alias` is null,
 dispatch through `scripts/invoke-claude-chunk.ps1` instead. Relay any `ROUTER_ALERT:` line to Danny once.
 
@@ -162,7 +165,7 @@ one line per dispatch. Capability preflights are not substantive dispatches and 
 For either cross-model wrapper, pass the identical reason through `-SelectionReason`. Both wrappers hard
 fail a blank, multiline, or over-240-character reason and persist `selection_reason` plus the canonical
 `disclosure_line` (with the router's reason appended) in provenance, plus `category`, `protected`,
-`router_reason`, `router_table_source`, `router_table_date`, and `escalated_from`. The orchestrator must print that exact canonical line; provenance is the
+`router_reason`, `router_table_source`, `router_table_date`, `job`, `vendor`, and `escalated_from`. The orchestrator must print that exact canonical line; provenance is the
 durable audit record but does not replace the visible report.
 
 **Codex lane.** Never inherit Codex's user-config model or reasoning effort. Invoke every Codex chunk
@@ -174,8 +177,7 @@ chunks unsandboxed (Codex removed its Windows sandbox; a `workspace-write` reque
 blocks every command): containment there is the scoped worktree plus independent verification, and the
 provenance JSON records the effective mode. Never treat that Windows block as a dead Codex lane.
 
-**Claude lane.** Repo-wide navigation, UI judgment, and workspace-memory work belong on this lane (on
-codex-host only under the opt-in exception in the lane default below). Dispatch it via CLAUDE_DISPATCH (harness contract below); record the surface/model actually
+**Claude lane.** Dispatch a Claude roster pick via CLAUDE_DISPATCH (harness contract below); record the surface/model actually
 used, never invent a slug. The model comes from the router's Claude lane for the chunk's category;
 `scripts/invoke-claude-chunk.ps1` reads the exact version from the CLI's JSON
 `modelUsage` and persists it as `resolved_model` (plus `models_used`, `total_cost_usd`) in provenance,
@@ -185,27 +187,23 @@ exact model the harness reports, not the alias.
 **Harness contract.** At intake, note which harness is orchestrating: `claude-host` (a Claude Code / Cowork
 session with the host-native Agent tool) or `codex-host` (any orchestrator without it). Define
 **CLAUDE_DISPATCH** once for the run — on claude-host, a fresh host-native Agent with an explicit `model`
-set to the router's `agent_alias` for the chunk's category; on codex-host, `scripts/invoke-claude-chunk.ps1`
+set to the router's `agent_alias` for a Claude pick; on codex-host, `scripts/invoke-claude-chunk.ps1`
 with the same `-Category` — and use
-CLAUDE_DISPATCH everywhere this skill dispatches a Claude subagent. Define **VERIFY_DISPATCH** the same
-way for independent semantic verification (step 6.d) and the final combined-diff review (step 6.5): on
-claude-host it is CLAUDE_DISPATCH; on codex-host it is a fresh Codex session through
-`scripts/invoke-codex-chunk.ps1` that did not build the chunk under review. On codex-host, run
+CLAUDE_DISPATCH whenever the roster selects Claude. Define **VERIFY_DISPATCH** for independent semantic
+verification (step 6.d) and final combined-diff review (step 6.5) as a fresh non-builder session on
+the vendor returned for `code-review`; use the matching wrapper or host-native Claude Agent. On codex-host, run
 `scripts/invoke-claude-chunk.ps1 -Preflight -TimeoutMs 30000` once per selected Claude category before its
 first substantive use, same rules as the Codex category preflights. Claude frontmatter (`allowed-tools`) binds
 only Claude surfaces; Codex permissions come from its launch-time sandbox, not this file.
 
-**Lane default: stay in the orchestrator's family.** Every dispatch goes to the host's own lane unless an
-exception below applies:
-
-- `codex-host`: build, fix, verify, and final review all run on the Codex lane. A Claude chunk through
-  `scripts/invoke-claude-chunk.ps1` is opt-in, only for work that needs the Claude lane's named strengths
-  (UI judgment, workspace-memory work), and the selection reason must say which. Independent verification
-  on codex-host means a fresh Codex session that did not build the chunk, not a Claude session.
-- `claude-host`: verification, review, navigation, and UI judgment run on the Claude lane. Crisp, scoped
-  implementation chunks SHOULD go to the Codex lane through `scripts/invoke-codex-chunk.ps1` — that spends
-  the ChatGPT subscription instead of Claude quota and was the cheapest measured configuration. Keep a
-  chunk on a Claude builder when it needs repo-wide navigation or judgment, or when Codex is unavailable.
+**Roster dispatch.** For each delegated piece, run
+`pwsh -NoProfile -File scripts/model-router/resolve-model.ps1 -Category <c> -Json` without `-Lane`
+(adding `-Protected` only when justified), and dispatch through the wrapper matching its returned
+`vendor`: `invoke-codex-chunk.ps1` for Codex, `invoke-claude-chunk.ps1` for Claude. On
+`claude-host`, a Claude pick may use a host-native Agent with the returned `agent_alias`. A
+`status = wait` result stops that dispatch and tells Danny the reason. Wrappers resolve again with their
+own lane and fail closed on `wait`. Keep image generation on Codex, Codex implementation dispatches
+from a Claude host, and dt-review's cross-family rounds available as before.
 
 Both wrappers keep the same contract: prompt over stdin, pinned model, provenance JSON, structured-report
 shape check. `invoke-claude-chunk.ps1` starts a slim session (`--strict-mcp-config`, built-in file and
