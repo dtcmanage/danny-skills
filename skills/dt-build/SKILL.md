@@ -80,13 +80,17 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 
 **Orchestrator:** whatever session Danny launches IS the orchestrator — dt-build imposes no orchestrator
 model gate. The orchestrator's job is dividing the roadmap into chunks, routing each chunk to the router
-category that fits it, judging failures, and escalating. The orchestrator never delegates its
-own model for implementation chunks.
+category that fits it, judging failures, and escalating. The orchestrator never builds or verifies a
+chunk in its own context; it always dispatches a fresh session, even when the roster picks the same model
+the orchestrator runs on.
 
 **Per-chunk category.** Every model pick comes from the shared model router
 (`scripts/model-router/resolve-model.ps1`), never from a tier map or a hardcoded slug. At roadmap time the
 orchestrator gives each delegated piece exactly one category, records it in `build-plan.md`, and
-resolves it without `-Lane`. Use `-Protected` only where the protected rule below permits it.
+resolves it without `-Lane`. Use `-Protected` only where the protected rule below permits it:
+load-bearing, security-sensitive, or live-write chunks run `complex-coding` protected (a load-bearing UI
+chunk runs `ui-frontend` protected); preflights and boilerplate run `mechanical`; verifiers and the final
+review run `code-review`, protected only for a load-bearing milestone.
 
 | Category | Use and example |
 | :-- | :-- |
@@ -116,8 +120,9 @@ writing category and `gpt-6-luna` for `mechanical`; Claude `opus` for `complex-c
 for `mechanical`. A `-Protected` call in any category resolves instead to the lane's protected pick
 (`claude-opus-5-5` on Claude, `gpt-6-sol` on Codex), matching the pre-router tier behavior where load-bearing
 and security-sensitive work ran on the complex tier regardless of the chunk's category. The router reason
-starts `bridge mode (no full research table yet):`. While the roster remains unapproved, a full-coverage
-research table applies the v1 evidence rules.
+starts `bridge mode (no full research table yet):`. While the roster remains unapproved, an approved
+full-coverage v1 research table picks by its evidence rules (confirmed grades, incumbent kept unless a
+strictly higher grade wins; see `references/model-router/table-schema.md`).
 
 Bridge first picks match the pre-router tiers, including protected work running on the top
 non-frontier model on each lane; bridge escalation stops at that model.
@@ -197,13 +202,14 @@ first substantive use, same rules as the Codex category preflights. Claude front
 only Claude surfaces; Codex permissions come from its launch-time sandbox, not this file.
 
 **Roster dispatch.** For each delegated piece, run
-`pwsh -NoProfile -File scripts/model-router/resolve-model.ps1 -Category <c> -Json` without `-Lane`
-(adding `-Protected` only when justified), and dispatch through the wrapper matching its returned
+`pwsh -NoProfile -File scripts/model-router/resolve-model.ps1 -Category <c> -SendAlerts -Json` without
+`-Lane` (adding `-Protected` only when justified), and dispatch through the wrapper matching its returned
 `vendor`: `invoke-codex-chunk.ps1` for Codex, `invoke-claude-chunk.ps1` for Claude. On
 `claude-host`, a Claude pick may use a host-native Agent with the returned `agent_alias`. A
 `status = wait` result stops that dispatch and tells Danny the reason. Wrappers resolve again with their
-own lane and fail closed on `wait`. Keep image generation on Codex, Codex implementation dispatches
-from a Claude host, and dt-review's cross-family rounds available as before.
+own lane and fail closed on `wait`. The roster decides the vendor, including when a blocked vendor sends
+work to the backup. Handoffs that stay as they were: image generation on Codex, and dt-review's
+cross-family rounds.
 
 Both wrappers keep the same contract: prompt over stdin, pinned model, provenance JSON, structured-report
 shape check. `invoke-claude-chunk.ps1` starts a slim session (`--strict-mcp-config`, built-in file and

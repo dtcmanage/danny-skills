@@ -223,7 +223,7 @@ $report
     Assert-True ($imageResolverError -notmatch 'Unknown category' -and $imageResolverError -match 'No usable Codex model') 'Resolve-CodexModel accepts image-generation category'
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json'), $rosterPath -Force
     $buildSkill = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-build/SKILL.md')
-    Assert-True ($buildSkill -match 'resolve-model.ps1 -Category <c> -Json' -and $buildSkill -match 'matching its returned' -and $buildSkill -notmatch 'Lane default: stay in the orchestrator') 'dt-build uses roster dispatch without family lane default'
+    Assert-True ($buildSkill -match 'resolve-model.ps1 -Category <c> -SendAlerts -Json' -and $buildSkill -match 'matching its returned' -and $buildSkill -notmatch 'Lane default: stay in the orchestrator') 'dt-build uses roster dispatch without family lane default'
 
     # 4. Other consumers pass their fixed categories.
     $reviewRound = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/invoke-codex-round.ps1')
