@@ -19,7 +19,14 @@ function Run-Update { Update-RouterOutcomes -Now $script:now -SourcesPath $scrip
 function Read-Records { @(Get-Content -LiteralPath (Join-Path $script:state 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -DateKind String }) }
 
 $saved = $env:DT_MODEL_ROUTER_STATE
+$savedTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
+$savedSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
 $temp = Join-Path $env:TEMP ('model-router-outcomes-' + [guid]::NewGuid().ToString('N'))
+$env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'sessions'
+[IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_CODEX_SESSIONS) | Out-Null
+$stub = Join-Path $temp 'transport.ps1'
+Set-Content -LiteralPath $stub -Value 'param($request) return [pscustomobject]@{id="stub"}'
+$env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $stub
 $script:state = Join-Path $temp 'state'
 $script:repo = Join-Path $temp 'sample-repo'
 $script:sources = Join-Path $temp 'sources.json'
@@ -98,6 +105,7 @@ try {
     Write-Provenance 'prior-10' 'M01' 1 'sonnet' $true '2026-08-01T12:00:00Z'
     $drift = Run-Update
     Assert-True ($drift.drift_flags -eq 1 -and @($drift.alerts | Where-Object { $_ -like 'drift:*' }).Count -eq 1) 'drift at exactly 15 points with 10 plus 20 samples'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $script:state 'drift-marks.json'))) 'no approved roster keeps v1 drift flags'
     $demoted = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     Assert-True ($demoted.model -eq 'claude-opus-5-5' -and $demoted.reason -match 'Drift demotion') 'resolver demotes flagged candidate (confirmed incumbent steps one rung up the ladder)'
     $protected = Resolve-RouterModel -Category routine-coding -Lane claude -Protected -SkipModelCheck
@@ -113,6 +121,32 @@ try {
     @([pscustomobject]@{ category='routine-coding'; lane='claude'; model=$rows[2].model; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' },[pscustomobject]@{ category='routine-coding'; lane='claude'; model='claude-opus-5-5'; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' }) | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $script:state 'drift-flags.json')
     $none = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     Assert-True ($none.model -eq $rows[2].model -and @($none.alerts | Where-Object { $_ -like 'drift-no-alternative:*' }).Count -eq 1) 'no eligible alternative (next rung also flagged, top rung frontier) retains pick and alerts'
+
+    $rosterState = Join-Path $temp 'roster-state'; $rosterRepo = Join-Path $temp 'roster-repo'
+    [IO.Directory]::CreateDirectory($rosterState) | Out-Null
+    [IO.Directory]::CreateDirectory($rosterRepo) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $rosterState; $script:state = $rosterState; $script:repo = $rosterRepo
+    @($rosterRepo) | ConvertTo-Json | Set-Content -LiteralPath $script:sources
+    $roster = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+    $roster.approved = $true; $roster.approved_at = '2026-09-27T00:00:00Z'
+    $roster | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $rosterState 'roster.json')
+    $rosterHash = (Get-FileHash -LiteralPath (Join-Path $rosterState 'roster.json') -Algorithm SHA256).Hash
+    Write-Provenance 'roster-analysis' 'M01' 1 'claude-opus-5-5' $true '2026-09-25T12:00:00Z' 'standard' '' 'analysis'
+    for ($i=1; $i -le 10; $i++) { Write-Provenance "roster-prior-$i" 'M01' 1 'gpt-6-sol' $true '2026-08-01T12:00:00Z' 'complex' '' 'complex-coding' }
+    for ($i=1; $i -le 20; $i++) { Write-Provenance "roster-recent-$i" 'M01' 1 'gpt-6-sol' ($i -le 17) '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
+    $rosterDrift = Run-Update
+    Assert-True (@(Read-Records | Where-Object { $_.key -eq 'roster-analysis:M01:1' -and $_.category -eq 'analysis' }).Count -eq 1) 'approved roster preserves analysis category during import'
+    $marks = @(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json'))
+    $latest = Read-RouterJsonObject -Path (Join-Path $rosterState 'roster-proposals/latest.json')
+    $swap = Read-RouterJsonObject -Path ([string]$latest.proposal)
+    Assert-True ($marks.Count -eq 1 -and $marks[0].job -eq 'coder' -and $marks[0].model -eq 'gpt-6-sol' -and [math]::Abs($marks[0].recent_rate - 0.85) -lt 0.00001) 'approved roster drift marks first choice across job categories'
+    Assert-True (@($rosterDrift.alerts | Where-Object { $_.key -eq 'drift:gpt-6-sol:coder:202609' -and $_.message -match 'uses its backup' -and $_.message -match 'swap first and backup' }).Count -eq 1) 'roster drift yields one backup and swap alert'
+    Assert-True ($swap.jobs.coder.first -eq 'claude-opus-5-5' -and $swap.jobs.coder.backup -eq 'gpt-6-sol' -and (Test-Path -LiteralPath $latest.report)) 'drift writes swap proposal and report'
+    Assert-True ((Get-FileHash -LiteralPath (Join-Path $rosterState 'roster.json') -Algorithm SHA256).Hash -eq $rosterHash) 'drift leaves approved roster unchanged'
+    Assert-True (@((Run-Update).alerts).Count -eq 0) 'repeat drift emits no duplicate alert'
+    for ($i=21; $i -le 50; $i++) { Write-Provenance "roster-recent-$i" 'M01' 1 'gpt-6-sol' $true '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
+    $rosterClear = Run-Update
+    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json')).Count -eq 0 -and @($rosterClear.alerts | Where-Object { $_.key -like 'drift-cleared:*' }).Count -eq 1) 'cleared roster drift removes mark and alerts once'
 
     $timestampState = Join-Path $temp 'timestamp-state'
     $timestampRepo = Join-Path $temp 'timestamp-repo'
@@ -163,5 +197,7 @@ try {
     Write-Output "PASS: $script:passed tests"
 } finally {
     $env:DT_MODEL_ROUTER_STATE = $saved
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $savedTransport
+    $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $savedSessions
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
