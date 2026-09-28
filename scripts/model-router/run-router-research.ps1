@@ -262,7 +262,7 @@ function Invoke-RouterCategoryResearch {
                 foreach ($result in $reading.results) {
                     $found = $false
                     foreach ($existing in $all) {
-                        if ($existing.benchmark -ceq $reading.benchmark -and $existing.version -ceq $reading.version -and $existing.harness -ceq $reading.harness) {
+                        if ($existing.benchmark -ceq $reading.benchmark -and $existing.version -ceq $reading.version -and $existing.harness -ceq $reading.harness -and $existing.effort_class -ceq $reading.effort_class) {
                             $prior = @($existing.results | Where-Object model -CEQ $result.model)
                             if ($prior.Count) {
                                 if ([datetime]$reading.date -gt [datetime]$existing.date) { $existing.results = @($existing.results | Where-Object model -CNE $result.model) + $result; $existing.date = $reading.date }

@@ -13,7 +13,8 @@ function Get-RouterProposalVendor {
 
 function Get-RouterProposalPrice {
     param([string]$Model, [object]$Prices)
-    $row = $Prices.models.PSObject.Properties[$Model]
+    $key = Get-RouterPriceKey -Model $Model -Models $Prices.models
+    $row = if ($key) { $Prices.models.PSObject.Properties[$key] } else { $null }
     if (-not $row) { return $null }
     $p = $row.Value.prices_usd_per_mtok
     if ($null -eq $p.input -or $null -eq $p.output) { return $null }
@@ -30,19 +31,24 @@ function Get-RouterProposalComparison {
     $groups = @{}
     foreach ($reading in @($Data.readings)) {
         $key = @($reading.benchmark,$reading.version,$reading.harness,$reading.effort_class) -join "`n"
-        if (-not $groups.ContainsKey($key)) { $groups[$key] = [pscustomobject]@{ independent=$reading.independent; results=@{}; benchmark=$reading.benchmark } }
-        foreach ($result in @($reading.results)) { $groups[$key].results[[string]$result.model] = $result }
+        if (-not $groups.ContainsKey($key)) { $groups[$key] = [pscustomobject]@{ results=@{}; benchmark=$reading.benchmark } }
+        foreach ($result in @($reading.results)) {
+            $model = [string]$result.model
+            if (-not $groups[$key].results.ContainsKey($model) -or $reading.independent -or -not $groups[$key].results[$model].independent) {
+                $groups[$key].results[$model] = [pscustomobject]@{ value=$result; independent=[bool]$reading.independent }
+            }
+        }
     }
     $leads = 0; $trails = 0; $comparable = 0; $names = @()
     foreach ($key in @($groups.Keys | Sort-Object)) {
         $g = $groups[$key]
         if (-not $g.results.ContainsKey($Challenger) -or -not $g.results.ContainsKey($Incumbent)) { continue }
         $comparable++
-        $a = $g.results[$Challenger]; $b = $g.results[$Incumbent]
+        $a = $g.results[$Challenger].value; $b = $g.results[$Incumbent].value
         $margin = [Math]::Max([double]$(if ($null -ne $a.margin) { $a.margin } else { 0 }),[double]$(if ($null -ne $b.margin) { $b.margin } else { 0 }))
         if ($null -eq $a.margin -and $null -eq $b.margin) { $margin = 1.0 }
         $gap = [double]$a.score - [double]$b.score
-        if ($gap -gt $margin -and $g.independent -and $names -notcontains $g.benchmark) { $leads++; $names += $g.benchmark }
+        if ($gap -gt $margin -and $g.results[$Challenger].independent -and $g.results[$Incumbent].independent -and $names -notcontains $g.benchmark) { $leads++; $names += $g.benchmark }
         if ($gap -lt -$margin) { $trails++ }
     }
     $verdict = if ($trails) { 'trail' } elseif ($leads -ge 2) { 'win' } else { 'not-enough-evidence' }
@@ -54,7 +60,7 @@ function Get-RouterProposalJobVerdict {
     $primary = @{ fast='mechanical'; coder='complex-coding'; 'deep-thinker'='analysis'; writer='long-form-writing'; illustrator='image-generation' }[$Job]
     $categories = @{ fast=@('mechanical'); coder=@('routine-coding','complex-coding','ui-frontend'); 'deep-thinker'=@('code-review','planning','deep-research','math','analysis'); writer=@('long-form-writing'); illustrator=@('image-generation') }[$Job]
     $models = @($categories | ForEach-Object { if ($Readings.ContainsKey($_)) { $Readings[$_].readings | ForEach-Object { $_.results | ForEach-Object model } } } | Where-Object { $_ -and $_ -ne $Incumbent } | Sort-Object -Unique)
-    $qualified = @(); $tradeoffs = @()
+    $qualified = @(); $tradeoffs = @(); $hasFloorClearer = $false
     foreach ($model in $models) {
         if ($Vendor -and (Get-RouterProposalVendor $model) -ne $Vendor) { continue }
         if (Test-RouterProposalFrontier $model $Frontier) { continue }
@@ -77,6 +83,7 @@ function Get-RouterProposalJobVerdict {
         }
         $quality = $p.verdict -eq 'win' -and $trailed.Count -eq 0
         $floor = $p.comparable -ge 2 -and $p.trails -eq 0
+        if ($Job -eq 'fast' -and $floor) { $hasFloorClearer = $true }
         $eligible = if ($Job -eq 'fast') { $floor -and -not $older -and $null -ne $price } else { $quality -and -not $lowerTier }
         $evidence = "$model`: primary $($p.verdict) ($($p.leads) independent leads, $($p.comparable) comparable); won [$($won -join ', ')]; trailed [$($trailed -join ', ')]"
         if ($lowerTier) { $evidence += '; lower same-vendor tier' }
@@ -87,10 +94,10 @@ function Get-RouterProposalJobVerdict {
     $winner = $null
     if ($Job -eq 'fast') {
         $incPrice = Get-RouterProposalPrice $Incumbent $Prices
-        $qualified = @($qualified | Where-Object { $null -ne $_.price -and ($null -eq $incPrice -or $_.price -lt $incPrice) } | Sort-Object price,model)
+        $qualified = @($qualified | Where-Object { $null -ne $incPrice -and $null -ne $_.price -and $_.price -lt $incPrice } | Sort-Object price,model)
     } else { $qualified = @($qualified | Sort-Object @{Expression='leads';Descending=$true},@{Expression={if ($null -eq $_.price) {[double]::PositiveInfinity} else {$_.price}}},model) }
     if ($qualified.Count) { $winner = $qualified[0] }
-    $result = if ($winner) { $winner.model } elseif ($tradeoffs.Count -and @($tradeoffs | Where-Object { $_ -match 'trailed \[[^]]+\]' }).Count) { 'keep' } else { 'not-enough-evidence' }
+    $result = if ($winner) { $winner.model } elseif ($Job -eq 'fast' -and $hasFloorClearer) { 'keep' } elseif ($tradeoffs.Count -and @($tradeoffs | Where-Object { $_ -match 'trailed \[[^]]+\]' }).Count) { 'keep' } else { 'not-enough-evidence' }
     return [pscustomobject]@{ result=$result; evidence=$(if ($winner) {$winner.evidence} else {$tradeoffs -join '; '}); tradeoffs=@($tradeoffs) }
 }
 
@@ -103,6 +110,7 @@ function Build-RouterRosterProposal {
     $passes = @(if (Test-Path -LiteralPath $passesPath) { Get-Content -LiteralPath $passesPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
     if (-not $passes.Count) { return [pscustomobject]@{changed=$false;pass_id=$null;changes=@();proposal=$null;report=$null} }
     $passId = [string]$passes[-1].pass_id
+    $coveredJobs = @(@($passes[-1].categories) | Where-Object { $_ -in @(Get-RouterCategories) } | ForEach-Object { Get-RouterCategoryJob -Category $_ } | Sort-Object -Unique)
     $readings = @{}
     foreach ($file in @(Get-ChildItem -LiteralPath $readDir -Filter '*.json' -File -ErrorAction SilentlyContinue)) { $data = Read-RouterJsonObject $file.FullName; if ($data -and $data.PSObject.Properties['readings']) { $readings[$file.BaseName] = $data } }
     $prices = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json -Depth 20
@@ -114,17 +122,16 @@ function Build-RouterRosterProposal {
     $proposed.generated_at = $Now.ToString('o'); $proposed.approved = $false; $proposed.approved_at = $null
     $changes = @(); $tradeoffs = @()
     foreach ($job in @(Get-RouterJobs)) {
-        $anticipatedFirst = [string]$current.jobs.$job.first
+        if ($coveredJobs -notcontains $job) { continue }
         foreach ($slot in @('first','backup')) {
             if ($job -eq 'illustrator' -and $slot -eq 'backup') { continue }
             $entry = $proposed.jobs.$job
             $currentEntry = $current.jobs.$job
-            $anticipatedVendor = Get-RouterProposalVendor $anticipatedFirst
-            $flipped = $slot -eq 'backup' -and $anticipatedVendor -eq $currentEntry.backup_vendor
+            $proposedVendor = Get-RouterProposalVendor $entry.first
+            $flipped = $slot -eq 'backup' -and $proposedVendor -ne $currentEntry.first_vendor
             $incumbent = if ($flipped) { $currentEntry.first } else { $currentEntry.$slot }
-            $vendor = if ($slot -eq 'backup') { if ($anticipatedVendor -eq 'codex') {'claude'} else {'codex'} } else { $null }
+            $vendor = if ($slot -eq 'backup') { if ($proposedVendor -eq 'codex') {'claude'} else {'codex'} } else { $null }
             $verdict = Get-RouterProposalJobVerdict -Job $job -Incumbent $incumbent -Vendor $vendor -Readings $readings -Prices $prices -Frontier $frontier
-            if ($slot -eq 'first' -and $verdict.result -notin @('keep','not-enough-evidence')) { $anticipatedFirst = [string]$verdict.result }
             if ($flipped -and $verdict.result -in @('keep','not-enough-evidence')) {
                 $verdict.result = $incumbent
                 $verdict.evidence = "Other-vendor incumbent after first-choice flip: $incumbent. $($verdict.evidence)"
@@ -136,7 +143,7 @@ function Build-RouterRosterProposal {
             }
             $eligible = @($history | Where-Object { $_.job -eq $job -and $_.slot -eq $slot -and $_.result -ne 'not-enough-evidence' } | Select-Object -Last 2)
             $target = if ($eligible.Count -eq 2 -and $eligible[0].result -eq $eligible[1].result -and $eligible[1].result -notin @('keep',$currentEntry.$slot)) { [string]$eligible[1].result } else { $null }
-            if ($slot -eq 'backup' -and $flipped -and $entry.first_vendor -ne $anticipatedVendor) { $target = $null }
+            if ($flipped) { $target = if ($verdict.result -notin @('keep','not-enough-evidence')) { [string]$verdict.result } else { [string]$incumbent } }
             if ($target -and $target -ne $currentEntry.$slot -and -not (Test-RouterProposalFrontier $target $frontier)) {
                 $entry.$slot = $target; $entry."${slot}_vendor" = Get-RouterProposalVendor $target
                 $changes += [pscustomobject]@{job=$job;slot=$slot;from=$currentEntry.$slot;to=$target;evidence=$verdict.evidence}
@@ -159,7 +166,9 @@ function Build-RouterRosterProposal {
     $proposed | Add-Member -NotePropertyName over_cap -NotePropertyValue $overCap
     $proposed | Add-Member -NotePropertyName conflicts -NotePropertyValue $conflicts
     $proposed | Add-Member -NotePropertyName pass_id -NotePropertyValue $passId
-    if (-not $overCap) { $errors = @(Test-RouterRoster $proposed); if ($errors.Count) { throw "PROPOSAL_INVALID: $($errors -join '; ')" } }
+    $errors = @(Test-RouterRoster $proposed)
+    $proposed | Add-Member -NotePropertyName validation_errors -NotePropertyValue $errors
+    if ($errors.Count -and -not $overCap) { throw "PROPOSAL_INVALID: $($errors -join '; ')" }
     $stem = $Now.ToString('yyyy-MM-ddTHHmmss'); $jsonPath = Join-Path $dir ($stem + '.json'); $reportPath = Join-Path $dir ($stem + '.md')
     [IO.File]::WriteAllText($jsonPath,($proposed | ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new($false))
     $lines = @('# Model list proposal','','| Job | Current | Proposed | Evidence summary | Backup |','| --- | --- | --- | --- | --- |')
@@ -173,10 +182,11 @@ function Build-RouterRosterProposal {
     if ($tradeoffs.Count) { $lines += @($tradeoffs | ForEach-Object { "- $_" }) } else { $lines += 'None.' }
     [IO.File]::WriteAllText($reportPath,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $dir 'latest.json'),(ConvertTo-Json -InputObject ([pscustomobject]@{proposal=$jsonPath;report=$reportPath}) -Compress),[Text.UTF8Encoding]::new($false))
-    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject @($changes) -Compress -Depth 20)))).ToLowerInvariant()
+    $alertChanges = @($changes | ForEach-Object { [pscustomobject]@{job=$_.job;slot=$_.slot;from=$_.from;to=$_.to} })
+    $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $alertChanges -Compress -Depth 20)))).ToLowerInvariant()
     $first = $changes[0]
     Send-RouterAlerts -Alerts @([pscustomobject]@{key="roster-proposal:$hash";message="Model list change proposed: $($first.job) $($first.from) -> $($first.to). Report: $reportPath"}) | Out-Null
-    return [pscustomobject]@{changed=$true;pass_id=$passId;changes=@($changes);proposal=$jsonPath;report=$reportPath;over_cap=$overCap;conflicts=$conflicts}
+    return [pscustomobject]@{changed=$true;pass_id=$passId;changes=@($changes);proposal=$jsonPath;report=$reportPath;over_cap=$overCap;conflicts=$conflicts;validation_errors=$errors}
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

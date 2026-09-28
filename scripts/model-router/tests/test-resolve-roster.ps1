@@ -39,7 +39,7 @@ try {
     $r.jobs.illustrator.backup = 'claude-opus-5-5'; Assert-True ((Get-RosterErrors $r) -eq 'ROSTER_ILLUSTRATOR_BACKUP: must be null') 'illustrator null rule'; $r = Copy-Roster
     $r.jobs.coder.first = 'gpt-6-astra'; Assert-True ((Get-RosterErrors $r) -eq 'ROSTER_FRONTIER: coder/first') 'frontier rule'; $r = Copy-Roster
     $r.jobs.fast.first_vendor = 'claude'; Assert-True ((Get-RosterErrors $r) -eq 'ROSTER_MODEL_VENDOR: fast/first') 'model vendor rule'; $r = Copy-Roster
-    $r.jobs.fast.backup = 'claude-sonnet-5'; $r.jobs.writer.backup = 'gpt-5.6-sol'; Assert-True ((Get-RosterErrors $r) -eq 'ROSTER_MODEL_COUNT: maximum 5 distinct models') 'five distinct models rule'
+    $r.jobs.fast.backup = 'claude-sonnet-5'; $r.jobs.writer.backup = 'gpt-5.6-sol'; Assert-True ((Get-RosterErrors $r) -eq 'ROSTER_MODEL_CAP: maximum 5 distinct models') 'five distinct models rule'
     Assert-True ((Read-RouterRoster).source -eq 'default') 'default source when state missing'
     $r = Copy-Roster; $r.approved = $true; $r.approved_at = '2026-09-28T01:00:00Z'; Save-Roster $r
     Assert-True ((Read-RouterRoster).source -eq 'state') 'approved state source'

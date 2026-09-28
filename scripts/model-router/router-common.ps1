@@ -93,7 +93,7 @@ function Test-RouterRoster {
         }
     }
     foreach ($name in $Roster.jobs.PSObject.Properties.Name) { if ($name -notin @(Get-RouterJobs)) { $errors.Add("ROSTER_JOB_EXTRA: $name") } }
-    if ($models.Count -gt 5) { $errors.Add('ROSTER_MODEL_COUNT: maximum 5 distinct models') }
+    if ($models.Count -gt 5) { $errors.Add('ROSTER_MODEL_CAP: maximum 5 distinct models') }
     return $errors.ToArray()
 }
 
@@ -123,6 +123,14 @@ function Get-RouterModelGeneration {
     if ($Model -match '^claude-(?:opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$') {
         return [pscustomobject]@{ vendor = 'claude'; major = [long]$Matches[1]; minor = $(if ($Matches[2]) { [long]$Matches[2] } else { [long]0 }) }
     }
+    return $null
+}
+
+function Get-RouterPriceKey {
+    param([string]$Model, [object]$Models)
+    if (-not $Model -or -not $Models) { return $null }
+    if ($Models.PSObject.Properties[$Model]) { return $Model }
+    if ($Model -match '^(.*)-\d{8}$' -and $Models.PSObject.Properties[$Matches[1]]) { return $Matches[1] }
     return $null
 }
 
