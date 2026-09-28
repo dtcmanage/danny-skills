@@ -220,6 +220,7 @@
   "scripts/model-router/check-frontier-spend.ps1": {"consumers": ["dt-build"], "summary_token": "model router"},
   "scripts/model-router/check-new-models.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/cost_report.py": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/approve-router-table.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/cost-report.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/register-router-schedules.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/resolve-model.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},

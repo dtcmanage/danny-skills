@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.15.2
+
+- Model router: research grades must be confirmed by two runs, the current pick keeps its place without evidence, older models need a higher grade, protected work only moves up, and evidence routing waits for approval.
+
 ## 2.15.1
 
 - Model-router research now sends its profile schema inside the prompt, so research runs produce valid profiles.

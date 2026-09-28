@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.2.2 (2026-09-27): Model router: research grades must be confirmed by two runs, the current pick keeps its place without evidence, older models need a higher grade, protected work only moves up, and evidence routing waits for approval.
+
 - 0.2.1 (2026-09-27): Model-router research now sends its profile schema inside the prompt, so research runs produce valid profiles.
 
 - 0.2.0 (2026-09-27): Add model-router advice to image generation output.
