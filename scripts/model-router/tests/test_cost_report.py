@@ -480,6 +480,16 @@ def test_cost_report_refreshes_all_sessions_with_fake_sweep(tmp_path, exit_code)
     env = os.environ.copy()
     env["DT_MODEL_ROUTER_STATE"] = str(tmp_path / "state")
     env["DT_MODEL_ROUTER_USAGE_SWEEP"] = str(sweep)
+    # The Discord-delivery step this milestone adds must never reach a real transport.
+    fake_transport = tmp_path / "fake-transport.ps1"
+    fake_transport.write_text(
+        "param($request)\nif ($request['kind'] -eq 'secret') { return 'fake-secret' }\n"
+        "if ($request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '123' } } }\n"
+        "if ($request['uri'] -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm-channel' } }\n"
+        "return [pscustomobject]@{ id = 'fake-message' }\n",
+        encoding="utf-8",
+    )
+    env["DT_MODEL_ROUTER_ALERT_TRANSPORT"] = str(fake_transport)
     state = Path(env["DT_MODEL_ROUTER_STATE"])
     state.mkdir()
     (state / "usage-all-sessions.jsonl").write_text(json.dumps({
@@ -495,6 +505,8 @@ def test_cost_report_refreshes_all_sessions_with_fake_sweep(tmp_path, exit_code)
     assert json.loads(marker.read_text(encoding="utf-8")) == ["--all-sessions", "--quiet"]
     assert ("usage sweep failed" in result.stdout) is bool(exit_code)
     assert (tmp_path / "state" / "cost-reports" / "latest.md").exists()
+    assert (tmp_path / "state" / "cost-reports" / "discord-summary.json").exists()
+    assert "weekly summary sent (discord)" in result.stdout
 
 def test_python_state_writers_create_gitignore(tmp_path, cu):
     for module, sub in ((cr, "a"), (cu, "b")):
@@ -505,3 +517,262 @@ def test_python_state_writers_create_gitignore(tmp_path, cu):
     (keep / ".gitignore").write_text("custom\n", encoding="utf-8")
     cr.ensure_state_gitignore(keep)
     assert (keep / ".gitignore").read_text(encoding="utf-8") == "custom\n"
+
+
+# ---------------------------------------------------------------------------
+# Weekly Discord summary renderer (plain-language DM sent by cost-report.ps1)
+# ---------------------------------------------------------------------------
+
+def _row(host, model, date_et, **tokens):
+    tok = {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}
+    tok.update(tokens)
+    return {"kind": "usage", "host": host, "model": model, "session_id": f"s-{host}-{model}-{date_et}",
+            "date_et": date_et, "calls": 1, "tokens": tok}
+
+
+def test_previous_complete_iso_week_monday_and_midweek():
+    # 2026-09-28 is a Monday (ISO week 40); the last complete week is 39 (Sep 21-27).
+    assert cr.previous_complete_iso_week(date(2026, 9, 28)) == (2026, 39)
+    # A mid-week day in the same ISO week resolves to the same prior complete week.
+    assert cr.previous_complete_iso_week(date(2026, 10, 1)) == (2026, 39)
+
+
+def test_format_week_range_same_and_crossing_month():
+    assert cr.format_week_range(date(2026, 9, 21), date(2026, 9, 27)) == "Sep 21-27"
+    assert cr.format_week_range(date(2026, 9, 28), date(2026, 10, 4)) == "Sep 28-Oct 4"
+
+
+def test_friendly_model_name_map_and_generic_fallback():
+    assert cr.friendly_model_name("gpt-6-sol") == "GPT-6 Sol"
+    assert cr.friendly_model_name("gpt-6-luna") == "GPT-6 Luna"
+    assert cr.friendly_model_name("gpt-image-2") == "gpt-image-2"
+    assert cr.friendly_model_name("claude-opus-5-5") == "Opus 5.5"
+    assert cr.friendly_model_name("claude-haiku-4-5-20251001") == "Haiku 4.5"
+    # Unmapped claude-* id: strip vendor prefix, strip trailing date, "name-N-M" -> "Name N.M".
+    assert cr.friendly_model_name("claude-sonnet-5-20260101") == "Sonnet 5"
+    assert cr.friendly_model_name("claude-mythos-5-1") == "Mythos 5.1"
+    # Unmapped, non-claude id: raw fallback, never guessed.
+    assert cr.friendly_model_name("gpt-9-nova") == "gpt-9-nova"
+    assert cr.friendly_model_name(None) == ""
+
+
+def _synth_report(week=(2026, 39), claude_sub=46.0, claude_api=0.0, codex_sub=46.0, codex_api=0.0,
+                   blocked_minutes=0.0, work_by_model=None, frontier_ids=None, frontier_cost=0.0,
+                   include_codex=True, include_claude=True):
+    vendors = {}
+    if include_claude:
+        vendors["claude"] = cr.VendorWeek(host="claude", label="Claude", subscription_usd=claude_sub,
+                                           api_equivalent_usd=claude_api, blocked_minutes=None)
+    if include_codex:
+        vendors["codex"] = cr.VendorWeek(host="codex", label="Codex", subscription_usd=codex_sub,
+                                          api_equivalent_usd=codex_api, blocked_minutes=blocked_minutes)
+    return {
+        "iso_year": week[0], "iso_week": week[1], "label": cr.week_label(*week),
+        "vendors": vendors, "work_by_model": work_by_model or [],
+        "frontier": {"api_equivalent_usd": frontier_cost, "sessions": 0, "model_ids": frontier_ids or []},
+    }
+
+
+def test_headline_math_subscription_ahead_and_api_cheaper():
+    report = _synth_report(claude_api=100.0, claude_sub=46.0, codex_api=48.0, codex_sub=46.0)
+    assert cr.render_headline(report) == "Your plans covered $148 of work for $92 in subscription cost."
+    cheaper = _synth_report(claude_api=10.0, claude_sub=46.0, codex_api=10.0, codex_sub=46.0)
+    assert cr.render_headline(cheaper) == (
+        "Your plans covered $20 of work for $92 in subscription cost "
+        "(API pricing would have been cheaper this week)."
+    )
+
+
+def test_vendor_lines_omit_absent_vendor():
+    report = _synth_report(claude_api=100.0, include_codex=False)
+    lines = cr.render_vendor_lines(report["vendors"])
+    assert lines == ["- Claude: $100 of work (at API prices) on a $46/wk plan"]
+
+
+def test_top3_ordering_and_friendly_names_skips_unpriced():
+    work = [
+        {"model": "gpt-6-sol", "api_equivalent_usd": 41.0, "share_pct": 41.0},
+        {"model": "claude-opus-5-5", "api_equivalent_usd": 38.0, "share_pct": 38.0},
+        {"model": "gpt-6-luna", "api_equivalent_usd": 12.0, "share_pct": 12.0},
+        {"model": "claude-sonnet-5", "api_equivalent_usd": 9.0, "share_pct": 9.0},
+        {"model": "unset", "api_equivalent_usd": None, "share_pct": None},
+    ]
+    top = cr.top_models(work)
+    assert [m["model"] for m in top] == ["gpt-6-sol", "claude-opus-5-5", "gpt-6-luna"]
+    most_used = " - ".join(f"{cr.friendly_model_name(m['model'])} {round(m['share_pct'])}%" for m in top)
+    assert most_used == "GPT-6 Sol 41% - Opus 5.5 38% - GPT-6 Luna 12%"
+
+
+def test_frontier_line_used_and_not_used():
+    frontier_models = {"claude_patterns": ["claude-fable-*"], "codex_models": ["gpt-6-astra"]}
+    not_used = _synth_report()
+    assert cr.render_frontier_line(not_used, frontier_models) == "Frontier models (Fable/Astra): not used"
+    used = _synth_report(frontier_ids=["gpt-6-astra"], frontier_cost=31.0)
+    assert cr.render_frontier_line(used, frontier_models) == (
+        "Frontier models (Fable/Astra): used - GPT-6 Astra, $31 of work at API prices"
+    )
+
+
+def test_codex_limit_line_none_zero_and_positive():
+    assert cr.render_codex_limit_line(_synth_report(blocked_minutes=None)["vendors"]) == "Codex usage limit: no data"
+    assert cr.render_codex_limit_line(_synth_report(blocked_minutes=0.0)["vendors"]) == "Codex usage limit: never hit"
+    assert cr.render_codex_limit_line(_synth_report(blocked_minutes=125.0)["vendors"]) == (
+        "Codex usage limit: maxed out for about 2h 5m"
+    )
+    assert cr.render_codex_limit_line(_synth_report(blocked_minutes=40.0)["vendors"]) == (
+        "Codex usage limit: maxed out for about 40m"
+    )
+    assert cr.render_codex_limit_line(_synth_report(include_codex=False)["vendors"]) is None
+
+
+# --- Needs-you: pending roster proposal, drift marks, corruption tolerance ---
+
+def _write_json(path: Path, obj) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj), encoding="utf-8")
+
+
+def test_needs_you_pending_proposal_when_never_approved(tmp_path):
+    state = tmp_path / "state"
+    proposal_path = state / "roster-proposals" / "seed.json"
+    _write_json(proposal_path, {"jobs": {"fast": {"first": "gpt-6-luna", "backup": "claude-haiku-4-5-20251001"}}})
+    _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(proposal_path)})
+    lines = cr.compute_needs_you_lines(state)
+    assert len(lines) == 1
+    assert "a proposed change to the model list is waiting for your OK" in lines[0]
+    assert "-Roster -Show" in lines[0]
+
+
+def test_needs_you_nothing_when_proposal_fully_approved(tmp_path):
+    state = tmp_path / "state"
+    jobs = {
+        "fast": {"first": "gpt-6-luna", "backup": "claude-haiku-4-5-20251001"},
+        "coder": {"first": "gpt-6-sol", "backup": "claude-opus-5-5"},
+        "deep-thinker": {"first": "claude-opus-5-5", "backup": "gpt-6-sol"},
+        "writer": {"first": "claude-opus-5-5", "backup": "gpt-6-sol"},
+        "illustrator": {"first": "gpt-image-2", "backup": None},
+    }
+    proposal_path = state / "roster-proposals" / "seed.json"
+    _write_json(proposal_path, {"jobs": jobs, "approved": False})
+    _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(proposal_path)})
+    _write_json(state / "roster.json", {"approved": True, "jobs": jobs})
+    assert cr.compute_needs_you_lines(state) == []
+
+
+def test_needs_you_pending_when_partial_jobs_approval_leaves_a_mismatch(tmp_path):
+    state = tmp_path / "state"
+    proposed_jobs = {
+        "fast": {"first": "gpt-6-luna", "backup": "claude-sonnet-5"},
+        "coder": {"first": "gpt-6-sol", "backup": "claude-opus-5-5"},
+    }
+    approved_jobs = {  # only "coder" was approved into state; "fast" still differs
+        "fast": {"first": "gpt-6-luna", "backup": "claude-haiku-4-5-20251001"},
+        "coder": {"first": "gpt-6-sol", "backup": "claude-opus-5-5"},
+    }
+    proposal_path = state / "roster-proposals" / "seed.json"
+    _write_json(proposal_path, {"jobs": proposed_jobs})
+    _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(proposal_path)})
+    _write_json(state / "roster.json", {"approved": True, "jobs": approved_jobs})
+    lines = cr.compute_needs_you_lines(state)
+    assert len(lines) == 1
+    assert "model list is waiting" in lines[0]
+
+
+def test_needs_you_active_drift_mark_names_job_and_backup(tmp_path):
+    state = tmp_path / "state"
+    _write_json(state / "drift-marks.json", [{"model": "gpt-6-sol", "job": "coder", "marked_at": "2026-09-28T00:00:00Z"}])
+    _write_json(state / "roster.json", {"approved": True, "jobs": {
+        "coder": {"first": "gpt-6-sol", "backup": "claude-opus-5-5"},
+    }})
+    lines = cr.compute_needs_you_lines(state)
+    assert len(lines) == 1
+    assert "the coder job is on its backup (Opus 5.5) because GPT-6 Sol has been underperforming" in lines[0]
+    assert "-DeclineDrift -Job coder" in lines[0]
+
+
+def test_needs_you_declined_drift_mark_is_excluded(tmp_path):
+    state = tmp_path / "state"
+    _write_json(state / "drift-marks.json", [{"model": "gpt-6-sol", "job": "coder", "marked_at": "2026-09-28T00:00:00Z"}])
+    _write_json(state / "drift-declines.json", [{"model": "gpt-6-sol", "job": "coder", "declined_at": "2026-09-28T00:00:00Z"}])
+    _write_json(state / "roster.json", {"approved": True, "jobs": {
+        "coder": {"first": "gpt-6-sol", "backup": "claude-opus-5-5"},
+    }})
+    assert cr.compute_needs_you_lines(state) == []
+
+
+def test_needs_you_tolerates_corrupt_state_files(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    (state / "roster-proposals").mkdir()
+    (state / "roster-proposals" / "latest.json").write_text("{not json", encoding="utf-8")
+    (state / "drift-marks.json").write_text("[{broken", encoding="utf-8")
+    (state / "roster.json").write_text("not even json", encoding="utf-8")
+    assert cr.compute_needs_you_lines(state) == []
+
+
+def test_needs_you_multiple_findings_produce_a_bullet_each(tmp_path):
+    state = tmp_path / "state"
+    proposal_path = state / "roster-proposals" / "seed.json"
+    _write_json(proposal_path, {"jobs": {"fast": {"first": "claude-sonnet-5", "backup": "gpt-6-luna"}}})
+    _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(proposal_path)})
+    _write_json(state / "drift-marks.json", [{"model": "gpt-6-sol", "job": "coder", "marked_at": "2026-09-28T00:00:00Z"}])
+    _write_json(state / "roster.json", {"approved": True, "jobs": {
+        "fast": {"first": "gpt-6-luna", "backup": "claude-haiku-4-5-20251001"},
+        "coder": {"first": "gpt-6-sol", "backup": "claude-opus-5-5"},
+    }})
+    text = cr.render_needs_you(cr.compute_needs_you_lines(state))
+    assert text.startswith("Needs you:\n- ")
+    assert text.count("\n- ") == 2
+
+
+# --- End-to-end render_discord_summary: no-data week, length cap, JSON file ---
+
+def test_render_discord_summary_no_data_week_still_includes_needs_you(tmp_path):
+    state = tmp_path / "state"
+    proposal_path = state / "roster-proposals" / "seed.json"
+    _write_json(proposal_path, {"jobs": {"fast": {"first": "gpt-6-luna", "backup": "claude-haiku-4-5-20251001"}}})
+    _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(proposal_path)})
+    label, message = cr.render_discord_summary([], date(2026, 9, 28), state)
+    assert label == "2026-W39"
+    assert message.splitlines()[0] == "**Model router - week of Sep 21-27**"
+    assert "No model usage was recorded last week." in message
+    assert "Needs you:" in message and "waiting for your OK" in message
+    assert "Full report:" not in message
+
+
+def test_render_discord_summary_message_capped_at_1500_chars(tmp_path):
+    state = tmp_path / "state"
+    marks = [{"model": "gpt-6-sol", "job": job, "marked_at": "2026-09-28T00:00:00Z"} for job in
+              ("fast", "coder", "deep-thinker", "writer")]
+    _write_json(state / "drift-marks.json", marks)
+    roster_jobs = {job: {"first": "gpt-6-sol", "backup": "claude-opus-5-5"} for job in
+                   ("fast", "coder", "deep-thinker", "writer")}
+    _write_json(state / "roster.json", {"approved": True, "jobs": roster_jobs})
+    padding_proposal = state / "roster-proposals" / "seed.json"
+    _write_json(padding_proposal, {"jobs": {"illustrator": {"first": "gpt-image-2", "backup": None}}})
+    _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(padding_proposal)})
+    label, message = cr.render_discord_summary([], date(2026, 9, 28), state)
+    assert len(message) <= 1500
+
+
+def test_cost_report_main_writes_discord_summary_json(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    usage_path = state / "usage-all-sessions.jsonl"
+    monday, _ = cr.week_bounds_et(2026, 39)
+    usage_path.write_text(
+        json.dumps(_row("claude", "claude-opus-5-5", monday.isoformat(), input=1_000_000, output=1_000_000)) + "\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["DT_MODEL_ROUTER_STATE"] = str(state)
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts/model-router/cost_report.py"), "--state-dir", str(state)],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    summary_path = state / "cost-reports" / "discord-summary.json"
+    assert summary_path.is_file()
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["key"].startswith("weekly-report:")
+    assert isinstance(summary["message"], str) and summary["message"]

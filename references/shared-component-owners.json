@@ -241,6 +241,7 @@
   "scripts/model-router/tests/test-build-router-table.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-canary.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-check-new-models.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test-cost-report.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-consumer-wiring.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/codex-sessions/2026/09/27/rollout-old.jsonl": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/codex-sessions/2026/09/28/rollout-usage.jsonl": {"consumers": [], "summary_token": "model router"},

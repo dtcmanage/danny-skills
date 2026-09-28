@@ -36,6 +36,24 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($Prices)) { $pyArgs += @('--prices', $Prices) }
     & $python @pyArgs
     if ($LASTEXITCODE -ne 0) { throw "cost_report.py exited $LASTEXITCODE" }
+
+    try {
+        $priorState2 = $env:DT_MODEL_ROUTER_STATE
+        try {
+            if (-not [string]::IsNullOrWhiteSpace($StateDir)) { $env:DT_MODEL_ROUTER_STATE = $StateDir }
+            . (Join-Path $PSScriptRoot 'router-common.ps1')
+            $resolvedState = Get-RouterStateDir
+        } finally { $env:DT_MODEL_ROUTER_STATE = $priorState2 }
+        $discordPath = Join-Path $resolvedState 'cost-reports/discord-summary.json'
+        if (Test-Path -LiteralPath $discordPath) {
+            $summary = Get-Content -LiteralPath $discordPath -Raw | ConvertFrom-Json
+            . (Join-Path $PSScriptRoot 'send-router-alert.ps1')
+            $result = Send-RouterAlert -Key ([string]$summary.key) -Message ([string]$summary.message) -Severity info
+            if ($result.deduped) { Write-Output "DT_MODEL_ROUTER_COST_REPORT: weekly summary already sent" }
+            elseif ($result.sent) { Write-Output "DT_MODEL_ROUTER_COST_REPORT: weekly summary sent (discord)" }
+            else { Write-Output "DT_MODEL_ROUTER_COST_REPORT: weekly summary delivery failed" }
+        }
+    } catch { Write-Output "DT_MODEL_ROUTER_COST_REPORT: weekly summary delivery failed ($($_.Exception.Message))" }
 }
 catch {
     Write-Output "DT_MODEL_ROUTER_COST_REPORT: skipped ($($_.Exception.Message))"

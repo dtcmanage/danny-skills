@@ -18,6 +18,7 @@ from fnmatch import fnmatchcase
 import html
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -513,6 +514,287 @@ p{{margin:6px 0}} ul{{margin:4px 0 8px 18px;padding:0}}
 </body></html>"""
 
 
+FRIENDLY_MODEL_NAMES = {
+    "gpt-6-sol": "GPT-6 Sol",
+    "gpt-6-luna": "GPT-6 Luna",
+    "gpt-6-astra": "GPT-6 Astra",
+    "gpt-image-2": "gpt-image-2",
+    "claude-opus-5-5": "Opus 5.5",
+    "claude-sonnet-5": "Sonnet 5",
+    "claude-haiku-4-5-20251001": "Haiku 4.5",
+    "claude-fable-5-1": "Fable 5.1",
+}
+
+ROUTER_JOBS = ("fast", "coder", "deep-thinker", "writer", "illustrator")
+DEFAULT_ROSTER_PATH = REPO_ROOT / "references" / "model-router" / "default-roster.json"
+
+
+def friendly_model_name(model_id: str | None) -> str:
+    """Friendly display name for a router model id. Explicit map first, then a small
+    generic transform for unmapped claude-* ids (strip the vendor prefix and a trailing
+    -YYYYMMDD snapshot date, turn a trailing "name-N-M" version pair into "Name N.M"),
+    otherwise the raw id is returned unchanged -- never guessed."""
+    if not model_id:
+        return ""
+    if model_id in FRIENDLY_MODEL_NAMES:
+        return FRIENDLY_MODEL_NAMES[model_id]
+    if not model_id.startswith("claude-"):
+        return model_id
+    name = re.sub(r"-\d{8}$", "", model_id[len("claude-"):])
+    m = re.match(r"^([a-zA-Z]+)-(\d+)-(\d+)$", name)
+    if m:
+        return f"{m.group(1).capitalize()} {m.group(2)}.{m.group(3)}"
+    m2 = re.match(r"^([a-zA-Z]+)-(\d+)$", name)
+    if m2:
+        return f"{m2.group(1).capitalize()} {m2.group(2)}"
+    return name.replace("-", " ").title()
+
+
+def _frontier_nickname_from_claude_pattern(pattern: str) -> str:
+    base = pattern
+    if base.startswith("claude-"):
+        base = base[len("claude-"):]
+    base = base.rstrip("*").rstrip("-")
+    m = re.match(r"^([a-zA-Z]+)", base)
+    return m.group(1).capitalize() if m else base
+
+
+def _frontier_nickname_from_codex_model(model_id: str) -> str:
+    friendly = friendly_model_name(model_id)
+    parts = friendly.split()
+    return parts[-1] if parts else friendly
+
+
+def format_week_range(monday: date, sunday: date) -> str:
+    if monday.month == sunday.month:
+        return f"{monday.strftime('%b')} {monday.day}-{sunday.day}"
+    return f"{monday.strftime('%b')} {monday.day}-{sunday.strftime('%b')} {sunday.day}"
+
+
+def previous_complete_iso_week(today_et: date) -> tuple[int, int]:
+    """The most recent complete ISO week (Mon-Sun, ET), strictly before the week
+    containing today_et."""
+    iso_year, iso_week, iso_weekday = today_et.isocalendar()
+    monday_this_week = today_et - timedelta(days=iso_weekday - 1)
+    prev_monday = monday_this_week - timedelta(days=7)
+    y, w, _ = prev_monday.isocalendar()
+    return y, w
+
+
+def _load_json_object(path: Path):
+    try:
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _live_roster_jobs(state_dir: Path) -> dict:
+    roster_path = state_dir / "roster.json"
+    candidate = _load_json_object(roster_path)
+    if isinstance(candidate, dict) and isinstance(candidate.get("jobs"), dict):
+        return candidate["jobs"]
+    default = _load_json_object(DEFAULT_ROSTER_PATH)
+    if isinstance(default, dict) and isinstance(default.get("jobs"), dict):
+        return default["jobs"]
+    return {}
+
+
+def compute_pending_roster_proposal(state_dir: Path) -> bool:
+    """Mirrors approve-router-table.ps1 -Roster: a proposal file's own `approved` field is
+    never mutated by -Approve (only <state>/roster.json is), so pending-ness is decided by
+    comparing the proposal's job picks against the live, approved roster -- covering a
+    partial -Jobs approval, where only some jobs match."""
+    try:
+        latest = _load_json_object(state_dir / "roster-proposals" / "latest.json")
+        if not isinstance(latest, dict) or not latest.get("proposal"):
+            return False
+        proposal = _load_json_object(Path(str(latest["proposal"])))
+        if not isinstance(proposal, dict):
+            return False
+        roster_path = state_dir / "roster.json"
+        live = _load_json_object(roster_path)
+        if not isinstance(live, dict) or live.get("approved") is not True:
+            # Never approved (or invalid) live state: any proposal on file is pending.
+            return True
+        proposal_jobs = proposal.get("jobs") or {}
+        live_jobs = live.get("jobs") or {}
+        for job in ROUTER_JOBS:
+            p = proposal_jobs.get(job) or {}
+            entry = live_jobs.get(job) or {}
+            if p.get("first") != entry.get("first") or p.get("backup") != entry.get("backup"):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def compute_active_drift_marks(state_dir: Path) -> list[dict]:
+    """Active drift marks: entries in drift-marks.json not matched by a drift-declines.json
+    entry for the same job/model (approve-router-table.ps1 -DeclineDrift normally removes the
+    mark outright; the decline-list cross-check is a defensive extra)."""
+    try:
+        marks = _load_json_object(state_dir / "drift-marks.json")
+        if not isinstance(marks, list):
+            return []
+        declines = _load_json_object(state_dir / "drift-declines.json")
+        declined_pairs = {
+            (d.get("job"), d.get("model")) for d in declines if isinstance(d, dict)
+        } if isinstance(declines, list) else set()
+        active = []
+        for m in marks:
+            if not isinstance(m, dict):
+                continue
+            job = m.get("job")
+            model = m.get("model")
+            if not job or not model:
+                continue
+            if (job, model) in declined_pairs:
+                continue
+            active.append(m)
+        return active
+    except Exception:
+        return []
+
+
+def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> list[str]:
+    lines: list[str] = []
+    approve_script = repo_root / "scripts" / "model-router" / "approve-router-table.ps1"
+    if compute_pending_roster_proposal(state_dir):
+        cmd = f'pwsh -NoProfile -File "{approve_script}" -Roster -Show'
+        lines.append(f"a proposed change to the model list is waiting for your OK. Review it: `{cmd}`")
+    jobs = _live_roster_jobs(state_dir)
+    for mark in compute_active_drift_marks(state_dir):
+        job = mark.get("job")
+        first = mark.get("model")
+        backup = (jobs.get(job) or {}).get("backup")
+        if not backup:
+            continue
+        cmd = f'pwsh -NoProfile -File "{approve_script}" -Roster -DeclineDrift -Job {job}'
+        lines.append(
+            f"the {job} job is on its backup ({friendly_model_name(backup)}) because "
+            f"{friendly_model_name(first)} has been underperforming. Decide: `{cmd}`"
+        )
+    return lines
+
+
+def render_needs_you(lines: list[str]) -> str:
+    if not lines:
+        return "Needs you: nothing"
+    return "\n".join(["Needs you:"] + [f"- {line}" for line in lines])
+
+
+def top_models(work_by_model: list[dict], n: int = 3) -> list[dict]:
+    priced = [
+        m for m in work_by_model
+        if m.get("api_equivalent_usd") is not None and m.get("model") not in (None, "unset")
+    ]
+    return sorted(priced, key=lambda m: -(m.get("share_pct") or 0))[:n]
+
+
+def render_headline(report: dict) -> str:
+    total_api = sum(vw.api_equivalent_usd for vw in report["vendors"].values())
+    total_sub = sum(vw.subscription_usd for vw in report["vendors"].values())
+    line = f"Your plans covered ${round(total_api)} of work for ${round(total_sub)} in subscription cost"
+    if total_api < total_sub:
+        line += " (API pricing would have been cheaper this week)"
+    return line + "."
+
+
+def render_vendor_lines(vendors: dict) -> list[str]:
+    labels = {"claude": "Claude", "codex": "Codex"}
+    lines = []
+    for host in ("claude", "codex"):
+        vw = vendors.get(host)
+        if not vw:
+            continue
+        lines.append(
+            f"- {labels[host]}: ${round(vw.api_equivalent_usd)} of work (at API prices) "
+            f"on a ${round(vw.subscription_usd)}/wk plan"
+        )
+    return lines
+
+
+def render_codex_limit_line(vendors: dict) -> str | None:
+    vw = vendors.get("codex")
+    if not vw:
+        return None
+    if vw.blocked_minutes is None:
+        return "Codex usage limit: no data"
+    if vw.blocked_minutes <= 0:
+        return "Codex usage limit: never hit"
+    minutes = int(round(vw.blocked_minutes))
+    hours, mins = divmod(minutes, 60)
+    if hours > 0:
+        duration = f"{hours}h {mins}m" if mins else f"{hours}h"
+    else:
+        duration = f"{mins}m"
+    return f"Codex usage limit: maxed out for about {duration}"
+
+
+def render_frontier_line(report: dict, frontier_models: dict) -> str:
+    nicknames: list[str] = []
+    for pattern in frontier_models.get("claude_patterns", []):
+        nick = _frontier_nickname_from_claude_pattern(pattern)
+        if nick and nick not in nicknames:
+            nicknames.append(nick)
+    for model in frontier_models.get("codex_models", []):
+        nick = _frontier_nickname_from_codex_model(model)
+        if nick and nick not in nicknames:
+            nicknames.append(nick)
+    label = f"Frontier models ({'/'.join(nicknames)})" if nicknames else "Frontier models"
+    frontier = report["frontier"]
+    if frontier["model_ids"]:
+        names = ", ".join(friendly_model_name(m) for m in frontier["model_ids"])
+        return f"{label}: used - {names}, ${round(frontier['api_equivalent_usd'])} of work at API prices"
+    return f"{label}: not used"
+
+
+def _cap_message(message: str, limit: int = 1500) -> str:
+    if len(message) <= limit:
+        return message
+    return message[: limit - 1].rstrip() + "…"
+
+
+def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
+                            repo_root: Path = REPO_ROOT,
+                            frontier_path: Path = FRONTIER_MODELS_PATH) -> tuple[str, str]:
+    """Build the weekly plain-language Discord DM for the last complete ET week.
+    Returns (week_label, message). Never touches state files that must not exist yet;
+    read-only against roster/proposal/drift state, all of which may be missing or corrupt."""
+    iso_year, iso_week = previous_complete_iso_week(today_et)
+    label = week_label(iso_year, iso_week)
+    monday, sunday = week_bounds_et(iso_year, iso_week)
+    header = f"**Model router - week of {format_week_range(monday, sunday)}**"
+    needs_you_text = render_needs_you(compute_needs_you_lines(state_dir, repo_root))
+
+    report = next(
+        (r for r in reports if (r["iso_year"], r["iso_week"]) == (iso_year, iso_week)), None
+    )
+    if report is None:
+        message = "\n".join([header, "No model usage was recorded last week.", needs_you_text])
+        return label, _cap_message(message)
+
+    frontier_models = json.loads(frontier_path.read_text(encoding="utf-8"))
+    lines = [header, render_headline(report)]
+    lines.extend(render_vendor_lines(report["vendors"]))
+    top = top_models(report["work_by_model"])
+    if top:
+        most_used = " - ".join(
+            f"{friendly_model_name(m['model'])} {round(m['share_pct'])}%" for m in top
+        )
+        lines.append(f"Most used: {most_used}")
+    lines.append(render_frontier_line(report, frontier_models))
+    codex_line = render_codex_limit_line(report["vendors"])
+    if codex_line:
+        lines.append(codex_line)
+    lines.append(needs_you_text)
+    html_path = state_dir / "cost-reports" / f"weekly-{label}.html"
+    lines.append(f"Full report: `{html_path}`")
+    return label, _cap_message("\n".join(lines))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=None)
@@ -530,27 +812,33 @@ def main() -> None:
 
     if not reports:
         print("DT_MODEL_ROUTER_COST_REPORT: no usage data found; nothing written.")
-        return
+    else:
+        latest_md = None
+        for report in sorted(reports, key=lambda r: (r["iso_year"], r["iso_week"])):
+            md = render_markdown(report)
+            out_html = render_html(report)
+            (out_dir / f"weekly-{report['label']}.md").write_text(md, encoding="utf-8")
+            (out_dir / f"weekly-{report['label']}.html").write_text(out_html, encoding="utf-8")
+            latest_md = md
+        if latest_md is not None:
+            (out_dir / "latest.md").write_text(latest_md, encoding="utf-8")
 
-    latest_md = None
-    for report in sorted(reports, key=lambda r: (r["iso_year"], r["iso_week"])):
-        md = render_markdown(report)
-        out_html = render_html(report)
-        (out_dir / f"weekly-{report['label']}.md").write_text(md, encoding="utf-8")
-        (out_dir / f"weekly-{report['label']}.html").write_text(out_html, encoding="utf-8")
-        latest_md = md
-    if latest_md is not None:
-        (out_dir / "latest.md").write_text(latest_md, encoding="utf-8")
+        last = reports[-1]
+        lines = [f"DT_MODEL_ROUTER_COST_REPORT: {len(reports)} week(s) written; latest {last['label']}:"]
+        for host in ("claude", "codex"):
+            vw = last["vendors"].get(host)
+            if vw:
+                lines.append(f"  {vw.label}: subscription {fmt_usd(vw.subscription_usd)} vs "
+                             f"API-equivalent {fmt_usd(vw.api_equivalent_usd)} "
+                             f"({len(vw.dates_seen)} of {len(vw.dates_seen) + len(vw.gap_dates)} ET days covered)")
+        print("\n".join(lines))
 
-    last = reports[-1]
-    lines = [f"DT_MODEL_ROUTER_COST_REPORT: {len(reports)} week(s) written; latest {last['label']}:"]
-    for host in ("claude", "codex"):
-        vw = last["vendors"].get(host)
-        if vw:
-            lines.append(f"  {vw.label}: subscription {fmt_usd(vw.subscription_usd)} vs "
-                         f"API-equivalent {fmt_usd(vw.api_equivalent_usd)} "
-                         f"({len(vw.dates_seen)} of {len(vw.dates_seen) + len(vw.gap_dates)} ET days covered)")
-    print("\n".join(lines))
+    label, message = render_discord_summary(reports, datetime.now(tz=ET_ZONE).date(), state_dir)
+    discord_path = out_dir / "discord-summary.json"
+    discord_path.write_text(
+        json.dumps({"key": f"weekly-report:{label}", "message": message}, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":
