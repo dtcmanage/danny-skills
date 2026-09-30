@@ -48,7 +48,7 @@ try {
     Assert-True ($first.results.Count -eq 3 -and $script:invocations -eq 4 -and @($first.results | Where-Object { -not $_.pass }).Count -eq 0) 'three graded runs per model-task plus pelican'
     $fenced = { param($model,$lane,$task,$prompt,$run) if ($task -eq 'pelican') { return "``````svg`n<svg/>`n``````" }; return "``````python`n" + [IO.File]::ReadAllText((Join-Path $taskRoot "$task/known-good.txt")) + "`n``````" }
     $fencedRun = Invoke-RouterCanary -Models @('claude-haiku-4-5-20251001') -Invoker $fenced -Now ([datetime]'2026-09-27T10:00:30Z')
-    Assert-True (@($fencedRun.results | Where-Object { -not $_.pass }).Count -eq 0 -and (Get-CanaryAnswerBody -Answer 'plain text') -eq 'plain text' -and (Get-CanaryAnswerBody -Answer "``````python`nx = 1`n``````") -eq 'x = 1') 'markdown-fenced answers are unwrapped before grading; plain answers untouched'
+    Assert-True (@($fencedRun.results | Where-Object { -not $_.pass }).Count -eq 0 -and (Get-CanaryAnswerBody -Answer 'plain text') -eq 'plain text' -and (Get-CanaryAnswerBody -Answer '[16:47:18] plain text') -eq 'plain text' -and (Get-CanaryAnswerBody -Answer "[9:05] ``````python`nx = 1`n``````") -eq 'x = 1' -and (Get-CanaryAnswerBody -Answer "``````python`nx = 1`n``````") -eq 'x = 1') 'markdown-fenced answers are unwrapped before grading; plain answers untouched'
     $rows = @(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ConvertFrom-Json)
     Assert-True (@($rows | Where-Object model -eq 'gpt-6-luna').Count -eq 3 -and @($rows | Where-Object source -ne canary).Count -eq 0) 'outcomes append canary source'
     $sources = Join-Path $env:DT_MODEL_ROUTER_STATE 'sources.json'

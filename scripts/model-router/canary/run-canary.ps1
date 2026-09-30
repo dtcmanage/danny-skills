@@ -140,9 +140,11 @@ function Get-CanaryAnswerBody {
     param([AllowEmptyString()][string]$Answer)
     if ($null -eq $Answer) { return '' }
     $text = $Answer.Trim()
+    # Session hooks on this machine stamp replies with a leading [HH:MM:SS]; it is harness noise, not the answer.
+    $text = [regex]::Replace($text, '\A(?:\[\d{1,2}:\d{2}(?::\d{2})?\][ 	]*)+', '')
     $m = [regex]::Match($text, '(?s)\A```[A-Za-z0-9_+-]*[ \t]*\r?\n(.*?)\r?\n?```\z')
     if ($m.Success) { return $m.Groups[1].Value }
-    return $Answer
+    return $text
 }
 
 function Invoke-RouterCanary {

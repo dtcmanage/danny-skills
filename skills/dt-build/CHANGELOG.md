@@ -2,7 +2,7 @@
 
 ## 2.16.3
 
-- model router: price GPT-6.1 Sol and Sonnet 5.5 so reports and canary stop showing them unpriced; canary finds claude.exe when claude.ps1 is absent and unwraps markdown-fenced answers before grading (Claude models were never canaried, and fenced code failed every code task)
+- model router: price GPT-6.1 Sol and Sonnet 5.5 so reports and canary stop showing them unpriced; canary finds claude.exe when claude.ps1 is absent and strips the session timestamp stamp and markdown fences before grading, and the code-review grader judges the whole answer (Claude models were never canaried, and fenced code failed every code task)
 
 ## 2.16.2
 
