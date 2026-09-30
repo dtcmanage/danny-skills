@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.15.4",
+  "version": "0.15.5",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.15.5 model router: read Claude weekly usage from the OAuth usage endpoint (5-minute cache, token never stored) and move Claude jobs to their Codex backup at 95%, same as Codex; weekly cost report shows the Claude weekly and 5-hour readings (dt-build 2.16.4, dt-review 1.14.7, dt-image-gen 0.2.7, dt-writing-draft 0.1.12, dt-writing-edit 0.2.10)",
       "0.15.4 model router: GPT-6.1 Sol and Sonnet 5.5 priced; canary finds claude.exe when claude.ps1 is absent and strips the session timestamp stamp and markdown fences before grading, and the code-review grader judges the whole answer, so Claude models are canaried for the first time and code tasks grade the code, not the fence (dt-build 2.16.3, dt-review 1.14.6, dt-image-gen 0.2.6, dt-writing-draft 0.1.11, dt-writing-edit 0.2.9)",
       "0.15.3 model router: GPT-6.1 Sol replaces GPT-6 Sol as the Codex Sol rung; research retries transient Codex failures, keeps Codex error output, and checks Artificial Analysis for launch-day scores (dt-build 2.16.2, dt-review 1.14.5, dt-image-gen 0.2.5, dt-writing-draft 0.1.10, dt-writing-edit 0.2.8); version policy: owners entry for the new router test fixture",
       "0.15.2 model router alerts refuse real delivery from tests (pytest or a temp state folder); dt-build 2.16.1, dt-review 1.14.4, dt-image-gen 0.2.4, dt-writing-draft 0.1.9, dt-writing-edit 0.2.7.",

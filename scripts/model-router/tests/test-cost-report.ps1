@@ -38,6 +38,9 @@ throw "Unexpected request: $($request['uri'])"
 '@
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeTransport
 
+$priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
+$env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-credentials.json'
+
 try {
     # A minimal usage row for the most recent complete ET week (Monday of that week) so
     # cost_report.py's own week selection lands on a real, non-empty report.
@@ -74,6 +77,7 @@ try {
 
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
     $env:DT_MODEL_ROUTER_STATE = $priorState
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport
     $env:DT_MODEL_ROUTER_USAGE_SWEEP = $priorSweep

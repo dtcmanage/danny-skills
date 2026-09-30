@@ -19,6 +19,7 @@ Set-Content -LiteralPath $transport -Value 'param($request) return [pscustomobje
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transport
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 $fixtureCodexHome = Enter-RouterTestCodexHome
+$priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 try {
     $codexIso = Test-RouterLimitRefusal -Vendor codex -Text 'ERROR: usage limit reached; try again at 2026-10-01T12:30:00Z.'
     Assert-True ($codexIso.refused -and $codexIso.reset_at_utc -eq '2026-10-01T12:30:00.0000000+00:00') 'Codex usage refusal parses try-again time'
@@ -119,8 +120,94 @@ try {
     $cliReset = [datetimeoffset]::UtcNow.AddMinutes(20).ToString('o')
     $recorded = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../vendor-limits.ps1') -RecordBlock -Vendor codex -ResetAtUtc $cliReset -Reason 'CLI refusal' -Json | ConvertFrom-Json
     Assert-True ($recorded.blocked -and $recorded.reason -eq 'CLI refusal' -and @(Read-RouterJsonArray -Path (Join-Path $state 'vendor-blocks.json') | Where-Object { $_.vendor -eq 'codex' -and $_.reason -eq 'CLI refusal' }).Count -eq 1) 'CLI records refusal with reset time'
+    $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
+    $credentialsPath = Join-Path $temp 'fixture-credentials.json'
+    $cachePath = Join-Path $state 'claude-usage.json'
+    $script:claudeFetchCalls = 0
+    $script:claudePercent = 67.0
+    $script:claudeReset = [datetimeoffset]::UtcNow.AddDays(3).ToString('o')
+    $script:RouterClaudeUsageFetcher = {
+        param($token)
+        $script:claudeFetchCalls++
+        return [pscustomobject]@{
+            seven_day=[pscustomobject]@{ utilization=$script:claudePercent; resets_at=$script:claudeReset }
+            five_hour=[pscustomobject]@{ utilization=8.0; resets_at=[datetimeoffset]::UtcNow.AddHours(2).ToString('o') }
+        }
+    }
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $credentialsPath
+    $credentials = [pscustomobject]@{ claudeAiOauth=[pscustomobject]@{ accessToken='fixture-token-never-cache'; expiresAt=[datetimeoffset]::UtcNow.AddHours(1).ToUnixTimeMilliseconds() } }
+    Write-RouterJsonAtomic -Path $credentialsPath -Value $credentials
+    Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json') -Force
+    $usage = Get-RouterClaudeUsage
+    Assert-True ($usage.used_percent -eq 67 -and $usage.session_percent -eq 8 -and -not (Get-RouterVendorBlocked -Vendor claude)) 'Claude 67 percent and session parse without blocking'
+    Assert-True ((Test-Path -LiteralPath $cachePath) -and [IO.File]::ReadAllText($cachePath) -notmatch 'fixture-token-never-cache') 'Claude cache written without token'
+    Assert-True ($usage.source -eq 'oauth-usage' -and ([datetimeoffset]$usage.resets_at_utc).Offset -eq [timespan]::Zero -and @($usage.PSObject.Properties).Count -eq 6) 'Claude reading has only six fields and UTC reset'
+    $calls = $script:claudeFetchCalls
+    $cached = Get-RouterClaudeUsage
+    Assert-True ($script:claudeFetchCalls -eq $calls) 'fresh Claude cache skips fetch'
+    Assert-True ($cached.used_percent -is [double] -and $cached.resets_at_utc -is [string] -and $cached.observed_at_utc -is [string] -and $cached.session_resets_at_utc -is [string]) 'Claude cache returns double percentages and ISO strings'
+    $usage.observed_at_utc = [datetimeoffset]::UtcNow.AddMinutes(-6).ToString('o')
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    $null = Get-RouterClaudeUsage
+    Assert-True ($script:claudeFetchCalls -eq $calls + 1) 'stale Claude cache fetches'
+    Remove-Item -LiteralPath $cachePath
+    $script:claudePercent = 96
+    Assert-True ((Get-RouterVendorBlocked -Vendor claude)) 'Claude 96 percent blocks'
+    $cli = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../vendor-limits.ps1') -Vendor claude -Json | ConvertFrom-Json
+    Assert-True ($cli.blocked -and $cli.reason -eq 'Claude weekly usage at or above 95%' -and $cli.session_percent -eq 8 -and $cli.resets_at_utc) 'Claude CLI uses cached weekly reading and reason'
+    $usage = Read-RouterJsonObject -Path $cachePath
+    $usage.used_percent = 95
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    Assert-True ((Get-RouterVendorBlocked -Vendor claude)) 'Claude exact 95 percent threshold blocks'
+    $usage.used_percent = 67; $usage.session_percent = 100
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    Assert-True (-not (Get-RouterVendorBlocked -Vendor claude)) 'Claude session limit is informational for routing'
+    Remove-Item -LiteralPath $cachePath
+    $credentials.claudeAiOauth.expiresAt = [datetimeoffset]::UtcNow.AddMinutes(-1).ToUnixTimeMilliseconds()
+    Write-RouterJsonAtomic -Path $credentialsPath -Value $credentials
+    $calls = $script:claudeFetchCalls
+    Assert-True ($null -eq (Get-RouterClaudeUsage) -and $script:claudeFetchCalls -eq $calls) 'expired Claude token never fetches'
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing.json'
+    Assert-True ($null -eq (Get-RouterClaudeUsage)) 'missing Claude credentials return unknown'
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $credentialsPath
+    Set-Content -LiteralPath $credentialsPath -Value '{broken'
+    Assert-True ($null -eq (Get-RouterClaudeUsage)) 'unparsable Claude credentials return unknown'
+    $credentials.claudeAiOauth.expiresAt = [datetimeoffset]::UtcNow.AddHours(1).ToUnixTimeMilliseconds()
+    $credentials.claudeAiOauth.accessToken = ''
+    Write-RouterJsonAtomic -Path $credentialsPath -Value $credentials
+    Assert-True ($null -eq (Get-RouterClaudeUsage) -and $script:claudeFetchCalls -eq $calls) 'absent Claude token never fetches'
+    $credentials.claudeAiOauth.accessToken = 'fixture-token-never-cache'
+    Write-RouterJsonAtomic -Path $credentialsPath -Value $credentials
+    $usage.used_percent = 67
+    $usage.observed_at_utc = [datetimeoffset]::UtcNow.AddMinutes(-6).ToString('o')
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    $script:RouterClaudeUsageFetcher = { param($token) $script:claudeFetchCalls++; throw 'fixture failure' }
+    Assert-True ((Get-RouterClaudeUsage).used_percent -eq 67) 'Claude fetch failure falls back to stale cache'
+    Remove-Item -LiteralPath $cachePath
+    Assert-True ($null -eq (Get-RouterClaudeUsage)) 'Claude fetch failure without cache returns unknown'
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    $script:RouterClaudeUsageFetcher = { param($token) return [pscustomobject]@{ seven_day=[pscustomobject]@{ utilization='invalid'; resets_at='invalid' } } }
+    Assert-True ((Get-RouterClaudeUsage).used_percent -eq 67) 'Claude parse failure falls back to stale cache'
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing.json'
+    Assert-True ($null -eq (Get-RouterClaudeUsage)) 'stale cache does not mask missing credentials'
+    $usage.observed_at_utc = [datetimeoffset]::UtcNow.ToString('o')
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    Assert-True ((Get-RouterClaudeUsage).used_percent -eq 67) 'fresh cache may precede missing credentials'
+    $usage.resets_at_utc = [datetimeoffset]::UtcNow.AddMinutes(-1).ToString('o')
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    Assert-True ((Get-RouterClaudeUsage).used_percent -eq 0) 'past Claude cached reset zeroes weekly usage'
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $credentialsPath
+    Remove-Item -LiteralPath $cachePath
+    $script:RouterClaudeUsageFetcher = { param($token) return [pscustomobject]@{ seven_day=[pscustomobject]@{ utilization=96; resets_at=[datetimeoffset]::UtcNow.AddMinutes(-1).ToString('o') } } }
+    $usage = Get-RouterClaudeUsage
+    Assert-True ($usage.used_percent -eq 0 -and $null -eq $usage.session_percent -and $null -eq $usage.session_resets_at_utc) 'past Claude fetched reset zeroes usage and optional session is null'
+    $usage.used_percent = 67; $usage.resets_at_utc = [datetimeoffset]::UtcNow.AddDays(3).ToString('o')
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    $null = Add-RouterVendorBlock -Vendor claude -Reason 'refusal wins'
+    Assert-True ((Get-RouterVendorBlocked -Vendor claude)) 'Claude refusal still blocks at 67 percent'
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
     Write-Output "SUMMARY: $script:passed passed"
-} finally { Exit-RouterTestCodexHome $fixtureCodexHome;
+} finally { $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials; Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState
     $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorSessions
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport

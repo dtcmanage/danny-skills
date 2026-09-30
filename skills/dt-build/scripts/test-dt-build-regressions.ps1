@@ -2,10 +2,12 @@ param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:passed = 0
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
     if (-not $Condition) { throw "ASSERT_FAIL: $Message" }
+    $script:passed++
 }
 
 function Write-Utf8 {
@@ -23,6 +25,8 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-regressions-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $originalCodexHome = $env:CODEX_HOME
+$originalClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
+$env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $tempRoot 'missing-claude-credentials.json'
 $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
@@ -606,10 +610,12 @@ Write-Envelope $report
     Remove-Item Env:DT_FAKE_CLAUDE_MODE -ErrorAction SilentlyContinue
 
     Write-Output 'PASS: dt-build regression suite'
+    Write-Output "SUMMARY: $script:passed passed"
 }
 finally {
     if ($null -eq $originalCodexHome) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
     else { $env:CODEX_HOME = $originalCodexHome }
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $originalClaudeCredentials
     $env:DT_MODEL_ROUTER_STATE = $originalRouterState
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $originalAlertTransport
     Remove-Item Env:DT_FAKE_CODEX_MODE -ErrorAction SilentlyContinue

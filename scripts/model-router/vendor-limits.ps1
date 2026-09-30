@@ -9,6 +9,75 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 
+if (-not (Get-Variable -Name RouterClaudeUsageFetcher -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:RouterClaudeUsageFetcher = {
+        param([string]$Token)
+        Invoke-RestMethod -Uri 'https://api.anthropic.com/api/oauth/usage' -Method Get -TimeoutSec 5 -Headers @{
+            Authorization="Bearer $Token"; 'anthropic-beta'='oauth-2025-04-20'
+        }
+    }
+}
+
+function Get-RouterClaudeUsage {
+    $cached = $null
+    try {
+        $path = Join-Path (Get-RouterStateDir) 'claude-usage.json'
+        $cached = Read-RouterJsonObject -Path $path
+        $now = [datetimeoffset]::UtcNow
+        if ($null -ne $cached) {
+            try {
+                $cached = [pscustomobject]@{
+                    used_percent=[double]$cached.used_percent
+                    resets_at_utc=([datetimeoffset]$cached.resets_at_utc).ToUniversalTime().ToString('o')
+                    observed_at_utc=([datetimeoffset]$cached.observed_at_utc).ToUniversalTime().ToString('o')
+                    session_percent=$(if ($cached.PSObject.Properties['session_percent'] -and $null -ne $cached.session_percent) { [double]$cached.session_percent } else { $null })
+                    session_resets_at_utc=$(if ($cached.PSObject.Properties['session_resets_at_utc'] -and $null -ne $cached.session_resets_at_utc) { ([datetimeoffset]$cached.session_resets_at_utc).ToUniversalTime().ToString('o') } else { $null })
+                    source='oauth-usage'
+                }
+                if (-not [double]::IsFinite($cached.used_percent)) { throw 'CLAUDE_CACHE_PERCENT' }
+                if ([datetimeoffset]$cached.resets_at_utc -le $now) { $cached.used_percent = 0.0 }
+                if (($now - [datetimeoffset]$cached.observed_at_utc).TotalMinutes -lt 5) { return $cached }
+            } catch { $cached = $null }
+        }
+        $credentialsPath = if ($env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS) { $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS }
+            elseif ($env:CLAUDE_CONFIG_DIR) { Join-Path $env:CLAUDE_CONFIG_DIR '.credentials.json' }
+            else { Join-Path (Join-Path $HOME '.claude') '.credentials.json' }
+        try { $credentials = Read-RouterJsonObject -Path $credentialsPath } catch { return $null }
+        if ($null -eq $credentials -or -not $credentials.PSObject.Properties['claudeAiOauth'] -or $null -eq $credentials.claudeAiOauth) { return $null }
+        $oauth = $credentials.claudeAiOauth
+        if (-not $oauth.PSObject.Properties['accessToken'] -or [string]::IsNullOrWhiteSpace([string]$oauth.accessToken)) { return $null }
+        try {
+            if (-not $oauth.PSObject.Properties['expiresAt'] -or [datetimeoffset]::FromUnixTimeMilliseconds([long]$oauth.expiresAt) -le $now) { return $null }
+        } catch { return $null }
+        $response = & $script:RouterClaudeUsageFetcher ([string]$oauth.accessToken)
+        if ($null -eq $response -or -not $response.PSObject.Properties['seven_day'] -or $null -eq $response.seven_day -or
+            -not $response.seven_day.PSObject.Properties['utilization'] -or $null -eq $response.seven_day.utilization -or
+            -not $response.seven_day.PSObject.Properties['resets_at']) { throw 'CLAUDE_USAGE_SHAPE' }
+        $used = [double]$response.seven_day.utilization
+        if (-not [double]::IsFinite($used)) { throw 'CLAUDE_USAGE_PERCENT' }
+        $reset = ([datetimeoffset]$response.seven_day.resets_at).ToUniversalTime()
+        $session = $null; $sessionReset = $null
+        if ($response.PSObject.Properties['five_hour'] -and $null -ne $response.five_hour) {
+            if ($response.five_hour.PSObject.Properties['utilization'] -and $null -ne $response.five_hour.utilization) {
+                $session = [double]$response.five_hour.utilization
+                if (-not [double]::IsFinite($session)) { throw 'CLAUDE_SESSION_PERCENT' }
+            }
+            if ($response.five_hour.PSObject.Properties['resets_at'] -and $null -ne $response.five_hour.resets_at) {
+                $sessionReset = ([datetimeoffset]$response.five_hour.resets_at).ToUniversalTime().ToString('o')
+            }
+        }
+        $reading = [pscustomobject]@{ used_percent=$used; resets_at_utc=$reset.ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o'); session_percent=$session; session_resets_at_utc=$sessionReset; source='oauth-usage' }
+        Write-RouterJsonAtomic -Path $path -Value $reading
+        if ($reset -le [datetimeoffset]::UtcNow) { $reading.used_percent = 0.0 }
+        return $reading
+    } catch {
+        try {
+            if ($null -ne $cached -and [datetimeoffset]$cached.resets_at_utc -le [datetimeoffset]::UtcNow) { $cached.used_percent = 0.0 }
+            return $cached
+        } catch { return $null }
+    }
+}
+
 function Get-RouterCodexUsage {
     param([string]$SessionsRoot)
     if (-not $SessionsRoot) {
@@ -145,7 +214,7 @@ function Get-RouterVendorBlocked {
             $entry.vendor -eq $Vendor -and [datetimeoffset]$entry.reset_at_utc -gt $now) { return $true }
     }
     if ($Vendor -eq 'codex') { $usage = Get-RouterCodexUsage; return ($null -ne $usage -and $usage.used_percent -ge 95) }
-    return $false
+    $usage = Get-RouterClaudeUsage; return ($null -ne $usage -and $usage.used_percent -ge 95)
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
@@ -155,9 +224,10 @@ if ($MyInvocation.InvocationName -ne '.') {
         if ($PSBoundParameters.ContainsKey('RouterLimitsCliResetAtUtc')) { $recordArgs.ResetAtUtc = $RouterLimitsCliResetAtUtc }
         $null = Add-RouterVendorBlock @recordArgs
     }
-    $usage = if ($RouterLimitsCliVendor -eq 'codex') { Get-RouterCodexUsage } else { $null }
+    $usage = if ($RouterLimitsCliVendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterClaudeUsage }
     $block = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $RouterLimitsCliVendor -and [datetimeoffset]$_.reset_at_utc -gt [datetimeoffset]::UtcNow } | Select-Object -First 1)
     $blocked = ($block.Count -gt 0 -or ($null -ne $usage -and $usage.used_percent -ge 95))
-    $result = [pscustomobject]@{ vendor=$RouterLimitsCliVendor; blocked=$blocked; reason=$(if ($block.Count) { $block[0].reason } elseif ($blocked) { 'Codex usage at or above 95%' } else { $null }); used_percent=$(if ($null -ne $usage) { $usage.used_percent } else { $null }) }
+    $result = [pscustomobject]@{ vendor=$RouterLimitsCliVendor; blocked=$blocked; reason=$(if ($block.Count) { $block[0].reason } elseif ($blocked) { if ($RouterLimitsCliVendor -eq 'claude') { 'Claude weekly usage at or above 95%' } else { 'Codex usage at or above 95%' } } else { $null }); used_percent=$(if ($null -ne $usage) { $usage.used_percent } else { $null }); resets_at_utc=$(if ($null -ne $usage) { $usage.resets_at_utc } else { $null }) }
+    if ($RouterLimitsCliVendor -eq 'claude') { $result | Add-Member -NotePropertyName session_percent -NotePropertyValue $(if ($null -ne $usage) { $usage.session_percent } else { $null }) }
     if ($RouterLimitsCliJson) { $result | ConvertTo-Json -Compress -Depth 5 } else { $result }
 }

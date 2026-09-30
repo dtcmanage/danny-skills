@@ -294,3 +294,15 @@ function Read-RouterTable {
     if ($errors.Count) { throw "SEED_TABLE_INVALID: $($errors -join '; ')" }
     return [pscustomobject]@{ table = $table; source = 'seed'; validation_error = $liveError }
 }
+
+function Write-RouterJsonAtomic {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][object]$Value)
+    $directory = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    $temp = Join-Path $directory ('.' + [IO.Path]::GetFileName($Path) + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        $json = ConvertTo-Json -InputObject $Value -Depth 20
+        [IO.File]::WriteAllText($temp, $json, [Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($temp, $Path, $true)
+    } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}

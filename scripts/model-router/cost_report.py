@@ -246,7 +246,7 @@ class VendorWeek:
     dates_seen: list = field(default_factory=list)
     gap_dates: list = field(default_factory=list)
     coverage_complete: bool = True
-    blocked_minutes: float | None = None  # None = "no limit data available" (Claude)
+    blocked_minutes: float | None = None  # Claude keeps a latest reading, not history.
 
 
 def _dates_between(start: date, end: date) -> list[str]:
@@ -393,6 +393,38 @@ def fmt_tok(n: float) -> str:
     return str(n)
 
 
+def load_claude_usage(state_dir: Path) -> dict | None:
+    reading = _load_json_object(state_dir / "claude-usage.json")
+    if not isinstance(reading, dict):
+        return None
+    try:
+        float(reading["used_percent"])
+        if not parse_ts(reading["observed_at_utc"]) or not parse_ts(reading["resets_at_utc"]):
+            return None
+    except (KeyError, TypeError, ValueError):
+        return None
+    return reading
+
+
+def format_usage_time_et(value: str) -> str:
+    at = parse_ts(value).astimezone(ET_ZONE)
+    return f"{at:%b} {at.day}, {at.hour % 12 or 12}:{at:%M %p} ET"
+
+
+def render_claude_usage(reading: dict | None) -> str:
+    if not reading:
+        return "Claude usage: no Claude usage reading yet"
+    line = (f"Claude weekly usage: {float(reading['used_percent']):g}% of the weekly limit at "
+            f"{format_usage_time_et(reading['observed_at_utc'])}, resets "
+            f"{format_usage_time_et(reading['resets_at_utc'])}")
+    if reading.get("session_percent") is not None:
+        line += f"; 5-hour window {float(reading['session_percent']):g}%"
+    return line
+
+
+CLAUDE_BLOCKED_NOTE = "Claude blocked-minutes are not computed (only the latest reading is kept, not a history)."
+
+
 def render_markdown(report: dict) -> str:
     lines = [f"# Model-router weekly cost report - {report['label']}", ""]
     lines.append("Subscription vs API-equivalent cost of observed usage, priced at published vendor list rates. "
@@ -427,7 +459,8 @@ def render_markdown(report: dict) -> str:
             else:
                 lines.append(f"- Blocked time (quota at 100%): {vw.blocked_minutes:.1f} minutes; no dollar figure is invented for blocked work")
         else:
-            lines.append("- Blocked time (quota at 100%): no limit data available (Claude session logs expose no account-level quota-used field)")
+            lines.append("- " + render_claude_usage(report.get("claude_usage")))
+            lines.append("- " + CLAUDE_BLOCKED_NOTE)
         lines.append("")
     lines.extend(["## Work by model", ""])
     for item in report["work_by_model"]:
@@ -468,7 +501,8 @@ def render_html(report: dict) -> str:
             blocked_html = (f"<p>Blocked time (quota at 100%): {vw.blocked_minutes:.1f} min; no dollar figure invented</p>"
                              if vw.blocked_minutes is not None else "<p>Blocked time: no limit data available</p>")
         else:
-            blocked_html = "<p>Blocked time: no limit data available (no Claude account-level quota field exists)</p>"
+            blocked_html = (f"<p>{html.escape(render_claude_usage(report.get('claude_usage')))}</p>"
+                            f"<p>{CLAUDE_BLOCKED_NOTE}</p>")
         cards.append(f"""<div class="card"><h2>{html.escape(vw.label)}</h2>
 {bar(vw.subscription_usd, 'sub')}<div class='label'>Subscription (this week)</div>
 {bar(vw.api_equivalent_usd, 'api')}<div class='label'>API-equivalent (observed usage)</div>
@@ -789,6 +823,9 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
     codex_line = render_codex_limit_line(report["vendors"])
     if codex_line:
         lines.append(codex_line)
+    if "claude" in report["vendors"]:
+        lines.append(render_claude_usage(report.get("claude_usage")))
+        lines.append(CLAUDE_BLOCKED_NOTE)
     lines.append(needs_you_text)
     html_path = state_dir / "cost-reports" / f"weekly-{label}.html"
     lines.append(f"Full report: `{html_path}`")
@@ -809,6 +846,9 @@ def main() -> None:
     prices = load_prices(args.prices)
     usage_rows, rate_rows = load_usage_all_sessions(usage_path)
     reports = build_weekly_reports(usage_rows, rate_rows, prices)
+    claude_usage = load_claude_usage(state_dir)
+    for report in reports:
+        report["claude_usage"] = claude_usage
 
     if not reports:
         print("DT_MODEL_ROUTER_COST_REPORT: no usage data found; nothing written.")

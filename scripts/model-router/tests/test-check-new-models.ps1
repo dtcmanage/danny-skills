@@ -27,6 +27,9 @@ return [pscustomobject]@{ id = 'fake-message' }
 '@
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transportPath
 $now = [datetime]'2026-09-27T12:00:00Z'
+$priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
+$env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-credentials.json'
+
 try {
     $script:canaryLaunchCount = 0
     $script:RouterCanaryLauncher = { param($exe,$arguments) $script:canaryLaunchCount++ }
@@ -163,6 +166,7 @@ try {
     } finally { $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transportPath }
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport
     $env:DT_MODEL_ROUTER_STATE = $priorState
     Remove-Item -LiteralPath $temp -Recurse -Force

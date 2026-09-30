@@ -573,6 +573,38 @@ def _synth_report(week=(2026, 39), claude_sub=46.0, claude_api=0.0, codex_sub=46
     }
 
 
+@pytest.mark.parametrize("present", [True, False])
+def test_claude_latest_usage_rendered_in_markdown_html_and_discord(tmp_path, present):
+    reading = {
+        "used_percent": 67.0, "session_percent": 8.0,
+        "observed_at_utc": "2026-09-30T21:00:00+00:00",
+        "resets_at_utc": "2026-10-03T18:00:00+00:00", "source": "oauth-usage",
+        "session_resets_at_utc": None,
+    }
+    if present:
+        (tmp_path / "claude-usage.json").write_text(json.dumps(reading), encoding="utf-8")
+    loaded = cr.load_claude_usage(tmp_path)
+    assert loaded == (reading if present else None)
+    report = _synth_report()
+    report["claude_usage"] = loaded
+    expected = ("Claude weekly usage: 67% of the weekly limit at Sep 30, 5:00 PM ET, "
+                "resets Oct 3, 2:00 PM ET; 5-hour window 8%") if present else "no Claude usage reading yet"
+    outputs = [cr.render_markdown(report), cr.render_html(report),
+               cr.render_discord_summary([report], date(2026, 9, 28), tmp_path)[1]]
+    for output in outputs:
+        assert expected in output
+        assert "Claude blocked-minutes are not computed" in output
+        assert "only the latest reading is kept, not a history" in output
+        assert "no Claude account-level quota field" not in output
+
+
+def test_claude_usage_cache_corrupt_or_invalid_is_unknown(tmp_path):
+    cache = tmp_path / "claude-usage.json"
+    for text in ("{broken", "[]", '{}', '{"used_percent": "invalid"}'):
+        cache.write_text(text, encoding="utf-8")
+        assert cr.load_claude_usage(tmp_path) is None
+
+
 def test_headline_math_subscription_ahead_and_api_cheaper():
     report = _synth_report(claude_api=100.0, claude_sub=46.0, codex_api=48.0, codex_sub=46.0)
     assert cr.render_headline(report) == "Your plans covered $148 of work for $92 in subscription cost."
@@ -761,6 +793,10 @@ def test_render_discord_summary_message_capped_at_1500_chars(tmp_path):
 def test_cost_report_main_writes_discord_summary_json(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
+    (state / "claude-usage.json").write_text(json.dumps({
+        "used_percent": 67, "session_percent": 8,
+        "observed_at_utc": "2026-09-30T21:00:00Z", "resets_at_utc": "2026-10-03T18:00:00Z",
+    }), encoding="utf-8")
     usage_path = state / "usage-all-sessions.jsonl"
     monday, _ = cr.week_bounds_et(2026, 39)
     usage_path.write_text(
@@ -779,3 +815,5 @@ def test_cost_report_main_writes_discord_summary_json(tmp_path):
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["key"].startswith("weekly-report:")
     assert isinstance(summary["message"], str) and summary["message"]
+    assert "Claude weekly usage: 67%" in summary["message"]
+    assert "resets Oct 3, 2:00 PM ET" in (state / "cost-reports/latest.md").read_text(encoding="utf-8")

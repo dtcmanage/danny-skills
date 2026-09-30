@@ -19,6 +19,9 @@ $saved = @{}
 foreach ($name in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CODEX_SESSIONS','CODEX_HOME','DT_FAKE_CLAUDE_MODE','DT_FAKE_CODEX_MODE')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $temp = Join-Path $env:TEMP ('model-router-wiring-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
+$priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
+$env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-credentials.json'
+
 try {
     # Isolation: temp router state, fresh catalog-check stamp (no network), a fake alert
     # transport for child processes (no real alert can be sent), and a mock router table.
@@ -361,6 +364,7 @@ $report
 
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
     foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

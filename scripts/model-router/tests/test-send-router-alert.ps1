@@ -14,11 +14,14 @@ $priorState = $env:DT_MODEL_ROUTER_STATE
 $temp = Join-Path $env:TEMP ('model-router-alert-test-' + [guid]::NewGuid().ToString('N'))
 [System.IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
+$priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
+$env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-credentials.json'
+
 try {
     Remove-Variable -Name RouterAlertSecretCache -Scope Script -ErrorAction SilentlyContinue
     $probeError = ''
-    try { $null = Invoke-RouterAlertTransport -Request @{ kind = 'secret'; name = 'router-selftest-nonexistent-secret' } -Deadline ([datetime]::UtcNow.AddSeconds(20)) } catch { $probeError = $_.Exception.Message }
-    Assert-True ($probeError -notmatch 'has not been set') 'real secret path runs under StrictMode without an uninitialized cache error'
+    try { $null = Invoke-RouterAlertTransport -Request @{ kind = 'secret'; name = 'router-selftest-nonexistent-secret' } -Deadline ([datetime]::UtcNow.AddSeconds(-1)) } catch { $probeError = $_.Exception.Message }
+    Assert-True ($probeError -eq 'Alert batch deadline exceeded') 'secret path initializes its cache under StrictMode and stops before network access'
     $script:requests = [System.Collections.Generic.List[object]]::new()
     $script:failDm = $false
     $script:failEmail = $false
@@ -200,6 +203,7 @@ return [pscustomobject]@{ id = 'fake-message' }
     } else { Write-Output 'SKIPPED: LIVE alert (set DT_MODEL_ROUTER_LIVE_ALERT=1)' }
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
     $env:DT_MODEL_ROUTER_STATE = $priorState
     Remove-Item -LiteralPath $temp -Recurse -Force
 }
