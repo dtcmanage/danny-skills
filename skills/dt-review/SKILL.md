@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.14.4
+  version: 1.14.5
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -54,8 +54,8 @@ authoring model:
 
 | Role | Codex lane | Claude lane | Limit |
 | --- | --- | --- | --- |
-| Light review | model router, category `planning` (today `gpt-6-sol`), effort `medium` | `sonnet` | 3 rounds |
-| Complex review | model router, category `planning`, protected (strongest eligible; today `gpt-6-sol`), effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
+| Light review | model router, category `planning` (today `gpt-6.1-sol`), effort `medium` | `sonnet` | 3 rounds |
+| Complex review | model router, category `planning`, protected (strongest eligible; today `gpt-6.1-sol`), effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
 | Preflight | the same `planning` pick the rounds will use, effort `low` | tier model, echo check | 30 seconds |
 
 Rounds 1-2 are the full critique; rounds 3+ are verification rounds (check prior commitments, new
@@ -66,7 +66,7 @@ round metadata.
 
 **Model-selection disclosure (tracking).** At Round 0, state in the chat output the selected lane and
 tier model with a one-sentence reason (authoring family + review class), e.g.
-`codex lane, gpt-6-sol @ high: Claude-authored draft, complex review`. Any mid-review deviation
+`codex lane, gpt-6.1-sol @ high: Claude-authored draft, complex review`. Any mid-review deviation
 restates the new model and its recorded reason in chat. One sentence is enough; this visible line is how
 Danny tracks that model routing works as intended — round metadata records the same facts but does not
 replace saying it.

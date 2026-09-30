@@ -12,6 +12,8 @@ $priorState = $env:DT_MODEL_ROUTER_STATE
 $testState = Join-Path $env:TEMP ('router-canary-test-' + [guid]::NewGuid().ToString('N'))
 $env:DT_MODEL_ROUTER_STATE = $testState
 [IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_STATE) | Out-Null
+. (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+$fixtureCodexHome = Enter-RouterTestCodexHome
 try {
     $taskRoot = Join-Path $PSScriptRoot '../canary/tasks'
     foreach ($task in @(Get-ChildItem -LiteralPath $taskRoot -Directory | Where-Object Name -ne 'pelican')) {
@@ -68,7 +70,7 @@ try {
     $scheduled = @(Register-RouterSchedules)
     Assert-True ($scheduled.Count -eq 4 -and @($scheduled | Where-Object { $_.launcher -like '*run-hidden.vbs' }).Count -eq 4) 'schedule dry run lists all four hidden-launcher tasks without registration'
     Write-Output "PASS: $script:passed canary assertions"
-} finally {
+} finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState
     $resolved = [IO.Path]::GetFullPath($testState)
     $tempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar

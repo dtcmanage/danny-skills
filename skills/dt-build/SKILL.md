@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.16.1
+  version: 2.16.2
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -114,11 +114,11 @@ maps `complex` -> `complex-coding` protected, `standard` -> `routine-coding`, `l
 
 **Bridge mode (no full research table yet).** Until the router's table source is `research` with `coverage=full`, the router ignores
 eligibility and makes first picks that match the pre-router tiers, from
-`references/model-router/bridge-map.json`: Codex `gpt-6-sol` for every coding, review, planning, research, and
+`references/model-router/bridge-map.json`: Codex `gpt-6.1-sol` for every coding, review, planning, research, and
 writing category and `gpt-6-luna` for `mechanical`; Claude `opus` for `complex-coding`, `planning`, and
 `long-form-writing`, `sonnet` for `routine-coding`, `code-review`, `ui-frontend`, and `deep-research`, `haiku`
 for `mechanical`. A `-Protected` call in any category resolves instead to the lane's protected pick
-(`claude-opus-5-5` on Claude, `gpt-6-sol` on Codex), matching the pre-router tier behavior where load-bearing
+(`claude-opus-5-5` on Claude, `gpt-6.1-sol` on Codex), matching the pre-router tier behavior where load-bearing
 and security-sensitive work ran on the complex tier regardless of the chunk's category. The router reason
 starts `bridge mode (no full research table yet):`. While the roster remains unapproved, an approved
 full-coverage v1 research table picks by its evidence rules (confirmed grades, incumbent kept unless a
@@ -128,7 +128,7 @@ Bridge first picks match the pre-router tiers, including protected work running 
 non-frontier model on each lane; bridge escalation stops at that model.
 
 **Escalation.** A failed attempt retries one step up the lane's non-frontier ladder (Codex:
-`gpt-6-luna` -> `gpt-6-sol`; Claude: haiku -> sonnet -> opus) and stops at its top model: pass
+`gpt-6-luna` -> `gpt-6.1-sol`; Claude: haiku -> sonnet -> opus) and stops at its top model: pass
 `-EscalateFrom <the model that failed>` to the selected wrapper (for host-native dispatch, resolve
 without `-Lane` and include `-EscalateFrom <model>`). Escalation IS the second
 attempt and stays inside the two-attempt budget.

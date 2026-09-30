@@ -237,6 +237,7 @@
   "scripts/model-router/send-router-alert.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/anthropic-models-live-20260927.html": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/collect-usage-baseline.py": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/fixtures/router-test-codex-home.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test_cost_report.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-build-router-table.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-canary.ps1": {"consumers": [], "summary_token": "model router"},

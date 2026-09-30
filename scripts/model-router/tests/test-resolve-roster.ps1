@@ -23,7 +23,9 @@ return [pscustomobject]@{ id = 'fake-message' }
 '@
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeScript
 $script:blocked = @()
-$catalog = [pscustomobject]@{ models=@([pscustomobject]@{slug='gpt-6-sol';visibility='list'},[pscustomobject]@{slug='gpt-6-luna';visibility='list'}) }
+$catalog = [pscustomobject]@{ models=@([pscustomobject]@{slug='gpt-6.1-sol';visibility='list'},[pscustomobject]@{slug='gpt-6-luna';visibility='list'}) }
+. (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+$fixtureCodexHome = Enter-RouterTestCodexHome
 try {
     $r = Copy-Roster
     Assert-True (@(Get-RosterErrors $r).Count -eq 0) 'seed validates'
@@ -59,7 +61,7 @@ try {
     }
     $codex = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Catalog $catalog
     $claude = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane claude -Catalog $catalog
-    Assert-True ($codex.model -eq 'gpt-6-sol' -and $codex.vendor -eq 'codex' -and $claude.model -eq 'claude-opus-5-5' -and $claude.agent_alias -eq 'opus') 'lane constraint both ways'
+    Assert-True ($codex.model -eq 'gpt-6.1-sol' -and $codex.vendor -eq 'codex' -and $claude.model -eq 'claude-opus-5-5' -and $claude.agent_alias -eq 'opus') 'lane constraint both ways'
     $image = Resolve-RouterModel -SkipModelCheck -Category image-generation -Lane claude
     Assert-True ($image.status -eq 'wait' -and $null -eq $image.model -and $image.reason -match 'image model') 'illustrator Claude lane waits'
     $script:blocked = @('codex')
@@ -71,43 +73,43 @@ try {
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $catalog).status -eq 'wait') 'both vendors blocked wait'
     Assert-True ((Resolve-RouterModel -SkipModelCheck -Category image-generation).status -eq 'wait') 'blocked illustrator waits'
     $script:blocked = @()
-    @([pscustomobject]@{model='gpt-6-sol';job='coder'}) | ConvertTo-Json -AsArray | Set-Content (Join-Path $temp 'drift-marks.json')
+    @([pscustomobject]@{model='gpt-6.1-sol';job='coder'}) | ConvertTo-Json -AsArray | Set-Content (Join-Path $temp 'drift-marks.json')
     $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $catalog
     Assert-True ($pick.model -eq 'claude-opus-5-5' -and $pick.reason -match 'drifting') 'drifting first uses backup'
     $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Catalog $catalog
     Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.reason -match 'drifting') 'drifting constrained lane waits'
     $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -EscalateFrom 'gpt-6-luna' -Catalog $catalog
     Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.reason -match 'drifting') 'drifting constrained lane escalation waits'
-    @([pscustomobject]@{job='coder'},[pscustomobject]@{model='gpt-6-sol'}) | ConvertTo-Json -AsArray | Set-Content (Join-Path $temp 'drift-marks.json')
-    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $catalog).model -eq 'gpt-6-sol') 'incomplete drift marks ignored'
+    @([pscustomobject]@{job='coder'},[pscustomobject]@{model='gpt-6.1-sol'}) | ConvertTo-Json -AsArray | Set-Content (Join-Path $temp 'drift-marks.json')
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $catalog).model -eq 'gpt-6.1-sol') 'incomplete drift marks ignored'
     @([pscustomobject]@{model='gpt-image-2';job='illustrator'}) | ConvertTo-Json -AsArray | Set-Content (Join-Path $temp 'drift-marks.json')
     $image = Resolve-RouterModel -SkipModelCheck -Category image-generation
     Assert-True ($image.status -eq 'ok' -and $image.model -eq 'gpt-image-2' -and $image.alerts -contains 'roster-drift-no-backup:gpt-image-2') 'illustrator drift keeps image model and alerts'
     Remove-Item (Join-Path $temp 'drift-marks.json')
-    $hidden = [pscustomobject]@{models=@([pscustomobject]@{slug='gpt-6-sol';visibility='hide'})}
+    $hidden = [pscustomobject]@{models=@([pscustomobject]@{slug='gpt-6.1-sol';visibility='hide'})}
     $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $hidden
-    Assert-True ($pick.model -eq 'claude-opus-5-5' -and $pick.alerts -contains 'roster-model-unselectable:gpt-6-sol') 'unselectable first uses backup and alerts'
+    Assert-True ($pick.model -eq 'claude-opus-5-5' -and $pick.alerts -contains 'roster-model-unselectable:gpt-6.1-sol') 'unselectable first uses backup and alerts'
     Assert-True (@(Get-Content -LiteralPath $deliveryLog).Count -eq 1) 'unselectable roster alert is not delivered without SendAlerts'
     $null = Resolve-RouterModel -SkipModelCheck -SendAlerts -Category complex-coding -Catalog $hidden
     Assert-True (@(Get-Content -LiteralPath $deliveryLog).Count -eq 2) 'unselectable roster alert delivered once with SendAlerts'
     $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Catalog $hidden
-    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.alerts -contains 'roster-model-unselectable:gpt-6-sol') 'unselectable constrained Codex lane waits and alerts'
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.alerts -contains 'roster-model-unselectable:gpt-6.1-sol') 'unselectable constrained Codex lane waits and alerts'
     $script:blocked = @('claude')
     $pick = Resolve-RouterModel -SkipModelCheck -Category analysis -Catalog $hidden
-    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.alerts -contains 'roster-model-unselectable:gpt-6-sol') 'unselectable Codex backup waits when Claude is blocked'
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.alerts -contains 'roster-model-unselectable:gpt-6.1-sol') 'unselectable Codex backup waits when Claude is blocked'
     $script:blocked = @()
     $pick = Resolve-RouterModel -SkipModelCheck -Category analysis -Lane codex -Catalog $hidden
-    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.alerts -contains 'roster-model-unselectable:gpt-6-sol') 'unselectable constrained Codex backup waits'
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.alerts -contains 'roster-model-unselectable:gpt-6.1-sol') 'unselectable constrained Codex backup waits'
     $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -EscalateFrom 'gpt-6-luna' -Catalog $hidden
-    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.alerts -contains 'roster-model-unselectable:gpt-6-sol') 'unselectable escalated Codex pick waits'
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.model -and $pick.alerts -contains 'roster-model-unselectable:gpt-6.1-sol') 'unselectable escalated Codex pick waits'
     $fast = Resolve-RouterModel -SkipModelCheck -Category mechanical -Catalog $catalog
     $protected = Resolve-RouterModel -SkipModelCheck -Category mechanical -Protected -Catalog $catalog
     Assert-True ($protected.job -eq 'coder' -and $protected.model -ne $fast.model) 'protected mechanical uses different coder model'
-    foreach ($case in @(@('codex','gpt-6-sol'),@('claude','claude-opus-5-5'))) {
+    foreach ($case in @(@('codex','gpt-6.1-sol'),@('claude','claude-opus-5-5'))) {
         $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane $case[0] -EscalateFrom $case[1] -Catalog $catalog
         Assert-True ($pick.model -eq $case[1] -and $pick.reason -match 'top non-frontier') "roster escalation ceiling $($case[0])"
     }
-    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category analysis -EscalateFrom 'gpt-6-luna' -Catalog $catalog).model -eq 'gpt-6-sol') 'roster escalation follows source model lane'
+    Assert-True ((Resolve-RouterModel -SkipModelCheck -Category analysis -EscalateFrom 'gpt-6-luna' -Catalog $catalog).model -eq 'gpt-6.1-sol') 'roster escalation follows source model lane'
     foreach ($lane in @('codex','claude')) {
         $otherSource = if ($lane -eq 'codex') { 'claude-haiku-4-5-20251001' } else { 'gpt-6-luna' }
         $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane $lane -EscalateFrom $otherSource -Catalog $catalog
@@ -133,11 +135,11 @@ try {
     Assert-True ($pick.lane -eq 'claude' -and $pick.model -eq 'claude-opus-5-5' -and $pick.roster_source -eq 'default') 'v1 no lane takes default roster lane'
     $script:blocked = @('claude')
     $pick = Resolve-RouterModel -SkipModelCheck -Category analysis -Catalog $catalog
-    Assert-True ($pick.lane -eq 'codex' -and $pick.model -eq 'gpt-6-sol') 'v1 no lane takes backup lane when first vendor blocked'
+    Assert-True ($pick.lane -eq 'codex' -and $pick.model -eq 'gpt-6.1-sol') 'v1 no lane takes backup lane when first vendor blocked'
     $script:blocked = @()
     $cli = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../resolve-model.ps1') -Category analysis -SkipModelCheck -Json 2>$null | ConvertFrom-Json
     Assert-True ($LASTEXITCODE -eq 0 -and $cli.category -eq 'analysis' -and $cli.lane -eq 'claude') 'CLI without Lane returns JSON pick'
     foreach ($category in @('math','analysis')) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category $category -Lane codex -Catalog $catalog).model -eq (Resolve-RouterModel -SkipModelCheck -Category planning -Lane codex -Catalog $catalog).model) "v1 $category maps to planning" }
-    foreach ($case in @(@('codex','gpt-6-sol'),@('claude','claude-opus-5-5'))) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $case[0] -EscalateFrom $case[1] -Catalog $catalog).model -eq $case[1]) "v1 frontier ceiling $($case[0])" }
+    foreach ($case in @(@('codex','gpt-6.1-sol'),@('claude','claude-opus-5-5'))) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $case[0] -EscalateFrom $case[1] -Catalog $catalog).model -eq $case[1]) "v1 frontier ceiling $($case[0])" }
     Write-Output "SUMMARY: $script:passed passed"
-} finally { $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport; $env:DT_MODEL_ROUTER_STATE = $prior; Remove-Item -LiteralPath $temp -Recurse -Force }
+} finally { Exit-RouterTestCodexHome $fixtureCodexHome; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport; $env:DT_MODEL_ROUTER_STATE = $prior; Remove-Item -LiteralPath $temp -Recurse -Force }

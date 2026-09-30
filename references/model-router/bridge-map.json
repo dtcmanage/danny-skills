@@ -5,18 +5,18 @@
     "codex": {
       "ladder": [
         { "model": "gpt-6-luna", "frontier": false },
-        { "model": "gpt-6-sol", "frontier": false },
+        { "model": "gpt-6.1-sol", "frontier": false },
         { "model": "gpt-6-astra", "frontier": true }
       ],
-      "protected": "gpt-6-sol",
+      "protected": "gpt-6.1-sol",
       "categories": {
-        "complex-coding": "gpt-6-sol",
-        "routine-coding": "gpt-6-sol",
-        "code-review": "gpt-6-sol",
-        "ui-frontend": "gpt-6-sol",
-        "planning": "gpt-6-sol",
-        "deep-research": "gpt-6-sol",
-        "long-form-writing": "gpt-6-sol",
+        "complex-coding": "gpt-6.1-sol",
+        "routine-coding": "gpt-6.1-sol",
+        "code-review": "gpt-6.1-sol",
+        "ui-frontend": "gpt-6.1-sol",
+        "planning": "gpt-6.1-sol",
+        "deep-research": "gpt-6.1-sol",
+        "long-form-writing": "gpt-6.1-sol",
         "mechanical": "gpt-6-luna",
         "image-generation": "gpt-image-2"
       }

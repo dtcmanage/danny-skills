@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.2.5 (2026-09-30): Router: GPT-6.1 Sol replaces GPT-6 Sol as the Codex Sol rung; research retries transient Codex failures, keeps Codex error output, and checks Artificial Analysis for launch-day scores.
+
 - 0.2.4 (2026-09-28): Model router alerts refuse real delivery from tests.
 
 - 0.2.3 (2026-09-28): Shared model router v2: cross-vendor roster, vendor-limit backups, offline research cadence (model router).

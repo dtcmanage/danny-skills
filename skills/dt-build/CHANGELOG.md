@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.16.2
+
+- Router: GPT-6.1 Sol replaces GPT-6 Sol as the Codex Sol rung; research retries transient Codex failures, keeps Codex error output, and checks Artificial Analysis for launch-day scores.
+
 ## 2.16.1
 
 - Model router alerts refuse real delivery from tests.

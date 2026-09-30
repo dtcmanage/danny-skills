@@ -17,6 +17,8 @@ $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $sessions
 $transport = Join-Path $temp 'fake-transport.ps1'
 Set-Content -LiteralPath $transport -Value 'param($request) return [pscustomobject]@{ id = "fake" }'
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transport
+. (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+$fixtureCodexHome = Enter-RouterTestCodexHome
 try {
     $codexIso = Test-RouterLimitRefusal -Vendor codex -Text 'ERROR: usage limit reached; try again at 2026-10-01T12:30:00Z.'
     Assert-True ($codexIso.refused -and $codexIso.reset_at_utc -eq '2026-10-01T12:30:00.0000000+00:00') 'Codex usage refusal parses try-again time'
@@ -118,7 +120,7 @@ try {
     $recorded = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../vendor-limits.ps1') -RecordBlock -Vendor codex -ResetAtUtc $cliReset -Reason 'CLI refusal' -Json | ConvertFrom-Json
     Assert-True ($recorded.blocked -and $recorded.reason -eq 'CLI refusal' -and @(Read-RouterJsonArray -Path (Join-Path $state 'vendor-blocks.json') | Where-Object { $_.vendor -eq 'codex' -and $_.reason -eq 'CLI refusal' }).Count -eq 1) 'CLI records refusal with reset time'
     Write-Output "SUMMARY: $script:passed passed"
-} finally {
+} finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState
     $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorSessions
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport

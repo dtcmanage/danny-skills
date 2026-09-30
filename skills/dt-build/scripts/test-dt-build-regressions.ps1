@@ -128,9 +128,13 @@ return [pscustomobject]@{ id = 'fake' }
   {"slug":"gpt-reserve","visibility":"hide","priority":3,"upgrade":null}
 ]}
 '@
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "bridge mode: complex tier (complex-coding, protected) did not keep the pre-router gpt-6-sol pick"
-    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-sol') "bridge mode: standard tier (routine-coding) did not keep the pre-router gpt-6-sol pick"
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') "bridge mode: light tier (mechanical) did not keep the pre-router gpt-6-luna pick"
+    # The live catalog lists GPT-6.1 Sol beside the older 6.0 models; the bridge's Sol rung is 6.1 Sol. The catalog
+    # above stays 6.0-only for the legacy generation-ladder check below, which only looks at the newest generation.
+    $routerCachePath = Join-Path $tempRoot 'models-router.json'
+    Write-Utf8 -Path $routerCachePath -Content ((Get-Content -Raw -LiteralPath $cachePath).Replace('{"models":[', '{"models":[' + "`n" + '  {"slug":"gpt-6.1-sol","visibility":"list","priority":2,"upgrade":null,"description":"Workhorse model for coding and everyday work."},'))
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $routerCachePath -Strict) -eq 'gpt-6.1-sol') "bridge mode: complex tier (complex-coding, protected) did not keep the bridge gpt-6.1-sol pick"
+    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $routerCachePath -Strict) -eq 'gpt-6.1-sol') "bridge mode: standard tier (routine-coding) did not keep the bridge gpt-6.1-sol pick"
+    Assert-True ((Resolve-CodexModel -Tier light -CachePath $routerCachePath -Strict) -eq 'gpt-6-luna') "bridge mode: light tier (mechanical) did not keep the pre-router gpt-6-luna pick"
     if (-not (Get-Command Resolve-RouterModel -ErrorAction SilentlyContinue)) { . (Join-Path $repoRoot 'scripts\model-router\resolve-model.ps1') }
     foreach ($claudeTier in @(@('complex', 'claude-opus-5-5'), @('standard', 'claude-sonnet-5'), @('light', 'claude-haiku-4-5-20251001'))) {
         $mappedTier = ConvertTo-RouterCategoryFromTier -Tier $claudeTier[0]
@@ -140,14 +144,14 @@ return [pscustomobject]@{ id = 'fake' }
     Assert-True ((@(Get-CodexModelLadder -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)) -join ',') -eq 'gpt-6-sol,gpt-6-luna') "frontier model leaked into the automatic ladder"
     Assert-True ((Resolve-CodexModel -Tier complex -PreferredModel 'gpt-6-astra' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-6-astra') "explicit frontier override was not honored"
     $retiringCache = Join-Path $tempRoot 'models-retiring.json'
-    Write-Utf8 -Path $retiringCache -Content '{"models":[{"slug":"gpt-6-sol","visibility":"list","priority":1,"upgrade":{"model":"gpt-6-luna"}},{"slug":"gpt-6-luna","visibility":"list","priority":2,"upgrade":null}]}'
+    Write-Utf8 -Path $retiringCache -Content '{"models":[{"slug":"gpt-6.1-sol","visibility":"list","priority":1,"upgrade":{"model":"gpt-6-luna"}},{"slug":"gpt-6-luna","visibility":"list","priority":2,"upgrade":null}]}'
     Assert-True ((Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) -eq 'gpt-6-luna') "bridge mode: resolver selected a model carrying a retirement notice instead of the next selectable ladder rung"
     $overrideRejected = $false
     try { [void](Resolve-CodexModel -Tier standard -PreferredModel 'gone-model' -CachePath $cachePath -Strict) }
     catch { $overrideRejected = $true }
     Assert-True $overrideRejected "strict resolver silently replaced an unselectable override"
     $effortCache = Join-Path $tempRoot 'models-effort.json'
-    Write-Utf8 -Path $effortCache -Content '{"models":[{"slug":"gpt-6-sol","visibility":"list","priority":1,"supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]}]}'
+    Write-Utf8 -Path $effortCache -Content '{"models":[{"slug":"gpt-6.1-sol","visibility":"list","priority":1,"supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"},{"effort":"xhigh"}]}]}'
     $fallbackModel = Resolve-CodexModel -Tier standard -CachePath $effortCache -Strict
     $effortRejected = $false
     try { [void](Assert-CodexReasoningEffort -Model $fallbackModel -Effort max -CachePath $effortCache -Strict) }
@@ -374,7 +378,7 @@ rationale: Framework limitation accepted with visible evidence.
     # failure provenance even when a child never reads stdin.
     $fixtureCodexHome = Join-Path $tempRoot 'codex-home'
     New-Item -ItemType Directory -Path $fixtureCodexHome -Force | Out-Null
-    Write-Utf8 -Path (Join-Path $fixtureCodexHome 'models_cache.json') -Content '{"fetched_at":"fixture","models":[{"slug":"gpt-6-sol","visibility":"list","supported_reasoning_levels":[{"effort":"medium"}]}]}'
+    Write-Utf8 -Path (Join-Path $fixtureCodexHome 'models_cache.json') -Content '{"fetched_at":"fixture","models":[{"slug":"gpt-6.1-sol","visibility":"list","supported_reasoning_levels":[{"effort":"medium"}]}]}'
     Write-Utf8 -Path (Join-Path $fixtureCodexHome 'auth.json') -Content '{"auth_mode":"fixture"}'
     $env:CODEX_HOME = $fixtureCodexHome
     $fakeCodex = Join-Path $tempRoot 'fake-codex.ps1'
@@ -427,7 +431,7 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     Assert-True ($retained -match '\[REDACTED-SECRET\]') "retained chunk output was not redacted"
     $wrapperProv = Get-Content -Raw -LiteralPath "$wrapperOutput.provenance.json" | ConvertFrom-Json
     Assert-True ([string]$wrapperProv.selection_reason -eq 'ordinary fixture implementation logic') "Codex provenance omitted selection reason"
-    Assert-True ([string]$wrapperProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> gpt-6-sol \(routine-coding, effort medium\): ordinary fixture implementation logic; router: .+$') "Codex provenance omitted canonical disclosure line"
+    Assert-True ([string]$wrapperProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> gpt-6\.1-sol \(routine-coding, effort medium\): ordinary fixture implementation logic; router: .+$') "Codex provenance omitted canonical disclosure line"
 
     $env:DT_FAKE_CODEX_MODE = 'malformed'
     $malformedOutput = Join-Path $tempRoot 'wrapper-malformed.md'

@@ -21,45 +21,47 @@ $env:DT_MODEL_ROUTER_STATE=$temp; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT=Join-Path
 [IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_CODEX_SESSIONS) | Out-Null
 $script:readDir=Join-Path $temp 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
 $script:alerts=@()
+. (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+$fixtureCodexHome = Enter-RouterTestCodexHome
 try {
-    $a=New-Reading 'b1' 'gpt-6-sol' 60 'claude-opus-5-5' 55
-    $b=New-Reading 'b2' 'gpt-6-sol' 60 'claude-opus-5-5' 55
-    $comparison=Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5'
+    $a=New-Reading 'b1' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
+    $b=New-Reading 'b2' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
+    $comparison=Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5'
     Assert-True ($comparison.verdict -eq 'win' -and $comparison.leads -eq 2) 'two independent comparable leads win'
     $b.effort_class='high'
-    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5').leads -eq 2) 'separate benchmark with different effort remains comparable within its pair'
-    $b.results=@([pscustomobject]@{model='gpt-6-sol';score=60;margin=$null})
-    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5').verdict -eq 'not-enough-evidence') 'non-comparable pair does not count'
-    $split=New-Reading 'split' 'gpt-6-sol' 60 'claude-opus-5-5' 55
-    $split.results=@($split.results | Where-Object model -eq 'gpt-6-sol')
-    $other=New-Reading 'split' 'gpt-6-sol' 60 'claude-opus-5-5' 55
+    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5').leads -eq 2) 'separate benchmark with different effort remains comparable within its pair'
+    $b.results=@([pscustomobject]@{model='gpt-6.1-sol';score=60;margin=$null})
+    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5').verdict -eq 'not-enough-evidence') 'non-comparable pair does not count'
+    $split=New-Reading 'split' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
+    $split.results=@($split.results | Where-Object model -eq 'gpt-6.1-sol')
+    $other=New-Reading 'split' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
     $other.version='2'; $other.results=@($other.results | Where-Object model -eq 'claude-opus-5-5')
-    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($split,$other)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5').comparable -eq 0) 'different versions cannot form a pair'
-    $b=New-Reading 'b2' 'gpt-6-sol' 60 'claude-opus-5-5' 55 $null $false
-    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5').verdict -eq 'not-enough-evidence') 'vendor-only second lead does not count'
-    $vendor=New-Reading 'shared' 'gpt-6-sol' 60 'claude-opus-5-5' 55 $null $false
-    $independent=New-Reading 'shared' 'gpt-6-sol' 60 'claude-opus-5-5' 55
-    $forward=Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$vendor,$independent)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5'
-    $reverse=Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$independent,$vendor)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5'
+    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($split,$other)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5').comparable -eq 0) 'different versions cannot form a pair'
+    $b=New-Reading 'b2' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55 $null $false
+    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5').verdict -eq 'not-enough-evidence') 'vendor-only second lead does not count'
+    $vendor=New-Reading 'shared' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55 $null $false
+    $independent=New-Reading 'shared' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
+    $forward=Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$vendor,$independent)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5'
+    $reverse=Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$independent,$vendor)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5'
     Assert-True ($forward.verdict -eq 'win' -and $reverse.verdict -eq 'win' -and $forward.leads -eq $reverse.leads) 'independent duplicate wins in either reading order'
-    $tie=New-Reading 'tie' 'gpt-6-sol' 60 'claude-opus-5-5' 59 2
-    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($tie)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5').leads -eq 0) 'margin tie'
-    $tie=New-Reading 'tie' 'gpt-6-sol' 60 'claude-opus-5-5' 59
-    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($tie)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5').leads -eq 0) 'one point without margins ties'
-    $trail=New-Reading 'b3' 'gpt-6-sol' 40 'claude-opus-5-5' 55
-    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,(New-Reading 'b2' 'gpt-6-sol' 60 'claude-opus-5-5' 55),$trail)}) -Challenger 'gpt-6-sol' -Incumbent 'claude-opus-5-5').verdict -eq 'trail') 'any trail vetoes category'
+    $tie=New-Reading 'tie' 'gpt-6.1-sol' 60 'claude-opus-5-5' 59 2
+    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($tie)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5').leads -eq 0) 'margin tie'
+    $tie=New-Reading 'tie' 'gpt-6.1-sol' 60 'claude-opus-5-5' 59
+    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($tie)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5').leads -eq 0) 'one point without margins ties'
+    $trail=New-Reading 'b3' 'gpt-6.1-sol' 40 'claude-opus-5-5' 55
+    Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,(New-Reading 'b2' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55),$trail)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5').verdict -eq 'trail') 'any trail vetoes category'
     $prices=Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json
     $frontier=Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json
-    $readings=@{ 'complex-coding'=[pscustomobject]@{readings=@((New-Reading 'b1' 'claude-opus-5-5' 60 'gpt-6-sol' 55),(New-Reading 'b2' 'claude-opus-5-5' 60 'gpt-6-sol' 55))}; 'routine-coding'=[pscustomobject]@{readings=@((New-Reading 'r1' 'claude-opus-5-5' 40 'gpt-6-sol' 55))} }
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -eq 'keep') 'primary win with other-category trail keeps incumbent'
+    $readings=@{ 'complex-coding'=[pscustomobject]@{readings=@((New-Reading 'b1' 'claude-opus-5-5' 60 'gpt-6.1-sol' 55),(New-Reading 'b2' 'claude-opus-5-5' 60 'gpt-6.1-sol' 55))}; 'routine-coding'=[pscustomobject]@{readings=@((New-Reading 'r1' 'claude-opus-5-5' 40 'gpt-6.1-sol' 55))} }
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -eq 'keep') 'primary win with other-category trail keeps incumbent'
     $readings.Remove('routine-coding')
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'primary win and no trails qualifies'
-    $readings['complex-coding']=[pscustomobject]@{readings=@((New-Reading 'b1' 'gpt-6-luna' 99 'gpt-6-sol' 50),(New-Reading 'b2' 'gpt-6-luna' 99 'gpt-6-sol' 50))}
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -ne 'gpt-6-luna') 'lower same-vendor tier excluded'
-    $readings['complex-coding']=[pscustomobject]@{readings=@((New-Reading 'b1' 'gpt-6-astra' 99 'gpt-6-sol' 50),(New-Reading 'b2' 'gpt-6-astra' 99 'gpt-6-sol' 50))}
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -ne 'gpt-6-astra') 'frontier excluded'
-    $readings['complex-coding']=[pscustomobject]@{readings=@((New-Reading 'b1' 'gpt-5.6-sol' 99 'gpt-6-sol' 50),(New-Reading 'b2' 'gpt-5.6-sol' 99 'gpt-6-sol' 50))}
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -eq 'gpt-5.6-sol') 'older generation may win on quality'
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'primary win and no trails qualifies'
+    $readings['complex-coding']=[pscustomobject]@{readings=@((New-Reading 'b1' 'gpt-6-luna' 99 'gpt-6.1-sol' 50),(New-Reading 'b2' 'gpt-6-luna' 99 'gpt-6.1-sol' 50))}
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -ne 'gpt-6-luna') 'lower same-vendor tier excluded'
+    $readings['complex-coding']=[pscustomobject]@{readings=@((New-Reading 'b1' 'gpt-6-astra' 99 'gpt-6.1-sol' 50),(New-Reading 'b2' 'gpt-6-astra' 99 'gpt-6.1-sol' 50))}
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -ne 'gpt-6-astra') 'frontier excluded'
+    $readings['complex-coding']=[pscustomobject]@{readings=@((New-Reading 'b1' 'gpt-5.6-sol' 99 'gpt-6.1-sol' 50),(New-Reading 'b2' 'gpt-5.6-sol' 99 'gpt-6.1-sol' 50))}
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -eq 'gpt-5.6-sol') 'older generation may win on quality'
     $readings=@{mechanical=[pscustomobject]@{readings=@((New-Reading 'm1' 'claude-haiku-4-5-20251001' 55 'gpt-6-luna' 55),(New-Reading 'm2' 'claude-haiku-4-5-20251001' 55 'gpt-6-luna' 55))}}
     Assert-True ((Get-RouterProposalJobVerdict -Job fast -Incumbent 'gpt-6-luna' -Readings $readings -Prices $prices -Frontier $frontier).result -eq 'keep') 'fast floor with higher price keeps incumbent'
     $fast=@{mechanical=[pscustomobject]@{readings=@((New-Reading 'm1' 'gpt-6-luna' 55 'claude-haiku-4-5' 55),(New-Reading 'm2' 'gpt-6-luna' 55 'claude-haiku-4-5' 55))}}
@@ -85,20 +87,20 @@ try {
     $priced=$prices | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $priced.models.'gpt-5.6-luna'.prices_usd_per_mtok.input=0.01; $priced.models.'gpt-5.6-luna'.prices_usd_per_mtok.output=0.01
     Assert-True ((Get-RouterProposalJobVerdict -Job fast -Incumbent 'gpt-6-luna' -Readings $older -Prices $priced -Frontier $frontier).result -ne 'gpt-5.6-luna') 'older generation cannot win on price'
-    $backupReadings=@{'complex-coding'=[pscustomobject]@{readings=@((New-Reading 'b1' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'b2' 'claude-opus-5-5' 70 'gpt-6-sol' 50))}}
+    $backupReadings=@{'complex-coding'=[pscustomobject]@{readings=@((New-Reading 'b1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'b2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))}}
     foreach ($row in $backupReadings['complex-coding'].readings) { $row.results += [pscustomobject]@{model='gpt-5.6-sol';score=99;margin=$null} }
-    $decoyRow = New-Reading 'b3' 'gpt-5.6-sol' 99 'gpt-6-sol' 50
+    $decoyRow = New-Reading 'b3' 'gpt-5.6-sol' 99 'gpt-6.1-sol' 50
     $decoyRow.results += [pscustomobject]@{model='claude-opus-5-5';score=50;margin=$null}
     $backupReadings['complex-coding'].readings = @($backupReadings['complex-coding'].readings) + $decoyRow
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $backupReadings -Prices $prices -Frontier $frontier).result -eq 'gpt-5.6-sol') 'same-vendor decoy wins when no vendor filter applies'
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Vendor claude -Readings $backupReadings -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'backup candidate restricted to opposite vendor'
-    $multi=@((New-Reading 'q1' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'q2' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'q3' 'claude-opus-5-5' 70 'gpt-6-sol' 50))
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $backupReadings -Prices $prices -Frontier $frontier).result -eq 'gpt-5.6-sol') 'same-vendor decoy wins when no vendor filter applies'
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Vendor claude -Readings $backupReadings -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'backup candidate restricted to opposite vendor'
+    $multi=@((New-Reading 'q1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'q2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'q3' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
     foreach ($row in $multi[0..1]) { $row.results += [pscustomobject]@{model='claude-sonnet-5';score=70;margin=$null} }
     $multiRead=@{'complex-coding'=[pscustomobject]@{readings=$multi}}
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'most primary independent leads wins'
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'most primary independent leads wins'
     $multi[2].results += [pscustomobject]@{model='claude-sonnet-5';score=70;margin=$null}
-    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-sonnet-5') 'equal leads use lower price'
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6-sol' 50))
+    Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-sonnet-5') 'equal leads use lower price'
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
     Add-Pass 'p1'; $one=Build-RouterRosterProposal -Now ([datetime]'2026-09-28T10:00:00')
     Assert-True (-not $one.changed -and $script:alerts.Count -eq 0) 'one pass no proposal or alert'
     $created=@(Get-ChildItem -LiteralPath (Join-Path $temp 'roster-proposals') -File | Select-Object -ExpandProperty Name)
@@ -108,7 +110,7 @@ try {
     Assert-True (-not $same.changed -and @($records | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' }).Count -eq 1) 'same pass adds no verdict'
     Add-Pass 'p2'; $two=Build-RouterRosterProposal -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True ($two.changed -and $script:alerts.Count -eq 1 -and (Test-Path $two.report)) 'two passes propose and alert once'
-    Assert-True (@($two.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'backup' -and $_.to -eq 'gpt-6-sol' }).Count -eq 1) 'vendor flip re-chooses backup from opposite vendor'
+    Assert-True (@($two.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'backup' -and $_.to -eq 'gpt-6.1-sol' }).Count -eq 1) 'vendor flip re-chooses backup from opposite vendor'
     $repeat=Build-RouterRosterProposal -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True (-not $repeat.changed -and $script:alerts.Count -eq 1) 'repeat sends no alert'
     $proposal=Get-Content -LiteralPath $two.proposal -Raw | ConvertFrom-Json -Depth 30
@@ -117,23 +119,23 @@ try {
     Assert-True ($null -eq $proposal.jobs.illustrator.backup -and $null -eq $proposal.jobs.illustrator.backup_vendor) 'illustrator backup remains null'
     $scenario=Join-Path $temp 'scenario-ne'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
     Add-Pass 'ne-p1'; $null=Build-RouterRosterProposal
     Save-Category -Category complex-coding -Rows @()
     Add-Pass 'ne-p2'; $null=Build-RouterRosterProposal
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
     Add-Pass 'ne-p3'; $afterGap=Build-RouterRosterProposal
     Assert-True ($afterGap.changed) 'winner then not-enough-evidence then winner changes'
     $scenario=Join-Path $temp 'scenario-switch'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
     Add-Pass 'switch-p1'; $null=Build-RouterRosterProposal
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
     Add-Pass 'switch-p2'; $switched=Build-RouterRosterProposal
     Assert-True (-not $switched.changed) 'winner A then winner B does not change'
     $scenario=Join-Path $temp 'scenario-coverage'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
     Add-Pass 'u1'; $null=Build-RouterRosterProposal
     Add-Pass 'u2' @('mechanical'); $uncov=Build-RouterRosterProposal
     $records=@(Get-Content (Join-Path $scenario 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
@@ -143,27 +145,27 @@ try {
     $coverageAlertKey=$script:alerts[-1].key; $coverageEvidence=$covered.changes[0].evidence
     $scenario=Join-Path $temp 'scenario-analysis'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category analysis -Rows @((New-Reading 'a1' 'gpt-6-sol' 70 'claude-opus-5-5' 50),(New-Reading 'a2' 'gpt-6-sol' 70 'claude-opus-5-5' 50))
+    Save-Category -Category analysis -Rows @((New-Reading 'a1' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50),(New-Reading 'a2' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50))
     Add-Pass 'an1' @('analysis'); $null=Build-RouterRosterProposal
     Add-Pass 'an2' @('analysis'); $analysisOnly=Build-RouterRosterProposal
-    Assert-True ($analysisOnly.changed -and @($analysisOnly.changes | Where-Object { $_.job -eq 'deep-thinker' -and $_.slot -eq 'first' -and $_.to -eq 'gpt-6-sol' }).Count -eq 1) 'analysis-only passes count for the deep-thinker job'
+    Assert-True ($analysisOnly.changed -and @($analysisOnly.changes | Where-Object { $_.job -eq 'deep-thinker' -and $_.slot -eq 'first' -and $_.to -eq 'gpt-6.1-sol' }).Count -eq 1) 'analysis-only passes count for the deep-thinker job'
     [IO.File]::AppendAllText((Join-Path $script:readDir 'passes.jsonl'),((ConvertTo-Json -InputObject ([pscustomobject]@{pass_id='legacy'}) -Compress) + "`n"))
     $legacy=Build-RouterRosterProposal
     Assert-True (-not $legacy.changed) 'pass record without categories covers no job and does not throw'
     $scenario=Join-Path $temp 'scenario-flip'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
     Add-Pass 'flip-p1'; $null=Build-RouterRosterProposal
-    $p2Row=New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6-sol' 50
+    $p2Row=New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50
     $p2Row.results += [pscustomobject]@{model='claude-sonnet-5';score=60;margin=$null}
     Save-Category -Category complex-coding -Rows @($p2Row)
     Add-Pass 'flip-p2'; $null=Build-RouterRosterProposal
     $p2Records=@(Get-Content (Join-Path $scenario 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True (@($p2Records | Where-Object { $_.pass_id -eq 'flip-p2' -and $_.job -eq 'coder' -and $_.slot -eq 'backup' -and $_.result -eq 'keep' }).Count -eq 1) 'intervening pass records backup keep'
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 80 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 80 'gpt-6-sol' 50),(New-Reading 'c3' 'claude-opus-5-5' 80 'gpt-6-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50),(New-Reading 'c3' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50))
     Add-Pass 'flip-p3'; $flipped=Build-RouterRosterProposal
     $flipProposal=Get-Content -LiteralPath $flipped.proposal -Raw | ConvertFrom-Json -Depth 30
-    Assert-True ($flipped.changed -and $flipProposal.jobs.coder.first -eq 'claude-opus-5-5' -and $flipProposal.jobs.coder.backup -eq 'gpt-6-sol' -and @($flipProposal.validation_errors).Count -eq 0) 'confirmed vendor flip immediately recomputes valid other-vendor backup'
+    Assert-True ($flipped.changed -and $flipProposal.jobs.coder.first -eq 'claude-opus-5-5' -and $flipProposal.jobs.coder.backup -eq 'gpt-6.1-sol' -and @($flipProposal.validation_errors).Count -eq 0) 'confirmed vendor flip immediately recomputes valid other-vendor backup'
     Assert-True ($script:alerts[-1].key -eq $coverageAlertKey -and $flipped.changes[0].evidence -ne $coverageEvidence) 'alert key depends on job slot and models rather than evidence'
     $scenario=Join-Path $temp 'scenario-dated-fast'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
@@ -178,12 +180,12 @@ try {
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster -Seed | Out-Null
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster -Approve | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
     Add-Pass 'seed-p1'; $null=Build-RouterRosterProposal
     Add-Pass 'seed-p2'; $seedTwo=Build-RouterRosterProposal
     Assert-True ($seedTwo.changed -and (Test-Path -LiteralPath $seedTwo.proposal)) 'approved seed accepts two covered passes without optional pass_id'
     Write-Output "TOTAL PASS: $script:passed"
-} finally {
+} finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE=$priorState; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT=$priorAlert; $env:DT_MODEL_ROUTER_CODEX_SESSIONS=$priorSessions
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }

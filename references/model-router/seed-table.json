@@ -8,7 +8,7 @@
   "categories": {
     "complex-coding": {
       "codex": {
-        "fallback": "gpt-6-sol",
+        "fallback": "gpt-6.1-sol",
         "candidates": [
           {
             "model": "gpt-6-astra",
@@ -36,7 +36,7 @@
             "pass_samples": 0
           },
           {
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "frontier": false,
             "strength_rank": 2,
             "grade": "unknown",
@@ -185,7 +185,7 @@
     },
     "routine-coding": {
       "codex": {
-        "fallback": "gpt-6-sol",
+        "fallback": "gpt-6.1-sol",
         "candidates": [
           {
             "model": "gpt-6-astra",
@@ -213,7 +213,7 @@
             "pass_samples": 0
           },
           {
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "frontier": false,
             "strength_rank": 2,
             "grade": "unknown",
@@ -362,7 +362,7 @@
     },
     "code-review": {
       "codex": {
-        "fallback": "gpt-6-sol",
+        "fallback": "gpt-6.1-sol",
         "candidates": [
           {
             "model": "gpt-6-astra",
@@ -377,7 +377,7 @@
             "pass_samples": 0
           },
           {
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "frontier": false,
             "strength_rank": 2,
             "grade": "unknown",
@@ -506,7 +506,7 @@
     },
     "ui-frontend": {
       "codex": {
-        "fallback": "gpt-6-sol",
+        "fallback": "gpt-6.1-sol",
         "candidates": [
           {
             "model": "gpt-6-astra",
@@ -521,7 +521,7 @@
             "pass_samples": 0
           },
           {
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "frontier": false,
             "strength_rank": 2,
             "grade": "unknown",
@@ -650,7 +650,7 @@
     },
     "planning": {
       "codex": {
-        "fallback": "gpt-6-sol",
+        "fallback": "gpt-6.1-sol",
         "candidates": [
           {
             "model": "gpt-6-astra",
@@ -665,7 +665,7 @@
             "pass_samples": 0
           },
           {
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "frontier": false,
             "strength_rank": 2,
             "grade": "unknown",
@@ -801,7 +801,7 @@
     },
     "deep-research": {
       "codex": {
-        "fallback": "gpt-6-sol",
+        "fallback": "gpt-6.1-sol",
         "candidates": [
           {
             "model": "gpt-6-astra",
@@ -823,7 +823,7 @@
             "pass_samples": 0
           },
           {
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "frontier": false,
             "strength_rank": 2,
             "grade": "unknown",
@@ -959,7 +959,7 @@
     },
     "long-form-writing": {
       "codex": {
-        "fallback": "gpt-6-sol",
+        "fallback": "gpt-6.1-sol",
         "candidates": [
           {
             "model": "gpt-6-astra",
@@ -974,7 +974,7 @@
             "pass_samples": 0
           },
           {
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "frontier": false,
             "strength_rank": 2,
             "grade": "unknown",
@@ -1019,7 +1019,7 @@
     },
     "mechanical": {
       "codex": {
-        "fallback": "gpt-6-sol",
+        "fallback": "gpt-6.1-sol",
         "candidates": [
           {
             "model": "gpt-6-astra",
@@ -1034,7 +1034,7 @@
             "pass_samples": 0
           },
           {
-            "model": "gpt-6-sol",
+            "model": "gpt-6.1-sol",
             "frontier": false,
             "strength_rank": 2,
             "grade": "unknown",

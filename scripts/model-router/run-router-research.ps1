@@ -14,6 +14,39 @@ $ErrorActionPreference = 'Stop'
 $script:RouterResearchCallTimeoutMs = 3600000
 $script:RouterLockStaleMinutes = 10 + ($script:RouterResearchCallTimeoutMs / 60000)
 if (-not (Get-Variable RouterResearchHandoffSeconds -Scope Script -ErrorAction SilentlyContinue)) { $script:RouterResearchHandoffSeconds = 30 }
+# A research call that throws (process crash, timeout, transport error) is retried after each delay here; tests set it to zeros.
+if (-not (Get-Variable RouterResearchRetryDelaysSeconds -Scope Script -ErrorAction SilentlyContinue)) { $script:RouterResearchRetryDelaysSeconds = @(15, 45) }
+
+function Format-RouterCodexFailure {
+    # Keeps the diagnosable part of a failed Codex run; a bare "failed" message left no way to tell a crash from a timeout.
+    param([string]$Label, [object]$Result)
+    $stderr = [string]$Result.stderr
+    if ($stderr.Length -gt 2000) { $stderr = $stderr.Substring($stderr.Length - 2000) }
+    return "$Label (exit_code=$($Result.exit_code); timed_out=$($Result.timed_out); duration_ms=$($Result.duration_ms)). stderr tail: $stderr"
+}
+
+function Invoke-RouterWithRetry {
+    # Runs $Action; on a throw, reports the attempt, waits, runs $BeforeRetry, and tries again until the delays run out.
+    param([Parameter(Mandatory)][scriptblock]$Action, [scriptblock]$OnFailure, [scriptblock]$BeforeRetry)
+    $delays = @($script:RouterResearchRetryDelaysSeconds)
+    for ($attempt = 1; ; $attempt++) {
+        try { return (& $Action) }
+        catch {
+            # Hook output is discarded so it can never leak into the returned reply.
+            if ($OnFailure) { $null = & $OnFailure $_ $attempt ($delays.Count + 1) }
+            if ($attempt -gt $delays.Count) { throw }
+            if ([double]$delays[$attempt - 1] -gt 0) { Start-Sleep -Seconds ([double]$delays[$attempt - 1]) }
+            if ($BeforeRetry) { $null = & $BeforeRetry }
+        }
+    }
+}
+
+function Write-RouterResearchFailure {
+    param([Parameter(Mandatory)][string]$StateDir, [Parameter(Mandatory)][string]$FileName, [Parameter(Mandatory)][string]$Detail)
+    $failDir = Join-Path $StateDir 'research-failures'; New-Item -ItemType Directory -Path $failDir -Force | Out-Null
+    if ($Detail.Length -gt 20000) { $Detail = $Detail.Substring(0,20000) }
+    [IO.File]::WriteAllText((Join-Path $failDir $FileName),$Detail,[Text.UTF8Encoding]::new($false))
+}
 
 function Open-RouterLockExclusive {
     param([string]$Path)
@@ -118,7 +151,7 @@ function Invoke-RouterResearchCall {
     $out = Join-Path $env:TEMP ('router-research-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
         $result = Invoke-CodexProcess -CodexPath $codex -Arguments @('--ask-for-approval','never','exec','--ignore-user-config','-c','web_search="live"','--sandbox','read-only','--cd',$PSScriptRoot,'--model',$pick.model,'--output-last-message',$out,'-') -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $script:RouterResearchCallTimeoutMs
-        if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw 'Research process failed or timed out.' }
+        if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw (Format-RouterCodexFailure -Label 'Research process failed or timed out' -Result $result) }
         return (Get-Content -LiteralPath $out -Raw)
     } finally { if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force } }
 }
@@ -141,7 +174,7 @@ function Invoke-RouterCategoryCall {
         $out = Join-Path $env:TEMP ('router-category-' + [guid]::NewGuid().ToString('N') + '.json')
         try {
             $result = Invoke-CodexProcess -CodexPath $codex -Arguments (Get-RouterCategoryCallArguments -Lane codex -OutPath $out) -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $script:RouterResearchCallTimeoutMs
-            if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw 'Category research process failed or timed out.' }
+            if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw (Format-RouterCodexFailure -Label 'Category research process failed or timed out' -Result $result) }
             return [IO.File]::ReadAllText($out)
         } finally { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
     }
@@ -224,19 +257,21 @@ function Invoke-RouterCategoryResearch {
                 $raw = ''
                 $returned = $false
                 try {
-                    $raw = Invoke-RouterCategoryCall -Category $category -Lane $Lane -Prompt $prompt
+                    # A thrown call is retried (transient Codex crashes happen); every failed attempt leaves a diagnosable file.
+                    $raw = Invoke-RouterWithRetry -Action { Invoke-RouterCategoryCall -Category $category -Lane $Lane -Prompt $prompt } -OnFailure {
+                        param($failure, $attempt, $attempts)
+                        Write-RouterResearchFailure -StateDir $state -FileName ($category + '@' + (Get-Date).ToString('yyyyMMddTHHmmssfff') + "-attempt$attempt.txt") -Detail "attempt $attempt of ${attempts}: call threw`nerror: $($failure.Exception.Message)"
+                    } -BeforeRetry { [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action heartbeat) }
                     $returned = $true
                     $body = ([string]$raw).Trim()
                     if ($body -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $body = $Matches[1] }
                     $parsed = $body | ConvertFrom-Json -Depth 40
                     if (-not (Test-RouterReadings -Readings $parsed -Category $category -Models $request.models)) { throw 'Invalid category readings' }
                 } catch {
-                    # A call that threw interrupts the pass (discarded, rerun later); an empty or invalid reply only fails this category.
+                    # A call that still throws after its retries interrupts the pass (discarded, rerun later); an empty or
+                    # invalid reply only fails this category. Thrown attempts already wrote their own failure files.
                     if ($i -eq 0 -and -not $returned) { throw }
-                    $failDir = Join-Path $state 'research-failures'; New-Item -ItemType Directory -Path $failDir -Force | Out-Null
-                    $detail = "error: $($_.Exception.Message)`n" + [string]$raw
-                    if ($detail.Length -gt 20000) { $detail = $detail.Substring(0,20000) }
-                    [IO.File]::WriteAllText((Join-Path $failDir ($category + '@' + (Get-Date).ToString('yyyyMMddTHHmmssfff') + '.txt')),$detail,[Text.UTF8Encoding]::new($false))
+                    if ($returned) { Write-RouterResearchFailure -StateDir $state -FileName ($category + '@' + (Get-Date).ToString('yyyyMMddTHHmmssfff') + '.txt') -Detail ("error: $($_.Exception.Message)`n" + [string]$raw) }
                     if ($i -gt 0) { $notes.Add("$category follow-up failed: $($_.Exception.Message)") }
                     else { $failed.Add($category) }
                     break
@@ -327,7 +362,7 @@ function Invoke-RouterResearch {
             [void](Update-RouterLockOwned -Path $lock -Token $token -Action heartbeat)
             try {
                 $raw = $null
-                $raw = Invoke-RouterResearchCall -Model $id -Prompt $prompt
+                $raw = Invoke-RouterWithRetry -Action { Invoke-RouterResearchCall -Model $id -Prompt $prompt } -BeforeRetry { [void](Update-RouterLockOwned -Path $lock -Token $token -Action heartbeat) }
                 if (-not $raw) { throw 'empty research response' }
                 $text = ([string]$raw).Trim()
                 if ($text -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $text = $Matches[1] }

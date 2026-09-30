@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.14.5 (2026-09-30): Router: GPT-6.1 Sol replaces GPT-6 Sol as the Codex Sol rung; research retries transient Codex failures, keeps Codex error output, and checks Artificial Analysis for launch-day scores.
+
 - 1.14.4 (2026-09-28): Model router alerts refuse real delivery from tests.
 
 - 1.14.3 (2026-09-28): Frontier models run only on explicit request; no frontier escalation (model router v2).

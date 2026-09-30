@@ -6,42 +6,50 @@
   "routine-coding": [
     {"name":"Terminal-Bench","url":"https://www.tbench.ai/","measures":"terminal coding tasks","independent":true},
     {"name":"SWE-bench Verified","url":"https://www.swebench.com/","measures":"verified software repair","independent":true},
-    {"name":"LMArena WebDev / Code Arena","url":"https://arena.ai/leaderboard/code","measures":"web development and code preference","independent":true}
+    {"name":"LMArena WebDev / Code Arena","url":"https://arena.ai/leaderboard/code","measures":"web development and code preference","independent":true},
+    {"name":"Artificial Analysis","url":"https://artificialanalysis.ai/models/","measures":"Intelligence Index / Coding Index / Agentic Index, per-model pages, often published on release day","independent":true}
   ],
   "complex-coding": [
     {"name":"Terminal-Bench","url":"https://www.tbench.ai/","measures":"terminal coding tasks","independent":true},
     {"name":"SWE-bench Verified","url":"https://www.swebench.com/","measures":"verified software repair","independent":true},
-    {"name":"LMArena WebDev / Code Arena","url":"https://arena.ai/leaderboard/code","measures":"web development and code preference","independent":true}
+    {"name":"LMArena WebDev / Code Arena","url":"https://arena.ai/leaderboard/code","measures":"web development and code preference","independent":true},
+    {"name":"Artificial Analysis","url":"https://artificialanalysis.ai/models/","measures":"Intelligence Index / Coding Index / Agentic Index, per-model pages, often published on release day","independent":true}
   ],
   "ui-frontend": [
     {"name":"Terminal-Bench","url":"https://www.tbench.ai/","measures":"terminal coding tasks","independent":true},
     {"name":"SWE-bench Verified","url":"https://www.swebench.com/","measures":"verified software repair","independent":true},
     {"name":"LMArena WebDev / Code Arena","url":"https://arena.ai/leaderboard/code","measures":"web development and code preference","independent":true},
-    {"name":"Design Arena","url":"","measures":"interface design preference","independent":true}
+    {"name":"Design Arena","url":"","measures":"interface design preference","independent":true},
+    {"name":"Artificial Analysis","url":"https://artificialanalysis.ai/models/","measures":"Intelligence Index / Coding Index / Agentic Index, per-model pages, often published on release day","independent":true}
   ],
   "code-review": [
     {"name":"SWE-bench Verified","url":"https://www.swebench.com/","measures":"verified software repair","independent":true},
-    {"name":"Terminal-Bench","url":"https://www.tbench.ai/","measures":"terminal coding tasks","independent":true}
+    {"name":"Terminal-Bench","url":"https://www.tbench.ai/","measures":"terminal coding tasks","independent":true},
+    {"name":"Artificial Analysis","url":"https://artificialanalysis.ai/models/","measures":"Intelligence Index / Coding Index / Agentic Index, per-model pages, often published on release day","independent":true}
   ],
   "planning": [
     {"name":"GPQA Diamond","url":"https://arxiv.org/abs/2311.12022","measures":"graduate-level reasoning","independent":true},
     {"name":"Humanity's Last Exam","url":"https://lastexam.ai/","measures":"expert-level reasoning","independent":true},
-    {"name":"BrowseComp","url":"https://openai.com/index/browsecomp/","measures":"web research","independent":false}
+    {"name":"BrowseComp","url":"https://openai.com/index/browsecomp/","measures":"web research","independent":false},
+    {"name":"Artificial Analysis","url":"https://artificialanalysis.ai/models/","measures":"Intelligence Index / Coding Index / Agentic Index, per-model pages, often published on release day","independent":true}
   ],
   "deep-research": [
     {"name":"GPQA Diamond","url":"https://arxiv.org/abs/2311.12022","measures":"graduate-level reasoning","independent":true},
     {"name":"Humanity's Last Exam","url":"https://lastexam.ai/","measures":"expert-level reasoning","independent":true},
-    {"name":"BrowseComp","url":"https://openai.com/index/browsecomp/","measures":"web research","independent":false}
+    {"name":"BrowseComp","url":"https://openai.com/index/browsecomp/","measures":"web research","independent":false},
+    {"name":"Artificial Analysis","url":"https://artificialanalysis.ai/models/","measures":"Intelligence Index / Coding Index / Agentic Index, per-model pages, often published on release day","independent":true}
   ],
   "math": [
     {"name":"AIME (latest year)","url":"","measures":"competition mathematics","independent":true},
     {"name":"FrontierMath","url":"https://epoch.ai/frontiermath","measures":"advanced mathematics","independent":true},
-    {"name":"MathArena","url":"","measures":"mathematics competition results","independent":true}
+    {"name":"MathArena","url":"","measures":"mathematics competition results","independent":true},
+    {"name":"Artificial Analysis","url":"https://artificialanalysis.ai/models/","measures":"Intelligence Index / Coding Index / Agentic Index, per-model pages, often published on release day","independent":true}
   ],
   "analysis": [
     {"name":"DABstep","url":"","measures":"data analysis","independent":true},
     {"name":"TableBench","url":"","measures":"table reasoning","independent":true},
-    {"name":"LongBench v2","url":"https://github.com/THUDM/LongBench","measures":"document comprehension","independent":true}
+    {"name":"LongBench v2","url":"https://github.com/THUDM/LongBench","measures":"document comprehension","independent":true},
+    {"name":"Artificial Analysis","url":"https://artificialanalysis.ai/models/","measures":"Intelligence Index / Coding Index / Agentic Index, per-model pages, often published on release day","independent":true}
   ],
   "long-form-writing": [
     {"name":"EQ-Bench Creative Writing","url":"https://eqbench.com/","measures":"creative writing quality","independent":true},

@@ -47,11 +47,13 @@ return [pscustomobject]@{ id = 'fake-message' }
     $table.evidence_routing_approved = $true
     $table.generated_at = '2026-09-27'
     $rows = @(
-        @('complex-coding','codex','gpt-6-sol','strong',10), @('complex-coding','codex','gpt-6-luna','capable',2),
-        @('routine-coding','codex','gpt-6-sol','capable',10), @('routine-coding','codex','gpt-6-luna','capable',2),
+        @('complex-coding','codex','gpt-6.1-sol','strong',10), @('complex-coding','codex','gpt-6-luna','capable',2),
+        # Luna (6.0) is an older generation than the 6.1 Sol incumbent, and the router never lets an older generation win an
+        # equal-grade cost tie, so Luna carries the higher grade here; the generation ladder alone would still pick Sol.
+        @('routine-coding','codex','gpt-6.1-sol','capable',10), @('routine-coding','codex','gpt-6-luna','strong',2),
         @('mechanical','codex','gpt-6-luna','capable',10), @('mechanical','codex','gpt-5.6-sol','strong',1),
-        @('planning','codex','gpt-6-sol','capable',10), @('planning','codex','gpt-6-luna','capable',2), @('planning','codex','gpt-5.6-sol','capable',5),
-        @('ui-frontend','codex','gpt-6-sol','strong',5),
+        @('planning','codex','gpt-6.1-sol','capable',10), @('planning','codex','gpt-6-luna','strong',2), @('planning','codex','gpt-5.6-sol','capable',5),
+        @('ui-frontend','codex','gpt-6.1-sol','strong',5),
         @('routine-coding','claude','claude-opus-5-5','capable',10), @('routine-coding','claude','claude-sonnet-5','capable',2),
         @('code-review','claude','claude-opus-5-5','strong',10), @('code-review','claude','claude-sonnet-5','capable',2),
         @('complex-coding','claude','claude-opus-5-5','strong',10), @('complex-coding','claude','claude-sonnet-5','capable',2),
@@ -70,7 +72,7 @@ return [pscustomobject]@{ id = 'fake-message' }
     $codexHome = Join-Path $temp 'codex-home'
     $catalogJson = '{"fetched_at":"fixture","models":[' +
         '{"slug":"gpt-6-astra","visibility":"list","priority":1,"upgrade":null,"description":"Frontier intelligence.",' + $levels + '},' +
-        '{"slug":"gpt-6-sol","visibility":"list","priority":2,"upgrade":null,' + $levels + '},' +
+        '{"slug":"gpt-6.1-sol","visibility":"list","priority":2,"upgrade":null,' + $levels + '},' +
         '{"slug":"gpt-6-luna","visibility":"list","priority":3,"upgrade":null,' + $levels + '},' +
         '{"slug":"gpt-5.6-sol","visibility":"list","priority":4,"upgrade":null,' + $levels + '},' +
         '{"slug":"gpt-6-codex-spark","visibility":"list","priority":0,"upgrade":null,' + $levels + '}]}'
@@ -84,12 +86,12 @@ return [pscustomobject]@{ id = 'fake-message' }
     . (Join-Path $repoRoot 'scripts/model-router/resolve-model.ps1')
     $map = @{ complex = 'complex-coding:True'; standard = 'routine-coding:False'; light = 'mechanical:False' }
     foreach ($tier in $map.Keys) { $m = ConvertTo-RouterCategoryFromTier -Tier $tier; Assert-True ("$($m.category):$($m.protected)" -eq $map[$tier]) "tier $tier maps to $($map[$tier])" }
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'tier complex resolves complex-coding protected (strongest eligible)'
+    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'tier complex resolves complex-coding protected (strongest eligible)'
     Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'tier standard resolves routine-coding (router cost pick, not generation ladder)'
     Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-5.6-sol') 'tier light resolves mechanical (older generation allowed by the table)'
     Assert-True ((Resolve-CodexModel -Category planning -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'category planning resolves through the router'
-    Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'category planning -Protected picks strongest eligible'
-    Assert-True ((Resolve-CodexModel -Category ui-frontend -CachePath $cachePath -Strict) -eq 'gpt-6-sol') 'category ui-frontend resolves through the router'
+    Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'category planning -Protected picks strongest eligible'
+    Assert-True ((Resolve-CodexModel -Category ui-frontend -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'category ui-frontend resolves through the router'
     Assert-True ((Resolve-CodexModel -Tier standard -PreferredModel 'gpt-6-astra' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-6-astra') '-PreferredModel override honored'
     $threw = ''; try { [void](Resolve-CodexModel -Tier standard -PreferredModel 'gone-model' -CachePath $cachePath -Strict) } catch { $threw = $_.Exception.Message }
     Assert-True ($threw -match 'not selectable') '-PreferredModel still selectable-checked under -Strict'
@@ -135,7 +137,7 @@ $report
     Assert-True ($r.prov.router_reason -and $r.prov.router_table_source -eq 'live' -and $r.prov.router_table_date -eq '2026-09-27') 'codex provenance carries router reason and table source/date'
     Assert-True ($r.prov.disclosure_line -match '^MODEL_SELECTION: wiring-chunk -> gpt-6-luna \(routine-coding, effort medium\): fixture reason; router: \S') 'codex disclosure line puts router reason after selection reason'
     $r = Invoke-CodexWrapper 'codex-escalate' @('-Category','complex-coding','-Protected','-EscalateFrom','gpt-6-luna')
-    Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6-sol' -and $r.prov.escalated_from -eq 'gpt-6-luna' -and $r.prov.protected -eq $true) 'codex wrapper -EscalateFrom moves one step up'
+    Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6.1-sol' -and $r.prov.escalated_from -eq 'gpt-6-luna' -and $r.prov.protected -eq $true) 'codex wrapper -EscalateFrom moves one step up'
     Assert-True ($r.prov.disclosure_line -match '\(complex-coding, protected, escalated from gpt-6-luna, effort medium\)' -and $r.prov.router_reason -match 'Escalation') 'codex escalation disclosed'
     $r = Invoke-CodexWrapper 'codex-override' @('-Tier','standard','-Model','gpt-6-astra')
     Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6-astra' -and $r.prov.router_reason -match '^Explicit -Model override') 'codex wrapper -Model override honored and disclosed'
@@ -232,14 +234,14 @@ $report
         Assert-True ($codexResult.exit -eq 0 -and $codexResult.prov.resolved_model -eq $codexMember -and $codexResult.prov.job -eq $job -and $codexResult.prov.vendor -eq 'codex') "codex wrapper accepts $category and records roster job/vendor"
         Assert-True ($claudeResult.exit -eq 0 -and $claudeResult.prov.requested_model -eq $claudeMember -and $claudeResult.prov.job -eq $job -and $claudeResult.prov.vendor -eq 'claude') "claude wrapper accepts $category and records roster job/vendor"
     }
-    $topCodex = Resolve-RouterModel -Category analysis -Lane codex -EscalateFrom gpt-6-sol -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)
+    $topCodex = Resolve-RouterModel -Category analysis -Lane codex -EscalateFrom gpt-6.1-sol -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)
     $topClaude = Resolve-RouterModel -Category analysis -Lane claude -EscalateFrom claude-opus-5-5
-    Assert-True ($topCodex.model -eq 'gpt-6-sol' -and $topClaude.model -eq 'claude-opus-5-5') 'escalation stops at top non-frontier model on both lanes'
-    $codexTop = Invoke-CodexWrapper 'codex-top' @('-Category','analysis','-EscalateFrom','gpt-6-sol')
+    Assert-True ($topCodex.model -eq 'gpt-6.1-sol' -and $topClaude.model -eq 'claude-opus-5-5') 'escalation stops at top non-frontier model on both lanes'
+    $codexTop = Invoke-CodexWrapper 'codex-top' @('-Category','analysis','-EscalateFrom','gpt-6.1-sol')
     $claudeTop = Invoke-ClaudeWrapper 'claude-top' @('-Category','analysis','-EscalateFrom','claude-opus-5-5')
-    Assert-True ($codexTop.exit -eq 0 -and $codexTop.prov.resolved_model -eq 'gpt-6-sol' -and $claudeTop.exit -eq 0 -and $claudeTop.prov.requested_model -eq 'claude-opus-5-5') 'wrappers cannot retry past top non-frontier model'
+    Assert-True ($codexTop.exit -eq 0 -and $codexTop.prov.resolved_model -eq 'gpt-6.1-sol' -and $claudeTop.exit -eq 0 -and $claudeTop.prov.requested_model -eq 'claude-opus-5-5') 'wrappers cannot retry past top non-frontier model'
     $driftPath = Join-Path $state 'drift-marks.json'
-    Write-Utf8 $driftPath (@(@{ job='coder'; model='gpt-6-sol' }, @{ job='coder'; model='claude-opus-5-5' }) | ConvertTo-Json -Depth 4)
+    Write-Utf8 $driftPath (@(@{ job='coder'; model='gpt-6.1-sol' }, @{ job='coder'; model='claude-opus-5-5' }) | ConvertTo-Json -Depth 4)
     $codexDriftOverride = Invoke-CodexWrapper 'codex-drift-override' @('-Category','complex-coding','-Model','gpt-6-astra')
     $claudeDriftOverride = Invoke-ClaudeWrapper 'claude-drift-override' @('-Category','complex-coding','-Model','claude-fable-5-1')
     Assert-True ($codexDriftOverride.exit -eq 0 -and $codexDriftOverride.prov.resolved_model -eq 'gpt-6-astra' -and $claudeDriftOverride.exit -eq 0 -and $claudeDriftOverride.prov.requested_model -eq 'claude-fable-5-1') 'explicit overrides bypass constrained roster drift waits'
@@ -280,7 +282,7 @@ $report
     # 5. Alias mapping for host-native Agent dispatch.
     $aliases = @{ 'claude-opus-5-5' = 'opus'; 'claude-sonnet-5' = 'sonnet'; 'claude-haiku-4-5-20251001' = 'haiku'; 'claude-fable-5-1' = 'fable' }
     foreach ($id in $aliases.Keys) { Assert-True ((Get-RouterAgentAlias -Model $id) -eq $aliases[$id]) "alias $id -> $($aliases[$id])" }
-    Assert-True ($null -eq (Get-RouterAgentAlias -Model 'gpt-6-sol')) 'non-Claude model has no Agent alias'
+    Assert-True ($null -eq (Get-RouterAgentAlias -Model 'gpt-6.1-sol')) 'non-Claude model has no Agent alias'
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     $codexPick = Resolve-RouterModel -Category routine-coding -Lane codex -SkipModelCheck -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)
     Assert-True ($pick.agent_alias -eq 'sonnet' -and $null -eq $codexPick.agent_alias) 'router result carries agent_alias on the Claude lane only'
@@ -306,7 +308,7 @@ $report
     }
     $spendCodex = Join-Path $temp 'spend-codex'
     New-Rollout (Join-Path $spendCodex 'sessions/2026/09/27/rollout-frontier.jsonl') 'gpt-6-astra' @(@(-30, 5), @(2, 24), @(4, 33))
-    New-Rollout (Join-Path $spendCodex 'sessions/2026/09/27/rollout-sol.jsonl') 'gpt-6-sol' @(@(1, 20), @(3, 27))
+    New-Rollout (Join-Path $spendCodex 'sessions/2026/09/27/rollout-sol.jsonl') 'gpt-6.1-sol' @(@(1, 20), @(3, 27))
     $emptyClaude = Join-Path $temp 'spend-claude-empty'
     New-Item -ItemType Directory -Path $emptyClaude | Out-Null
     $spend = Test-FrontierSpend -RunStartedAt $start -RunId 'run-a' -RemainingMilestones 3 -CodexHome $spendCodex -ClaudeHome $emptyClaude -Transport $fake 6>$null
