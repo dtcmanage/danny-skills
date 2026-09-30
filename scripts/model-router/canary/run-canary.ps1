@@ -105,7 +105,8 @@ function Invoke-CanaryModel {
             return [IO.File]::ReadAllText($out)
         } finally { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
     }
-    $claude = (Get-Command claude.ps1,claude.cmd,claude,claude.exe -ErrorAction Stop | Select-Object -First 1).Source
+    $claude = (Get-Command claude.ps1,claude.cmd,claude,claude.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if (-not $claude) { throw 'CANARY_CLAUDE_CLI_MISSING: no claude CLI (claude.ps1, claude.cmd, claude, or claude.exe) is on PATH.' }
     $cliArgs = @('-p','--model',$Model,'--output-format','json','--no-session-persistence','--strict-mcp-config','--tools','')
     $spec = [Diagnostics.ProcessStartInfo]::new()
     $extension = [IO.Path]::GetExtension($claude).ToLowerInvariant()

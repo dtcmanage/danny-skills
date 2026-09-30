@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.16.3
+
+- model router: price GPT-6.1 Sol and Sonnet 5.5 so reports and canary stop showing them unpriced; canary finds claude.exe when claude.ps1 is absent (Claude models were never canaried)
+
 ## 2.16.2
 
 - Router: GPT-6.1 Sol replaces GPT-6 Sol as the Codex Sol rung; research retries transient Codex failures, keeps Codex error output, and checks Artificial Analysis for launch-day scores.
