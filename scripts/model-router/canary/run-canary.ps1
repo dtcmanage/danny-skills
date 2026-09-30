@@ -134,6 +134,17 @@ function Invoke-CanaryModel {
     } finally { if (-not $process.HasExited) { $process.Kill($true) }; $process.Dispose() }
 }
 
+function Get-CanaryAnswerBody {
+    # Models often wrap a code-only answer in a markdown fence. The fence is formatting, not
+    # capability, so strip one outer fence (with optional language tag) before grading.
+    param([AllowEmptyString()][string]$Answer)
+    if ($null -eq $Answer) { return '' }
+    $text = $Answer.Trim()
+    $m = [regex]::Match($text, '(?s)\A```[A-Za-z0-9_+-]*[ \t]*\r?\n(.*?)\r?\n?```\z')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return $Answer
+}
+
 function Invoke-RouterCanary {
     param([string[]]$Models,[ValidateSet('monthly','post-release','manual')][string]$Reason='manual',[scriptblock]$Invoker,[switch]$DryRun,[datetime]$Now=(Get-Date),[switch]$ExplicitModels)
     $scope = @(Get-CanaryScope -OnlyModels $Models -ExcludeFrontier:($Reason -ne 'manual' -and -not $ExplicitModels))
@@ -159,6 +170,7 @@ function Invoke-RouterCanary {
                     $answer = ''; $passed = $false; $errorText = $null
                     try {
                         $answer = if ($Invoker) { [string](& $Invoker $model.model $model.lane $task $prompt $run) } else { [string](Invoke-CanaryModel -Model $model.model -Lane $model.lane -Prompt $prompt) }
+                        $answer = Get-CanaryAnswerBody -Answer $answer
                         if ($task -eq 'pelican') {
                             $svg = Join-Path $runDir ($model.model + '-pelican.svg')
                             [IO.File]::WriteAllText($svg,$answer)

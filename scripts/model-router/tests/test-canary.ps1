@@ -46,12 +46,15 @@ try {
     Assert-True ((@($zeroTask.unpriced) -join ',') -eq 'unknown-model-x' -and $zeroTask.priced_usd -eq 0) 'zero-call models are not listed as unpriced; all-unpriced scope sums to 0'
     $first = Invoke-RouterCanary -Models @('gpt-6-luna') -Invoker $fake -Now ([datetime]'2026-09-27T10:00:00Z')
     Assert-True ($first.results.Count -eq 3 -and $script:invocations -eq 4 -and @($first.results | Where-Object { -not $_.pass }).Count -eq 0) 'three graded runs per model-task plus pelican'
+    $fenced = { param($model,$lane,$task,$prompt,$run) if ($task -eq 'pelican') { return "``````svg`n<svg/>`n``````" }; return "``````python`n" + [IO.File]::ReadAllText((Join-Path $taskRoot "$task/known-good.txt")) + "`n``````" }
+    $fencedRun = Invoke-RouterCanary -Models @('claude-haiku-4-5-20251001') -Invoker $fenced -Now ([datetime]'2026-09-27T10:00:30Z')
+    Assert-True (@($fencedRun.results | Where-Object { -not $_.pass }).Count -eq 0 -and (Get-CanaryAnswerBody -Answer 'plain text') -eq 'plain text' -and (Get-CanaryAnswerBody -Answer "``````python`nx = 1`n``````") -eq 'x = 1') 'markdown-fenced answers are unwrapped before grading; plain answers untouched'
     $rows = @(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ConvertFrom-Json)
-    Assert-True ($rows.Count -eq 3 -and @($rows | Where-Object source -ne canary).Count -eq 0) 'outcomes append canary source'
+    Assert-True (@($rows | Where-Object model -eq 'gpt-6-luna').Count -eq 3 -and @($rows | Where-Object source -ne canary).Count -eq 0) 'outcomes append canary source'
     $sources = Join-Path $env:DT_MODEL_ROUTER_STATE 'sources.json'
     [IO.File]::WriteAllText($sources,'[]')
     $ingest = Update-RouterOutcomes -SourcesPath $sources -Now ([datetime]'2026-09-27T10:01:00Z')
-    Assert-True ($ingest.total_records -eq 3) 'Update-RouterOutcomes reads canary rows'
+    Assert-True ($ingest.total_records -eq $rows.Count) 'Update-RouterOutcomes reads canary rows'
     $baseline = Read-RouterJsonObject (Join-Path $env:DT_MODEL_ROUTER_STATE 'canary/baseline.json')
     Assert-True ([double]$baseline.'gpt-6-luna' -eq 1) 'first complete run sets baseline'
     $bad = { param($model,$lane,$task,$prompt,$run) if ($task -eq 'pelican') { return '<svg/>' }; if ($run -eq 1) { return [IO.File]::ReadAllText((Join-Path $taskRoot "$task/known-bad.txt")) }; return [IO.File]::ReadAllText((Join-Path $taskRoot "$task/known-good.txt")) }

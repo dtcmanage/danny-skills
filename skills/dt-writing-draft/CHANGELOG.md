@@ -1,6 +1,6 @@
 # dt-writing-draft changelog
 
-- 0.1.11 (2026-09-30): model router: price GPT-6.1 Sol and Sonnet 5.5 so reports and canary stop showing them unpriced; canary finds claude.exe when claude.ps1 is absent (Claude models were never canaried)
+- 0.1.11 (2026-09-30): model router: price GPT-6.1 Sol and Sonnet 5.5 so reports and canary stop showing them unpriced; canary finds claude.exe when claude.ps1 is absent and unwraps markdown-fenced answers before grading (Claude models were never canaried, and fenced code failed every code task)
 
 - 0.1.10 (2026-09-30): Router: GPT-6.1 Sol replaces GPT-6 Sol as the Codex Sol rung; research retries transient Codex failures, keeps Codex error output, and checks Artificial Analysis for launch-day scores.
 

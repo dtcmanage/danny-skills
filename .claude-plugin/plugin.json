@@ -26,7 +26,7 @@
   ],
   "metadata": {
     "changelog": [
-      "0.15.4 model router: GPT-6.1 Sol and Sonnet 5.5 priced; canary finds claude.exe when claude.ps1 is absent, so Claude models are canaried for the first time (dt-build 2.16.3, dt-review 1.14.6, dt-image-gen 0.2.6, dt-writing-draft 0.1.11, dt-writing-edit 0.2.9)",
+      "0.15.4 model router: GPT-6.1 Sol and Sonnet 5.5 priced; canary finds claude.exe when claude.ps1 is absent and unwraps markdown-fenced answers before grading, so Claude models are canaried for the first time and code tasks grade the code, not the fence (dt-build 2.16.3, dt-review 1.14.6, dt-image-gen 0.2.6, dt-writing-draft 0.1.11, dt-writing-edit 0.2.9)",
       "0.15.3 model router: GPT-6.1 Sol replaces GPT-6 Sol as the Codex Sol rung; research retries transient Codex failures, keeps Codex error output, and checks Artificial Analysis for launch-day scores (dt-build 2.16.2, dt-review 1.14.5, dt-image-gen 0.2.5, dt-writing-draft 0.1.10, dt-writing-edit 0.2.8); version policy: owners entry for the new router test fixture",
       "0.15.2 model router alerts refuse real delivery from tests (pytest or a temp state folder); dt-build 2.16.1, dt-review 1.14.4, dt-image-gen 0.2.4, dt-writing-draft 0.1.9, dt-writing-edit 0.2.7.",
       "0.15.1 model router weekly report also DMs a short plain-language summary with readable dollar amounts; version policy ownership declared for the new test file",
