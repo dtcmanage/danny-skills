@@ -111,13 +111,7 @@ if ([string]$request['uri'] -like '*/oauth2/applications/@me') { return [pscusto
 return [pscustomobject]@{ id = 'fake' }
 '@
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
-    # No router-table.json: the router runs in bridge mode (seed table, no research yet) and
-    # must reproduce dt-build's pre-router picks.
-
-    # Codex picks come from the model router (legacy tiers map to categories: complex ->
-    # complex-coding protected, standard -> routine-coding, light -> mechanical) and must be
-    # selectable on the live catalog: Spark, retiring, or unlisted models are never chosen
-    # automatically, and frontier models run only as an explicit override.
+    # Approved fixture roster matches the shipped default; all router assertions use it.
     . (Join-Path $repoRoot 'scripts\resolve-codex-model.ps1')
     $cachePath = Join-Path $tempRoot 'models.json'
     Write-Utf8 -Path $cachePath -Content @'
@@ -132,24 +126,36 @@ return [pscustomobject]@{ id = 'fake' }
   {"slug":"gpt-reserve","visibility":"hide","priority":3,"upgrade":null}
 ]}
 '@
-    # The live catalog lists GPT-6.1 Sol beside the older 6.0 models; the bridge's Sol rung is 6.1 Sol. The catalog
+    # The roster's coder is GPT-6.1 Sol. The catalog
     # above stays 6.0-only for the legacy generation-ladder check below, which only looks at the newest generation.
     $routerCachePath = Join-Path $tempRoot 'models-router.json'
     Write-Utf8 -Path $routerCachePath -Content ((Get-Content -Raw -LiteralPath $cachePath).Replace('{"models":[', '{"models":[' + "`n" + '  {"slug":"gpt-6.1-sol","visibility":"list","priority":2,"upgrade":null,"description":"Workhorse model for coding and everyday work."},'))
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $routerCachePath -Strict) -eq 'gpt-6.1-sol') "bridge mode: complex tier (complex-coding, protected) did not keep the bridge gpt-6.1-sol pick"
-    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $routerCachePath -Strict) -eq 'gpt-6.1-sol') "bridge mode: standard tier (routine-coding) did not keep the bridge gpt-6.1-sol pick"
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $routerCachePath -Strict) -eq 'gpt-6-luna') "bridge mode: light tier (mechanical) did not keep the pre-router gpt-6-luna pick"
-    if (-not (Get-Command Resolve-RouterModel -ErrorAction SilentlyContinue)) { . (Join-Path $repoRoot 'scripts\model-router\resolve-model.ps1') }
-    foreach ($claudeTier in @(@('complex', 'claude-opus-5-5'), @('standard', 'claude-sonnet-5'), @('light', 'claude-haiku-4-5-20251001'))) {
-        $mappedTier = ConvertTo-RouterCategoryFromTier -Tier $claudeTier[0]
-        $claudePick = Resolve-RouterModel -Category $mappedTier.category -Lane claude -Protected:$mappedTier.protected -SkipModelCheck
-        Assert-True ($claudePick.model -eq $claudeTier[1] -and $claudePick.reason -match '^bridge mode \(no full research table yet\)') "bridge mode: Claude $($claudeTier[0]) tier did not keep the pre-router $($claudeTier[1]) pick"
+    . (Join-Path $repoRoot 'scripts\model-router\resolve-model.ps1')
+    $fixtureRoster = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'references/model-router/default-roster.json') | ConvertFrom-Json -Depth 20
+    $fixtureRoster.approved = $true; $fixtureRoster.approved_at = '2026-10-01T00:00:00Z'
+    Write-Utf8 -Path (Join-Path $routerState 'roster.json') -Content ($fixtureRoster | ConvertTo-Json -Depth 20)
+    $routerCatalog = Get-Content -Raw -LiteralPath $routerCachePath | ConvertFrom-Json -Depth 20
+    foreach ($case in @(@('complex-coding',$true,'medium'),@('routine-coding',$false,'medium'),@('mechanical',$false,'low'),@('code-review',$false,'high'))) {
+        foreach ($lane in @('codex','claude')) {
+            $pick = Resolve-RouterModel -Category $case[0] -Lane $lane -Protected:$case[1] -Catalog $routerCatalog -SkipModelCheck
+            $job = $fixtureRoster.jobs.(Get-RouterCategoryJob -Category $case[0])
+            $want = if ($job.first_vendor -eq $lane) { $job.first } else { $job.backup }
+            Assert-True ($pick.model -eq $want -and $pick.effort -eq $case[2] -and $pick.roster_source -eq 'state') "roster pick and effort $($case[0])/$lane"
+        }
     }
+    $emptyState = Join-Path $tempRoot 'empty-router-state'; New-Item -ItemType Directory -Path $emptyState | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $emptyState
+    try {
+        $pick = Resolve-RouterModel -Category routine-coding -Lane claude -Catalog $routerCatalog -SkipModelCheck
+        Assert-True ($pick.model -eq 'claude-opus-5-5' -and $pick.effort -eq 'medium' -and $pick.roster_source -eq 'default') 'default roster fallback and effort'
+    } finally { $env:DT_MODEL_ROUTER_STATE = $routerState }
     Assert-True ((@(Get-CodexModelLadder -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)) -join ',') -eq 'gpt-6-sol,gpt-6-luna') "frontier model leaked into the automatic ladder"
     Assert-True ((Resolve-CodexModel -Tier complex -PreferredModel 'gpt-6-astra' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-6-astra') "explicit frontier override was not honored"
     $retiringCache = Join-Path $tempRoot 'models-retiring.json'
     Write-Utf8 -Path $retiringCache -Content '{"models":[{"slug":"gpt-6.1-sol","visibility":"list","priority":1,"upgrade":{"model":"gpt-6-luna"}},{"slug":"gpt-6-luna","visibility":"list","priority":2,"upgrade":null}]}'
-    Assert-True ((Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) -eq 'gpt-6-luna') "bridge mode: resolver selected a model carrying a retirement notice instead of the next selectable ladder rung"
+    $retiringRejected = $false
+    try { [void](Resolve-CodexModel -Tier complex -CachePath $retiringCache -Strict) } catch { $retiringRejected = $_.Exception.Message -match 'unselectable' }
+    Assert-True $retiringRejected "roster resolver accepted a retiring model on a constrained lane"
     $overrideRejected = $false
     try { [void](Resolve-CodexModel -Tier standard -PreferredModel 'gone-model' -CachePath $cachePath -Strict) }
     catch { $overrideRejected = $true }
@@ -382,18 +388,20 @@ rationale: Framework limitation accepted with visible evidence.
     # failure provenance even when a child never reads stdin.
     $fixtureCodexHome = Join-Path $tempRoot 'codex-home'
     New-Item -ItemType Directory -Path $fixtureCodexHome -Force | Out-Null
-    Write-Utf8 -Path (Join-Path $fixtureCodexHome 'models_cache.json') -Content '{"fetched_at":"fixture","models":[{"slug":"gpt-6.1-sol","visibility":"list","supported_reasoning_levels":[{"effort":"medium"}]}]}'
+    Write-Utf8 -Path (Join-Path $fixtureCodexHome 'models_cache.json') -Content '{"fetched_at":"fixture","models":[{"slug":"gpt-6.1-sol","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"}]}]}'
     Write-Utf8 -Path (Join-Path $fixtureCodexHome 'auth.json') -Content '{"auth_mode":"fixture"}'
     $env:CODEX_HOME = $fixtureCodexHome
     $fakeCodex = Join-Path $tempRoot 'fake-codex.ps1'
     Write-Utf8 -Path $fakeCodex -Content @'
 if ($args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if ($args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path $env:CODEX_HOME 'models_cache.json'); exit 0 }
+if ($env:DT_FAKE_CODEX_ARGS) { [IO.File]::WriteAllText($env:DT_FAKE_CODEX_ARGS, ($args -join '|')) }
 $outIndex = [Array]::IndexOf([object[]]$args, '--output-last-message')
 $outPath = if ($outIndex -ge 0) { [string]$args[$outIndex + 1] } else { '' }
 $mode = [string]$env:DT_FAKE_CODEX_MODE
 if ($mode -eq 'hang') { Start-Sleep -Seconds 10; exit 0 }
 [void][Console]::In.ReadToEnd()
+if ($mode -eq 'preflight') { [System.IO.File]::WriteAllText($outPath, 'OK'); exit 0 }
 if ($mode -eq 'malformed') { [System.IO.File]::WriteAllText($outPath, 'I cannot do that.'); exit 0 }
 $report = @"
 DT_BUILD_REPORT_VERSION: 2
@@ -420,15 +428,15 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     $missingReasonOutput = Join-Path $tempRoot 'wrapper-missing-reason.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $missingReasonOutput `
-        -CodexCliPath $fakeCodex -Tier standard -Attempt 1 -Json *> $null
+        -CodexCliPath $fakeCodex -Tier standard -Effort medium -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Codex wrapper allowed a substantive dispatch without -SelectionReason"
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $missingReasonOutput `
-        -CodexCliPath $fakeCodex -Tier standard -SelectionReason "line one`nline two" -Attempt 1 -Json *> $null
+        -CodexCliPath $fakeCodex -Tier standard -Effort medium -SelectionReason "line one`nline two" -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Codex wrapper allowed a multiline -SelectionReason"
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $wrapperOutput `
-        -CodexCliPath $fakeCodex -Tier standard -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
+        -CodexCliPath $fakeCodex -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Codex success path failed"
     $retained = Get-Content -Raw -LiteralPath $wrapperOutput
     Assert-True ($retained -notmatch 'ghp_') "retained chunk output leaked a credential"
@@ -437,11 +445,26 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     Assert-True ([string]$wrapperProv.selection_reason -eq 'ordinary fixture implementation logic') "Codex provenance omitted selection reason"
     Assert-True ([string]$wrapperProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> gpt-6\.1-sol \(routine-coding, effort medium\): ordinary fixture implementation logic; router: .+$') "Codex provenance omitted canonical disclosure line"
 
+    $codexArgsLog = Join-Path $tempRoot 'codex-effort-args.txt'; $env:DT_FAKE_CODEX_ARGS = $codexArgsLog
+    $lowCodexOutput = Join-Path $tempRoot 'codex-effort-low.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowCodexOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'effort argument fixture' -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw -LiteralPath $codexArgsLog) -match 'model_reasoning_effort="low"') 'Codex passes explicit low effort to CLI'
+    $lowCodexProv = Get-Content -Raw -LiteralPath "$lowCodexOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ($lowCodexProv.effort -eq 'low' -and $lowCodexProv.reasoning_effort -eq 'low' -and $lowCodexProv.disclosure_line -match 'effort low') 'Codex effort provenance and disclosure'
+    $missingEffortLog = Join-Path $tempRoot 'codex-missing-effort.log'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowCodexOutput -CodexCliPath $fakeCodex -SelectionReason 'effort argument fixture' -Json *> $missingEffortLog
+    Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw -LiteralPath $missingEffortLog) -match '-Effort' -and @(Get-Content -LiteralPath $missingEffortLog).Count -eq 1) 'Codex missing -Effort fails closed with one line'
+    Remove-Item Env:DT_FAKE_CODEX_ARGS
+
+    $env:DT_FAKE_CODEX_MODE = 'preflight'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'codex-preflight.md') -CodexCliPath $fakeCodex -Category routine-coding -Preflight -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'Codex preflight works without -Effort'
+
     $env:DT_FAKE_CODEX_MODE = 'malformed'
     $malformedOutput = Join-Path $tempRoot 'wrapper-malformed.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $malformedOutput `
-        -CodexCliPath $fakeCodex -Tier standard -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
+        -CodexCliPath $fakeCodex -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "malformed Codex output was accepted"
     $malformedProv = Get-Content -Raw -LiteralPath "$malformedOutput.provenance.json" | ConvertFrom-Json
     Assert-True (-not [bool]$malformedProv.pass) "malformed-output failure provenance claimed PASS"
@@ -452,7 +475,7 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     $hangOutput = Join-Path $tempRoot 'wrapper-hang.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $hangPrompt -OutputPath $hangOutput `
-        -CodexCliPath $fakeCodex -Tier standard -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -TimeoutMs 1000 -Json *> $null
+        -CodexCliPath $fakeCodex -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -TimeoutMs 1000 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "non-reading Codex child escaped timeout"
     $hangProv = Get-Content -Raw -LiteralPath "$hangOutput.provenance.json" | ConvertFrom-Json
     Assert-True (-not [bool]$hangProv.pass) "timeout failure provenance claimed PASS"
@@ -477,6 +500,7 @@ function Write-Envelope([string]$Text) {
     Write-Output (@{ type = 'result'; is_error = $false; result = $Text; total_cost_usd = 0.01; modelUsage = $usage } | ConvertTo-Json -Depth 5 -Compress)
 }
 if ($mode -eq 'malformed') { Write-Envelope 'I cannot do that.'; exit 0 }
+if ($mode -eq 'preflight') { Write-Envelope 'OK'; exit 0 }
 if ($mode -eq 'rawtext') { Write-Output 'plain text, no envelope'; exit 0 }
 $report = @"
 DT_BUILD_REPORT_VERSION: 2
@@ -500,21 +524,23 @@ Write-Envelope $report
     $claudeMissingReason = Join-Path $tempRoot 'claude-wrapper-missing-reason.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMissingReason `
-        -ClaudeCliPath $fakeClaude -Tier standard -Attempt 1 -Json *> $null
+        -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper allowed a substantive dispatch without -SelectionReason"
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMissingReason `
-        -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason "line one`nline two" -Attempt 1 -Json *> $null
+        -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason "line one`nline two" -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper allowed a multiline -SelectionReason"
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeOutput `
-        -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
+        -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Claude success path failed"
     $claudeRetained = Get-Content -Raw -LiteralPath $claudeOutput
     Assert-True ($claudeRetained -notmatch 'ghp_') "retained Claude chunk output leaked a credential"
     Assert-True ($claudeRetained -match '\[REDACTED-SECRET\]') "retained Claude chunk output was not redacted"
     $claudeProv = Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json" | ConvertFrom-Json
     Assert-True ([string]$claudeProv.selection_reason -eq 'ordinary fixture verification logic') "Claude provenance omitted selection reason"
+    Assert-True ($claudeProv.effort -eq 'medium' -and $claudeProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> claude-sonnet-5 \(routine-coding, effort medium\): ordinary fixture verification logic; router: .+$') 'Claude effort provenance and full disclosure'
+    $claudeProv.disclosure_line = $claudeProv.disclosure_line.Replace(', effort medium', '') # Preserve the existing legacy disclosure-structure assertion below.
     Assert-True ([string]$claudeProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> claude-sonnet-5 \(routine-coding\): ordinary fixture verification logic; router: .+$') "Claude provenance omitted canonical disclosure line"
     Assert-True ([string]$claudeProv.requested_model -eq 'claude-sonnet-5') "Claude provenance lost the router-requested model"
     Assert-True ([string]$claudeProv.resolved_model -eq 'claude-sonnet-5') "Claude provenance did not record the exact model version that ran"
@@ -528,7 +554,7 @@ Write-Envelope $report
         $badOut = Join-Path $tempRoot "claude-wrapper-$badMode.md"
         & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
             -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $badOut `
-            -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
+            -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
         Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper accepted $badMode output"
         $badProv = Get-Content -Raw -LiteralPath "$badOut.provenance.json" | ConvertFrom-Json
         Assert-True (-not [bool]$badProv.pass) "Claude $badMode provenance claimed PASS"
@@ -541,17 +567,30 @@ Write-Envelope $report
     $env:DT_FAKE_CLAUDE_ARGS = $claudeArgsLog
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-args-build.md') `
-        -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
+        -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     $buildArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
     Assert-True ($buildArgs -match '--strict-mcp-config') "Claude wrapper did not disable MCP servers"
     Assert-True ($buildArgs -match '--tools\|Bash,Read,Edit,Write,Glob,Grep(\||$)') "Claude wrapper build tool list drifted"
     Assert-True ($buildArgs -notmatch 'Agent') "Claude wrapper exposed the Agent tool to a chunk"
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-args-verify.md') `
-        -ClaudeCliPath $fakeClaude -Tier standard -ReadOnly -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
+        -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     $verifyArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
     Assert-True ($verifyArgs -match '--tools\|Bash,Read,Glob,Grep(\||$)') "Claude wrapper -ReadOnly still exposed write tools"
+    $lowClaudeOutput = Join-Path $tempRoot 'claude-effort-low.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowClaudeOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort low -SelectionReason 'effort argument fixture' -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw -LiteralPath $claudeArgsLog) -match '--model\|claude-sonnet-5\|--effort\|low(\||$)') 'Claude passes explicit low effort beside model to CLI'
+    $lowClaudeProv = Get-Content -Raw -LiteralPath "$lowClaudeOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ($lowClaudeProv.effort -eq 'low' -and $lowClaudeProv.disclosure_line -match 'effort low') 'Claude low effort provenance and disclosure'
+    $missingEffortLog = Join-Path $tempRoot 'claude-missing-effort.log'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowClaudeOutput -ClaudeCliPath $fakeClaude -SelectionReason 'effort argument fixture' -Json *> $missingEffortLog
+    Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw -LiteralPath $missingEffortLog) -match '-Effort' -and @(Get-Content -LiteralPath $missingEffortLog).Count -eq 1) 'Claude missing -Effort fails closed with one line'
     Remove-Item Env:DT_FAKE_CLAUDE_ARGS -ErrorAction SilentlyContinue
+
+    $env:DT_FAKE_CLAUDE_MODE = 'preflight'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'Claude preflight works without -Effort'
+    $env:DT_FAKE_CLAUDE_MODE = 'success'
 
     # Every assembled prompt carries the standing context-discipline rules and
     # the checkpoint field; removing either silently restores unbounded builders.
@@ -603,7 +642,7 @@ Write-Envelope $report
     $claudeMalformed = Join-Path $tempRoot 'claude-wrapper-malformed.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMalformed `
-        -ClaudeCliPath $fakeClaude -Tier standard -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
+        -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "malformed Claude output was accepted"
     $claudeMalformedProv = Get-Content -Raw -LiteralPath "$claudeMalformed.provenance.json" | ConvertFrom-Json
     Assert-True (-not [bool]$claudeMalformedProv.pass) "malformed Claude-output failure provenance claimed PASS"

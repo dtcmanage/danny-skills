@@ -11,6 +11,7 @@ param(
     [string]$EscalateFrom = "",
     [string]$Model = "",
     [string]$SelectionReason = "",
+    [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
     [ValidateRange(1, 2)][int]$Attempt = 1,
     [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
@@ -29,8 +30,8 @@ param(
 # The model comes from the shared model router (scripts/model-router/resolve-model.ps1,
 # Claude lane) for the chunk's category; -Tier alone maps to a category the same way
 # as the Codex wrapper. -Model is an explicit override only.
-# There is no reasoning-effort knob on the claude CLI; effort is a session-level
-# setting, so provenance records the requested model and resolved CLI version only.
+# The claude CLI accepts --effort; the caller passes the resolved roster effort
+# explicitly and provenance records it alongside the model version.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -97,6 +98,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "CLAUDE_INVOKE_FAIL: project path is not a git repo: $projectRoot`n$($gitProbe -join "`n")"
 }
 
+if (-not $Preflight -and -not $Effort) {
+    [Console]::Error.WriteLine('CLAUDE_INVOKE_FAIL: substantive invocation requires -Effort.')
+    exit 1
+}
+
 if (-not $Preflight) {
     if ([string]::IsNullOrWhiteSpace($PromptPath) -or -not (Test-Path -LiteralPath $PromptPath -PathType Leaf)) {
         throw "CLAUDE_INVOKE_FAIL: substantive invocation requires an existing -PromptPath."
@@ -151,7 +157,7 @@ if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or
     $waitReason = "ROUTER_WAIT: $($routerPick.reason)"
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         $waitProvenance = [pscustomobject]@{
-            pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier
+            pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier; effort = $Effort
             category = $Category; protected = [bool]$routerPick.protected; escalated_from = $escalatedFrom
             router_status = 'wait'; router_reason = $routerPick.reason
             router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
@@ -177,7 +183,7 @@ else {
 }
 $selectionLabel = $Category + $(if ($isProtected) { ', protected' } else { '' }) + $(if ($escalatedFrom) { ", escalated from $escalatedFrom" } else { '' })
 $disclosureLine = if ($Preflight) { $null } else {
-    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel): $SelectionReason; router: $routerReason"
+    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel, effort $Effort): $SelectionReason; router: $routerReason"
 }
 $claudeCli = Get-ClaudeCliPath
 # The exact model version the CLI reports; null until a run is parsed.
@@ -224,6 +230,8 @@ $args = @(
     '--strict-mcp-config',
     '--tools', $toolList
 )
+
+if ($Effort) { $args = @($args[0..2]) + @('--effort', $Effort) + @($args[3..($args.Count - 1)]) }
 
 $started = Get-Date
 $proc = $null
@@ -370,6 +378,7 @@ try {
         pass                = [string]::IsNullOrWhiteSpace($failureReason)
         preflight           = [bool]$Preflight
         lane                = 'claude'
+        effort              = $Effort
         tier                = $Tier
         category            = $Category
         protected           = $isProtected
@@ -416,7 +425,7 @@ catch {
     if (-not $temporaryOutput -and -not $provenanceWritten) {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
-            pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier
+            pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier; effort = $Effort
             category = $Category; protected = $isProtected; escalated_from = $escalatedFrom
             router_reason = $routerReason; router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
             job = $routerPick.job; vendor = $routerPick.vendor

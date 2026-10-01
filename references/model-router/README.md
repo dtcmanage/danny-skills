@@ -1,6 +1,6 @@
 # Model router operator reference
 
-Route work through `scripts/model-router/resolve-model.ps1`; request `-Json` for structured output. The roster contains five jobs, a first choice and an other-vendor backup per job, and a category-to-job map. The illustrator has no backup while only one image model exists.
+Route work through `scripts/model-router/resolve-model.ps1`; request `-Json` for structured output. The roster contains five jobs, a first choice and an other-vendor backup per job, and a category-to-job map. The illustrator has no backup while only one image model exists. Each slot carries an effort (fast low, coder medium, deep thinker high, writer medium, illustrator none) that the resolver returns and the wrappers pass to the CLIs.
 
 Use the approved state `roster.json` when valid. An absent `roster.json` raises `router-roster-missing`; a `roster.json` that is invalid or not approved raises `router-roster-invalid` with the error text. In both cases, the resolver uses `default-roster.json`. `ladders.json` defines the per-lane escalation ladder. Vendor limits and recorded refusal blocks can move a job to its backup; drift moves a job to its approved backup. When no eligible model is available, the resolver returns `wait`.
 

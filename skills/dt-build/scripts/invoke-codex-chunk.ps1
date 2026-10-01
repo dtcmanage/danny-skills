@@ -11,7 +11,7 @@ param(
     [string]$EscalateFrom = "",
     [string]$Model = "",
     [string]$SelectionReason = "",
-    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')][string]$ReasoningEffort = "medium",
+    [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
     [ValidateRange(1, 2)][int]$Attempt = 1,
     [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
@@ -87,6 +87,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "CODEX_INVOKE_FAIL: project path is not a git repo: $projectRoot`n$($gitProbe -join "`n")"
 }
 
+if (-not $Preflight -and -not $Effort) {
+    [Console]::Error.WriteLine('CODEX_INVOKE_FAIL: substantive invocation requires -Effort.')
+    exit 1
+}
+
 if (-not $Preflight) {
     if ([string]::IsNullOrWhiteSpace($PromptPath) -or -not (Test-Path -LiteralPath $PromptPath -PathType Leaf)) {
         throw "CODEX_INVOKE_FAIL: substantive invocation requires an existing -PromptPath."
@@ -146,7 +151,7 @@ if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or
     $waitReason = "ROUTER_WAIT: $($routerPick.reason)"
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         $waitProvenance = [pscustomobject]@{
-            pass = $false; preflight = [bool]$Preflight; tier = $Tier
+            pass = $false; preflight = [bool]$Preflight; tier = $Tier; effort = $Effort; reasoning_effort = $Effort
             category = $Category; protected = [bool]$routerPick.protected; escalated_from = $escalatedFrom
             router_status = 'wait'; router_reason = $routerPick.reason
             router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
@@ -174,10 +179,10 @@ else {
     }
     $routerReason = [string]$routerPick.reason
 }
-[void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $ReasoningEffort -Catalog $modelCatalog -Strict)
+if ($Effort) { [void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $Effort -Catalog $modelCatalog -Strict) }
 $selectionLabel = $Category + $(if ($isProtected) { ', protected' } else { '' }) + $(if ($escalatedFrom) { ", escalated from $escalatedFrom" } else { '' })
 $disclosureLine = if ($Preflight) { $null } else {
-    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel, effort $ReasoningEffort): $SelectionReason; router: $routerReason"
+    "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel, effort $Effort): $SelectionReason; router: $routerReason"
 }
 
 $temporaryOutput = $false
@@ -227,10 +232,11 @@ $args = @(
 ) + $sandboxArgs + @(
     '--cd', $projectRoot,
     '--model', $resolvedModel,
-    '-c', ('model_reasoning_effort="{0}"' -f $ReasoningEffort),
     '--output-last-message', $OutputPath,
     '-'
 )
+
+if ($Effort) { $args = @($args[0..($args.Count - 2)]) + @('-c', ('model_reasoning_effort="{0}"' -f $Effort), '-') }
 
 $started = Get-Date
 $proc = $null
@@ -399,7 +405,8 @@ try {
         model_ladder           = $modelLadder
         selection_reason       = if ($Preflight) { $null } else { $SelectionReason }
         disclosure_line        = $disclosureLine
-        reasoning_effort       = $ReasoningEffort
+        effort                 = $Effort
+        reasoning_effort       = $Effort
         attempt                = $Attempt
         sandbox                = $sandbox
         # Approval policy and sandbox mode are separate controls: the global
@@ -437,14 +444,14 @@ catch {
     if (-not $temporaryOutput -and -not $provenanceWritten) {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
-            pass = $false; preflight = [bool]$Preflight; tier = $Tier
+            pass = $false; preflight = [bool]$Preflight; tier = $Tier; effort = $Effort; reasoning_effort = $Effort
             category = $Category; protected = $isProtected; escalated_from = $escalatedFrom
             router_reason = $routerReason; router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
             job = $routerPick.job; vendor = $routerPick.vendor
             requested_model = $preferred; resolved_model = $resolvedModel
             selection_reason = if ($Preflight) { $null } else { $SelectionReason }
             disclosure_line = $disclosureLine
-            reasoning_effort = $ReasoningEffort; attempt = $Attempt; sandbox = $sandbox
+            attempt = $Attempt; sandbox = $sandbox
             approval_mode = 'never'
             duration_ms = $durationMs; timeout_ms = $TimeoutMs; prompt_sha256 = $promptSha256
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }

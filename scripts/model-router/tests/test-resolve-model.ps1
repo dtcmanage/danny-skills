@@ -26,6 +26,7 @@ try {
     foreach ($category in @('routine-coding','code-review','ui-frontend','deep-research')) {
         $pick = Resolve-RouterModel -Category $category -Lane claude -SkipModelCheck -Catalog $catalog
         Assert-True ($pick.model -eq 'claude-opus-5-5' -and $pick.roster_source -eq 'default' -and $pick.alerts -contains 'router-roster-missing') "missing roster default $category"
+        Assert-True ($pick.effort -ceq (Get-RouterJobEffort -Job (Get-RouterCategoryJob -Category $category))) "default effort $category"
     }
     Assert-True ((Get-RouterAlertMessage 'router-roster-missing') -eq 'Model router roster is missing; it is using the default roster.') 'missing roster alert message'
     $rosterPath = Join-Path $temp 'roster.json'
@@ -56,9 +57,11 @@ try {
             $want = $expected[$category][$(if ($lane -eq 'codex') { 0 } else { 1 })]
             $pick = Resolve-RouterModel -Category $category -Lane $lane -SkipModelCheck -Catalog $catalog
             Assert-True ($pick.model -eq $want -and $pick.roster_source -eq 'state' -and $pick.status -eq $(if ($want) { 'ok' } else { 'wait' })) "state pick $category/$lane"
+            Assert-True ($pick.PSObject.Properties['effort'] -and $pick.effort -ceq $(if ($want) { Get-RouterJobEffort -Job (Get-RouterCategoryJob -Category $category) } else { $null })) "state effort $category/$lane"
         }
     }
     $snapshot = @(Get-RouterPicksSnapshot)
+    Assert-True (@($snapshot | Where-Object { -not $_.PSObject.Properties['effort'] }).Count -eq 0) 'snapshot carries effort'
     Assert-True ($snapshot.Count -eq 42 -and @($snapshot | Where-Object { -not $_.lane }).Count -eq 0 -and @($snapshot | Where-Object { $_.category -in @('math','analysis') }).Count -eq 8) 'snapshot includes math and analysis in 42 rows'
     Assert-True ((Resolve-RouterModel -Category mechanical -Lane codex -Protected -Catalog $catalog).model -eq 'gpt-6.1-sol') 'protected mechanical uses coder'
     Assert-True ((Resolve-RouterModel -Category long-form-writing -Catalog $catalog).protected) 'writing always protected'

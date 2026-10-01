@@ -1,6 +1,6 @@
 # Model router roster schema (v1)
 
-`roster.json` is a JSON object with `schema_version: 1`, an ISO `generated_at` timestamp, Boolean `approved`, and `approved_at` (ISO timestamp when approved, otherwise null). `category_jobs` maps every category to one job. `jobs` is keyed by job; each value has `first` (model ID), `first_vendor` (`codex` or `claude`), `backup` (model ID or null), and `backup_vendor` (vendor or null).
+`roster.json` is a JSON object with `schema_version: 1`, an ISO `generated_at` timestamp, Boolean `approved`, and `approved_at` (ISO timestamp when approved, otherwise null). `category_jobs` maps every category to one job. `jobs` is keyed by job; each value has `first` (model ID), `first_vendor` (`codex` or `claude`), `backup` (model ID or null), `backup_vendor` (vendor or null), `first_effort`, and `backup_effort`. Both effort fields are required. Allowed text values are `low`, `medium`, and `high`; `max` and `xhigh` are invalid. Both illustrator fields must be null; every other job requires an allowed value in both slots. Writers use the fixed policy: fast `low`, coder `medium`, deep thinker `high`, writer `medium`, illustrator null. Missing or invalid values return `ROSTER_EFFORT: <job>/<slot>`; non-null illustrator effort returns `ROSTER_EFFORT_ILLUSTRATOR: must be null`.
 
 Categories and jobs: `mechanical` -> `fast`; `routine-coding`, `complex-coding`, `ui-frontend` -> `coder`; `code-review`, `planning`, `deep-research`, `math`, `analysis` -> `deep-thinker`; `long-form-writing` -> `writer`; `image-generation` -> `illustrator`.
 

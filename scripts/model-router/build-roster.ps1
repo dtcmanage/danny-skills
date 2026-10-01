@@ -121,6 +121,11 @@ function Build-RouterRosterProposal {
     $verdictPath = Join-Path $dir 'verdicts.jsonl'
     $history = @(if (Test-Path -LiteralPath $verdictPath) { Get-Content -LiteralPath $verdictPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
     $proposed = $current | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    foreach ($name in @(Get-RouterJobs)) {
+        foreach ($slot in @('first','backup')) {
+            $proposed.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
+        }
+    }
     $proposed.generated_at = $Now.ToString('o'); $proposed.approved = $false; $proposed.approved_at = $null
     $changes = @(); $tradeoffs = @()
     foreach ($job in @(Get-RouterJobs)) {
@@ -176,7 +181,7 @@ function Build-RouterRosterProposal {
     $lines = @('# Model list proposal','','| Job | Current | Proposed | Evidence summary | Backup |','| --- | --- | --- | --- | --- |')
     foreach ($job in @(Get-RouterJobs)) {
         $evidence = @($changes | Where-Object job -eq $job | ForEach-Object evidence) -join '; '
-        $lines += "| $job | $($current.jobs.$job.first) | $($proposed.jobs.$job.first) | $evidence | $($proposed.jobs.$job.backup) |"
+        $lines += "| $job | $($current.jobs.$job.first) | $($proposed.jobs.$job.first) (effort $($proposed.jobs.$job.first_effort)) | $evidence | $($proposed.jobs.$job.backup) (effort $($proposed.jobs.$job.backup_effort)) |"
     }
     $lines += @('','## Conflicts','')
     if ($conflicts.Count) { $lines += @($conflicts | ForEach-Object { "- $($_.job)/$($_.slot): $($_.from) -> $($_.to). $($_.evidence)" }) } else { $lines += 'None.' }

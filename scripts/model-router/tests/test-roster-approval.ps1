@@ -26,6 +26,13 @@ try {
     $latest = Get-Content -LiteralPath (Join-Path $temp 'roster-proposals/latest.json') -Raw | ConvertFrom-Json
     $show = @(Invoke-Approval -Options @('-Show')) -join "`n"
     Assert-True ((Test-Path -LiteralPath $latest.proposal) -and $show -match '\| Job \| Current \| Proposed' -and $show -match 'Current roster') 'seed writes proposal and show prints report'
+    $seed = Get-Content -Raw -LiteralPath $latest.proposal | ConvertFrom-Json -Depth 30
+    foreach ($job in @(Get-RouterJobs)) {
+        $want = Get-RouterJobEffort -Job $job
+        Assert-True ($seed.jobs.$job.first_effort -ceq $want -and $seed.jobs.$job.backup_effort -ceq $want) "seed fixed effort $job"
+        if ($want) { Assert-True ($show -match "$job.*effort $want.*effort $want") "show both efforts $job" }
+    }
+    Assert-True ($show -match 'first_effort' -and $show -match 'backup_effort' -and $null -eq $seed.jobs.illustrator.first_effort -and $null -eq $seed.jobs.illustrator.backup_effort) 'show effort columns and illustrator null'
     $before = Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog
     Assert-True ($before.roster_source -eq 'default') 'seed alone uses default roster'
     $null = Invoke-Approval -Options @('-Approve')

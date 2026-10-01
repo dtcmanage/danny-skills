@@ -46,15 +46,20 @@ if ($Show) {
     else { 'No roster proposal.' | Write-Output }
     $current = Read-RouterRoster
     "Current roster ($($current.source)):" | Write-Output
-    @(Get-RouterJobs | ForEach-Object { [pscustomobject]@{ job=$_; first=$current.roster.jobs.$_.first; backup=$current.roster.jobs.$_.backup } }) | Format-Table -AutoSize | Out-String | Write-Output
+    @(Get-RouterJobs | ForEach-Object { [pscustomobject]@{ job=$_; first=$current.roster.jobs.$_.first; first_effort=$current.roster.jobs.$_.first_effort; backup=$current.roster.jobs.$_.backup; backup_effort=$current.roster.jobs.$_.backup_effort } }) | Format-Table -AutoSize | Out-String | Write-Output
 } elseif ($Seed) {
     $proposal = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+    foreach ($name in @(Get-RouterJobs)) {
+        foreach ($slot in @('first','backup')) {
+            $proposal.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
+        }
+    }
     $proposal.generated_at = (Get-Date).ToUniversalTime().ToString('o')
     $stem = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHHmmss') + '-seed'
     $path = Join-Path $dir ($stem + '.json'); $report = Join-Path $dir ($stem + '.md')
     Write-RouterApprovalJson $path $proposal
     $lines = @('# Model list proposal','','| Job | Current | Proposed | Evidence summary | Backup |','| --- | --- | --- | --- | --- |')
-    foreach ($name in @(Get-RouterJobs)) { $lines += "| $name | $($proposal.jobs.$name.first) | $($proposal.jobs.$name.first) | Seeded from default roster | $($proposal.jobs.$name.backup) |" }
+    foreach ($name in @(Get-RouterJobs)) { $lines += "| $name | $($proposal.jobs.$name.first) (effort $($proposal.jobs.$name.first_effort)) | $($proposal.jobs.$name.first) (effort $($proposal.jobs.$name.first_effort)) | Seeded from default roster | $($proposal.jobs.$name.backup) (effort $($proposal.jobs.$name.backup_effort)) |" }
     [IO.File]::WriteAllText($report,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
     Write-RouterApprovalJson (Join-Path $dir 'latest.json') ([pscustomobject]@{proposal=$path;report=$report})
     "Seed proposal: $path" | Write-Output
@@ -71,6 +76,11 @@ if ($Show) {
         }
         $proposal = $selected
     }
+    foreach ($name in @(Get-RouterJobs)) {
+        foreach ($slot in @('first','backup')) {
+            $proposal.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
+        }
+    }
     $proposal.approved = $true; $proposal.approved_at = (Get-Date).ToUniversalTime().ToString('o')
     $errors = @(Test-RouterRoster -Roster $proposal)
     if ($errors.Count) { throw "Invalid roster proposal: $($errors -join '; ')" }
@@ -84,6 +94,11 @@ if ($Show) {
 } elseif ($Revoke) {
     if (-not (Test-Path -LiteralPath $rosterPath)) { throw 'No roster to revoke.' }
     $current = Get-Content -LiteralPath $rosterPath -Raw | ConvertFrom-Json -Depth 40
+    foreach ($name in @(Get-RouterJobs)) {
+        foreach ($slot in @('first','backup')) {
+            $current.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
+        }
+    }
     $current.approved = $false
     Write-RouterApprovalJson $rosterPath $current
     'Roster approval cleared. Routing falls back to the default roster with an alert.' | Write-Output

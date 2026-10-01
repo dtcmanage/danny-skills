@@ -183,6 +183,11 @@ function Update-RouterOutcomes {
     $proposalPath = $null
     if ($newMarks -gt 0 -and @($marks | Where-Object { $roster.jobs.($_.job).backup }).Count) {
         $proposal = $roster | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+        foreach ($name in @(Get-RouterJobs)) {
+            foreach ($slot in @('first','backup')) {
+                $proposal.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
+            }
+        }
         $proposal.generated_at = $nowUtc.ToString('o'); $proposal.approved = $false; $proposal.approved_at = $null
         foreach ($mark in $marks) {
             $target = $proposal.jobs.($mark.job)
@@ -199,7 +204,7 @@ function Update-RouterOutcomes {
         foreach ($job in @(Get-RouterJobs)) {
             $mark = @($marks | Where-Object job -eq $job)
             $evidence = if ($mark.Count) { "Pass rate $($mark[0].prior_rate) to $($mark[0].recent_rate); drift threshold met" } else { 'No change' }
-            $lines += "| $job | $($roster.jobs.$job.first) | $($proposal.jobs.$job.first) | $evidence | $($proposal.jobs.$job.backup) |"
+            $lines += "| $job | $($roster.jobs.$job.first) | $($proposal.jobs.$job.first) (effort $($proposal.jobs.$job.first_effort)) | $evidence | $($proposal.jobs.$job.backup) (effort $($proposal.jobs.$job.backup_effort)) |"
         }
         [IO.File]::WriteAllText($reportPath,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
         Write-RouterOutcomeJson (Join-Path $dir 'latest.json') ([pscustomobject]@{proposal=$proposalPath;report=$reportPath})

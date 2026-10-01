@@ -114,6 +114,8 @@ try {
     $repeat=Build-RouterRosterProposal -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True (-not $repeat.changed -and $script:alerts.Count -eq 1) 'repeat sends no alert'
     $proposal=Get-Content -LiteralPath $two.proposal -Raw | ConvertFrom-Json -Depth 30
+    foreach ($job in @(Get-RouterJobs)) { Assert-True ($proposal.jobs.$job.first_effort -ceq (Get-RouterJobEffort $job) -and $proposal.jobs.$job.backup_effort -ceq (Get-RouterJobEffort $job)) "proposal effort $job" }
+    Assert-True (@(Test-RouterRoster $proposal | Where-Object { $_ -notlike 'ROSTER_MODEL_CAP:*' }).Count -eq 0) 'proposal schema validates apart from intentional model cap conflict'
     Assert-True ($proposal.over_cap -and @($proposal.conflicts | Where-Object job -eq 'coder').Count -ge 1 -and @($proposal.validation_errors | Where-Object { $_ -like 'ROSTER_MODEL_CAP:*' }).Count -eq 1 -and (@($proposal.validation_errors) -join ';') -ceq (@(Test-RouterRoster $proposal) -join ';')) 'over-cap proposal names conflict and reports every validation error'
     Assert-True ($script:alerts[0].message -match 'choose which of these jobs' -and $script:alerts[0].message -match 'coder' -and $script:alerts[0].message -match 'approve-roster\.ps1 -Approve -Jobs ') 'over-cap alert names jobs and approval command'
     Assert-True ($null -eq $proposal.jobs.illustrator.backup -and $null -eq $proposal.jobs.illustrator.backup_vendor) 'illustrator backup remains null'
@@ -170,6 +172,7 @@ try {
     $scenario=Join-Path $temp 'scenario-dated-fast'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     $roster=(Read-RouterRoster).roster
+    foreach ($job in @(Get-RouterJobs)) { $roster.jobs.$job.first_effort = Get-RouterJobEffort -Job $job; $roster.jobs.$job.backup_effort = Get-RouterJobEffort -Job $job }
     $roster.jobs.fast.first='claude-haiku-4-5-20251001'; $roster.jobs.fast.first_vendor='claude'; $roster.jobs.fast.backup='gpt-6-luna'; $roster.jobs.fast.backup_vendor='codex'; $roster.approved=$true; $roster.approved_at='2026-09-28T09:00:00Z'
     [IO.File]::WriteAllText((Join-Path $scenario 'roster.json'),($roster | ConvertTo-Json -Depth 30))
     Save-Category -Category mechanical -Rows @((New-Reading 'm1' 'claude-opus-5-5' 55 'claude-haiku-4-5-20251001' 55),(New-Reading 'm2' 'claude-opus-5-5' 55 'claude-haiku-4-5-20251001' 55))

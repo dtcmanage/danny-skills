@@ -66,8 +66,8 @@ function Resolve-RouterRosterPick {
     $job = Get-RouterCategoryJob -Category $Category
     if ($IsProtected -and $job -eq 'fast') { $job = 'coder' }
     $entry = $Read.roster.jobs.$job
-    $first = [pscustomobject]@{ model=$entry.first; vendor=$entry.first_vendor }
-    $backup = if ($null -ne $entry.backup) { [pscustomobject]@{ model=$entry.backup; vendor=$entry.backup_vendor } } else { $null }
+    $first = [pscustomobject]@{ model=$entry.first; vendor=$entry.first_vendor; effort=$entry.first_effort }
+    $backup = if ($null -ne $entry.backup) { [pscustomobject]@{ model=$entry.backup; vendor=$entry.backup_vendor; effort=$entry.backup_effort } } else { $null }
     $chosen = $first
     $other = $backup
     $reason = "roster job $job first choice"
@@ -99,8 +99,8 @@ function Resolve-RouterRosterPick {
         $ids = @($map.lanes.($chosen.vendor).ladder | Where-Object { -not $_.frontier } | ForEach-Object { [string]$_.model })
         $at = [array]::IndexOf($ids,$from)
         if ($at -ge 0) {
-            if ($at -lt $ids.Count - 1) { $chosen = [pscustomobject]@{ model=$ids[$at + 1]; vendor=$chosen.vendor }; $reason = "Escalation: one rung up from $from." }
-            else { $chosen = [pscustomobject]@{ model=$from; vendor=$chosen.vendor }; $reason = "Escalation: already at the top non-frontier model; same model retained." }
+            if ($at -lt $ids.Count - 1) { $chosen = [pscustomobject]@{ model=$ids[$at + 1]; vendor=$chosen.vendor; effort=$chosen.effort }; $reason = "Escalation: one rung up from $from." }
+            else { $chosen = [pscustomobject]@{ model=$from; vendor=$chosen.vendor; effort=$chosen.effort }; $reason = "Escalation: already at the top non-frontier model; same model retained." }
         }
     }
     if ($chosen -and (Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue)) {
@@ -118,7 +118,7 @@ function Resolve-RouterRosterPick {
         } else { $chosen = $null; $reason = "Wait: $unselectable unselectable on constrained or unavailable lane." }
     }
     $model = if ($chosen) { $chosen.model } else { $null }
-    $result = [pscustomobject]@{ model=$model; agent_alias=$null; category=$Category; lane=$null; protected=$IsProtected; reason=$reason; table_source=$null; table_date=$null; validation_error=$Read.validation_error; alerts=@($alerts.ToArray()); ranked=[object[]]@($model | Where-Object { $_ }) }
+    $result = [pscustomobject]@{ model=$model; agent_alias=$null; effort=$(if ($chosen) { $chosen.effort } else { $null }); category=$Category; lane=$null; protected=$IsProtected; reason=$reason; table_source=$null; table_date=$null; validation_error=$Read.validation_error; alerts=@($alerts.ToArray()); ranked=[object[]]@($model | Where-Object { $_ }) }
     return (Complete-RouterResult -Result $result -Job $job -RosterSource $Read.source)
 }
 
@@ -152,7 +152,7 @@ function Get-RouterPicksSnapshot {
         foreach ($lane in $(if ($category -eq 'image-generation') { @('codex') } else { @('codex','claude') })) {
             foreach ($protected in @($false,$true)) {
                 $pick = Resolve-RouterModel -Category $category -Lane $lane -Protected:$protected -SkipModelCheck
-                $picks.Add([pscustomobject]@{ category = $category; lane = $lane; protected = $protected; model = $pick.model; reason = $pick.reason })
+                $picks.Add([pscustomobject]@{ category = $category; lane = $lane; protected = $protected; model = $pick.model; effort = $pick.effort; reason = $pick.reason })
             }
         }
     }

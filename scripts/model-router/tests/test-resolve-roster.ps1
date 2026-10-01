@@ -29,6 +29,22 @@ $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
     $r = Copy-Roster
     Assert-True (@(Get-RosterErrors $r).Count -eq 0) 'seed validates'
+    foreach ($job in @(Get-RouterJobs)) {
+        Assert-True ($r.jobs.$job.first_effort -ceq (Get-RouterJobEffort -Job $job) -and $r.jobs.$job.backup_effort -ceq (Get-RouterJobEffort -Job $job)) "fixed effort $job"
+        foreach ($slot in @('first','backup')) {
+            $bad = Copy-Roster; $bad.jobs.$job.PSObject.Properties.Remove("${slot}_effort")
+            Assert-True ((Get-RosterErrors $bad) -ceq "ROSTER_EFFORT: $job/$slot") "missing effort $job/$slot"
+            foreach ($value in @('max','xhigh','ultra','LOW',1,$null)) {
+                if ($job -eq 'illustrator' -and $null -eq $value) { continue }
+                $bad = Copy-Roster; $bad.jobs.$job."${slot}_effort" = $value
+                $errorText = if ($job -eq 'illustrator') { 'ROSTER_EFFORT_ILLUSTRATOR: must be null' } else { "ROSTER_EFFORT: $job/$slot" }
+                Assert-True ((Get-RosterErrors $bad) -ceq $errorText) "invalid effort $job/$slot/$value"
+            }
+        }
+    }
+    $legacy = Copy-Roster
+    foreach ($job in @(Get-RouterJobs)) { foreach ($slot in @('first','backup')) { $legacy.jobs.$job.PSObject.Properties.Remove("${slot}_effort") } }
+    Assert-True (@(Get-RosterErrors $legacy).Count -eq 10 -and @(Get-RosterErrors $legacy | Where-Object { $_ -notlike 'ROSTER_EFFORT: *' }).Count -eq 0) 'legacy roster fails with plain effort messages'
     $r.schema_version = 2; Assert-True ((Get-RosterErrors $r) -eq 'ROSTER_SCHEMA_VERSION: expected integer 1') 'schema version rule'; $r = Copy-Roster
     $r.generated_at = 'bad'; Assert-True ((Get-RosterErrors $r) -eq 'ROSTER_GENERATED_AT: expected ISO date') 'generated date rule'; $r = Copy-Roster
     $r.approved = 'yes'; Assert-True ((Get-RosterErrors $r) -eq 'ROSTER_APPROVED: expected Boolean') 'approval type rule'; $r = Copy-Roster
@@ -62,8 +78,14 @@ try {
     $codex = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Catalog $catalog
     $claude = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane claude -Catalog $catalog
     Assert-True ($codex.model -eq 'gpt-6.1-sol' -and $codex.vendor -eq 'codex' -and $claude.model -eq 'claude-opus-5-5' -and $claude.agent_alias -eq 'opus') 'lane constraint both ways'
+    Assert-True ($codex.effort -eq 'medium' -and $claude.effort -eq 'medium') 'first and backup effort returned'
+    $r.jobs.coder.first_effort = 'low'; $r.jobs.coder.backup_effort = 'high'; Save-Roster $r
+    Assert-True ((Resolve-RouterModel -Category complex-coding -Lane codex -Catalog $catalog).effort -eq 'low' -and (Resolve-RouterModel -Category complex-coding -Lane claude -Catalog $catalog).effort -eq 'high') 'picked slot effort is returned'
+    $r.jobs.coder.first_effort = Get-RouterJobEffort coder; $r.jobs.coder.backup_effort = Get-RouterJobEffort coder; Save-Roster $r
+    Assert-True ($null -eq (Resolve-RouterModel -Category image-generation -Catalog $catalog).effort) 'illustrator effort is null'
     $image = Resolve-RouterModel -SkipModelCheck -Category image-generation -Lane claude
     Assert-True ($image.status -eq 'wait' -and $null -eq $image.model -and $image.reason -match 'image model') 'illustrator Claude lane waits'
+    Assert-True ($image.PSObject.Properties['effort'] -and $null -eq $image.effort) 'wait effort is null'
     $script:blocked = @('codex')
     $pick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Catalog $catalog
     Assert-True ($pick.model -eq 'claude-opus-5-5' -and $pick.reason -match 'Backup used: codex at its usage limit') 'blocked first vendor uses backup'

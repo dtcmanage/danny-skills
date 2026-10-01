@@ -72,6 +72,7 @@ try {
     $env:DT_MODEL_ROUTER_STATE = $rosterState; $script:state = $rosterState; $script:repo = $rosterRepo
     @($rosterRepo) | ConvertTo-Json | Set-Content -LiteralPath $script:sources
     $roster = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+    foreach ($job in @(Get-RouterJobs)) { $roster.jobs.$job.first_effort = Get-RouterJobEffort -Job $job; $roster.jobs.$job.backup_effort = Get-RouterJobEffort -Job $job }
     $roster.approved = $true; $roster.approved_at = '2026-09-27T00:00:00Z'
     $roster | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $rosterState 'roster.json')
     $rosterHash = (Get-FileHash -LiteralPath (Join-Path $rosterState 'roster.json') -Algorithm SHA256).Hash
@@ -86,6 +87,8 @@ try {
     Assert-True ($marks.Count -eq 1 -and $marks[0].job -eq 'coder' -and $marks[0].model -eq 'gpt-6.1-sol' -and [math]::Abs($marks[0].recent_rate - 0.85) -lt 0.00001) 'approved roster drift marks first choice across job categories'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $rosterState 'alert-log.jsonl'))) 'dot-sourced roster update returns alert without delivery'
     Assert-True (@($rosterDrift.alerts | Where-Object { $_.key -eq 'drift:gpt-6.1-sol:coder:202609' -and $_.message -match 'uses its backup' -and $_.message -match 'swap first and backup' }).Count -eq 1) 'roster drift yields one backup and swap alert'
+    Assert-True (@(Test-RouterRoster $swap).Count -eq 0) 'drift swap proposal validates'
+    foreach ($job in @(Get-RouterJobs)) { Assert-True ($swap.jobs.$job.first_effort -ceq (Get-RouterJobEffort $job) -and $swap.jobs.$job.backup_effort -ceq (Get-RouterJobEffort $job)) "drift proposal effort $job" }
     Assert-True ($swap.jobs.coder.first -eq 'claude-opus-5-5' -and $swap.jobs.coder.backup -eq 'gpt-6.1-sol' -and (Test-Path -LiteralPath $latest.report)) 'drift writes swap proposal and report'
     Assert-True ((Get-FileHash -LiteralPath (Join-Path $rosterState 'roster.json') -Algorithm SHA256).Hash -eq $rosterHash) 'drift leaves approved roster unchanged'
     Assert-True (@((Run-Update).alerts).Count -eq 0) 'repeat drift emits no duplicate alert'
@@ -118,12 +121,14 @@ try {
     Run-Update | Out-Null
     $latest = Read-RouterJsonObject -Path (Join-Path $sequenceState 'roster-proposals/latest.json')
     $both = Read-RouterJsonObject -Path ([string]$latest.proposal)
+    Assert-True (@(Test-RouterRoster $both).Count -eq 0) 'combined drift proposal validates'
     Assert-True ($both.jobs.coder.first -eq 'claude-opus-5-5' -and $both.jobs.'deep-thinker'.first -eq 'gpt-6.1-sol' -and ((Get-Content -LiteralPath $latest.report -Raw) -match 'deep-thinker.*drift threshold met')) 'new proposal swaps every current mark and reports each'
     for ($i=1; $i -le 10; $i++) { Write-Provenance "writer-prior-$i" 'M01' 1 'claude-opus-5-5' $true '2026-08-01T12:00:00Z' 'standard' '' 'long-form-writing' }
     for ($i=1; $i -le 20; $i++) { Write-Provenance "writer-recent-$i" 'M01' 1 'claude-opus-5-5' ($i -le 17) '2026-09-25T12:00:00Z' 'standard' '' 'long-form-writing' }
     Run-Update | Out-Null
     $latest = Read-RouterJsonObject -Path (Join-Path $sequenceState 'roster-proposals/latest.json')
     $allSwapped = Read-RouterJsonObject -Path ([string]$latest.proposal)
+    Assert-True (@(Test-RouterRoster $allSwapped).Count -eq 0) 'all drift swaps validate'
     Assert-True ($allSwapped.jobs.coder.first -eq 'claude-opus-5-5' -and $allSwapped.jobs.writer.first -eq 'gpt-6.1-sol' -and ((Get-Content -LiteralPath $latest.report -Raw) -match 'coder.*drift threshold met') -and ((Get-Content -LiteralPath $latest.report -Raw) -match 'writer.*drift threshold met')) 'writer drift proposal retains coder swap and reports both'
     $approval = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -DeclineDrift -Job coder 2>&1) -join "`n"
     $marksBefore = @(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json'))

@@ -664,6 +664,12 @@ def test_codex_limit_line_none_zero_and_positive():
 
 def _write_json(path: Path, obj) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(obj, dict) and "jobs" in obj:
+        obj = json.loads(json.dumps(obj))
+        defaults = json.loads((REPO_ROOT / "references/model-router/default-roster.json").read_text(encoding="utf-8"))
+        for job, entry in obj["jobs"].items():
+            for slot in ("first", "backup"):
+                entry[f"{slot}_effort"] = defaults["jobs"][job][f"{slot}_effort"]
     path.write_text(json.dumps(obj), encoding="utf-8")
 
 

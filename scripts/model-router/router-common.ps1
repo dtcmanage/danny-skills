@@ -37,6 +37,17 @@ function Test-RouterReadings {
 
 function Get-RouterJobs { return @('fast','coder','deep-thinker','writer','illustrator') }
 
+function Get-RouterJobEffort {
+    param([Parameter(Mandatory)][ValidateSet('fast','coder','deep-thinker','writer','illustrator')][string]$Job)
+    switch ($Job) {
+        'fast' { return 'low' }
+        'coder' { return 'medium' }
+        'deep-thinker' { return 'high' }
+        'writer' { return 'medium' }
+        'illustrator' { return $null }
+    }
+}
+
 function Get-RouterCategoryJob {
     param([Parameter(Mandatory)][string]$Category)
     $map = @{ mechanical='fast'; 'routine-coding'='coder'; 'complex-coding'='coder'; 'ui-frontend'='coder'; 'code-review'='deep-thinker'; planning='deep-thinker'; 'deep-research'='deep-thinker'; math='deep-thinker'; analysis='deep-thinker'; 'long-form-writing'='writer'; 'image-generation'='illustrator' }
@@ -76,6 +87,13 @@ function Test-RouterRoster {
         $p = $Roster.jobs.PSObject.Properties[$job]
         if (-not $p -or $p.Value -isnot [pscustomobject]) { $errors.Add("ROSTER_JOB: missing or invalid $job"); continue }
         $entry = $p.Value
+        foreach ($slot in @('first','backup')) {
+            $effort = $entry.PSObject.Properties["${slot}_effort"]
+            if (-not $effort) { $errors.Add("ROSTER_EFFORT: $job/$slot"); continue }
+            if ($job -eq 'illustrator') {
+                if ($null -ne $effort.Value) { $errors.Add('ROSTER_EFFORT_ILLUSTRATOR: must be null') }
+            } elseif ($effort.Value -cnotin @('low','medium','high')) { $errors.Add("ROSTER_EFFORT: $job/$slot") }
+        }
         foreach ($field in @('first','first_vendor','backup','backup_vendor')) { if (-not $entry.PSObject.Properties[$field]) { $errors.Add("ROSTER_JOB_FIELD: $job/$field") } }
         if (@(@('first','first_vendor','backup','backup_vendor') | Where-Object { -not $entry.PSObject.Properties[$_] }).Count) { continue }
         if ($entry.first -isnot [string] -or -not $entry.first.Trim()) { $errors.Add("ROSTER_FIRST: $job") }
