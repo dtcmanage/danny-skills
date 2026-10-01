@@ -27,7 +27,7 @@ try {
         Assert-True ($LASTEXITCODE -ne 0) "code-review $($badAnswer.Name) fails"
     }
     @([pscustomobject]@{ id='gpt-6-new'; lane='codex'; status='unprofiled' },[pscustomobject]@{ id='claude-new'; lane='claude'; status='unprofiled' }) | ConvertTo-Json | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json')
-    @([pscustomobject]@{ model='claude-flagged'; category='code-review'; lane='claude' }) | ConvertTo-Json | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'drift-flags.json')
+    @([pscustomobject]@{ model='claude-flagged'; job='deep-thinker' }) | ConvertTo-Json | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'drift-marks.json')
     $scope = @(Get-CanaryScope)
     Assert-True ((@($scope | Where-Object picked).Count -gt 0) -and (@($scope | Where-Object new).Count -eq 2) -and (@($scope | Where-Object flagged).Count -eq 1) -and -not @($scope | Where-Object model -eq 'irrelevant').Count) 'scope contains picked, new, flagged, both lanes, nothing else'
     $frontier = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json).codex_models[0]

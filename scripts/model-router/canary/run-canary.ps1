@@ -20,25 +20,15 @@ $script:RouterCanaryScriptPath = $PSCommandPath
 function Get-CanaryScope {
     param([string[]]$OnlyModels,[switch]$ExcludeFrontier)
     $state = Get-RouterStateDir
-    $table = (Read-RouterTable).table
+    $roster = (Read-RouterRoster).roster
     $picked = @{}
     $eligible = @{}
-    foreach ($category in @(Get-RouterCategories | Where-Object { $_ -in @('complex-coding','routine-coding','code-review','mechanical','ui-frontend') })) {
-        foreach ($lane in @('codex','claude')) {
-            foreach ($candidate in @($table.categories.$category.$lane.candidates)) {
-                if (-not $eligible.ContainsKey([string]$candidate.model)) { $eligible[[string]$candidate.model] = [System.Collections.Generic.HashSet[string]]::new() }
-                if ($candidate.grade -in @('strong','capable') -and -not $candidate.frontier) { [void]$eligible[[string]$candidate.model].Add($category) }
-            }
-        }
-    }
-    foreach ($category in @(Get-RouterCategories)) {
-        foreach ($lane in $(if ($category -eq 'image-generation') { @('codex') } else { @('codex','claude') })) {
-            try {
-                $pick = Resolve-RouterModel -Category $category -Lane $lane -SkipModelCheck
-                $picked[[string]$pick.model] = $true
-                if (-not $eligible.ContainsKey([string]$pick.model)) { $eligible[[string]$pick.model] = [System.Collections.Generic.HashSet[string]]::new() }
-                [void]$eligible[[string]$pick.model].Add($category)
-            } catch { throw "CANARY_RESOLVE: $category/$lane`: $($_.Exception.Message)" }
+    foreach ($job in $roster.jobs.PSObject.Properties) {
+        $categories = @($roster.category_jobs.PSObject.Properties | Where-Object { $_.Value -eq $job.Name } | ForEach-Object Name)
+        foreach ($model in @($job.Value.first, $job.Value.backup) | Where-Object { $_ }) {
+            $picked[[string]$model] = $true
+            if (-not $eligible.ContainsKey([string]$model)) { $eligible[[string]$model] = [System.Collections.Generic.HashSet[string]]::new() }
+            foreach ($category in $categories) { [void]$eligible[[string]$model].Add($category) }
         }
     }
     $new = @{}
@@ -46,10 +36,10 @@ function Get-CanaryScope {
         if ($item.status -eq 'unprofiled') { $new[[string]$item.id] = [string]$item.lane }
     }
     $flagged = @{}
-    foreach ($item in @(Read-RouterJsonArray -Path (Join-Path $state 'drift-flags.json'))) {
+    foreach ($item in @(Read-RouterJsonArray -Path (Join-Path $state 'drift-marks.json'))) {
         $flagged[[string]$item.model] = $true
         if (-not $eligible.ContainsKey([string]$item.model)) { $eligible[[string]$item.model] = [System.Collections.Generic.HashSet[string]]::new() }
-        [void]$eligible[[string]$item.model].Add([string]$item.category)
+        foreach ($category in @($roster.category_jobs.PSObject.Properties | Where-Object { $_.Value -eq $item.job } | ForEach-Object Name)) { [void]$eligible[[string]$item.model].Add($category) }
     }
     $ids = @($picked.Keys + $new.Keys + $flagged.Keys | Sort-Object -Unique)
     if ($ExcludeFrontier) {

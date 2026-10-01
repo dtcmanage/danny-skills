@@ -109,15 +109,12 @@ function Get-RouterAlertMessage {
     switch -Regex -CaseSensitive ($Key) {
         '^router-roster-missing$' { return 'Model router roster is missing; it is using the default roster.' }
         '^router-roster-invalid: (.+)$' { return "Model router roster is invalid ($($Matches[1])); it is using the default roster." }
-        '^router-seed-table-in-use$' { return 'Model router has no research table yet, so routing matches the pre-router defaults until research runs.' }
         '^router-picks-changed-needs-approval$' { return 'Model router research changed its picks; review and approve before they take effect.' }
         '^new-model:(.+)$' { return "Model router found a new model: $($Matches[1]). Research is needed before it can be selected." }
         '^model-missing:(.+)$' { return "Model router can no longer find model $($Matches[1]) in the vendor catalog." }
         '^catalog-check-timeout$' { return 'Model router catalog check timed out; it will retry later.' }
         '^catalog-check-error:(.+)$' { return "Model router catalog check failed for $($Matches[1]); it will retry later." }
-        '^no-eligible:([^:]+):([^:]+)$' { return "Model router found no eligible model for $($Matches[1]) on the $($Matches[2]) lane; it is using the fallback." }
         '^drift:' { return "Model router detected table drift: $Key" }
-        '^router-live-table-invalid' { return 'Model router live table is invalid; it is using the starter table.' }
         '^fallback_unselectable' { return "Model router fallback cannot be selected: $Key" }
         '^UNSELECTABLE_CODEX_MODEL:\s*(.+)$' { return "Model $($Matches[1]) is not selectable in the Codex catalog; the router used the next option." }
         default { return $Key }

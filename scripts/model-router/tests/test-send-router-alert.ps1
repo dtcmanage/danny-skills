@@ -109,10 +109,10 @@ try {
         Assert-True (-not $busy.sent -and -not $busy.deduped -and $busy.error -eq 'busy' -and $script:requests.Count -eq $beforeBusy) 'mutex timeout leaves alert retryable without transport'
     } finally { Wait-Job -Job $holder | Out-Null; Remove-Job -Job $holder }
 
-    $messageResult = @(Send-RouterAlerts -Alerts @('router-seed-table-in-use') -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
+    $messageResult = @(Send-RouterAlerts -Alerts @('new-model:gpt-test-readable') -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
     $messageRequest = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' })[-1]
     $messageBody = $messageRequest.body | ConvertFrom-Json
-    Assert-True ($messageResult.sent -and $messageBody.content -match 'pre-router defaults until research runs' -and @($messageBody.allowed_mentions.parse).Count -eq 0) 'key-only alert gets readable Discord text with no mentions'
+    Assert-True ($messageResult.sent -and $messageBody.content -match 'gpt-test-readable' -and @($messageBody.allowed_mentions.parse).Count -eq 0) 'key-only alert gets readable Discord text with no mentions'
     $longText = '@everyone ' + ('x' * 2000)
     $longResult = @(Send-RouterAlert -Key 'long-message' -Message $longText -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
     $longBody = (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' })[-1].body | ConvertFrom-Json)

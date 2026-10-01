@@ -45,95 +45,26 @@ $env:DT_MODEL_ROUTER_STATE = $script:state
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
     @($script:repo,(Join-Path $temp 'missing-repo')) | ConvertTo-Json | Set-Content -LiteralPath $script:sources
-    $table = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/seed-table.json') -Raw | ConvertFrom-Json -Depth 30
-    $table.source = 'research'
-    $table.coverage = 'full'
-    $table.evidence_routing_approved = $true
-    $table.generated_at = '2026-09-27'
-    $rows = $table.categories.'routine-coding'.claude.candidates
-    foreach ($candidate in @($rows[1],$rows[2])) {
-        $candidate.grade = 'capable'
-        $candidate.confirmed_grade = 'capable'
-        $candidate.citations = @([pscustomobject]@{ source='Fixture'; url='https://example.org/evidence'; independent=$true; note='Fixture' })
-    }
-    $rows[1].grade = 'capable'; $rows[1].confirmed_grade = 'capable'
-    $rows[1].est_burn = 10; $rows[1].est_seconds = 30
-    $rows[2].est_burn = 8; $rows[2].est_seconds = 10
-    $table | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $script:state 'router-table.json')
-
+    $defaultRoster = (Read-RouterRoster).roster
+    $aliasModel = $defaultRoster.jobs.fast.backup
     $at = '2026-09-20T12:00:00Z'
-    Write-Provenance 'sample' 'M01' 1 'sonnet' $false $at
+    Write-Provenance 'sample' 'M01' 1 'haiku' $false $at
     Write-Provenance 'sample' 'M01' 2 'opus' $true $at 'complex'
-    Write-Provenance 'sample' 'M02' 1 'sonnet' $false $at 'standard' 'environment'
-    Write-Provenance 'sample' 'M03' 1 'sonnet' $false $at 'standard' 'tooling'
+    Write-Provenance 'sample' 'M02' 1 'haiku' $false $at 'standard' 'environment'
+    Write-Provenance 'sample' 'M03' 1 'haiku' $false $at 'standard' 'tooling'
     $first = Run-Update
     $history = Read-Records
+    Assert-True (-not $first.PSObject.Properties['table_updates'] -and -not $first.PSObject.Properties['drift_flags'] -and $first.PSObject.Properties['proposal']) 'JSON result exposes roster keys only'
     Assert-True ($history.Count -eq 4 -and $first.new_records -eq 4) 'provenance mining and one record per attempt'
     $a = @($history | Where-Object { $_.key -eq 'sample:M01:1' })[0]
-    Assert-True ($a.model -eq $rows[2].model -and -not $a.pass -and $a.escalated -and $a.category -eq 'routine-coding' -and $a.source -eq 'dt-build') 'alias, failure, category, and escalation derivation'
+    Assert-True ($a.model -eq $aliasModel -and -not $a.pass -and $a.escalated -and $a.category -eq 'routine-coding' -and $a.source -eq 'dt-build') 'alias, failure, category, and escalation derivation'
     Assert-True ((Run-Update).new_records -eq 0 -and (Read-Records).Count -eq 4) 'idempotent import'
     $acceptanceDir = Join-Path $script:repo '.dt-build/acceptance'
     [IO.Directory]::CreateDirectory($acceptanceDir) | Out-Null
-    @{ milestone_id='M04'; lane='claude'; builder=@{ model='sonnet' }; status='PASS'; recorded_at_utc=$at; category='code-review' } | ConvertTo-Json -Compress -Depth 5 | Set-Content -LiteralPath (Join-Path $acceptanceDir 'acceptance-rows.jsonl')
+    @{ milestone_id='M04'; lane='claude'; builder=@{ model='haiku' }; status='PASS'; recorded_at_utc=$at; category='code-review' } | ConvertTo-Json -Compress -Depth 5 | Set-Content -LiteralPath (Join-Path $acceptanceDir 'acceptance-rows.jsonl')
     Run-Update | Out-Null
     $accepted = @(Read-Records | Where-Object { $_.key -eq 'acceptance:M04:1' })
-    Assert-True ($accepted.Count -eq 1 -and $accepted[0].pass -and $accepted[0].category -eq 'code-review' -and $accepted[0].model -eq $rows[2].model) 'acceptance row mining'
-
-    for ($i=1; $i -le 8; $i++) { Write-Provenance "threshold-$i" 'M01' 1 'sonnet' $true $at }
-    Run-Update | Out-Null
-    $live = (Read-RouterTable).table.categories.'routine-coding'.claude.candidates[2]
-    Assert-True ($live.pass_samples -eq 0) 'ten usable first attempts required'
-    Write-Provenance 'threshold-9' 'M01' 1 'sonnet' $true $at
-    Run-Update | Out-Null
-    $live = (Read-RouterTable).table.categories.'routine-coding'.claude.candidates[2]
-    Assert-True ($live.pass_samples -eq 10 -and [math]::Abs($live.pass_rate - 0.9) -lt 0.00001) 'environment and tooling failures excluded from rate'
-    $normal = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
-    $protected = Resolve-RouterModel -Category routine-coding -Lane claude -Protected -SkipModelCheck
-    $writing = Resolve-RouterModel -Category long-form-writing -Lane claude -SkipModelCheck
-    Assert-True ($normal.model -eq $rows[2].model -and $protected.model -eq $rows[1].model -and $writing.model -eq $table.categories.'long-form-writing'.claude.fallback) 'measured rate promotes only non-protected work'
-
-    # Prior window is 10/10. Recent 17/20 is exactly 15 points lower.
-    for ($i=1; $i -le 10; $i++) { Write-Provenance "prior-$i" 'M01' 1 'sonnet' $true '2026-08-01T12:00:00Z' }
-    for ($i=1; $i -le 20; $i++) { Write-Provenance "recent-$i" 'M01' 1 'sonnet' ($i -le 17) '2026-09-25T12:00:00Z' }
-    Run-Update | Out-Null
-    $flags = @(Read-RouterJsonArray -Path (Join-Path $script:state 'drift-flags.json'))
-    Assert-True ($flags.Count -eq 0) 'baseline includes all recent samples and does not falsely flag'
-    # Isolate drift dates in a fresh state while preserving the fixture table.
-    $driftState = Join-Path $temp 'drift-state'
-    [IO.Directory]::CreateDirectory($driftState) | Out-Null
-    Copy-Item -LiteralPath (Join-Path $script:state 'router-table.json') -Destination (Join-Path $driftState 'router-table.json')
-    $env:DT_MODEL_ROUTER_STATE = $driftState
-    $script:state = $driftState
-    $driftRepo = Join-Path $temp 'drift-repo'
-    [IO.Directory]::CreateDirectory($driftRepo) | Out-Null
-    $script:repo = $driftRepo
-    @($driftRepo) | ConvertTo-Json | Set-Content -LiteralPath $script:sources
-    for ($i=1; $i -le 9; $i++) { Write-Provenance "prior-$i" 'M01' 1 'sonnet' $true '2026-08-01T12:00:00Z' }
-    for ($i=1; $i -le 20; $i++) { Write-Provenance "recent-$i" 'M01' 1 'sonnet' ($i -le 17) '2026-09-25T12:00:00Z' }
-    Assert-True ((Run-Update).drift_flags -eq 0) 'nine prior samples do not flag drift'
-    Write-Provenance 'prior-10' 'M01' 1 'sonnet' $true '2026-08-01T12:00:00Z'
-    $drift = Run-Update
-    Assert-True ($drift.drift_flags -eq 1 -and @($drift.alerts | Where-Object { $_ -like 'drift:*' }).Count -eq 1) 'drift at exactly 15 points with 10 plus 20 samples'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $script:state 'alert-log.jsonl'))) 'dot-sourced v1 update returns alert without delivery'
-    Remove-Item -LiteralPath (Join-Path $script:state 'drift-flags.json')
-    $cli = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../update-outcomes.ps1') -Now $script:now -SourcesPath $script:sources -Json 2>&1) -join "`n"
-    Assert-True ($LASTEXITCODE -eq 0 -and $cli -match 'ROUTER_ALERT:' -and (Test-Path -LiteralPath (Join-Path $script:state 'deliveries.log'))) 'v1 CLI sends alert through transport and prints chat line'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $script:state 'drift-marks.json'))) 'no approved roster keeps v1 drift flags'
-    $demoted = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
-    Assert-True ($demoted.model -eq 'claude-opus-5-5' -and $demoted.reason -match 'Drift demotion') 'resolver demotes flagged candidate (confirmed incumbent steps one rung up the ladder)'
-    $protected = Resolve-RouterModel -Category routine-coding -Lane claude -Protected -SkipModelCheck
-    Assert-True ($protected.model -eq $rows[1].model) 'protected pick remains strongest under drift'
-    for ($i=21; $i -le 50; $i++) { Write-Provenance "recent-$i" 'M01' 1 'sonnet' ($i -le 46) '2026-09-25T12:00:00Z' }
-    $clear = Run-Update
-    Assert-True ($clear.drift_flags -eq 0 -and @($clear.alerts | Where-Object { $_ -like 'drift-cleared:*' }).Count -eq 1) 'drift clears at 14 point drop'
-
-    $fixture = Get-Content -LiteralPath (Join-Path $script:state 'router-table.json') -Raw | ConvertFrom-Json -Depth 30
-    $fixture.categories.'routine-coding'.claude.candidates[1].grade = 'unknown'
-    $fixture.categories.'routine-coding'.claude.candidates[1].confirmed_grade = 'unknown'
-    $fixture | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $script:state 'router-table.json')
-    @([pscustomobject]@{ category='routine-coding'; lane='claude'; model=$rows[2].model; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' },[pscustomobject]@{ category='routine-coding'; lane='claude'; model='claude-opus-5-5'; recent_rate=0.85; prior_rate=1; flagged_at='2026-09-27T12:00:00Z' }) | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $script:state 'drift-flags.json')
-    $none = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
-    Assert-True ($none.model -eq $rows[2].model -and @($none.alerts | Where-Object { $_ -like 'drift-no-alternative:*' }).Count -eq 1) 'no eligible alternative (next rung also flagged, top rung frontier) retains pick and alerts'
+    Assert-True ($accepted.Count -eq 1 -and $accepted[0].pass -and $accepted[0].category -eq 'code-review' -and $accepted[0].model -eq $aliasModel) 'acceptance row mining'
 
     $rosterState = Join-Path $temp 'roster-state'; $rosterRepo = Join-Path $temp 'roster-repo'
     [IO.Directory]::CreateDirectory($rosterState) | Out-Null
@@ -160,7 +91,7 @@ try {
     Assert-True (@((Run-Update).alerts).Count -eq 0) 'repeat drift emits no duplicate alert'
     $savedNow = $script:now; $script:now = $savedNow.AddDays(40)
     $aged = Run-Update
-    Assert-True ($aged.drift_flags -eq 1 -and @($aged.alerts).Count -eq 0 -and (Test-Path -LiteralPath (Join-Path $rosterState 'roster-proposals/latest.json'))) '40 days without new outcomes retains drift mark and proposal'
+    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json')).Count -eq 1 -and @($aged.alerts).Count -eq 0 -and (Test-Path -LiteralPath (Join-Path $rosterState 'roster-proposals/latest.json'))) '40 days without new outcomes retains drift mark and proposal'
     $script:now = $savedNow
     Remove-Item -LiteralPath (Join-Path $rosterState 'drift-marks.json')
     $cli = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../update-outcomes.ps1') -Now $script:now -SourcesPath $script:sources -Json 2>&1) -join "`n"
@@ -179,7 +110,6 @@ try {
     for ($i=1; $i -le 20; $i++) { Write-Provenance "analysis-recent-$i" 'M01' 1 'claude-opus-5-5' ($i -le 17) '2026-09-25T12:00:00Z' 'standard' '' 'analysis' }
     Run-Update | Out-Null
     Assert-True (@(Read-Records | Where-Object { $_.category -eq 'analysis' }).Count -eq 30) 'analysis imported before roster retains recorded category'
-    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-flags.json') | Where-Object { $_.category -eq 'planning' -and $_.model -eq 'claude-opus-5-5' }).Count -eq 1) 'v1 path counts analysis outcomes as planning'
     $roster | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $sequenceState 'roster.json')
     $analysisDrift = Run-Update
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json') | Where-Object job -eq 'deep-thinker').Count -eq 1) 'pre-roster analysis records count toward deep-thinker drift'

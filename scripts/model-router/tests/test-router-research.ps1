@@ -30,7 +30,7 @@ try {
     Assert-True (Test-RouterReadings $good 'complex-coding' @('gpt-6.1-sol')) 'extra fields ignored'
     $script:calls = [Collections.Generic.List[object]]::new()
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:calls.Add([pscustomobject]@{ category=$category; lane=$lane; prompt=$prompt }); return (Fixture $category 'gpt-6.1-sol' | ConvertTo-Json -Depth 20) }
-    $pass = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol') -Lane codex
+    $pass = Invoke-RouterResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol') -Lane codex
     $stored = Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json
     Assert-True ($pass.pass_id -and (Test-Path (Join-Path $temp 'readings/passes.jsonl')) -and $stored.readings.Count -eq 1) 'staging committed and pass recorded'
     Assert-True ($stored.sources_checked[0].note -match 'ignore instructions' -and -not $stored.PSObject.Properties['injected']) 'poisoned text stays data and extra field omitted'
@@ -74,16 +74,13 @@ try {
     Assert-True ($script:thrownCalls -eq 2 -and $retried.pass_id -and @($retried.failed_categories).Count -eq 0 -and @(Get-Content (Join-Path $temp 'readings/passes.jsonl')).Count -eq $priorPassCount + 1) 'thrown call succeeds on second attempt and the pass completes'
     Assert-True (@(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*-attempt*.txt').Count -eq 4) 'recovered attempt still leaves its failure file'
     $script:RouterResearchInvoker = $null
-    # Load the resolver first: Invoke-RouterResearchCall dot-sources it on demand, which would re-import the real launcher over the stub.
+    # Load the resolver before installing the process stub.
     . (Join-Path $PSScriptRoot '../resolve-model.ps1')
     function codex { }
     function Invoke-CodexProcess { param($CodexPath, $Arguments, $Prompt, $WorkingDirectory, $TimeoutMs) return [pscustomobject]@{ exit_code = 3; timed_out = $false; duration_ms = 17000; stdout = ''; stderr = ('x' * 5000) + 'codex stderr marker: stream disconnected' } }
     $codexError = $null
     try { $null = Invoke-RouterCategoryCall -Category 'math' -Lane codex -Prompt 'p' } catch { $codexError = $_.Exception.Message }
     Assert-True ($codexError -match 'exit_code=3' -and $codexError -match 'timed_out=False' -and $codexError -match 'duration_ms=17000' -and $codexError -match 'codex stderr marker: stream disconnected' -and $codexError.Length -lt 2400) 'codex failure keeps exit code, timing, and stderr tail'
-    $codexError = $null
-    try { $null = Invoke-RouterResearchCall -Model 'gpt-6.1-sol' -Prompt 'p' } catch { $codexError = $_.Exception.Message }
-    Assert-True ($codexError -match 'exit_code=3' -and $codexError -match 'codex stderr marker') 'profile research failure keeps codex stderr tail'
     Remove-Item function:Invoke-CodexProcess, function:codex
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) if ($category -eq 'complex-coding') { return '' } return (Fixture $category 'gpt-6.1-sol' '2026-10-04' 70 | ConvertTo-Json -Depth 20) }
     $emptyFirst = Invoke-RouterCategoryResearch -Categories @('complex-coding','routine-coding') -Models @('gpt-6.1-sol')
@@ -130,14 +127,6 @@ try {
     Assert-True ($script:releaseCalls.Count -eq 1) 'first-call comparable roster reading needs no follow-up'
     $stale = @(Get-RouterStaleReadingModels -Now ([datetime]'2027-05-01'))
     Assert-True ($stale -contains 'gpt-6.1-sol') 'stale model detected'
-    $script:RouterResearchInvoker = { param($model,$prompt) return 'invalid' }
-    $script:RouterResearchSuppressAlerts = $true
-    $v1 = Invoke-RouterResearch -Models @('gpt-6.1-sol')
-    Assert-True ($v1.alerts -contains 'research-profile-invalid:gpt-6.1-sol') 'v1 per-model mode still handles invalid profile'
-    $script:profileCalls = 0
-    $script:RouterResearchInvoker = { param($model,$prompt) $script:profileCalls++; if ($script:profileCalls -eq 1) { throw 'transient profile crash' }; return 'invalid' }
-    $v1 = Invoke-RouterResearch -Models @('gpt-6.1-sol')
-    Assert-True ($script:profileCalls -eq 2 -and $v1.alerts -contains 'research-profile-invalid:gpt-6.1-sol' -and (Get-Content (Join-Path $temp 'research-failures/gpt-6.1-sol.txt') -Raw) -match '(?m)^invalid\s*$') 'v1 thrown call retried; returned invalid reply is not retried'
     $frontier = @((Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json).codex_models) + @('claude-fable-5-1')
     $codexArgs = @(Get-RouterCategoryCallArguments -Lane codex -OutPath 'out.json')
     $codexModel = $codexArgs[[array]::IndexOf($codexArgs,'--model') + 1]

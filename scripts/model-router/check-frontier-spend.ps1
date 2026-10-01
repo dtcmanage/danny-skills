@@ -19,14 +19,9 @@ $script:RouterFrontierSpendThresholdPoints = 10.0
 $script:RouterClaudeWeeklyWeightedBudgetEstimate = 250000000.0
 
 function Get-RouterFrontierModels {
-    param([string]$TablePath)
-    $table = (Read-RouterTable -TablePath $TablePath).table
+    $config = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json
     $models = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($category in $table.categories.PSObject.Properties) {
-        foreach ($lane in $category.Value.PSObject.Properties) {
-            foreach ($candidate in @($lane.Value.candidates)) { if ($candidate.frontier -eq $true) { [void]$models.Add([string]$candidate.model) } }
-        }
-    }
+    foreach ($model in @($config.codex_models) + @($config.claude_patterns)) { [void]$models.Add([string]$model) }
     return $models
 }
 
@@ -34,7 +29,7 @@ function Test-RouterFrontierModel {
     param([string]$Model, [System.Collections.Generic.HashSet[string]]$Frontier)
     if (-not $Model) { return $false }
     $clean = ($Model -replace '\[.*\]$', '').Trim()
-    foreach ($id in $Frontier) { if ($clean -ieq $id -or $clean -like "$id-*") { return $true } }
+    foreach ($id in $Frontier) { if ($clean -like $id -or $clean -like "$id-*") { return $true } }
     return $false
 }
 
@@ -132,12 +127,11 @@ function Test-FrontierSpend {
         [Nullable[int]]$RemainingMilestones,
         [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }),
         [string]$ClaudeHome = $(if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }),
-        [string]$TablePath,
         [scriptblock]$Transport,
         [switch]$ChatToStderr
     )
     $since = [datetimeoffset]$RunStartedAt
-    $frontier = Get-RouterFrontierModels -TablePath $TablePath
+    $frontier = Get-RouterFrontierModels
     $codex = Get-RouterCodexFrontierSpend -Since $since -CodexHome $CodexHome -Frontier $frontier
     $claude = Get-RouterClaudeFrontierSpend -Since $since -ClaudeHome $ClaudeHome -Frontier $frontier
     $threshold = $script:RouterFrontierSpendThresholdPoints
