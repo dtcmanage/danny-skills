@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.2.4
+
+- Consume the shared security posture correction that redacts vendor errors used by the router observability patch.
+
 ## 1.2.3
 
 - Correct named-artifact path extraction used by model-router build checks.

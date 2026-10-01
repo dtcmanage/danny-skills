@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.2.9 (2026-10-01): Consume shared model router diagnosis verdicts, vendor-incident failover, research and canary reliability, acknowledge support, and routing compliance reporting.
+
 - 0.2.8 (2026-10-01): model router consolidation: v1 evidence routing retired, roster-only resolver with effort, approve-roster.ps1 replaces approve-router-table.ps1, ladders.json replaces bridge-map.json
 
 - 0.2.7 (2026-09-30): model router: read Claude weekly usage from the OAuth usage endpoint (5-minute cache, token never stored) and move Claude jobs to their Codex backup at 95%, same as Codex; weekly cost report shows the Claude weekly and 5-hour readings

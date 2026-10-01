@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.15.1 (2026-10-01): Consume shared model router diagnosis verdicts, vendor-incident failover, research and canary reliability, acknowledge support, and routing compliance reporting.
+
 - 1.15.0 (2026-10-01): model router consolidation: both lanes resolve planning through the router (protected for complex), effort comes from the resolver and steps down one level from round 3, preflight resolves planning, skill text no longer names models or effort levels
 
 - 1.14.7 (2026-09-30): model router: read Claude weekly usage from the OAuth usage endpoint (5-minute cache, token never stored) and move Claude jobs to their Codex backup at 95%, same as Codex; weekly cost report shows the Claude weekly and 5-hour readings

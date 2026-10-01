@@ -257,5 +257,12 @@
   "scripts/model-router/tests/test-resolve-model.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-send-router-alert.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-update-outcomes.ps1": {"consumers": [], "summary_token": "model router"},
-  "scripts/model-router/update-outcomes.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"}
+  "scripts/model-router/update-outcomes.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
+  "references/model-router/vendor-status.json": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/tests/test-dispatch-diagnosis.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test_routing_compliance.py": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/fixtures/routing-dispatch-kinds.jsonl": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/fixtures/routing-no-agent-blocks.jsonl": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/fixtures/routing-pairing.jsonl": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/fixtures/routing-week-boundary.jsonl": {"consumers": [], "summary_token": "model router"}
 }

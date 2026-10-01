@@ -37,9 +37,80 @@ IDLE_MINUTES = 5            # cache TTL; a big re-write after this gap is an idl
 BIG_REWRITE = 50_000
 ALL_SESSIONS_CACHE_VERSION = 2
 SELECTION_RE = re.compile(r"MODEL_SELECTION:[^\r\n]*?\(([^,()]+)(?:,[^()]*)?,\s*effort\s+([^(),\s]+)\)")
-WRAPPER_RE = re.compile(r"\binvoke-[\w-]+-chunk\.ps1\b", re.IGNORECASE)
-CODEX_EXEC_RE = re.compile(r"\bcodex\s+exec\b")
-CODEX_MODEL_RE = re.compile(r"(?:^|\s)-m\s+['\"]?[^\s'\"]+")
+WRAPPER_RE = re.compile(r"invoke-(?:codex|claude)-chunk\.ps1", re.IGNORECASE)
+COMMAND_TOKEN_RE = re.compile(
+    r'''(?:'[^']*'|"(?:`.|\\.|[^"\\])*"|[^\s;|&(){}'"#])+|&&|\|\||[;|&(){}\n]|\#[^\n]*''')
+
+
+def executed_dispatch(command: str, depth: int = 0) -> bool | None:
+    """Recognize dispatch command positions, returning explicit-model status.
+
+    This is a small lexer for literal calls, not a shell evaluator. Arguments,
+    comments and file-writing heredoc/here-string bodies cannot launch a model.
+    One Bash tool call remains one delegation, even if it contains several calls.
+    """
+    lines: list[str] = []
+    terminators: list[tuple[str, bool]] = []
+    for line in command.splitlines(keepends=True):
+        if terminators:
+            marker, strip_tabs = terminators[0]
+            if (line.lstrip("\t") if strip_tabs else line).rstrip("\r\n") == marker:
+                terminators.pop(0)
+            continue
+        # PowerShell file-writing here-strings start at the end of a line.
+        here_string = re.search(r'''@(['"])\s*$''', line)
+        if here_string:
+            terminators.append((here_string.group(1) + "@", False))
+            line = line[:here_string.start()] + "'artifact'\n"
+        # Scan only unquoted tokens for Bash heredoc operators.
+        tokens = COMMAND_TOKEN_RE.findall(line)
+        for index, token in enumerate(tokens):
+            if token.startswith(("'", '"', "#")):
+                continue
+            for match in re.finditer(r'''<<(-)?(?:'([^']+)'|"([^"]+)"|([\w-]+))''', token):
+                terminators.append((next(g for g in match.groups()[1:] if g), bool(match.group(1))))
+            if token in ("<<", "<<-") and index + 1 < len(tokens):
+                terminators.append((tokens[index + 1].strip("'\""), token == "<<-"))
+        lines.append(line)
+    segments: list[list[str]] = [[]]
+    for token in COMMAND_TOKEN_RE.findall("".join(lines)):
+        if token.startswith("#"):
+            continue
+        if token in (";", "|", "&&", "||", "&", "(", ")", "{", "}", "\n"):
+            segments.append([])
+        else:
+            # Remove literal quote delimiters; retain Windows path backslashes.
+            parts = re.findall(r''''([^']*)'|"((?:`.|\\.|[^"\\])*)"|([^'"\s]+)''', token)
+            segments[-1].append("".join(a or b or c for a, b, c in parts))
+    found: bool | None = None
+    for args in segments:
+        while args and (args[0] == "." or re.match(r"^[A-Za-z_]\w*=", args[0])):
+            args = args[1:]
+        if not args:
+            continue
+        executable = re.split(r"[\\/]", args[0])[-1].lower()
+        if executable in ("pwsh", "pwsh.exe", "powershell", "powershell.exe"):
+            lowered = [arg.lower() for arg in args]
+            if "-file" in lowered:
+                args = args[lowered.index("-file") + 1:]
+                if not args:
+                    continue
+                executable = re.split(r"[\\/]", args[0])[-1].lower()
+            elif "-command" in lowered and depth < 2:
+                nested = executed_dispatch(" ".join(args[lowered.index("-command") + 1:]), depth + 1)
+                if nested is not None:
+                    found = bool(found or nested)
+                continue
+            else:
+                continue
+        if WRAPPER_RE.fullmatch(executable):
+            if not any(arg.lower() == "-preflight" or arg.lower().startswith("-preflight:") for arg in args[1:]):
+                found = True
+        elif executable in ("codex", "codex.exe") and args[1:2] == ["exec"]:
+            explicit = any(arg == "-m" and i + 1 < len(args) and bool(args[i + 1])
+                           for i, arg in enumerate(args[2:], start=2))
+            found = bool(found or explicit)
+    return found
 
 
 def workstation_for_project(project: str) -> str:
@@ -90,13 +161,10 @@ def tally_routing_message(row: dict, pending: list[tuple[str, str] | None],
             if name != "Bash":
                 continue
             command = str(inp.get("command") or "")
-            if re.search(r"(?i)(?:^|\s)-Preflight\b", command):
+            dispatch = executed_dispatch(command)
+            if dispatch is None:
                 continue
-            wrapper = bool(WRAPPER_RE.search(command))
-            codex = CODEX_EXEC_RE.search(command)
-            if not wrapper and not codex:
-                continue
-            explicit = wrapper or bool(CODEX_MODEL_RE.search(command[codex.end():]))
+            explicit = dispatch
         has_selection = bool(pending)
         selection = pending.pop() if has_selection else None
         routed = bool(explicit and has_selection)

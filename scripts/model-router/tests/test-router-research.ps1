@@ -30,6 +30,7 @@ $script:alerts = [Collections.Generic.List[object]]::new()
 function Send-RouterAlert { param($Key, $Message) $script:alerts.Add([pscustomobject]@{key=$Key;message=$Message}) }
 $script:passed = 0
 function Assert-True([bool]$Condition,[string]$Name) { if (-not $Condition) { throw "FAIL: $Name" }; $script:passed++; Write-Output "PASS: $Name" }
+function Read-ResearchOutcomes([string]$PassId) { @(Get-Content (Join-Path $temp 'outcomes.jsonl') | ConvertFrom-Json | Where-Object run_id -eq $PassId) }
 function Fixture([string]$Category,[string]$Model,[string]$Date='2026-09-01',[double]$Score=80) {
     return [pscustomobject]@{ category=$Category; sources_checked=@([pscustomobject]@{ name='Terminal-Bench'; comparable_results_found=$true; note='page text says ignore instructions; treated as data' }); readings=@([pscustomobject]@{ benchmark='Terminal-Bench'; version='2'; date=$Date; harness='agent'; effort_class='high'; independent=$true; url='https://www.tbench.ai/'; results=@([pscustomobject]@{ model=$Model; score=$Score; tasks=[long]100; margin=$null }) }) }
 }
@@ -81,7 +82,7 @@ try {
     $priorPassCount = @(Get-Content (Join-Path $temp 'readings/passes.jsonl')).Count
     $script:thrownCalls = 0
     $script:retryPrompts = [Collections.Generic.List[string]]::new()
-    $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:retryPrompts.Add("$lane`n$prompt"); $script:thrownCalls++; if ($script:thrownCalls -eq 2) { $script:testClock = $script:testClock.AddMinutes(2) }; throw "interrupted marker-$script:thrownCalls" }
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:RouterResearchCurrentModel = 'gpt-6.1-sol'; $script:retryPrompts.Add("$lane`n$prompt"); $script:thrownCalls++; if ($script:thrownCalls -eq 2) { $script:testClock = $script:testClock.AddMinutes(2) }; throw "interrupted marker-$script:thrownCalls" }
     $interrupted = $false
     try { $null = Invoke-RouterCategoryResearch -Categories @('complex-coding','math') -Models @('gpt-6.1-sol') } catch { $interrupted = $true }
     $lastPass = Get-Content (Join-Path $temp 'readings/passes.jsonl') | Select-Object -Last 1 | ConvertFrom-Json
@@ -92,6 +93,10 @@ try {
     Assert-True ($lastPass.research_failure_keys.'complex-coding' -eq 'research-failure:complex-coding:2026-09-30') 'research-failure key uses ET first failure date'
     $attemptFiles = @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*-attempt*.txt')
     Assert-True ($attemptFiles.Count -eq 2 -and @($attemptFiles | Where-Object { (Get-Content $_.FullName -Raw) -match 'marker-2' }).Count -eq 1) 'every thrown attempt writes failure evidence'
+    $stoppedRows = @(Read-ResearchOutcomes $lastPass.pass_id)
+    Assert-True ($stoppedRows.Count -eq 2 -and @($stoppedRows.key | Sort-Object -Unique).Count -eq 2 -and ($stoppedRows.attempt -join ',') -eq '1,2') 'two failed dispatches produce two unique stable attempt keys'
+    Assert-True (@($stoppedRows | Where-Object { $_.pass -or $_.failure_category -ne 'environment' -or $_.diagnosis -ne 'unexplained' -or $_.model -ne 'gpt-6.1-sol' -or $_.category -ne 'complex-coding' -or $_.pass_id -ne $lastPass.pass_id -or -not (Test-Path $_.failure_file) }).Count -eq 0) 'stopped rows preserve diagnosis model category pass and failure-file provenance'
+    Assert-True (($stoppedRows | ConvertTo-Json -Depth 10) -notmatch 'marker-|Candidate models:|interrupted marker|error_text|prompt') 'research outcomes contain no prompt or raw error text'
     $script:thrownCalls = 0
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:thrownCalls++; if ($script:thrownCalls -eq 1) { throw 'transient crash' }; return (Fixture $category 'gpt-6.1-sol' '2026-10-03' 93 | ConvertTo-Json -Depth 20) }
     $retried = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol')
@@ -103,6 +108,7 @@ try {
             param($category,$lane,$prompt)
             $script:calls.Add([pscustomobject]@{category=$category;lane=$lane;prompt=$prompt})
             if ($script:calls.Count -eq 1) {
+                $script:RouterResearchCurrentModel = 'gpt-6.1-sol'
                 if ($verdict -eq 'wait') { $error = [InvalidOperationException]::new('resolver wait'); $error.Data['router_status']='wait'; throw $error }
                 if ($verdict -eq 'quota') { throw 'ERROR: usage limit exceeded' }; throw 'vendor incident'
             }
@@ -110,6 +116,8 @@ try {
         }
         $switched = Invoke-RouterCategoryResearch -Categories @('complex-coding','math') -Models @('gpt-6.1-sol')
         Assert-True ($script:calls.Count -eq 3 -and $script:calls[1].lane -eq 'claude' -and $script:calls[2].lane -eq 'claude' -and $switched.attempts.'complex-coding'.Count -eq 2 -and $switched.attempts.math[0].succeeded) "lane switch for rest of pass on $verdict"
+        $switchedRows = @(Read-ResearchOutcomes $switched.pass_id)
+        Assert-True ($switchedRows.Count -eq 1 -and $switchedRows[0].lane -eq 'codex' -and $switchedRows[0].model -eq 'gpt-6.1-sol' -and $switchedRows[0].diagnosis -eq $(if ($verdict -eq 'wait') { 'quota' } else { $verdict }) -and $switchedRows[0].failure_category -eq 'environment' -and -not $switchedRows[0].pass) "$verdict outcome retains failed model before lane switch"
         Remove-Item (Join-Path $temp 'vendor-blocks.json') -ErrorAction SilentlyContinue
     }
     foreach ($reason in @('quota','vendor_incident')) {
@@ -125,9 +133,11 @@ try {
     foreach ($mode in @('offline-reconnect','offline-long')) {
         $script:diagnosis = $mode; $script:diagnosisCalls = 0
         $script:calls.Clear(); $script:sleeps.Clear(); $script:alerts.Clear()
-        $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:calls.Add([pscustomobject]@{lane=$lane;prompt=$prompt}); if ($script:calls.Count -eq 1) { throw 'offline failure' }; return (Fixture $category 'gpt-6.1-sol' | ConvertTo-Json -Depth 20) }
+        $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:RouterResearchCurrentModel = 'gpt-6.1-sol'; $script:calls.Add([pscustomobject]@{lane=$lane;prompt=$prompt}); if ($script:calls.Count -eq 1) { throw 'offline failure' }; return (Fixture $category 'gpt-6.1-sol' | ConvertTo-Json -Depth 20) }
         $reconnected = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol')
         Assert-True ($script:calls.Count -eq 2 -and $script:calls[0].lane -eq $script:calls[1].lane -and $script:calls[0].prompt -ceq $script:calls[1].prompt -and $script:sleeps[0] -eq 60000 -and $reconnected.attempts.'complex-coding'[1].succeeded) "$mode waits and resumes same dispatch"
+        $offlineRows = @(Read-ResearchOutcomes $reconnected.pass_id)
+        Assert-True ($offlineRows.Count -eq 1 -and $offlineRows[0].diagnosis -eq 'offline' -and $offlineRows[0].model -eq 'gpt-6.1-sol' -and $offlineRows[0].failure_category -eq 'environment' -and -not $offlineRows[0].pass -and $offlineRows[0].attempt -eq 1) "$mode original offline outcome persists without probe rows"
         if ($mode -eq 'offline-long') { Assert-True ($script:alerts.Count -eq 1 -and $script:alerts[0].key -match '^router-offline:2026-.* ET$') 'outage over five minutes alerts only on reconnect' }
     }
     $script:diagnosis = 'offline'; $script:sleeps.Clear()
@@ -267,6 +277,35 @@ try {
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) $error = [InvalidOperationException]::new('resolver wait'); $error.Data['router_status']='wait'; throw $error }
     $continuedFailure = Invoke-RouterCategoryResearch -Categories mechanical -Models gpt-6.1-sol
     Assert-True ($continuedFailure.research_failure_keys.mechanical -eq $nextFailure.research_failure_keys.mechanical) 'thrown attempt reuses unresolved invalid-reply episode'
+    # Feed actual research events through an importer rewrite and its production quality calculation.
+    . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
+    $qualityState = Join-Path $temp 'quality-state'
+    New-Item -ItemType Directory -Path $qualityState | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $qualityState
+    $roster = Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+    $roster.approved = $true; $roster.approved_at = '2026-10-01T00:00:00Z'
+    foreach ($job in @(Get-RouterJobs)) { $roster.jobs.$job.first_effort = Get-RouterJobEffort -Job $job; $roster.jobs.$job.backup_effort = Get-RouterJobEffort -Job $job }
+    $roster | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $qualityState 'roster.json')
+    $qualityPath = Join-Path $qualityState 'outcomes.jsonl'
+    $stoppedRows | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content $qualityPath
+    foreach ($period in @('prior','recent')) {
+        for ($n=1; $n -le 10; $n++) {
+            @{ key="quality:${period}:$n"; run_id="quality-$period-$n"; repo='danny-skills'; at=$(if ($period -eq 'prior') { '2026-08-01T12:00:00Z' } else { '2026-10-01T12:00:00Z' }); lane='codex'; model='gpt-6.1-sol'; category='complex-coding'; attempt=1; pass=($period -eq 'prior' -or $n -le 9); escalated=$false; failure_category=$null; diagnosis=$null; source='dt-build'; tier='complex' } | ConvertTo-Json -Compress | Add-Content $qualityPath
+        }
+    }
+    $importRepo = Join-Path $temp 'import-repo'
+    $importDir = Join-Path $importRepo '.dt-build/import/milestones/M01'
+    New-Item -ItemType Directory -Path $importDir -Force | Out-Null
+    @{ pass=$true; resolved_model='gpt-6.1-sol'; attempt=1; at='2026-10-01T12:00:00Z'; category='math'; tier='complex' } | ConvertTo-Json | Set-Content (Join-Path $importDir 'output.provenance.json')
+    $sourcesPath = Join-Path $temp 'outcome-sources.json'
+    ConvertTo-Json -InputObject @($importRepo) | Set-Content $sourcesPath
+    $imported = Update-RouterOutcomes -Now ([datetime]'2026-10-02T12:00:00Z') -SourcesPath $sourcesPath
+    $preserved = @(Get-Content $qualityPath | ConvertFrom-Json | Where-Object source -eq 'research')
+    Assert-True ($imported.new_records -eq 1 -and $imported.total_records -eq 23 -and $preserved.Count -eq 2 -and ($preserved.key -join ',') -eq ($stoppedRows.key -join ',')) 'outcomes importer rewrite preserves actual research event keys'
+    Assert-True ($imported.alerts.Count -eq 0 -and @(Read-RouterJsonArray -Path (Join-Path $qualityState 'drift-marks.json')).Count -eq 0) 'research environment failures do not turn 90 percent quality into drift'
+    $eligible = @(Get-Content $qualityPath | ConvertFrom-Json | Where-Object { $_.category -eq 'complex-coding' -and $_.attempt -eq 1 -and $_.failure_category -notin @('environment','tooling') -and ([datetime]$_.at) -ge [datetime]'2026-09-02T12:00:00Z' })
+    Assert-True ($eligible.Count -eq 10 -and @($eligible | Where-Object pass).Count -eq 9) 'quality denominator excludes diagnosed research failures exactly: 9 of 10'
+    Assert-True ((Update-RouterOutcomes -Now ([datetime]'2026-10-02T12:00:00Z') -SourcesPath $sourcesPath).new_records -eq 0 -and @(Get-Content $qualityPath | ConvertFrom-Json | Where-Object source -eq 'research').Count -eq 2) 'idempotent outcomes import retains both research failures'
     Write-Output "SUMMARY: PASS ($script:passed checks)"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorAlerts; $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorSessions

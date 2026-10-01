@@ -292,6 +292,7 @@ function Invoke-RouterCategoryResearch {
                             break
                         } catch {
                             $failure = $_
+                            $failedModel = $script:RouterResearchCurrentModel
                             $errorText = $failure.Exception.Message
                             $at = [datetimeoffset](& $script:RouterDiagnosisClock)
                             $et = [TimeZoneInfo]::ConvertTime($at, [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time'))
@@ -303,6 +304,14 @@ function Invoke-RouterCategoryResearch {
                             $diagnosis = $dispatch.verdict
                             $refusal = Test-RouterLimitRefusal -Vendor $Lane -Text $errorText
                             if ($refusal.refused -or $failure.Exception.Data['router_status'] -eq 'wait' -or ($dispatch.PSObject.Properties['status'] -and $dispatch.status -eq 'wait')) { $diagnosis = 'quota' }
+                            # Persist the diagnosed call before connectivity probes or failover can change its provenance.
+                            $outcome = [ordered]@{
+                                key="research:${passId}:${category}:$($attempt.attempt)"; run_id=$passId; pass_id=$passId
+                                repo='danny-skills'; at=$at.ToUniversalTime().ToString('o'); lane=$attempt.lane; model=$failedModel
+                                category=$category; attempt=$attempt.attempt; pass=$false; escalated=$false
+                                failure_category='environment'; diagnosis=$diagnosis; source='research'; tier='research'; failure_file=$failurePath
+                            }
+                            [IO.File]::AppendAllText((Join-Path $state 'outcomes.jsonl'), (($outcome | ConvertTo-Json -Compress) + "`n"))
                             if ($diagnosis -eq 'offline') {
                                 $outageStart = $at
                                 do {

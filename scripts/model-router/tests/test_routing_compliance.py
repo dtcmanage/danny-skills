@@ -161,3 +161,58 @@ def test_streamed_blocks_sharing_message_id_keep_selections_and_tools(tmp_path: 
         row["message"]["id"] = "streamed-message"
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     assert sum(row["routed"] for row in routing(path)) == 2
+
+
+@pytest.mark.parametrize("command", [
+    "rg -n invoke-codex-chunk.ps1 .",
+    'echo "codex exec -m gpt-6.1-sol"',
+    "rg -n 'codex exec -m gpt-6.1-sol' .",
+    'printf "%s\\n" "invoke-claude-chunk.ps1"',
+    '# codex exec -m gpt-6.1-sol\necho done',
+    'cat > example.sh <<\'EOF\'\ncodex exec -m gpt-6.1-sol prompt\nEOF\n',
+    'cat > example.ps1 << EOF\npwsh -File invoke-codex-chunk.ps1\nEOF\n',
+    'cat <<-"EOF" > example.sh\n\tcodex exec -m gpt-6.1-sol prompt\n\tEOF\n',
+    '$example = @"\ncodex exec -m gpt-6.1-sol prompt\n"@\nSet-Content example.sh $example',
+    "$example = @'\n& 'invoke-claude-chunk.ps1'\n'@\nSet-Content example.ps1 $example",
+    "pwsh -Command \"Write-Output 'codex exec -m gpt-6.1-sol'\"",
+    'echo "example; codex exec -m gpt-6.1-sol"',
+    "pwsh -File invoke-codex-chunk.ps1 -Preflight",
+    "& './invoke-claude-chunk.ps1' -Preflight:$true",
+])
+def test_command_mentions_do_not_count_or_consume_selection(command: str) -> None:
+    pending: list[tuple[str, str] | None] = [("routine-coding", "medium")]
+    buckets: dict[str, dict] = {}
+    row = {"timestamp": "2026-10-01T16:00:00Z", "message": {
+        "role": "assistant", "content": [{"type": "tool_use", "name": "Bash",
+                                            "input": {"command": command}}]}}
+    cu.tally_routing_message(row, pending, buckets, {})
+    assert buckets == {}
+    assert pending == [("routine-coding", "medium")]
+
+
+@pytest.mark.parametrize(("command", "explicit"), [
+    ("codex exec -m gpt-6.1-sol prompt", True),
+    ("codex exec prompt", False),
+    ('codex exec "example -m gpt-6.1-sol"', False),
+    ("cd /repo && codex exec -m 'gpt-6.1-sol' prompt", True),
+    ("MODEL_ENV=test codex exec -m gpt-6.1-sol prompt", True),
+    ("pwsh -NoProfile -File './skills/dt-build/scripts/invoke-codex-chunk.ps1'", True),
+    ("powershell.exe -File .\\invoke-claude-chunk.ps1", True),
+    ("& 'D:\\repo folder\\invoke-codex-chunk.ps1' -BundlePath bundle.txt", True),
+    ("./invoke-claude-chunk.ps1 -BundlePath bundle.txt", True),
+    ('pwsh -NoProfile -Command "& \'./invoke-codex-chunk.ps1\' -BundlePath bundle.txt"', True),
+    ("echo done; codex exec -m gpt-6.1-sol prompt", True),
+    ("cat <<'EOF' > example.sh\ncodex exec example\nEOF\ncodex exec -m gpt-6.1-sol prompt", True),
+    ("pwsh -File invoke-codex-chunk.ps1 -Prompt 'codex exec -m gpt-6.1-sol'", True),
+    ("pwsh -File invoke-codex-chunk.ps1 -Preflight; codex exec -m gpt-6.1-sol prompt", True),
+])
+def test_real_commands_count_once_with_their_model_status(command: str, explicit: bool) -> None:
+    pending: list[tuple[str, str] | None] = [("routine-coding", "medium")]
+    buckets: dict[str, dict] = {}
+    row = {"timestamp": "2026-10-01T16:00:00Z", "message": {
+        "role": "assistant", "content": [{"type": "tool_use", "name": "Bash",
+                                            "input": {"command": command}}]}}
+    cu.tally_routing_message(row, pending, buckets, {"routine-coding": "coder"})
+    bucket = buckets["2026-10-01"]
+    assert (bucket["delegations"], bucket["routed"], bucket["unrouted"]) == (1, int(explicit), int(not explicit))
+    assert pending == []

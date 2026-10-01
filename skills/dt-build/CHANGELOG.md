@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.18.0
+
+- Add router diagnosis verdicts, vendor-incident failover, research and canary reliability, acknowledge support, and a routing compliance report with execution-aware command counts.
+
 ## 2.17.0
 
 - model router consolidation: the routing section points at the shared router (one category per chunk, resolve without -Lane, dispatch on the returned vendor with -Effort, print MODEL_SELECTION, retry once on ROUTER_LIMIT, wait carries resume_after_et); context discipline trimmed to the load-bearing rules; wrappers take -Effort; bridge mode and the v1 table are gone
