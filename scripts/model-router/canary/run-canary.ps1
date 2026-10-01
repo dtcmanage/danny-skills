@@ -15,6 +15,8 @@ $script:CanaryClaudeCacheWriteTokens = 57000
 $script:CanaryOutputTokens = 600
 $script:CanaryRuns = 3
 $script:CanaryTimeoutMs = 120000
+$script:CanaryCallCeilingMs = 600000
+if (-not (Get-Variable RouterCanarySleep -Scope Script -ErrorAction SilentlyContinue)) { $script:RouterCanarySleep = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds } }
 $script:RouterCanaryScriptPath = $PSCommandPath
 
 function Get-CanaryScope {
@@ -86,12 +88,12 @@ function Get-CanaryBurn {
 }
 
 function Invoke-CanaryModel {
-    param([string]$Model,[string]$Lane,[string]$Prompt)
+    param([string]$Model,[string]$Lane,[string]$Prompt,[int]$TimeoutMs=$script:CanaryTimeoutMs)
     if ($Lane -eq 'codex') {
         $out = Join-Path $env:TEMP ('router-canary-' + [guid]::NewGuid().ToString('N') + '.txt')
         try {
-            $result = Invoke-CodexProcess -CodexPath (Get-Command codex -ErrorAction Stop).Source -Arguments @('--ask-for-approval','never','exec','--ignore-user-config','--sandbox','read-only','--cd',$PSScriptRoot,'--model',$Model,'--output-last-message',$out,'-') -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $script:CanaryTimeoutMs
-            if ($result.timed_out -or $result.exit_code -ne 0) { throw 'Codex canary call failed or timed out' }
+            $result = Invoke-CodexProcess -CodexPath (Get-Command codex -ErrorAction Stop).Source -Arguments @('--ask-for-approval','never','exec','--ignore-user-config','--sandbox','read-only','--cd',$PSScriptRoot,'--model',$Model,'--output-last-message',$out,'-') -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $TimeoutMs
+            if ($result.timed_out -or $result.exit_code -ne 0) { throw "Codex canary call failed or timed out: $($result.stderr)" }
             return [IO.File]::ReadAllText($out)
         } finally { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
     }
@@ -116,8 +118,8 @@ function Invoke-CanaryModel {
         $inputWrite = $process.StandardInput.WriteAsync($Prompt)
         if (-not $inputWrite.Wait(5000)) { $process.Kill($true); throw 'Claude canary prompt write timed out' }
         $process.StandardInput.Close()
-        if (-not $process.WaitForExit($script:CanaryTimeoutMs)) { $process.Kill($true); throw 'Claude canary call timed out' }
-        if ($process.ExitCode -ne 0) { throw 'Claude canary call failed' }
+        if (-not $process.WaitForExit($TimeoutMs)) { $process.Kill($true); throw 'Claude canary call timed out' }
+        if ($process.ExitCode -ne 0) { throw "Claude canary call failed: $($stderr.GetAwaiter().GetResult())" }
         $parsed = ConvertFrom-ClaudeCliResult -Stdout $stdout.GetAwaiter().GetResult() -RequestedModel $Model
         if ($parsed.is_error) { throw 'Claude canary result reported error' }
         return $parsed.result
@@ -151,6 +153,9 @@ function Invoke-RouterCanary {
         $runDir = Join-Path $state ('canary/' + $Now.ToString('yyyyMMdd') + '-' + $Reason)
         [IO.Directory]::CreateDirectory($runDir) | Out-Null
         $results = [System.Collections.Generic.List[object]]::new()
+        $alerts = [System.Collections.Generic.List[object]]::new()
+        $pagedModels = @{}
+        $runId = "canary-$($Now.ToString('yyyyMMdd'))-$Reason"
         $outcomes = Join-Path $state 'outcomes.jsonl'
         foreach ($model in $scope) {
             if (@($model.tasks).Count -eq 0) { continue }
@@ -159,9 +164,55 @@ function Invoke-RouterCanary {
                 $prompt = [IO.File]::ReadAllText((Join-Path $taskDir 'prompt.md'))
                 $runCount = if ($task -eq 'pelican') { 1 } else { $script:CanaryRuns }
                 for ($run=1; $run -le $runCount; $run++) {
-                    $answer = ''; $passed = $false; $errorText = $null
+                    $answer = ''; $passed = $false; $errorText = $null; $diagnosis = $null; $stopped = $false
+                    $attempt = 0; $retried = $false
+                    $callStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
+                    $failures = [System.Collections.Generic.List[object]]::new()
                     try {
-                        $answer = if ($Invoker) { [string](& $Invoker $model.model $model.lane $task $prompt $run) } else { [string](Invoke-CanaryModel -Model $model.model -Lane $model.lane -Prompt $prompt) }
+                        while ($true) {
+                            $attempt++
+                            try {
+                                $remaining = [int][Math]::Max(1, $script:CanaryCallCeilingMs - (([datetimeoffset](& $script:RouterDiagnosisClock)) - $callStarted).TotalMilliseconds)
+                                $answer = if ($Invoker) { [string](& $Invoker $model.model $model.lane $task $prompt $run) } else { [string](Invoke-CanaryModel -Model $model.model -Lane $model.lane -Prompt $prompt -TimeoutMs ([Math]::Min($script:CanaryTimeoutMs,$remaining))) }
+                                break
+                            } catch {
+                                $errorText = $_.Exception.Message
+                                $dispatch = Resolve-RouterDispatchFailure -Vendor $model.lane -ErrorText $errorText
+                                $diagnosis = $dispatch.verdict
+                                $failures.Add([pscustomobject]@{ attempt=$attempt; diagnosis=$diagnosis })
+                                if ($diagnosis -eq 'offline') {
+                                    $outageStart = [datetimeoffset](& $script:RouterDiagnosisClock)
+                                    do {
+                                        $remaining = $script:CanaryCallCeilingMs - (([datetimeoffset](& $script:RouterDiagnosisClock)) - $callStarted).TotalMilliseconds
+                                        if ($remaining -le 0) { break }
+                                        $null = & $script:RouterCanarySleep ([int][Math]::Min(60000,$remaining))
+                                        if ((([datetimeoffset](& $script:RouterDiagnosisClock)) - $callStarted).TotalMilliseconds -ge $script:CanaryCallCeilingMs) { break }
+                                        $dispatch = Resolve-RouterDispatchFailure -Vendor $model.lane -ErrorText ''
+                                    } while ($dispatch.verdict -eq 'offline')
+                                    if ($dispatch.verdict -ne 'offline' -and (([datetimeoffset](& $script:RouterDiagnosisClock)) - $callStarted).TotalMilliseconds -lt $script:CanaryCallCeilingMs) {
+                                        if ((([datetimeoffset](& $script:RouterDiagnosisClock)) - $outageStart).TotalMinutes -gt 5) {
+                                            $key = 'router-offline:' + [TimeZoneInfo]::ConvertTime($outageStart,[TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')).ToString('yyyy-MM-dd HH:mm') + ' ET'
+                                            $message = Get-RouterAlertMessage -Key $key
+                                            $alerts.Add([pscustomobject]@{ key=$key; message=$message })
+                                            if (-not $Invoker) { $null = Send-RouterAlert -Key $key -Message $message }
+                                        }
+                                        if ($dispatch.verdict -eq 'unexplained') { $errorText=$null; $diagnosis=$null; continue }
+                                        $diagnosis = $dispatch.verdict
+                                    }
+                                }
+                                if ($diagnosis -eq 'unexplained' -and -not $retried) { $retried=$true; $errorText=$null; $diagnosis=$null; continue }
+                                $stopped = $true
+                                if ($diagnosis -eq 'unexplained' -and -not $pagedModels.ContainsKey($model.model)) {
+                                    $pagedModels[$model.model] = $true
+                                    $key = "vendor-error:$($model.lane):${runId}:$($model.model)"
+                                    $message = Get-RouterAlertMessage -Key $key -Model $model.model -Category $task -ErrorText $errorText -Checks $dispatch.checks -ArtifactPath (Join-Path $runDir 'results.json') -PromptText $prompt
+                                    $alerts.Add([pscustomobject]@{ key=$key; message=$message })
+                                    if (-not $Invoker) { $null = Send-RouterAlert -Key $key -Message $message }
+                                }
+                                break
+                            }
+                        }
+                        if ($stopped) { throw $errorText }
                         $answer = Get-CanaryAnswerBody -Answer $answer
                         if ($task -eq 'pelican') {
                             $svg = Join-Path $runDir ($model.model + '-pelican.svg')
@@ -175,24 +226,31 @@ function Invoke-RouterCanary {
                             } finally { Remove-Item -LiteralPath $answerFile -Force -ErrorAction SilentlyContinue }
                         }
                     } catch { $errorText = $_.Exception.Message }
-                    if ($task -eq 'pelican') { continue }
                     $category = if ($task -like 'complex-coding-*') { 'complex-coding' } elseif ($task -like 'routine-coding-*') { 'routine-coding' } else { $task }
-                    $row = [pscustomobject]@{ key="canary:$($Now.ToString('yyyyMMdd')):$Reason`:$($model.model):$task`:$run"; run_id="canary-$($Now.ToString('yyyyMMdd'))-$Reason"; repo='danny-skills'; at=$Now.ToUniversalTime().ToString('o'); lane=$model.lane; model=$model.model; category=$category; task=$task; attempt=1; pass=$passed; escalated=$false; failure_category=$(if ($errorText) { 'environment' } else { $null }); source='canary'; tier='canary' }
+                    $row = [pscustomobject]@{ key="canary:$($Now.ToString('yyyyMMdd')):$Reason`:$($model.model):$task`:$run"; run_id=$runId; repo='danny-skills'; at=$Now.ToUniversalTime().ToString('o'); lane=$model.lane; model=$model.model; category=$category; task=$task; attempt=$attempt; pass=$passed; escalated=$false; failure_category=$(if ($errorText) { 'environment' } else { $null }); diagnosis=$diagnosis; source='canary'; tier='canary' }
+                    foreach ($failure in $failures) {
+                        if ($stopped -and $failure.attempt -eq $attempt) { continue }
+                        $failureRow = $row.PSObject.Copy()
+                        $failureRow.key = "$($row.key):failure:$($failure.attempt)"; $failureRow.attempt=$failure.attempt
+                        $failureRow.pass=$false; $failureRow.failure_category='environment'; $failureRow.diagnosis=$failure.diagnosis
+                        [IO.File]::AppendAllText($outcomes,($failureRow | ConvertTo-Json -Compress) + "`n")
+                    }
+                    if ($task -eq 'pelican' -and -not $stopped) { continue }
                     [IO.File]::AppendAllText($outcomes,($row | ConvertTo-Json -Compress) + "`n")
-                    $results.Add([pscustomobject]@{ model=$model.model; task=$task; run=$run; pass=$passed; error=$errorText })
+                    $results.Add([pscustomobject]@{ model=$model.model; task=$task; run=$run; pass=$passed; error=$errorText; stopped=$stopped; diagnosis=$diagnosis; attempts=$attempt })
+                    if ($stopped) { break }
                 }
             }
         }
         $baselinePath = Join-Path $state 'canary/baseline.json'
         $baseline = Read-RouterJsonObject -Path $baselinePath
         if (-not $baseline) { $baseline = [pscustomobject]@{} }
-        $alerts = [System.Collections.Generic.List[object]]::new()
         $lines = [System.Collections.Generic.List[string]]::new()
         $lines.Add('# Model router canary')
         $lines.Add('')
         $lines.Add("Estimated burn: $($burn.input_tokens) input + $($burn.output_tokens) output tokens; priced API equivalent `$$($burn.priced_usd). Unpriced: $($burn.unpriced -join ', ').")
         foreach ($model in $scope) {
-            $rows = @($results | Where-Object model -eq $model.model)
+            $rows = @($results | Where-Object { $_.model -eq $model.model -and -not $_.error -and $_.task -ne 'pelican' })
             if (-not $rows.Count) { continue }
             $rate = @($rows | Where-Object pass).Count / $rows.Count
             $prior = $baseline.PSObject.Properties[[string]$model.model]
@@ -209,7 +267,8 @@ function Invoke-RouterCanary {
         $report = Join-Path $runDir 'report.md'
         [IO.File]::WriteAllLines($report,$lines)
         $alerts.Add([pscustomobject]@{ key="canary-complete:$($Now.ToString('yyyyMMdd'))"; message="Canary complete: $report" })
-        if (-not $Invoker) { Send-RouterAlerts -Alerts @($alerts.ToArray()) | Out-Null }
+        # Error and reconnect alerts were sent immediately; do not send them again.
+        if (-not $Invoker) { Send-RouterAlerts -Alerts @($alerts.ToArray() | Where-Object { $_.key -notlike 'vendor-error:*' -and $_.key -notlike 'router-offline:*' }) | Out-Null }
         return [pscustomobject]@{ dry_run=$false; scope=$scope; burn=$burn; results=@($results.ToArray()); alerts=@($alerts.ToArray()); report=$report }
     } finally { $lock.Dispose() }
 }

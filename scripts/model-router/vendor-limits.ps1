@@ -277,6 +277,17 @@ function Get-RouterVendorBlocked {
     $usage = Get-RouterClaudeUsage; return ($null -ne $usage -and $usage.used_percent -ge 95)
 }
 
+function Test-RouterConnectivity {
+    param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor)
+    $configPath = Join-Path (Get-RouterStateDir) 'vendor-status.json'
+    if (-not (Test-Path -LiteralPath $configPath)) { $configPath = Join-Path $PSScriptRoot '../../references/model-router/vendor-status.json' }
+    $lane = (Read-RouterJsonObject -Path $configPath).$Vendor
+    $http = $false; $dns = $false
+    try { $http = $null -ne (& $script:RouterDiagnosisHttp 'http://www.msftconnecttest.com/connecttest.txt') } catch { }
+    try { $dns = [bool](& $script:RouterDiagnosisDns ([string]$lane.api_host)) } catch { }
+    return [pscustomobject]@{ http=$http; dns=$dns; offline=(-not $http -and -not $dns) }
+}
+
 function Resolve-RouterDispatchFailure {
     param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor,
         [Parameter(Mandatory)][AllowEmptyString()][string]$ErrorText)
@@ -291,8 +302,8 @@ function Resolve-RouterDispatchFailure {
         $lane = $config.$Vendor
         if (-not $lane.api_host -or -not $lane.components_url -or -not $lane.incidents_url -or -not @($lane.components).Count) { throw 'Incomplete vendor configuration' }
     } catch { $result.detail = "Component lookup configuration failed: $($_.Exception.Message)"; $checks.status = 'lookup_failed'; return $result }
-    try { $checks.http = $null -ne (& $script:RouterDiagnosisHttp 'http://www.msftconnecttest.com/connecttest.txt') } catch { $checks.http = $false }
-    try { $checks.dns = [bool](& $script:RouterDiagnosisDns ([string]$lane.api_host)) } catch { $checks.dns = $false }
+    $connectivity = Test-RouterConnectivity -Vendor $Vendor
+    $checks.http = $connectivity.http; $checks.dns = $connectivity.dns
     if (-not $checks.http -and -not $checks.dns) { $result.verdict = 'offline'; $result.detail = 'Connectivity HTTP probe and vendor API DNS lookup both failed'; return $result }
     try {
         $now = [datetimeoffset](& $script:RouterDiagnosisClock)

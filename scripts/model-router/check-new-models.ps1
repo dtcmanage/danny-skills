@@ -2,6 +2,7 @@ param([Alias('Force')][switch]$RouterCheckCliForce, [Alias('TimeoutSeconds')][in
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
+. (Join-Path $PSScriptRoot 'vendor-limits.ps1')
 
 function Get-RouterAnthropicModelIds {
     param([Parameter(Mandatory)][string]$Html)
@@ -50,7 +51,7 @@ function Invoke-RouterModelCheck {
     param([switch]$Force, [int]$TimeoutSeconds = 30, [datetime]$Now = (Get-Date))
     $state = Get-RouterStateDir
     $stamp = Join-Path $state 'last-check.json'
-    $result = [ordered]@{ skipped = $false; timed_out = $false; checked_at = $null; new_models = @(); missing_models = @(); errors = @(); alerts = @() }
+    $result = [ordered]@{ skipped = $false; offline = $false; timed_out = $false; checked_at = $null; new_models = @(); missing_models = @(); errors = @(); alerts = @() }
     if (-not $Force) {
         $last = Read-RouterJsonObject -Path $stamp
         if ($null -ne $last) {
@@ -66,6 +67,12 @@ function Invoke-RouterModelCheck {
     $vendorsPath = Join-Path $PSScriptRoot '../../references/model-router/vendors.json'
     if ((Get-Variable -Name RouterModelCheckVendorsPath -Scope Script -ErrorAction SilentlyContinue) -and $script:RouterModelCheckVendorsPath) { $vendorsPath = $script:RouterModelCheckVendorsPath }
     $vendors = @(Get-Content -LiteralPath $vendorsPath -Raw | ConvertFrom-Json)
+    foreach ($lane in @($vendors.lane | Sort-Object -Unique)) {
+        if ((Test-RouterConnectivity -Vendor $lane).offline) {
+            $result.skipped = $true; $result.offline = $true
+            return [pscustomobject]$result
+        }
+    }
     $jobs = [System.Collections.Generic.List[object]]::new()
     $fetcher = if (Get-Variable -Name RouterModelCheckFetcher -Scope Script -ErrorAction SilentlyContinue) { $script:RouterModelCheckFetcher } else { $null }
     try {

@@ -31,6 +31,8 @@ $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-credentials.json'
 
 try {
+    $script:RouterDiagnosisHttp = { param($Uri) 'fixture connected' }
+    $script:RouterDiagnosisDns = { param($ApiHost) $true }
     $script:canaryLaunchCount = 0
     $script:RouterCanaryLauncher = { param($exe,$arguments) $script:canaryLaunchCount++ }
     Reset-State
@@ -81,6 +83,21 @@ try {
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { throw 'fake failure' }; 'claude-new-1' }
     $r = Invoke-RouterModelCheck -Force -Now $now.AddHours(27)
     Assert-True ($r.errors.Count -eq 1 -and $r.alerts -contains 'catalog-check-error:openai' -and [IO.File]::ReadAllText($registryPath) -ceq $before) 'one vendor failure does not block other fetch or mutate registry'
+
+    $script:RouterDiagnosisHttp = { param($Uri) throw 'offline fixture' }
+    $script:RouterDiagnosisDns = { param($ApiHost) $false }
+    $script:RouterModelCheckFetcher = { param($vendor) throw 'fetch must not run offline' }
+    $r = Invoke-RouterModelCheck -Force -Now $now.AddHours(27)
+    Assert-True ($r.offline -and $r.skipped -and $r.errors.Count -eq 0 -and $r.alerts.Count -eq 0 -and [IO.File]::ReadAllText($registryPath) -ceq $before -and [IO.File]::ReadAllText((Join-Path $env:DT_MODEL_ROUTER_STATE 'last-check.json')) -ceq $stampBefore) 'offline catalog check raises no catalog-check-error and preserves last-good state'
+    $script:RouterDiagnosisDns = { param($ApiHost) $true }
+    $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { throw 'fixture failure online by DNS' }; 'claude-new-1' }
+    $r = Invoke-RouterModelCheck -Force -Now $now.AddHours(27)
+    Assert-True (-not $r.offline -and $r.alerts -contains 'catalog-check-error:openai') 'HTTP probe failure alone does not suppress catalog errors'
+    $script:RouterDiagnosisHttp = { param($Uri) 'fixture connected' }
+    $script:RouterDiagnosisDns = { param($ApiHost) $false }
+    $r = Invoke-RouterModelCheck -Force -Now $now.AddHours(27)
+    Assert-True (-not $r.offline -and $r.alerts -contains 'catalog-check-error:openai') 'DNS probe failure alone does not suppress catalog errors'
+    $script:RouterDiagnosisDns = { param($ApiHost) $true }
 
     $vendorsPath = Join-Path $temp 'unknown-vendors.json'
     @([pscustomobject]@{ id='unknown'; lane='claude'; source='future-source' },[pscustomobject]@{ id='anthropic'; lane='claude'; source='anthropic-models-page'; url='https://example.org' }) | ConvertTo-Json | Set-Content -LiteralPath $vendorsPath
@@ -146,11 +163,10 @@ try {
     Assert-True (-not $r.skipped -and $r.errors.Count -eq 0) 'corrupt last-check.json treated as absent; check runs instead of throwing'
 
     Reset-State
-    $script:RouterModelCheckFetcher = $null
-    Write-Output 'LIVE: real vendor check, read-only upstream'
+    $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }
     $r = Invoke-RouterModelCheck -Force -TimeoutSeconds 30
     $live = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
-    Assert-True (-not $r.timed_out -and $r.errors.Count -eq 0 -and @($live | Where-Object vendor -eq 'openai').Count -gt 0 -and @($live | Where-Object vendor -eq 'anthropic').Count -gt 0) 'LIVE: both vendors return models within 30 seconds'
+    Assert-True (-not $r.timed_out -and $r.errors.Count -eq 0 -and @($live | Where-Object vendor -eq 'openai').Count -gt 0 -and @($live | Where-Object vendor -eq 'anthropic').Count -gt 0) 'both vendor fixtures return models within 30 seconds without network'
 
     Reset-State
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-sol' } else { 'claude-sonnet-4-5' } }

@@ -15,6 +15,12 @@ $env:DT_MODEL_ROUTER_STATE = $testState
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
+    $script:diagnosisNow = [datetimeoffset]'2026-10-01T12:00:00Z'
+    $script:RouterDiagnosisClock = { $script:diagnosisNow }
+    $script:RouterDiagnosisDns = { param($ApiHost) $true }
+    $script:RouterDiagnosisHttp = { param($Uri) if ($Uri -like '*connecttest.txt') { return 'connected' }; throw 'fixture status lookup unavailable' }
+    $script:sleeps = [System.Collections.Generic.List[int]]::new()
+    $script:RouterCanarySleep = { param($Milliseconds) $script:sleeps.Add($Milliseconds); $script:diagnosisNow = $script:diagnosisNow.AddMilliseconds($Milliseconds) }
     $taskRoot = Join-Path $PSScriptRoot '../canary/tasks'
     foreach ($task in @(Get-ChildItem -LiteralPath $taskRoot -Directory | Where-Object Name -ne 'pelican')) {
         & python (Join-Path $task.FullName 'grader.py') (Join-Path $task.FullName 'known-good.txt') | Out-Null
@@ -72,7 +78,69 @@ try {
     . (Join-Path $PSScriptRoot '../register-router-schedules.ps1')
     $scheduled = @(Register-RouterSchedules)
     Assert-True ($scheduled.Count -eq 4 -and @($scheduled | Where-Object { $_.launcher -like '*run-hidden.vbs' }).Count -eq 4) 'schedule dry run lists all four hidden-launcher tasks without registration'
-    Write-Output "PASS: $script:passed canary assertions"
+    # One stopped model/task must not suppress its siblings or another model.
+    @([pscustomobject]@{ id='gpt-6-new'; lane='codex'; status='unprofiled' },[pscustomobject]@{ id='claude-new'; lane='claude'; status='unprofiled' }) | ConvertTo-Json | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json')
+    $script:cellCalls = @{}
+    $failing = { param($model,$lane,$task,$prompt,$run)
+        $key = "$model/$task"
+        if (-not $script:cellCalls.ContainsKey($key)) { $script:cellCalls[$key]=0 }
+        $script:cellCalls[$key]++
+        if ($model -eq 'gpt-6-new' -and $task -ne 'pelican') { throw 'fixture vendor failure' }
+        if ($task -eq 'pelican') { return '<svg/>' }
+        return [IO.File]::ReadAllText((Join-Path $taskRoot "$task/known-good.txt"))
+    }
+    $failed = Invoke-RouterCanary -Models @('gpt-6-new','claude-new') -Invoker $failing -Now ([datetime]'2026-10-01T12:00:00Z')
+    $stopped = @($failed.results | Where-Object stopped)
+    Assert-True ($stopped.Count -gt 1 -and @($stopped | Where-Object { $_.model -ne 'gpt-6-new' -or $_.attempts -ne 2 }).Count -eq 0 -and @($failed.results | Where-Object { $_.model -eq 'claude-new' -and $_.pass }).Count -gt 1) 'stopped cells skip remaining repetitions while other tasks and models continue'
+    Assert-True (@($failed.alerts | Where-Object key -eq 'vendor-error:codex:canary-20261001-manual:gpt-6-new').Count -eq 1 -and $script:sleeps.Count -eq 0 -and @($script:cellCalls.Values | Where-Object { $_ -gt 3 }).Count -eq 0) 'unexplained retries once immediately and pages once per model per run'
+    $persisted = Get-Content (Join-Path (Split-Path $failed.report) 'results.json') -Raw | ConvertFrom-Json
+    Assert-True (@($persisted.results | Where-Object stopped).Count -eq $stopped.Count) 'run record marks stopped cells'
+    $diagnosedRows = @(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ConvertFrom-Json | Where-Object run_id -eq 'canary-20261001-manual')
+    Assert-True (@($diagnosedRows | Where-Object { $_.model -eq 'gpt-6-new' -and $_.failure_category -eq 'environment' -and $_.diagnosis -eq 'unexplained' }).Count -eq (2 * $stopped.Count) -and @($failed.alerts | Where-Object key -like 'canary-drop:*').Count -eq 0) 'each diagnosed failed attempt carries environment and diagnosis and cannot trigger quality drift'
+
+    $script:cellCalls = @{}; $script:sleeps.Clear()
+    $script:RouterDiagnosisDns = { param($ApiHost) $false }
+    $script:RouterDiagnosisHttp = { param($Uri) throw 'offline fixture' }
+    $offlineInvoker = { param($model,$lane,$task,$prompt,$run) if ($task -eq 'pelican') { return '<svg/>' }; throw 'offline call fixture' }
+    $offlineStart = $script:diagnosisNow
+    $offline = Invoke-RouterCanary -Models @('gpt-6-luna') -Invoker $offlineInvoker -Now ([datetime]'2026-10-02T12:00:00Z')
+    Assert-True (($script:diagnosisNow - $offlineStart).TotalMilliseconds -eq 600000 -and $script:sleeps.Count -eq 10 -and @($script:sleeps | Where-Object { $_ -ne 60000 }).Count -eq 0 -and $offline.results[0].stopped -and $offline.results[0].attempts -eq 1 -and $offline.results[0].diagnosis -eq 'offline') 'offline waits at 60-second intervals bounded to ten minutes per call'
+    Assert-True (@($offline.alerts | Where-Object key -like 'vendor-error:*').Count -eq 0) 'offline ceiling does not page unexplained error'
+
+    $script:sleeps.Clear(); $script:reconnectCalls=0
+    $script:RouterDiagnosisDns = { param($ApiHost) $script:sleeps.Count -ge 6 }
+    $script:RouterDiagnosisHttp = { param($Uri) if ($script:sleeps.Count -lt 6) { throw 'offline fixture' }; if ($Uri -like '*connecttest.txt') { return 'connected' }; throw 'fixture status lookup unavailable' }
+    $reconnectInvoker = { param($model,$lane,$task,$prompt,$run)
+        if ($task -eq 'pelican') { return '<svg/>' }
+        $script:reconnectCalls++
+        if ($script:reconnectCalls -eq 1) { throw 'offline fixture' }
+        return [IO.File]::ReadAllText((Join-Path $taskRoot "$task/known-good.txt"))
+    }
+    $reconnected = Invoke-RouterCanary -Models @('gpt-6-luna') -Invoker $reconnectInvoker -Now ([datetime]'2026-10-03T12:00:00Z')
+    Assert-True ($script:reconnectCalls -eq 4 -and @($reconnected.results | Where-Object { $_.stopped -or -not $_.pass }).Count -eq 0 -and @($reconnected.alerts | Where-Object key -like 'router-offline:* ET').Count -eq 1) 'reconnection resumes identical call and alerts after more than five minutes'
+    $recoveredRows = @(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ConvertFrom-Json | Where-Object run_id -eq 'canary-20261003-manual')
+    Assert-True (@($recoveredRows | Where-Object { $_.diagnosis -eq 'offline' -and $_.failure_category -eq 'environment' }).Count -eq 1 -and @($recoveredRows | Where-Object pass).Count -eq 3) 'recovered offline failure remains diagnosed alongside successful outcomes'
+
+    $script:sleeps.Clear(); $script:RouterDiagnosisDns = { param($ApiHost) $false }
+    $script:RouterDiagnosisHttp = { param($Uri) throw 'offline fixture' }
+    $partialInvoker = { param($model,$lane,$task,$prompt,$run)
+        if ($task -eq 'pelican') { return '<svg/>' }
+        $script:diagnosisNow=$script:diagnosisNow.AddSeconds(35)
+        throw 'offline after 35 seconds of model call'
+    }
+    $partialStart=$script:diagnosisNow
+    $partial = Invoke-RouterCanary -Models @('gpt-6-luna') -Invoker $partialInvoker -Now ([datetime]'2026-10-04T12:00:00Z')
+    Assert-True (($script:diagnosisNow - $partialStart).TotalMilliseconds -eq 600000 -and $script:sleeps[-1] -eq 25000 -and $partial.results[0].stopped) 'offline wait includes time already spent in model call and shortens final sleep'
+
+    $script:sleeps.Clear(); $script:RouterDiagnosisDns = { param($ApiHost) $true }
+    $script:RouterDiagnosisHttp = { param($Uri)
+        if ($Uri -like '*connecttest.txt') { return 'connected' }
+        if ($Uri -like '*components.json') { return [pscustomobject]@{ components=@('Codex API','CLI','Responses' | ForEach-Object { [pscustomobject]@{ id=$_; name=$_; status='major_outage' } }) } }
+        return [pscustomobject]@{ incidents=@() }
+    }
+    $incident = Invoke-RouterCanary -Models @('gpt-6-luna') -Invoker $offlineInvoker -Now ([datetime]'2026-10-05T12:00:00Z')
+    Assert-True ($incident.results[0].stopped -and $incident.results[0].diagnosis -eq 'vendor_incident' -and $incident.results[0].attempts -eq 1 -and $script:sleeps.Count -eq 0 -and @($incident.alerts | Where-Object key -like 'vendor-error:*').Count -eq 0) 'vendor incident stops only its cell without unexplained retry or alert'
+    Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState
     $resolved = [IO.Path]::GetFullPath($testState)
