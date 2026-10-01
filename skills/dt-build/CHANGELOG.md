@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.17.0
+
+- model router consolidation: the routing section points at the shared router (one category per chunk, resolve without -Lane, dispatch on the returned vendor with -Effort, print MODEL_SELECTION, retry once on ROUTER_LIMIT, wait carries resume_after_et); context discipline trimmed to the load-bearing rules; wrappers take -Effort; bridge mode and the v1 table are gone
+
 ## 2.16.4
 
 - model router: read Claude weekly usage from the OAuth usage endpoint (5-minute cache, token never stored) and move Claude jobs to their Codex backup at 95%, same as Codex; weekly cost report shows the Claude weekly and 5-hour readings

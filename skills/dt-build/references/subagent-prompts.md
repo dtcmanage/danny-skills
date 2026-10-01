@@ -13,10 +13,8 @@ Required templates:
 - merge prompt
 
 Lane routing:
-- Follow `SKILL.md` "## Model routing" for every routing rule. The `MODEL_SELECTION:` line precedes every substantive dispatch.
+- Follow `SKILL.md` "## Model routing" for category, protection, selection disclosure, and retry rules.
 - Use CLAUDE_DISPATCH and VERIFY_DISPATCH as defined in `SKILL.md`; stop each subagent after collecting its report.
-- Give each chunk exactly one category at roadmap time. Protected must be earned and its reason recorded.
-- The orchestrator owns quality and retries one step up with `-EscalateFrom <failed model>` inside the two-attempt budget.
 - A fresh non-builder verifier via VERIFY_DISPATCH must verify every load-bearing, security-sensitive, live-write, or agent-verification milestone before acceptance.
 
 Every build/fix prompt ends with:

@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.15.0 (2026-10-01): model router consolidation: both lanes resolve planning through the router (protected for complex), effort comes from the resolver and steps down one level from round 3, preflight resolves planning, skill text no longer names models or effort levels
+
 - 1.14.7 (2026-09-30): model router: read Claude weekly usage from the OAuth usage endpoint (5-minute cache, token never stored) and move Claude jobs to their Codex backup at 95%, same as Codex; weekly cost report shows the Claude weekly and 5-hour readings
 
 - 1.14.6 (2026-09-30): model router: price GPT-6.1 Sol and Sonnet 5.5 so reports and canary stop showing them unpriced; canary finds claude.exe when claude.ps1 is absent and strips the session timestamp stamp and markdown fences before grading, and the code-review grader judges the whole answer (Claude models were never canaried, and fenced code failed every code task)
