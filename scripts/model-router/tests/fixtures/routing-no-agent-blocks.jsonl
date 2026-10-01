@@ -1,0 +1,1 @@
+{"type": "assistant", "timestamp": "2026-09-27T23:00:00Z", "message": {"id": "m1", "model": "claude-test", "content": [{"type": "text", "text": "MODEL_SELECTION: task -> model (routine-coding, protected, effort high): fixture"}, {"type": "tool_use", "id": "x", "name": "Read", "input": {"file_path": "fixture"}}], "usage": {"input_tokens": 10}}}

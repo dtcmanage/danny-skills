@@ -35,6 +35,85 @@ CTX_FLAG = 300_000          # peak context above this is flagged
 RESUME_FLAG = 5             # follow-up messages to live agents above this is flagged
 IDLE_MINUTES = 5            # cache TTL; a big re-write after this gap is an idle loss
 BIG_REWRITE = 50_000
+ALL_SESSIONS_CACHE_VERSION = 2
+SELECTION_RE = re.compile(r"MODEL_SELECTION:[^\r\n]*?\(([^,()]+)(?:,[^()]*)?,\s*effort\s+([^(),\s]+)\)")
+WRAPPER_RE = re.compile(r"\binvoke-[\w-]+-chunk\.ps1\b", re.IGNORECASE)
+CODEX_EXEC_RE = re.compile(r"\bcodex\s+exec\b")
+CODEX_MODEL_RE = re.compile(r"(?:^|\s)-m\s+['\"]?[^\s'\"]+")
+
+
+def workstation_for_project(project: str) -> str:
+    """Decode the parent workstation from Claude's lossy path slug."""
+    if project == "D--Claude":
+        return "workspace root"
+    marker = "D--Claude--Claude-Workspace-"
+    if not project.startswith(marker):
+        return "other"
+    tail = project[len(marker):]
+    # Spaces and path separators both become hyphens in project slugs. Match
+    # multiword workstation names before taking the first single-word segment.
+    names = ("Email HQ", "Finance HQ", "OneDrive Migration", "TCM Database",
+             "Trading Terminal", "Consultant Databases", "TCM Website",
+             "Skill Creation", "Design System", "Map Anything", "Amazon Store",
+             "For-Mac", "3D Design", "Primary Suite Renovation", "PC Build", "Home Server")
+    for name in names:
+        slug = name.replace(" ", "-")
+        if tail == slug or tail.startswith(slug + "-"):
+            return name
+    return tail.split("-", 1)[0] if tail else "other"
+
+
+def tally_routing_message(row: dict, pending: list[tuple[str, str] | None],
+                          buckets: dict[str, dict], category_jobs: dict[str, str]) -> None:
+    """Claim selection lines once, in content-block order, in the main session."""
+    message = row.get("message") or {}
+    if message.get("role", row.get("type")) != "assistant":
+        return
+    content = message.get("content")
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            for line in (block.get("text") or "").splitlines():
+                if "MODEL_SELECTION:" in line:
+                    match = SELECTION_RE.search(line)
+                    pending.append((match.group(1).strip(), match.group(2)) if match else None)
+            continue
+        if block.get("type") != "tool_use":
+            continue
+        inp = block.get("input") or {}
+        name = block.get("name")
+        explicit = bool(inp.get("model"))
+        if name != "Agent":
+            if name != "Bash":
+                continue
+            command = str(inp.get("command") or "")
+            if re.search(r"(?i)(?:^|\s)-Preflight\b", command):
+                continue
+            wrapper = bool(WRAPPER_RE.search(command))
+            codex = CODEX_EXEC_RE.search(command)
+            if not wrapper and not codex:
+                continue
+            explicit = wrapper or bool(CODEX_MODEL_RE.search(command[codex.end():]))
+        has_selection = bool(pending)
+        selection = pending.pop() if has_selection else None
+        routed = bool(explicit and has_selection)
+        date = to_et_date(row.get("timestamp"))
+        if not date:
+            continue
+        bucket = buckets.setdefault(date, {"delegations": 0, "routed": 0,
+                                          "unrouted": 0, "by_category": Counter(),
+                                          "by_job": Counter()})
+        bucket["delegations"] += 1
+        bucket["routed" if routed else "unrouted"] += 1
+        if routed and selection:
+            category, _effort = selection
+            bucket["by_category"][category] += 1
+            job = category_jobs.get(category)
+            if job:
+                bucket["by_job"][job] += 1
 
 
 def weighted(inp: int, cache_write: int, cache_read: int, out: int) -> int:
@@ -337,12 +416,16 @@ def to_et_date(stamp: str | None) -> str | None:
     return parsed.astimezone(ET_ZONE).date().isoformat()
 
 
-def tally_claude_by_day(path: Path) -> dict[tuple[str, str], Counter]:
+def tally_claude_by_day(path: Path, routing: dict[str, dict] | None = None,
+                       category_jobs: dict[str, str] | None = None) -> dict[tuple[str, str], Counter]:
     """Per (model, ET date) token totals for one Claude Code transcript. Dedupes
     repeated message ids within this file (a resumed transcript can rewrite earlier
     lines), matching tally_claude()'s per-file dedupe."""
     seen: set[str] = set()
     buckets: dict[tuple[str, str], Counter] = defaultdict(Counter)
+    pending: list[tuple[str, str] | None] = []
+    seen_tools: set[str] = set()
+    seen_text: set[tuple[str, str]] = set()
     with path.open(encoding="utf-8", errors="replace") as handle:
         for line in handle:
             try:
@@ -352,6 +435,27 @@ def tally_claude_by_day(path: Path) -> dict[tuple[str, str], Counter]:
             if row.get("type") != "assistant":
                 continue
             msg = row.get("message") or {}
+            if routing is not None and msg.get("role", "assistant") == "assistant":
+                # Claude can repeat a message id for different streamed blocks.
+                # Deduplicate tool ids, rather than dropping later tool blocks.
+                blocks = msg.get("content")
+                if isinstance(blocks, list):
+                    fresh = []
+                    for block in blocks:
+                        if isinstance(block, dict) and block.get("type") == "tool_use":
+                            tool_id = block.get("id")
+                            if tool_id and tool_id in seen_tools:
+                                continue
+                            if tool_id:
+                                seen_tools.add(tool_id)
+                        elif isinstance(block, dict) and block.get("type") == "text":
+                            text_key = (msg.get("id"), block.get("text") or "")
+                            if msg.get("id") and text_key in seen_text:
+                                continue
+                            seen_text.add(text_key)
+                        fresh.append(block)
+                    tally_routing_message({**row, "message": {**msg, "content": fresh}},
+                                          pending, routing, category_jobs or {})
             mid = msg.get("id")
             if not mid or mid in seen:
                 continue
@@ -375,7 +479,10 @@ def all_sessions_claude_rows(path: Path) -> list[dict]:
     subagent transcript under <session>/subagents/*.jsonl (a real gap confirmed in the
     intake evidence: subagent sidechains live in sibling files, not inline)."""
     combined: dict[tuple[str, str], Counter] = defaultdict(Counter)
-    for model_date, counts in tally_claude_by_day(path).items():
+    routing: dict[str, dict] = {}
+    roster_path = Path(__file__).resolve().parents[3] / "references" / "model-router" / "default-roster.json"
+    category_jobs = json.loads(roster_path.read_text(encoding="utf-8"))["category_jobs"]
+    for model_date, counts in tally_claude_by_day(path, routing, category_jobs).items():
         combined[model_date].update(counts)
     sub_dir = path.with_suffix("") / "subagents"
     if sub_dir.is_dir():
@@ -391,6 +498,11 @@ def all_sessions_claude_rows(path: Path) -> list[dict]:
             "tokens": {"input": counts["input"], "cache_write": counts["cache_write"],
                        "cache_read": counts["cache_read"], "output": counts["output"]},
         })
+    for date, counts in routing.items():
+        rows.append({"kind": "routing", "host": "claude", "session_id": session_id,
+                     "project": path.parent.name,
+                     "workstation": workstation_for_project(path.parent.name),
+                     "date_et": date, **counts})
     return rows
 
 
@@ -457,7 +569,7 @@ def sweep_all_sessions(claude_root: Path, codex_root: Path, cache: dict) -> tupl
     Read-only against the session logs; unchanged files are not re-parsed."""
     rows: list[dict] = []
     new_cache: dict = {}
-    file_cache = cache.get("files", {})
+    file_cache = cache.get("files", {}) if cache.get("cache_version", 0) >= ALL_SESSIONS_CACHE_VERSION else {}
 
     if claude_root.is_dir():
         for path in claude_root.glob("*/*.jsonl"):
@@ -504,7 +616,7 @@ def sweep_all_sessions(claude_root: Path, codex_root: Path, cache: dict) -> tupl
             new_cache[key] = {"sig": sig, "rows": file_rows}
             rows.extend(file_rows)
 
-    return rows, {"files": new_cache}
+    return rows, {"cache_version": ALL_SESSIONS_CACHE_VERSION, "files": new_cache}
 
 
 def run_all_sessions(quiet: bool = False) -> None:
