@@ -15,6 +15,10 @@ function Write-Utf8([string]$Path, [string]$Content) {
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $buildScripts = Join-Path $repoRoot 'skills/dt-build/scripts'
+$fixtureReset = [datetimeoffset]::Now.AddDays(1)
+$fixtureResetUtc = $fixtureReset.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+$fixtureResetEt = $fixtureReset.ToString("yyyy-MM-dd'T'HH:mm:sszzz")
+$fixtureResetEpoch = $fixtureReset.ToUnixTimeSeconds()
 $saved = @{}
 foreach ($name in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CODEX_SESSIONS','CODEX_HOME','DT_FAKE_CLAUDE_MODE','DT_FAKE_CODEX_MODE')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $temp = Join-Path $env:TEMP ('model-router-wiring-' + [guid]::NewGuid().ToString('N'))
@@ -122,7 +126,7 @@ return [pscustomobject]@{ id = 'fake-message' }
 if (`$args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if (`$args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path `$env:CODEX_HOME 'models_cache.json'); exit 0 }
 [IO.File]::AppendAllText('$launchLog', "codex`n")
-if (`$env:DT_FAKE_CODEX_MODE -eq 'limit') { [Console]::Error.WriteLine('ERROR: usage limit reached; try again at 2026-10-01T12:30:00Z'); exit 1 }
+if (`$env:DT_FAKE_CODEX_MODE -eq 'limit') { [Console]::Error.WriteLine('ERROR: usage limit reached; try again at $fixtureResetUtc'); exit 1 }
 if (`$env:DT_FAKE_CODEX_MODE -eq 'source-text') { [Console]::Error.WriteLine('Failed to compile rate_limits/usage_limit.ps1: rate limiting middleware'); exit 1 }
 `$outIndex = [Array]::IndexOf([object[]]`$args, '--output-last-message')
 [void][Console]::In.ReadToEnd()
@@ -178,9 +182,9 @@ $report
     Write-Utf8 $fakeClaude @"
 if (`$args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
 [IO.File]::AppendAllText('$launchLog', "claude`n")
-if (`$env:DT_FAKE_CLAUDE_MODE -eq 'limit') { [Console]::Error.WriteLine('You have reached your usage limit. Resets at 2026-10-01T15:00:00-04:00'); exit 1 }
+if (`$env:DT_FAKE_CLAUDE_MODE -eq 'limit') { [Console]::Error.WriteLine('You have reached your usage limit. Resets at $fixtureResetEt'); exit 1 }
 if (`$env:DT_FAKE_CLAUDE_MODE -eq 'max-turns') { Write-Output (@{ type='result'; subtype='error_max_turns'; is_error=`$true; result='Source mentions rate limit reached'; modelUsage=@{} } | ConvertTo-Json -Compress); exit 0 }
-if (`$env:DT_FAKE_CLAUDE_MODE -eq 'json-limit') { Write-Output (@{ type='result'; subtype='error_during_execution'; is_error=`$true; result='Claude AI usage limit reached|1790857800'; modelUsage=@{} } | ConvertTo-Json -Compress); exit 0 }
+if (`$env:DT_FAKE_CLAUDE_MODE -eq 'json-limit') { Write-Output (@{ type='result'; subtype='error_during_execution'; is_error=`$true; result='Claude AI usage limit reached|$fixtureResetEpoch'; modelUsage=@{} } | ConvertTo-Json -Compress); exit 0 }
 [void][Console]::In.ReadToEnd()
 `$ran = [string]`$args[[Array]::IndexOf([object[]]`$args, '--model') + 1]
 `$usage = [ordered]@{}; `$usage[`$ran] = @{ inputTokens = 1; outputTokens = 1; costUSD = 0.01 }
