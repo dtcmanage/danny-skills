@@ -31,6 +31,21 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    # Both orchestrator retry passages must consume diagnosis before escalation.
+    $skillText = Get-Content -Raw -LiteralPath (Join-Path $skillRoot 'SKILL.md')
+    $retryPassages = @(
+        [regex]::Match($skillText, '(?m)^- \*\*Retry one step up, once:\*\*[^\r\n]+').Value,
+        [regex]::Match($skillText, '(?s)- c\. \*\*Run the chunk through the canonical lane\.\*\*.*?(?=- c1\.)').Value
+    )
+    foreach ($passage in $retryPassages) {
+        $text = $passage -replace '\s+', ' '
+        Assert-True ($text -match 'Run the dispatch diagnosis before any `-EscalateFrom`; consume the wrapper result first\.' ) 'retry passage diagnoses before escalation'
+        Assert-True ($text -match 'On `ROUTER_VENDOR_INCIDENT` re-dispatch once on the result''s `backup_pick` and print its own `MODEL_SELECTION` line; this retry consumes no attempt, as for `ROUTER_LIMIT`\.') 'incident retry uses returned backup with disclosure and no attempt charge'
+        Assert-True ($text -match 'On `ROUTER_UNEXPLAINED` do not re-dispatch, escalate, or demote; stop the piece \(the wrapper already retried once and paged\)\.') 'unexplained stops without another retry or quality signal'
+        Assert-True ($text -match 'On `ROUTER_OFFLINE` the piece fails as `environment`; the orchestrator''s own resume handles it\.') 'offline returns to orchestrator resume as environment'
+        Assert-True ($text.IndexOf('run the dispatch diagnosis', [StringComparison]::OrdinalIgnoreCase) -lt $text.IndexOf('`-EscalateFrom')) 'diagnosis precedes first escalation reference'
+    }
+
     # Extract once: a backticked python -m pytest command must not produce an
     # inner duplicate pytest invocation.
     . (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1')
@@ -600,6 +615,70 @@ Write-Envelope $report
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $stampedOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'stamped report regression' -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $stampedOutput) -match '\ADT_BUILD_REPORT_VERSION:') 'timestamp-prefixed Claude structured report parses and is retained without stamp'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
+
+    # Pin the wrapper result consumed by the retry rule on both lanes. All
+    # diagnosis, clock, sleep, CLI and alert operations use temp-only fixtures.
+    $failureCli = Join-Path $tempRoot 'diagnosed-failure-cli.ps1'
+    Write-Utf8 -Path $failureCli -Content @'
+if ($args -contains '--version') { Write-Output 'fixture-cli'; exit 0 }
+if ($args -contains 'debug') { Get-Content -Raw (Join-Path $env:CODEX_HOME 'models_cache.json'); exit 0 }
+[void][Console]::In.ReadToEnd()
+[Console]::Error.WriteLine('fixture vendor server error')
+exit 1
+'@
+    $dispatchSeams = Join-Path $tempRoot 'diagnosed-failure-seams.ps1'
+    Write-Utf8 -Path $dispatchSeams -Content @'
+$script:fixtureClock = [datetimeoffset]'2030-01-01T00:00:00Z'
+$script:RouterDiagnosisClock = { $script:fixtureClock }
+$script:RouterDispatchSleep = { param([int]$Milliseconds) $script:fixtureClock = $script:fixtureClock.AddMilliseconds($Milliseconds) }
+$script:RouterDiagnosisDns = { param($ApiHost) $env:DT_BUILD_TEST_VERDICT -ne 'offline' }
+$script:RouterDiagnosisHttp = {
+    param($Uri)
+    if ($Uri -like '*connecttest*') {
+        if ($env:DT_BUILD_TEST_VERDICT -eq 'offline') { throw 'fixture offline' }
+        return 'connected'
+    }
+    if ($Uri -like '*unresolved*') { return [pscustomobject]@{ incidents = @([pscustomobject]@{ id = 'fixture-incident'; components = @([pscustomobject]@{ id = 'component' }) }) } }
+    $config = Get-Content -Raw (Join-Path $repoRoot 'references/model-router/vendor-status.json') | ConvertFrom-Json
+    $lane = if ($Uri -eq $config.codex.components_url) { $config.codex } else { $config.claude }
+    return [pscustomobject]@{ components = @($lane.components | ForEach-Object { [pscustomobject]@{ name = $_; id = 'component'; status = $(if ($env:DT_BUILD_TEST_VERDICT -eq 'vendor_incident') { 'degraded_performance' } else { 'operational' }) } }) }
+}
+'@
+    $savedDispatchSeams = $env:DT_BUILD_DISPATCH_SEAMS
+    $savedTestVerdict = $env:DT_BUILD_TEST_VERDICT
+    try {
+        $env:DT_BUILD_DISPATCH_SEAMS = $dispatchSeams
+        foreach ($lane in @('codex','claude')) {
+            foreach ($verdict in @('offline','vendor_incident','unexplained')) {
+                Remove-Item (Join-Path $routerState 'vendor-status-cache.json'),(Join-Path $routerState 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
+                $env:DT_BUILD_TEST_VERDICT = $verdict
+                $out = Join-Path $tempRoot "$lane-$verdict.md"
+                $resultPath = Join-Path $tempRoot "$lane-$verdict.json"
+                $errPath = Join-Path $tempRoot "$lane-$verdict.stderr"
+                $cliArgs = if ($lane -eq 'codex') { @('-CodexCliPath', $failureCli) } else { @('-ClaudeCliPath', $failureCli) }
+                & pwsh -NoProfile -File (Join-Path $scriptDir "invoke-$lane-chunk.ps1") `
+                    -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $out `
+                    -Category routine-coding -Effort medium -SelectionReason 'diagnosed failure contract fixture' `
+                    -Attempt 1 -TimeoutMs 120000 -Json @cliArgs 1>$resultPath 2>$errPath
+                Assert-True ($LASTEXITCODE -ne 0) "$lane $verdict fails the piece"
+                $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+                $prov = Get-Content -Raw -LiteralPath "$out.provenance.json" | ConvertFrom-Json
+                $termination = 'ROUTER_' + $verdict.ToUpperInvariant()
+                foreach ($record in @($result, $prov)) {
+                    Assert-True ($record.termination_reason -ceq $termination) "$lane $verdict termination_reason contract: $($record.termination_reason)"
+                    Assert-True ($record.failure_category -ceq 'environment' -and $record.diagnosis -ceq $verdict) "$lane $verdict environment and diagnosis contract"
+                    if ($verdict -eq 'vendor_incident') {
+                        $other = if ($lane -eq 'codex') { 'claude' } else { 'codex' }
+                        Assert-True ($record.backup_pick.vendor -eq $other -and $record.backup_pick.model -and $record.backup_pick.effort) "$lane incident result carries usable other-vendor backup pick"
+                    }
+                }
+            }
+        }
+    } finally {
+        Remove-Item (Join-Path $routerState 'vendor-status-cache.json'),(Join-Path $routerState 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
+        $env:DT_BUILD_DISPATCH_SEAMS = $savedDispatchSeams
+        $env:DT_BUILD_TEST_VERDICT = $savedTestVerdict
+    }
 
     # Every assembled prompt carries the standing context-discipline rules and
     # the checkpoint field; removing either silently restores unbounded builders.
