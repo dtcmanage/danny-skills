@@ -117,6 +117,7 @@ try {
     $longResult = @(Send-RouterAlert -Key 'long-message' -Message $longText -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
     $longBody = (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' })[-1].body | ConvertFrom-Json)
     Assert-True ($longResult.sent -and $longBody.content.Length -eq 1900 -and @($longBody.allowed_mentions.parse).Count -eq 0) 'Discord body is capped at 1900 characters without mentions'
+    Assert-True ((Get-RouterAlertMessage -Key 'router-wait: resume after October 1, 2026 3:00 PM ET') -eq 'Model router: every eligible vendor is at its limit. resume after October 1, 2026 3:00 PM ET.') 'router-wait key renders the resume line'
     Assert-True ((Get-RouterAlertMessage -Key 'new-model:gpt-test') -match 'gpt-test' -and (Get-RouterAlertMessage -Key 'unknown:key') -eq 'unknown:key') 'known keys are explained and unknown keys stay intact'
 
     [IO.File]::AppendAllText((Join-Path $temp 'alert-log.jsonl'), '{"event":"delivered","key":"cli-json","channel":"discord"}' + [Environment]::NewLine)
@@ -143,6 +144,7 @@ try {
 param($request)
 $log = Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-transport.log'
 Add-Content -LiteralPath $log -Value ([string]$request['kind'] + ' ' + [string]$request['uri'])
+if ($request['uri'] -like '*/channels/*/messages') { Set-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-delivered-message.txt') -Value (($request['body'] | ConvertFrom-Json).content) }
 if ($request['kind'] -eq 'secret') { return 'fake-secret' }
 if ($request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '123456789' } } }
 if ($request['uri'] -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm-channel' } }
@@ -153,6 +155,7 @@ return [pscustomobject]@{ id = 'fake-message' }
     try {
         $jsonSendCases = @(
             @{ name = 'send-router-alert'; arguments = @('-Key','cli-json-fresh','-Message','Fresh JSON-mode alert','-Json'); property = 'sent' },
+            @{ name = 'send-router-alert'; arguments = @('-Key','router-wait: resume after Thu 2026-10-01 3:00 PM ET','-Json'); property = 'sent'; messagePrefix = 'Model router: every eligible vendor is at its limit.' },
             @{ name = 'resolve-model'; arguments = @('-Category','routine-coding','-Lane','claude','-SkipModelCheck','-SendAlerts','-Json'); property = 'model' }
         )
         Remove-Item -LiteralPath (Join-Path $temp 'alert-log.jsonl') -Force -ErrorAction SilentlyContinue
@@ -168,6 +171,10 @@ return [pscustomobject]@{ id = 'fake-message' }
             Assert-True ($after -gt $before) "$($case.name) -Json performed a real (fake-transport) send"
             Assert-True ($exitCode -eq 0 -and $lines.Count -eq 1 -and $parsed -and $parsed.PSObject.Properties[$case.property]) "$($case.name) -Json non-deduped send emits exactly one parseable object on stdout"
             Assert-True ((Get-Content -LiteralPath $errPath -Raw) -match 'ROUTER_ALERT: ') "$($case.name) -Json chat line goes to stderr"
+            if ($case.ContainsKey('messagePrefix')) {
+                $deliveredMessage = Get-Content -LiteralPath (Join-Path $temp 'fake-delivered-message.txt') -Raw
+                Assert-True ($exitCode -eq 0 -and $parsed.sent -and $deliveredMessage.StartsWith($case.messagePrefix)) 'key-only CLI delivers the readable router-wait message'
+            }
         }
     } finally { $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport }
 

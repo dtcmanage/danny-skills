@@ -24,7 +24,7 @@ $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-creden
 
 try {
     # Isolation: temp router state, fresh catalog-check stamp (no network), a fake alert
-    # transport for child processes (no real alert can be sent), and a mock router table.
+    # transport for child processes (no real alert can be sent), and an approved fixture roster.
     $state = Join-Path $temp 'state'
     New-Item -ItemType Directory -Path $state | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $state
@@ -44,32 +44,11 @@ return [pscustomobject]@{ id = 'fake-message' }
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeTransport
     function Get-TransportCount { if (Test-Path -LiteralPath $transportLog) { @(Get-Content -LiteralPath $transportLog).Count } else { 0 } }
 
-    $table = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'references/model-router/seed-table.json') | ConvertFrom-Json -Depth 30
-    $table.source = 'research'
-    $table.coverage = 'full'
-    $table.evidence_routing_approved = $true
-    $table.generated_at = '2026-09-27'
-    $rows = @(
-        @('complex-coding','codex','gpt-6.1-sol','strong',10), @('complex-coding','codex','gpt-6-luna','capable',2),
-        # Luna (6.0) is an older generation than the 6.1 Sol incumbent, and the router never lets an older generation win an
-        # equal-grade cost tie, so Luna carries the higher grade here; the generation ladder alone would still pick Sol.
-        @('routine-coding','codex','gpt-6.1-sol','capable',10), @('routine-coding','codex','gpt-6-luna','strong',2),
-        @('mechanical','codex','gpt-6-luna','capable',10), @('mechanical','codex','gpt-5.6-sol','strong',1),
-        @('planning','codex','gpt-6.1-sol','capable',10), @('planning','codex','gpt-6-luna','strong',2), @('planning','codex','gpt-5.6-sol','capable',5),
-        @('ui-frontend','codex','gpt-6.1-sol','strong',5),
-        @('routine-coding','claude','claude-opus-5-5','capable',10), @('routine-coding','claude','claude-sonnet-5','capable',2),
-        @('code-review','claude','claude-opus-5-5','strong',10), @('code-review','claude','claude-sonnet-5','capable',2),
-        @('complex-coding','claude','claude-opus-5-5','strong',10), @('complex-coding','claude','claude-sonnet-5','capable',2),
-        @('long-form-writing','claude','claude-opus-5-5','strong',10))
-    foreach ($row in $rows) {
-        $candidate = @($table.categories.($row[0]).($row[1]).candidates | Where-Object { $_.model -eq $row[2] })[0]
-        $candidate.grade = $row[3]
-        $candidate.confirmed_grade = $row[3]
-        $candidate.citations = @([pscustomobject]@{ source = 'Fixture'; url = 'https://example.org/fixture'; independent = $true; note = 'Fixture' })
-        $candidate.est_burn = $row[4]
-        $candidate.est_seconds = 10
-    }
-    Write-Utf8 (Join-Path $state 'router-table.json') ($table | ConvertTo-Json -Depth 30)
+    $rosterPath = Join-Path $state 'roster.json'
+    $roster = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'references/model-router/default-roster.json') | ConvertFrom-Json -Depth 20
+    $roster.approved = $true
+    $roster.approved_at = '2026-09-28T00:00:00Z'
+    Write-Utf8 $rosterPath ($roster | ConvertTo-Json -Depth 20)
 
     $levels = '"supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]'
     $codexHome = Join-Path $temp 'codex-home'
@@ -90,10 +69,10 @@ return [pscustomobject]@{ id = 'fake-message' }
     $map = @{ complex = 'complex-coding:True'; standard = 'routine-coding:False'; light = 'mechanical:False' }
     foreach ($tier in $map.Keys) { $m = ConvertTo-RouterCategoryFromTier -Tier $tier; Assert-True ("$($m.category):$($m.protected)" -eq $map[$tier]) "tier $tier maps to $($map[$tier])" }
     Assert-True ((Resolve-CodexModel -Tier complex -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'tier complex resolves complex-coding protected (strongest eligible)'
-    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'tier standard resolves routine-coding (router cost pick, not generation ladder)'
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-5.6-sol') 'tier light resolves mechanical (older generation allowed by the table)'
-    Assert-True ((Resolve-CodexModel -Category planning -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'category planning resolves through the router'
-    Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'category planning -Protected picks strongest eligible'
+    Assert-True ((Resolve-CodexModel -Tier standard -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'tier standard resolves routine-coding through the approved roster'
+    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'tier light resolves mechanical through the approved roster'
+    Assert-True ((Resolve-CodexModel -Category planning -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'category planning resolves through the approved roster'
+    Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'category planning -Protected keeps the roster member'
     Assert-True ((Resolve-CodexModel -Category ui-frontend -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'category ui-frontend resolves through the router'
     Assert-True ((Resolve-CodexModel -Tier standard -PreferredModel 'gpt-6-astra' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-6-astra') '-PreferredModel override honored'
     $threw = ''; try { [void](Resolve-CodexModel -Tier standard -PreferredModel 'gone-model' -CachePath $cachePath -Strict) } catch { $threw = $_.Exception.Message }
@@ -105,6 +84,30 @@ return [pscustomobject]@{ id = 'fake-message' }
     $resolverText = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'scripts/resolve-codex-model.ps1')
     $body = [regex]::Match($resolverText, '(?s)function Resolve-CodexModel \{.*?\n\}').Value
     Assert-True ($body -match 'Resolve-RouterModel' -and $body -notmatch '\$ladder\[') 'Resolve-CodexModel has no generation-ranking pick'
+
+    $expected = @(
+        @('routine-coding','gpt-6.1-sol','claude-opus-5-5','medium'),
+        @('complex-coding','gpt-6.1-sol','claude-opus-5-5','medium'),
+        @('ui-frontend','gpt-6.1-sol','claude-opus-5-5','medium'),
+        @('mechanical','gpt-6-luna','claude-haiku-4-5-20251001','low'),
+        @('code-review','gpt-6.1-sol','claude-opus-5-5','high'),
+        @('planning','gpt-6.1-sol','claude-opus-5-5','high'),
+        @('deep-research','gpt-6.1-sol','claude-opus-5-5','high'),
+        @('math','gpt-6.1-sol','claude-opus-5-5','high'),
+        @('analysis','gpt-6.1-sol','claude-opus-5-5','high'),
+        @('long-form-writing','gpt-6.1-sol','claude-opus-5-5','medium'))
+    foreach ($case in $expected) {
+        foreach ($lane in @('codex','claude')) {
+            $pick = Resolve-RouterModel -Category $case[0] -Lane $lane -SkipModelCheck
+            $want = if ($lane -eq 'codex') { $case[1] } else { $case[2] }
+            Assert-True ($pick.model -eq $want -and $pick.effort -eq $case[3] -and $pick.roster_source -eq 'state') "approved roster model and effort $($case[0])/$lane"
+        }
+    }
+    $approvedRoster = Get-Content -LiteralPath $rosterPath -Raw
+    Remove-Item -LiteralPath $rosterPath
+    $fallbackPick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
+    Assert-True ($fallbackPick.model -eq 'claude-opus-5-5' -and $fallbackPick.effort -eq 'medium' -and $fallbackPick.roster_source -eq 'default' -and $fallbackPick.alerts -contains 'router-roster-missing') 'missing roster falls back to default with its alert'
+    Write-Utf8 $rosterPath $approvedRoster
 
     # 2. Codex chunk wrapper: router pick, disclosure, provenance, escalation, override.
     $project = Join-Path $temp 'project'
@@ -127,18 +130,30 @@ if (`$env:DT_FAKE_CODEX_MODE -eq 'source-text') { [Console]::Error.WriteLine('Fa
 $report
 '@)
 "@
-    function Invoke-CodexWrapper([string]$Name, [string[]]$Extra) {
+    function Get-WrapperEffort([string[]]$Extra) {
+        $categoryIndex = [Array]::IndexOf($Extra, '-Category')
+        $tierIndex = [Array]::IndexOf($Extra, '-Tier')
+        $category = if ($categoryIndex -ge 0) { $Extra[$categoryIndex + 1] } elseif ($tierIndex -ge 0) { (ConvertTo-RouterCategoryFromTier -Tier $Extra[$tierIndex + 1]).category } else { 'routine-coding' }
+        $job = Get-RouterCategoryJob -Category $category
+        # Wait-path image dispatches have no model effort; supply an explicit fixture value so the router wait is tested.
+        if ($job -eq 'illustrator') { return 'low' }
+        return [string]$roster.jobs.$job.first_effort
+    }
+    function Invoke-CodexWrapper([string]$Name, [string[]]$Extra, [switch]$OmitEffort) {
         $out = Join-Path $temp "$Name.md"
-        & pwsh -NoProfile -File (Join-Path $buildScripts 'invoke-codex-chunk.ps1') -ProjectPath $project -PromptPath $prompt -OutputPath $out -CodexCliPath $fakeCodex -SelectionReason 'fixture reason' -Attempt 1 -Json @Extra *> $null
+        $effortArgs = if ($OmitEffort) { @() } else { @('-Effort', (Get-WrapperEffort $Extra)) }
+        & pwsh -NoProfile -File (Join-Path $buildScripts 'invoke-codex-chunk.ps1') -ProjectPath $project -PromptPath $prompt -OutputPath $out -CodexCliPath $fakeCodex -SelectionReason 'fixture reason' -Attempt 1 -Json @effortArgs @Extra *> $null
         $code = $LASTEXITCODE
         $prov = if (Test-Path -LiteralPath "$out.provenance.json") { Get-Content -Raw -LiteralPath "$out.provenance.json" | ConvertFrom-Json } else { $null }
         return [pscustomobject]@{ exit = $code; prov = $prov }
     }
+    $missingEffort = Invoke-CodexWrapper 'codex-missing-effort' @('-Category','routine-coding') -OmitEffort
+    Assert-True ($missingEffort.exit -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $temp 'codex-missing-effort.md'))) 'Codex substantive wrapper without -Effort fails closed'
     $r = Invoke-CodexWrapper 'codex-standard' @('-Tier','standard')
-    Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6-luna') 'codex wrapper -Tier standard resolves through the router'
+    Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6.1-sol') 'codex wrapper -Tier standard resolves through the router'
     Assert-True ($r.prov.category -eq 'routine-coding' -and $r.prov.protected -eq $false -and $null -eq $r.prov.escalated_from) 'codex provenance carries category, protected, escalated_from'
-    Assert-True ($r.prov.router_reason -and $r.prov.router_table_source -eq 'live' -and $r.prov.router_table_date -eq '2026-09-27') 'codex provenance carries router reason and table source/date'
-    Assert-True ($r.prov.disclosure_line -match '^MODEL_SELECTION: wiring-chunk -> gpt-6-luna \(routine-coding, effort medium\): fixture reason; router: \S') 'codex disclosure line puts router reason after selection reason'
+    Assert-True ($r.prov.router_reason -and $null -eq $r.prov.router_table_source -and $null -eq $r.prov.router_table_date) 'codex provenance carries router reason and null retired table fields'
+    Assert-True ($r.prov.disclosure_line -match '^MODEL_SELECTION: wiring-chunk -> gpt-6\.1-sol \(routine-coding, effort medium\): fixture reason; router: \S') 'codex disclosure line puts router reason after selection reason'
     $r = Invoke-CodexWrapper 'codex-escalate' @('-Category','complex-coding','-Protected','-EscalateFrom','gpt-6-luna')
     Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6.1-sol' -and $r.prov.escalated_from -eq 'gpt-6-luna' -and $r.prov.protected -eq $true) 'codex wrapper -EscalateFrom moves one step up'
     Assert-True ($r.prov.disclosure_line -match '\(complex-coding, protected, escalated from gpt-6-luna, effort medium\)' -and $r.prov.router_reason -match 'Escalation') 'codex escalation disclosed'
@@ -173,18 +188,21 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = @'
 $report
 '@; total_cost_usd = 0.01; modelUsage = `$usage } | ConvertTo-Json -Depth 5 -Compress)
 "@
-    function Invoke-ClaudeWrapper([string]$Name, [string[]]$Extra) {
+    function Invoke-ClaudeWrapper([string]$Name, [string[]]$Extra, [switch]$OmitEffort) {
         $out = Join-Path $temp "$Name.md"
         $errPath = Join-Path $temp "$Name.stderr.txt"
-        $stdout = @(& pwsh -NoProfile -File (Join-Path $buildScripts 'invoke-claude-chunk.ps1') -ProjectPath $project -PromptPath $prompt -OutputPath $out -ClaudeCliPath $fakeClaude -SelectionReason 'fixture reason' -Attempt 1 -Json @Extra 2>$errPath)
+        $effortArgs = if ($OmitEffort) { @() } else { @('-Effort', (Get-WrapperEffort $Extra)) }
+        $stdout = @(& pwsh -NoProfile -File (Join-Path $buildScripts 'invoke-claude-chunk.ps1') -ProjectPath $project -PromptPath $prompt -OutputPath $out -ClaudeCliPath $fakeClaude -SelectionReason 'fixture reason' -Attempt 1 -Json @effortArgs @Extra 2>$errPath)
         $code = $LASTEXITCODE
         $prov = if (Test-Path -LiteralPath "$out.provenance.json") { Get-Content -Raw -LiteralPath "$out.provenance.json" | ConvertFrom-Json } else { $null }
         return [pscustomobject]@{ exit = $code; prov = $prov; stdout = ($stdout -join "`n"); stderr = (Get-Content -Raw -LiteralPath $errPath) }
     }
+    $missingEffort = Invoke-ClaudeWrapper 'claude-missing-effort' @('-Category','routine-coding') -OmitEffort
+    Assert-True ($missingEffort.exit -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $temp 'claude-missing-effort.md'))) 'Claude substantive wrapper without -Effort fails closed'
     $r = Invoke-ClaudeWrapper 'claude-standard' @('-Tier','standard')
-    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-sonnet-5' -and $r.prov.resolved_model -eq 'claude-sonnet-5') 'claude wrapper -Tier standard resolves through the router Claude lane'
-    Assert-True ($r.prov.category -eq 'routine-coding' -and $r.prov.router_reason -and $r.prov.router_table_source -eq 'live' -and $r.prov.router_table_date -eq '2026-09-27' -and $r.prov.PSObject.Properties['escalated_from']) 'claude provenance carries router fields'
-    Assert-True ($r.prov.disclosure_line -match '^MODEL_SELECTION: wiring-chunk -> claude-sonnet-5 \(routine-coding\): fixture reason; router: \S') 'claude disclosure line puts router reason after selection reason'
+    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.resolved_model -eq 'claude-opus-5-5') 'claude wrapper -Tier standard resolves through the router Claude lane'
+    Assert-True ($r.prov.category -eq 'routine-coding' -and $r.prov.router_reason -and $null -eq $r.prov.router_table_source -and $null -eq $r.prov.router_table_date -and $r.prov.PSObject.Properties['escalated_from']) 'claude provenance carries router fields'
+    Assert-True ($r.prov.disclosure_line -match '^MODEL_SELECTION: wiring-chunk -> claude-opus-5-5 \(routine-coding, effort medium\): fixture reason; router: \S') 'claude disclosure line puts router reason after selection reason'
     $r = Invoke-ClaudeWrapper 'claude-complex' @('-Tier','complex')
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.protected -eq $true) 'claude wrapper -Tier complex maps to complex-coding protected'
     $r = Invoke-ClaudeWrapper 'claude-escalate' @('-Category','complex-coding','-EscalateFrom','claude-sonnet-5')
@@ -207,24 +225,18 @@ $report
     $env:DT_FAKE_CLAUDE_MODE = $null
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
     $beforeSends = Get-TransportCount
-    $tablePath = Join-Path $state 'router-table.json'
-    $validTable = Get-Content -LiteralPath $tablePath -Raw
-    Write-Utf8 $tablePath '{"schema_version":99}'
+    $validRoster = Get-Content -LiteralPath $rosterPath -Raw
+    Write-Utf8 $rosterPath '{"schema_version":99}'
     $r = Invoke-ClaudeWrapper 'claude-review' @('-Category','code-review','-ReadOnly')
-    Write-Utf8 $tablePath $validTable
+    Write-Utf8 $rosterPath $validRoster
     $parsed = $null; try { $parsed = $r.stdout | ConvertFrom-Json } catch { }
-    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-sonnet-5' -and $parsed -and $parsed.category -eq 'code-review') 'claude wrapper -Json keeps stdout one JSON object'
+    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $parsed -and $parsed.category -eq 'code-review') 'claude wrapper -Json keeps stdout one JSON object'
     Assert-True ($r.stderr -match 'ROUTER_ALERT: ' -and (Get-TransportCount) -gt $beforeSends) 'wrapper passes -SendAlerts and prints the ROUTER_ALERT line (fake transport)'
     Assert-True (([regex]::Matches($r.stderr, 'ROUTER_ALERT_TEST_TRANSPORT_ACTIVE')).Count -eq 1) 'test transport seam writes its stderr marker once per process'
     $claudeText = Get-Content -Raw -LiteralPath (Join-Path $buildScripts 'invoke-claude-chunk.ps1')
     Assert-True ($claudeText -notmatch "'(opus|sonnet|haiku)'" -and $claudeText -match 'Resolve-RouterModel -Category \$Category -Lane claude') 'claude wrapper has no fixed tier map'
 
     # Approved roster: both wrappers keep their lane member, and a wait launches no model.
-    $rosterPath = Join-Path $state 'roster.json'
-    $roster = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'references/model-router/default-roster.json') | ConvertFrom-Json -Depth 20
-    $roster.approved = $true
-    $roster.approved_at = '2026-09-28T00:00:00Z'
-    Write-Utf8 $rosterPath ($roster | ConvertTo-Json -Depth 20)
     $categories = @(Get-RouterDispatchCategories)
     Assert-True ($categories.Count -eq 11 -and @(@('math','analysis') | Where-Object { $categories -notcontains $_ }).Count -eq 0) 'dispatch category list has all 11 including math and analysis'
     foreach ($category in $categories | Where-Object { $_ -ne 'image-generation' }) {
@@ -234,8 +246,8 @@ $report
         Assert-True ((Resolve-CodexModel -Category $category -CachePath $cachePath -Strict) -eq $codexMember) "Resolve-CodexModel accepts $category"
         $codexResult = Invoke-CodexWrapper "roster-codex-$category" @('-Category',$category)
         $claudeResult = Invoke-ClaudeWrapper "roster-claude-$category" @('-Category',$category)
-        Assert-True ($codexResult.exit -eq 0 -and $codexResult.prov.resolved_model -eq $codexMember -and $codexResult.prov.job -eq $job -and $codexResult.prov.vendor -eq 'codex') "codex wrapper accepts $category and records roster job/vendor"
-        Assert-True ($claudeResult.exit -eq 0 -and $claudeResult.prov.requested_model -eq $claudeMember -and $claudeResult.prov.job -eq $job -and $claudeResult.prov.vendor -eq 'claude') "claude wrapper accepts $category and records roster job/vendor"
+        Assert-True ($codexResult.exit -eq 0 -and $codexResult.prov.resolved_model -eq $codexMember -and $codexResult.prov.job -eq $job -and $codexResult.prov.vendor -eq 'codex' -and $codexResult.prov.effort -eq $roster.jobs.$job.first_effort -and $codexResult.prov.disclosure_line -match ('effort ' + $roster.jobs.$job.first_effort)) "codex wrapper accepts $category and records roster job/vendor"
+        Assert-True ($claudeResult.exit -eq 0 -and $claudeResult.prov.requested_model -eq $claudeMember -and $claudeResult.prov.job -eq $job -and $claudeResult.prov.vendor -eq 'claude' -and $claudeResult.prov.effort -eq $roster.jobs.$job.first_effort -and $claudeResult.prov.disclosure_line -match ('effort ' + $roster.jobs.$job.first_effort)) "claude wrapper accepts $category and records roster job/vendor"
     }
     $topCodex = Resolve-RouterModel -Category analysis -Lane codex -EscalateFrom gpt-6.1-sol -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)
     $topClaude = Resolve-RouterModel -Category analysis -Lane claude -EscalateFrom claude-opus-5-5
@@ -288,7 +300,7 @@ $report
     Assert-True ($null -eq (Get-RouterAgentAlias -Model 'gpt-6.1-sol')) 'non-Claude model has no Agent alias'
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     $codexPick = Resolve-RouterModel -Category routine-coding -Lane codex -SkipModelCheck -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)
-    Assert-True ($pick.agent_alias -eq 'sonnet' -and $null -eq $codexPick.agent_alias) 'router result carries agent_alias on the Claude lane only'
+    Assert-True ($pick.agent_alias -eq 'opus' -and $null -eq $codexPick.agent_alias) 'router result carries agent_alias on the Claude lane only'
 
     # 6. Frontier spend alert: 10 points, once per run.
     . (Join-Path $repoRoot 'scripts/model-router/check-frontier-spend.ps1')

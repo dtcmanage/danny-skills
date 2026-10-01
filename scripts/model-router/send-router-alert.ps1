@@ -107,6 +107,7 @@ function Write-RouterAlertLogWithRetry {
 function Get-RouterAlertMessage {
     param([string]$Key)
     switch -Regex -CaseSensitive ($Key) {
+        '^router-wait: (.+)$' { return "Model router: every eligible vendor is at its limit. $($Matches[1])." }
         '^router-roster-missing$' { return 'Model router roster is missing; it is using the default roster.' }
         '^router-roster-invalid: (.+)$' { return "Model router roster is invalid ($($Matches[1])); it is using the default roster." }
         '^router-picks-changed-needs-approval$' { return 'Model router research changed its picks; review and approve before they take effect.' }
@@ -221,6 +222,13 @@ function Send-RouterAlerts {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
+    if ([string]::IsNullOrEmpty($RouterAlertCliMessage)) {
+        $RouterAlertCliMessage = Get-RouterAlertMessage -Key $RouterAlertCliKey
+        if ([string]::IsNullOrEmpty($RouterAlertCliMessage)) {
+            [Console]::Error.WriteLine("No alert message found for key '$RouterAlertCliKey'.")
+            exit 1
+        }
+    }
     $result = Send-RouterAlert -Key $RouterAlertCliKey -Message $RouterAlertCliMessage -Severity $RouterAlertCliSeverity -ChatToStderr:$RouterAlertCliJson
     if ($RouterAlertCliJson) { $result | ConvertTo-Json -Compress } else { $result }
 }

@@ -76,191 +76,25 @@ Do NOT fire for:
 
 A milestone in any non-PASS state blocks every dependent milestone from starting, regardless of the verify/fix loop budget.
 
-## Model and lane routing
+## Model routing
 
-**Orchestrator:** whatever session Danny launches IS the orchestrator — dt-build imposes no orchestrator
-model gate. The orchestrator's job is dividing the roadmap into chunks, routing each chunk to the router
-category that fits it, judging failures, and escalating. The orchestrator never builds or verifies a
-chunk in its own context; it always dispatches a fresh session, even when the roster picks the same model
-the orchestrator runs on.
+Routing lives in the shared model router: `scripts/model-router/resolve-model.ps1`, operator reference `references/model-router/README.md`, session rules `00_Resources\model-routing.md`. dt-build adds only these rules.
 
-**Per-chunk category.** Every model pick comes from the shared model router
-(`scripts/model-router/resolve-model.ps1`), never from a tier map or a hardcoded slug. At roadmap time the
-orchestrator gives each delegated piece exactly one category, records it in `build-plan.md`, and
-resolves it without `-Lane`. Use `-Protected` only where the protected rule below permits it:
-load-bearing, security-sensitive, or live-write chunks run `complex-coding` protected (a load-bearing UI
-chunk runs `ui-frontend` protected); preflights and boilerplate run `mechanical`; verifiers and the final
-review run `code-review`, protected only for a load-bearing milestone.
+- **One category per chunk,** recorded in `build-plan.md` at roadmap time. Load-bearing (`scripts/identify-load-bearing.ps1`), security-sensitive, and live-write chunks run `complex-coding` with `-Protected` (a load-bearing UI chunk runs `ui-frontend` protected); other implementation runs `routine-coding`; preflights, boilerplate, and mechanical edits run `mechanical`; verifiers and the final review run `code-review`, protected only for a load-bearing milestone. Protected must be earned: the selection reason names the flag, the boundary, or the live write.
+- **Resolve without `-Lane`:** `pwsh -NoProfile -File scripts/model-router/resolve-model.ps1 -Category <c> -SendAlerts -Json` (plus `-Protected` when earned). The roster decides vendor, model, and effort. Frontier models run only on Danny's explicit request through `-Model` with a recorded reason.
+- **Dispatch on the returned vendor** through the wrapper matching its returned `vendor` (`scripts/invoke-codex-chunk.ps1` or `scripts/invoke-claude-chunk.ps1`) with `-Category`, `-Protected` when earned, `-Effort <returned effort>`, and `-SelectionReason`; add `-ReadOnly` on the Claude wrapper for verifiers and reviews. On claude-host a Claude pick at the session's own effort may use a host-native Agent with the returned `agent_alias`; any other effort goes through the wrapper so `--effort` is pinned. Never hand-roll `codex exec` or `claude -p`, and never inherit the session model. Relay `ROUTER_ALERT:` once.
+- **Print the line** before every substantive dispatch (build, continuation, retry, remediation, verifier, final review), one per parallel dispatch, preflights exempt: `MODEL_SELECTION: <dispatch_id> -> <resolved_model> (<category>[, protected][, escalated from <model>], effort <effort>): <one-sentence selection reason>; router: <router reason>`. The reason justifies category and protection. Pass the identical reason through `-SelectionReason`; the wrappers reject a blank, multiline, or over-240-character reason and persist the line. An Agent-tool dispatch names the inherited effort and sets `model` explicitly in the same message.
+- **Retry one step up, once:** re-resolve with `-EscalateFrom <failed model>`; that is the second attempt. On `ROUTER_LIMIT` re-resolve without `-Lane`, dispatch once on the returned backup, and print a second line; this retry consumes no attempt. On `status = wait` stop the dispatch, write the result's `resume_after_et` into `_build-state.md`, send one DM with `pwsh -NoProfile -File scripts/model-router/send-router-alert.ps1 -Key "router-wait: <resume_after_et>"`, and tell Danny.
+- **Frontier spend (alert only):** after step 6.i run `pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1 -RunStartedAt <run start, ISO> -RunId <RUN_ID> -RemainingMilestones <n> -Json` and relay its `ROUTER_ALERT:` line if any.
+- **Stop finished subagents** (TaskStop on claude-host) after collecting the report.
 
-| Category | Use and example |
-| :-- | :-- |
-| `mechanical` | Repetitive extraction or edits; extract fields from a PDF. |
-| `routine-coding` | Ordinary implementation; add a form field. |
-| `complex-coding` | Load-bearing or security-sensitive code; change an authorization boundary. |
-| `ui-frontend` | Interface implementation; build a responsive dashboard panel. |
-| `code-review` | Independent verification; review a milestone diff. |
-| `planning` | Sequence a design; plan a migration. |
-| `deep-research` | Investigate sources; compare technical approaches. |
-| `math` | Proofs, calculations, formulas, or quantitative models; verify a return formula. |
-| `analysis` | Interpret data or documents and spot gaps; explain a performance table. |
-| `long-form-writing` | Substantial prose; draft a white paper. |
-| `image-generation` | Generate visual assets; create a banner illustration. |
+Harness terms: `claude-host` has the Agent tool; `codex-host` is any other orchestrator. CLAUDE_DISPATCH is the Claude-lane dispatch above; VERIFY_DISPATCH is a fresh read-only non-builder session on the vendor returned for `code-review`. Run `-Preflight -TimeoutMs 30000` on each wrapper once per category before its first substantive use; substantive calls set `-TimeoutMs 600000` under a 10-minute outer timeout. On Windows the Codex wrapper runs unsandboxed (Codex removed its Windows sandbox); containment is the scoped worktree plus independent verification, recorded in provenance.
 
-The router uses the approved cross-vendor roster when available; until approval, its v1 table and bridge
-mode remain active. Codex picks must be selectable in the live account catalog (`codex debug models`;
-Spark and retiring models never qualify). Frontier models run only on Danny's explicit request through
-`-Model` with a recorded reason. The wrappers take `-Category`, `-Protected`, and `-EscalateFrom`; a legacy `-Tier` alone
-maps `complex` -> `complex-coding` protected, `standard` -> `routine-coding`, `light` -> `mechanical`.
+## Context discipline
 
-**Bridge mode (no full research table yet).** Until the router's table source is `research` with `coverage=full`, the router ignores
-eligibility and makes first picks that match the pre-router tiers, from
-`references/model-router/bridge-map.json`: Codex `gpt-6.1-sol` for every coding, review, planning, research, and
-writing category and `gpt-6-luna` for `mechanical`; Claude `opus` for `complex-coding`, `planning`, and
-`long-form-writing`, `sonnet` for `routine-coding`, `code-review`, `ui-frontend`, and `deep-research`, `haiku`
-for `mechanical`. A `-Protected` call in any category resolves instead to the lane's protected pick
-(`claude-opus-5-5` on Claude, `gpt-6.1-sol` on Codex), matching the pre-router tier behavior where load-bearing
-and security-sensitive work ran on the complex tier regardless of the chunk's category. The router reason
-starts `bridge mode (no full research table yet):`. While the roster remains unapproved, an approved
-full-coverage v1 research table picks by its evidence rules (confirmed grades, incumbent kept unless a
-strictly higher grade wins; see `references/model-router/table-schema.md`).
-
-Bridge first picks match the pre-router tiers, including protected work running on the top
-non-frontier model on each lane; bridge escalation stops at that model.
-
-**Escalation.** A failed attempt retries one step up the lane's non-frontier ladder (Codex:
-`gpt-6-luna` -> `gpt-6.1-sol`; Claude: haiku -> sonnet -> opus) and stops at its top model: pass
-`-EscalateFrom <the model that failed>` to the selected wrapper (for host-native dispatch, resolve
-without `-Lane` and include `-EscalateFrom <model>`). Escalation IS the second
-attempt and stays inside the two-attempt budget.
-
-**Protected must be earned.** `-Protected` (and `complex-coding`) is allowed only when (a)
-`scripts/identify-load-bearing.ps1` flagged the milestone, or (b) the milestone is security-sensitive or
-performs a live write. The selection reason must name which one. "Large", "important", or "to be safe" is not
-a reason. Verifiers of non-flagged milestones run `code-review` unprotected. (Measured 2026-09-19: 9 of 10
-claude-host dispatches and 206 of 211 codex-host `claude -p` chunks ran on Opus.) Quota never lowers a pick:
-there is no weekly step-down; cost control comes only from not over-assigning.
-
-**Host-native Claude dispatch.** When the no-lane router pick has `vendor = claude` on claude-host,
-set the Agent tool's `model` to the result's `agent_alias`
-(`opus`, `sonnet`, `haiku`, or `fable`, mapped from the router's Claude model id). When `agent_alias` is null,
-dispatch through `scripts/invoke-claude-chunk.ps1` instead. Relay any `ROUTER_ALERT:` line to Danny once.
-
-**Stop finished subagents.** After collecting a subagent's report, stop it (TaskStop on claude-host) before
-the next step. Never leave a finished agent idle. Codex wrapper sessions already exit when done.
-
-**Frontier spend (alert only).** At each milestone boundary (after step 6.i), run
-`pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1 -RunStartedAt <run start, ISO> -RunId <RUN_ID> -RemainingMilestones <n> -Json`.
-It alerts Danny once per run when frontier models reach 10 points of a weekly limit, with spend so far and the
-remaining milestone count; relay its
-`ROUTER_ALERT:` line if one prints. It never changes a model and never stops the run.
-
-**Mandatory model-selection report (hard dispatch gate).** Immediately before every substantive subagent
-dispatch — initial build, checkpoint continuation, retry/escalation, remediation, independent verifier, and
-final combined-diff review, on either lane — emit this standalone user-visible line:
-
-`MODEL_SELECTION: <dispatch_id> -> <resolved_model> (<category>[, protected][, escalated from <model>][, effort <effort>]): <one-sentence selection reason>; router: <router reason>`
-
-The reason must explain why that category (and protection) fits the task; a status update, test count, or reason for
-dispatching does not qualify. Do not launch the subagent until the line is visible in chat. On a Claude
-host, put the disclosure text block and the host-native `Agent` tool call in the same assistant message,
-and set the Agent `model` explicitly; a bare Agent call or inherited model is prohibited. On a Codex host,
-send the disclosure as commentary immediately before invoking the wrapper. Parallel dispatches require
-one line per dispatch. Capability preflights are not substantive dispatches and are exempt.
-
-For either cross-model wrapper, pass the identical reason through `-SelectionReason`. Both wrappers hard
-fail a blank, multiline, or over-240-character reason and persist `selection_reason` plus the canonical
-`disclosure_line` (with the router's reason appended) in provenance, plus `category`, `protected`,
-`router_reason`, `router_table_source`, `router_table_date`, `job`, `vendor`, and `escalated_from`. The orchestrator must print that exact canonical line; provenance is the
-durable audit record but does not replace the visible report.
-
-**Codex lane.** Never inherit Codex's user-config model or reasoning effort. Invoke every Codex chunk
-only through `scripts/invoke-codex-chunk.ps1 -Category <c>`, which refreshes the live catalog and resolves the
-model through the router (`scripts/resolve-codex-model.ps1` keeps the catalog plumbing and the selectable
-check), and persist the returned provenance JSON beside the chunk output (it records `resolved_model`, the
-router fields, and `model_cache_fetched_at`). On Windows the wrapper runs substantive
-chunks unsandboxed (Codex removed its Windows sandbox; a `workspace-write` request fails closed and
-blocks every command): containment there is the scoped worktree plus independent verification, and the
-provenance JSON records the effective mode. Never treat that Windows block as a dead Codex lane.
-
-**Claude lane.** Dispatch a Claude roster pick via CLAUDE_DISPATCH (harness contract below); record the surface/model actually
-used, never invent a slug. The model comes from the router's Claude lane for the chunk's category;
-`scripts/invoke-claude-chunk.ps1` reads the exact version from the CLI's JSON
-`modelUsage` and persists it as `resolved_model` (plus `models_used`, `total_cost_usd`) in provenance,
-failing closed when no model of the requested family ran. On a host-native Agent dispatch, record the
-exact model the harness reports, not the alias.
-
-**Harness contract.** At intake, note which harness is orchestrating: `claude-host` (a Claude Code / Cowork
-session with the host-native Agent tool) or `codex-host` (any orchestrator without it). Define
-**CLAUDE_DISPATCH** once for the run — on claude-host, a fresh host-native Agent with an explicit `model`
-set to the router's `agent_alias` for a Claude pick; on codex-host, `scripts/invoke-claude-chunk.ps1`
-with the same `-Category` — and use
-CLAUDE_DISPATCH whenever the roster selects Claude. Define **VERIFY_DISPATCH** for independent semantic
-verification (step 6.d) and final combined-diff review (step 6.5) as a fresh non-builder session on
-the vendor returned for `code-review`; use the matching wrapper or host-native Claude Agent. On codex-host, run
-`scripts/invoke-claude-chunk.ps1 -Preflight -TimeoutMs 30000` once per selected Claude category before its
-first substantive use, same rules as the Codex category preflights. Claude frontmatter (`allowed-tools`) binds
-only Claude surfaces; Codex permissions come from its launch-time sandbox, not this file.
-
-**Roster dispatch.** For each delegated piece, run
-`pwsh -NoProfile -File scripts/model-router/resolve-model.ps1 -Category <c> -SendAlerts -Json` without
-`-Lane` (adding `-Protected` only when justified), and dispatch through the wrapper matching its returned
-`vendor`: `invoke-codex-chunk.ps1` for Codex, `invoke-claude-chunk.ps1` for Claude. On
-`claude-host`, a Claude pick may use a host-native Agent with the returned `agent_alias`. A
-`status = wait` result stops that dispatch and tells Danny the reason. Wrappers resolve again with their
-own lane and fail closed on `wait`. The roster decides the vendor, including when a blocked vendor sends
-work to the backup. Handoffs that stay as they were: image generation on Codex, and dt-review's
-cross-family rounds.
-
-On `ROUTER_LIMIT`, re-resolve the piece without `-Lane` and dispatch once on the returned backup; this retry does not consume the two-attempt budget.
-
-Both wrappers keep the same contract: prompt over stdin, pinned model, provenance JSON, structured-report
-shape check. `invoke-claude-chunk.ps1` starts a slim session (`--strict-mcp-config`, built-in file and
-shell tools only, no Agent tool); pass `-ReadOnly` for verifier and review chunks. Codex is the most-used
-orchestrator in practice (usage ledger, 2026-09-19: 67 codex-host sessions ran acceptance gates and 40
-advanced an integration branch, against 7 claude-host sessions), so codex-host is a first-class path, not
-an experiment. What remains unbuilt is its stage-2 hardening: enforced build/verify task kinds in the
-Claude wrapper and sandbox, child-process network, and `.git`-write preflights under Codex's launch profile.
-
-Before the first substantive invocation of each distinct Codex category, run
-`scripts/invoke-codex-chunk.ps1 -Preflight -TimeoutMs 30000` under a 30-second outer timeout. Every
-substantive call sets `-TimeoutMs 600000` plus a 10-minute outer timeout. The wrapper passes the prompt over stdin, pins model and effort explicitly, uses
-the correct sandbox, redacts the stream log, and records requested/resolved model, CLI version, auth surface,
-cache timestamp, effort, and duration.
-
-## Context discipline (token budget)
-
-Measured 2026-09-19 (`Skill Creation/dt-build-token-efficiency/token-drain-review-2026-09-19.md`): prompt
-caching works (93-99% hits); the drain is context size multiplied by turn count. Builders kept alive by
-resume messages climbed to ~965K tokens and re-read it on every one of 600-1,300 turns; idle builders lost
-their 5-minute cache and re-wrote it 181 times; the orchestrator grew to 600K by reading whole designs and
-raw command output. These rules bind every run:
-
-- **No chunk-size limit.** Size chunks by coherence. One session may build a large component on a strong
-  model when splitting it would hurt the design. Cost is controlled by the rules below, not by chopping.
-- **Checkpoint, never bloat.** Every chunk prompt carries the standing execution rules appended by
-  `assemble-codex-prompt.ps1`: no nested agents, command output to a file and read the tail, no idle waits,
-  and a checkpoint after about 100 tool calls. Name the state-note path in the brief:
-  `<run-folder>/milestones/<mid>/continuation-<n>.md` (the one `.dt-build/` write a builder may make). On
-  claude-host, put the same standing rules in every host-native Agent prompt.
-- **Continue in a fresh session.** When a report returns `CONTINUATION_STATE` with a path, dispatch a fresh
-  builder on the same category (same router pick) whose brief is the milestone contract plus that note. A continuation is the same
-  attempt — it consumes no attempt budget — and gets its own `MODEL_SELECTION` line. Never build the note's
-  content into your own context beyond confirming it exists.
-- **No resume of a working builder.** Do not send follow-up messages to a builder that has already done
-  substantive work (SendMessage on claude-host, session resume on codex-host). A correction, fix, or next
-  step is a fresh dispatch with a brief that states the current state. Resume is allowed only to answer a
-  question the builder asked before it started work.
-- **No nested agents.** Builders, verifiers, and reviewers never spawn agents. If a returned report or
-  transcript shows one did, record it as a finding in the decision log.
-- **Thin orchestrator.** Never read the whole design, roadmap, or a reference file into your context: read
-  the current milestone's section by line range, and read each reference once, only at the step that needs
-  it. Run dt-build scripts with `-Json` and keep the verdict fields; redirect any command that can print
-  more than ~40 lines to a file under the run folder and read the tail. Never print a full diff — hand the
-  verifier the commit range instead. Give subagents paths, not pasted content.
-- **Restart at milestone boundaries.** After step 6.i, if this session has run more than about 150 tool
-  calls since it started or last compacted, tell Danny in one line that `_build-state.md` is current and the
-  run can continue in a fresh session (`/dt-build` with the RUN_ID) or after `/compact`. Continue if he
-  does not respond; this is advice, not a gate.
+- **Never pull bulk payloads into the orchestrator.** Read the current milestone by line range, read each reference once at the step that needs it, keep only `-Json` verdict fields, redirect anything over about 40 lines to a file under the run folder and read the tail, hand the verifier a commit range instead of a diff, and give subagents paths, not pasted content.
+- **Subagents write to files and checkpoint.** Every chunk prompt carries the standing rules `assemble-codex-prompt.ps1` appends (no nested agents, output to files, no idle waits, checkpoint after about 100 tool calls to `<run-folder>/milestones/<mid>/continuation-<n>.md`); a host-native Agent prompt carries the same text. A `CONTINUATION_STATE` path means a fresh builder on the same router pick continues as the same attempt with its own `MODEL_SELECTION` line. Never message a builder that has done substantive work; a correction is a fresh dispatch. Size chunks by coherence.
+- **Restart at milestone boundaries.** After step 6.i, past about 150 tool calls since start or last compaction, tell Danny in one line that `_build-state.md` is current and the run can continue in a fresh session (`/dt-build` with the RUN_ID) or after `/compact`; continue if he does not respond.
 
 ## Usage telemetry (automatic)
 
@@ -350,15 +184,14 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
 - b. **Assemble and verify the chunk prompt (both lanes).** `scripts/assemble-codex-prompt.ps1` (single canonical implementation — the name is historical; both lane wrappers consume its verified output, which carries the identity headers and report contract each wrapper enforces; envelope boundary via repo-level `scripts/wrap-prompt-envelope.ps1`), then the four-check prompt verify gate through `scripts/verify-codex-prompt.ps1` before every chunk invocation on either lane.
 - c. **Run the chunk through the canonical lane.** For Codex, call `scripts/invoke-codex-chunk.ps1`
-  with the chunk's `-Category` (plus `-Protected` when earned), explicit effort, and `-SelectionReason`; a retry
+  with the chunk's `-Category` (plus `-Protected` when earned), `-Effort <returned effort>` from the resolver, and `-SelectionReason`; a retry
   adds `-EscalateFrom <failed model>`. For Claude, dispatch via CLAUDE_DISPATCH with the same brief and scoped
   worktree. Do not hand-roll `codex exec` or `claude -p`. Automatic implementation failures consume at most two attempts;
   environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
   restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
   After collecting the subagent's report, stop that subagent (TaskStop on claude-host) before the next step;
   never leave a finished agent idle.
-- c1. **Handle a checkpoint return.** If the report's `CONTINUATION_STATE` names a path, follow "Continue
-  in a fresh session" above before any verification; verify only when a report returns `NONE`.
+- c1. **Handle a checkpoint return.** If the report's `CONTINUATION_STATE` names a path, follow "Subagents write to files and checkpoint" above before any verification; verify only when a report returns `NONE`.
 - c2. **Hold the milestone scope lock.** Every build/fix prompt carries the scope-lock block from
   `references/subagent-prompts.md`: the chunk builds exactly what the milestone specifies — no speculative
   abstraction, no unrequested features, no extra files. Anything discovered mid-build (a missing feature,
@@ -476,5 +309,5 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   - `scripts/identify-load-bearing.ps1` — load-bearing-first ordering input
   - `scripts/build-acceptance-ledger.ps1` — final four-axis ledger (.md + .html), plus the
     deferred-findings section when present
-- Claude-lane invocation wrapper for non-Claude orchestrators: `scripts/invoke-claude-chunk.ps1`
+- Claude-lane wrapper for codex-host and effort-mismatched Claude chunks: `scripts/invoke-claude-chunk.ps1`
 - Usage telemetry collector: `scripts/collect-usage.ps1` (entry point) and `scripts/collect-usage.py`

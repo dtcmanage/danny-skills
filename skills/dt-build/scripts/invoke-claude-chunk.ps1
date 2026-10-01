@@ -22,10 +22,9 @@ param(
 
 # invoke-claude-chunk.ps1
 # -----------------------
-# Claude-lane twin of invoke-codex-chunk.ps1, for orchestrators that cannot use a
-# host-native Agent tool (a Codex-orchestrated dt-build run). When the orchestrator
-# IS a Claude Code session, dispatch Claude subagents through the Agent tool with an
-# explicit model instead — this wrapper is the cross-model bridge, not the default.
+# Claude-lane wrapper for codex-host orchestrators and for Claude chunks whose
+# roster effort differs from the session's effort. A claude-host chunk at matching
+# effort may use the host-native Agent tool with an explicit resolved model.
 #
 # The model comes from the shared model router (scripts/model-router/resolve-model.ps1,
 # Claude lane) for the chunk's category; -Tier alone maps to a category the same way
