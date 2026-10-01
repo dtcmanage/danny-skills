@@ -129,6 +129,68 @@ try {
     $failed = $false
     try { $null = Resolve-RouterModel -Category routine-coding -AfterRefusal codex -Lane codex -Catalog $catalog } catch { $failed = $_.Exception.Message -like 'AFTER_REFUSAL_LANE_CONFLICT:*' }
     Assert-True ($failed -and [IO.File]::ReadAllText($blockPath) -ceq $before) 'same-vendor lane refusal errors before writing'
+    Remove-Item -LiteralPath $blockPath
+    $errorPath = Join-Path $temp 'dispatch error.txt'
+    $script:diagnoseNow = [datetimeoffset]::UtcNow
+    $script:RouterDiagnosisClock = { $script:diagnoseNow }
+    $script:diagnoseOffline = $false
+    $script:diagnoseDegraded = $false
+    $script:diagnoseCalls = 0
+    $statusConfig = Read-RouterJsonObject -Path (Join-Path $PSScriptRoot '../../../references/model-router/vendor-status.json')
+    $script:RouterDiagnosisDns = { param($ApiHost) -not $script:diagnoseOffline }
+    $script:RouterDiagnosisHttp = {
+        param($Uri)
+        $script:diagnoseCalls++
+        if ($script:diagnoseOffline) { throw 'fixture offline' }
+        if ($Uri -eq 'http://www.msftconnecttest.com/connecttest.txt') { return 'Microsoft Connect Test' }
+        foreach ($vendor in @('codex','claude')) {
+            $lane = $statusConfig.$vendor
+            if ($Uri -eq $lane.components_url) {
+                return [pscustomobject]@{ components=@($lane.components | ForEach-Object {
+                    [pscustomobject]@{ id=$_; name=$_; status=$(if ($script:diagnoseDegraded) { 'partial_outage' } else { 'operational' }) }
+                }) }
+            }
+            if ($Uri -eq $lane.incidents_url) {
+                return [pscustomobject]@{ incidents=@([pscustomobject]@{ id='fixture-incident'; components=@($lane.components | ForEach-Object { [pscustomobject]@{ id=$_ } }) }) }
+            }
+        }
+        throw "UNEXPECTED_HTTP: $Uri"
+    }
+    foreach ($vendor in @('codex','claude')) {
+        foreach ($file in @('vendor-blocks.json','vendor-status-cache.json')) {
+            $path = Join-Path $temp $file
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
+        }
+        $script:diagnoseCalls = 0
+        [IO.File]::WriteAllText($errorPath, "quoted input ' and `"`nERROR: usage limit reached")
+        $result = Resolve-RouterModel -Category routine-coding -Diagnose $vendor -ErrorTextPath $errorPath -Catalog $catalog
+        Assert-True ($result.verdict -eq 'quota' -and $result.checks.quota -and $script:diagnoseCalls -eq 0) "$vendor diagnose reads multiline quota text from file"
+        # The actual script entry point must bind both new aliases and emit JSON.
+        $result = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../resolve-model.ps1') -Category routine-coding -Diagnose $vendor -ErrorTextPath $errorPath -Json | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $result.verdict -eq 'quota' -and $result.PSObject.Properties['detail'] -and $result.PSObject.Properties['incident_id'] -and $result.PSObject.Properties['checks']) "$vendor diagnose CLI emits diagnosis JSON"
+        [IO.File]::WriteAllText($errorPath, "server error`nwith 'quotes' and `"double quotes`"")
+        $script:diagnoseOffline = $true
+        $result = Resolve-RouterModel -Category routine-coding -Diagnose $vendor -ErrorTextPath $errorPath -Catalog $catalog
+        Assert-True ($result.verdict -eq 'offline' -and -not $result.checks.http -and -not $result.checks.dns -and -not $result.PSObject.Properties['model']) "$vendor diagnose offline does not select another vendor"
+        $script:diagnoseOffline = $false; $script:diagnoseDegraded = $false
+        $result = Resolve-RouterModel -Category routine-coding -Diagnose $vendor -ErrorTextPath $errorPath -Catalog $catalog
+        Assert-True ($result.verdict -eq 'unexplained' -and $result.checks.status -eq 'operational' -and -not $result.PSObject.Properties['model']) "$vendor diagnose unexplained does not escalate"
+        Remove-Item -LiteralPath (Join-Path $temp 'vendor-status-cache.json')
+        $script:diagnoseDegraded = $true
+        $backupVendor = if ($vendor -eq 'codex') { 'claude' } else { 'codex' }
+        $normal = Resolve-RouterModel -Category routine-coding -Lane $backupVendor -Protected -Catalog $catalog
+        $result = Resolve-RouterModel -Category routine-coding -Diagnose $vendor -ErrorTextPath $errorPath -Protected -Catalog $catalog | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+        Assert-True ($result.verdict -eq 'vendor_incident' -and $result.incident_id -eq 'fixture-incident' -and $result.checks.status -eq 'non_operational' -and $result.status -eq 'ok' -and $result.vendor -eq $backupVendor) "$vendor diagnose incident returns other-vendor backup with verdict"
+        foreach ($name in @('model','agent_alias','effort','category','lane','protected','job','vendor','roster_source','resume_after_utc','resume_after_source','resume_after_et')) {
+            Assert-True ($result.PSObject.Properties[$name] -and $result.$name -eq $normal.$name) "$vendor incident backup preserves normal $name"
+        }
+        $null = Add-RouterVendorBlock -Vendor $backupVendor -Reason vendor_incident -Component $statusConfig.$backupVendor.components[0] -IncidentId 'backup-incident'
+        $result = Resolve-RouterModel -Category routine-coding -Diagnose $vendor -ErrorTextPath $errorPath -Catalog $catalog
+        Assert-True ($result.verdict -eq 'vendor_incident' -and $result.status -eq 'wait' -and $null -eq $result.model) "$vendor diagnose waits when backup has an incident too"
+    }
+    $failed = $false
+    try { $null = Resolve-RouterModel -Category routine-coding -Diagnose codex -Catalog $catalog } catch { $failed = $_.Exception.Message -like 'DIAGNOSE_ERROR_TEXT_PATH_REQUIRED:*' }
+    Assert-True $failed 'diagnose requires an error text file'
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
     Exit-RouterTestCodexHome $fixtureCodexHome

@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../vendor-limits.ps1')
+. (Join-Path $PSScriptRoot '../resolve-model.ps1')
 $script:passed = 0
 function Assert-True {
     param([object]$Condition, [string]$Name)
@@ -154,6 +155,46 @@ try {
     $script:components[0].status = 'partial_outage'; $script:incidentsOk = $false
     $result = Invoke-Diagnosis
     Assert-True ($result.verdict -eq 'unexplained' -and $result.detail -like '*lookup failed*incidents unreachable*') 'failed incident lookup is unexplained'
+    $catalog = [pscustomobject]@{ models=@([pscustomobject]@{ slug='gpt-6.1-sol'; visibility='list' }) }
+    foreach ($vendor in @('codex','claude')) {
+        Reset-Fixture $vendor
+        $category = if ($vendor -eq 'codex') { 'routine-coding' } else { 'planning' }
+        $backupVendor = if ($vendor -eq 'codex') { 'claude' } else { 'codex' }
+        $null = Add-RouterVendorBlock -Vendor $vendor -Reason vendor_incident -Component $script:components[0].name -IncidentId 'lane-incident'
+        $result = Resolve-RouterModel -Category $category -Catalog $catalog
+        Assert-True ($result.status -eq 'ok' -and $result.vendor -eq $backupVendor -and $result.reason -like '*vendor incident*' -and $script:httpCalls.Count -eq 0 -and $script:dnsHosts.Count -eq 0) "$vendor fresh incident routes normal resolve to backup without checks"
+        $script:fixtureNow = $script:fixtureNow.AddSeconds(299)
+        $result = Resolve-RouterModel -Category $category -Catalog $catalog
+        Assert-True ($result.vendor -eq $backupVendor -and $script:httpCalls.Count -eq 0) "$vendor incident younger than five minutes is not rechecked"
+        $script:fixtureNow = $script:fixtureNow.AddSeconds(1)
+        $result = Resolve-RouterModel -Category $category -Catalog $catalog
+        $blocks = @(Read-RouterJsonArray -Path (Join-Path $temp 'vendor-blocks.json'))
+        Assert-True ($result.vendor -eq $vendor -and $blocks.Count -eq 0 -and @($script:httpCalls | Where-Object { $_ -eq $script:expectedComponentsUrl }).Count -eq 1) "$vendor stale incident rechecked and cleared on operational at five minutes"
+        $count = $script:httpCalls.Count
+        $null = Resolve-RouterModel -Category $category -Catalog $catalog
+        Assert-True ($script:httpCalls.Count -eq $count) "$vendor recovered normal resolve does not poll status"
+    }
+    Reset-Fixture
+    $script:components[0].status = 'partial_outage'
+    $null = Invoke-Diagnosis
+    $script:fixtureNow = $script:fixtureNow.AddMinutes(5)
+    $result = Resolve-RouterModel -Category routine-coding -Catalog $catalog
+    $blocks = @(Read-RouterJsonArray -Path (Join-Path $temp 'vendor-blocks.json'))
+    Assert-True ($result.vendor -eq 'claude' -and $blocks.Count -eq 1 -and [datetimeoffset]$blocks[0].blocked_at_utc -eq $script:fixtureNow) 'stale degraded incident refreshes its record and retains backup routing'
+    $count = $script:httpCalls.Count
+    $null = Resolve-RouterModel -Category routine-coding -Catalog $catalog
+    Assert-True ($script:httpCalls.Count -eq $count) 'refreshed incident is not rechecked on the next dispatch'
+    $script:fixtureNow = $script:fixtureNow.AddMinutes(5)
+    $script:statusOk = $false
+    $result = Resolve-RouterModel -Category routine-coding -Catalog $catalog
+    Assert-True ($result.vendor -eq 'claude' -and (Get-RouterVendorBlocked codex)) 'failed stale component recheck keeps incident blocked'
+    Reset-Fixture
+    $null = Add-RouterVendorBlock -Vendor codex -Reason vendor_incident -Component $script:components[0].name -IncidentId 'lane-incident'
+    $null = Add-RouterVendorBlock -Vendor codex -Reason quota -ResetAtUtc $script:fixtureNow.AddHours(1)
+    $script:fixtureNow = $script:fixtureNow.AddMinutes(5)
+    $result = Resolve-RouterModel -Category routine-coding -Catalog $catalog
+    $blocks = @(Read-RouterJsonArray -Path (Join-Path $temp 'vendor-blocks.json'))
+    Assert-True ($result.vendor -eq 'claude' -and $blocks.Count -eq 1 -and $blocks[0].reason -eq 'quota') 'resolver recovery clears incident while honoring quota sibling'
     Write-Output "SUMMARY: $script:passed passed"
 } catch {
     Write-Output $_

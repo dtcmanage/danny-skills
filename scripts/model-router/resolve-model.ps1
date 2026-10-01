@@ -9,6 +9,8 @@ param(
     [Alias('AfterRefusal')][ValidateSet('codex','claude')][string]$RouterResolveCliAfterRefusal,
     [Alias('RefusalText')][string]$RouterResolveCliRefusalText,
     [Alias('ResetAtUtc')][datetimeoffset]$RouterResolveCliResetAtUtc,
+    [Alias('Diagnose')][ValidateSet('codex','claude')][string]$RouterResolveCliDiagnose,
+    [Alias('ErrorTextPath')][string]$RouterResolveCliErrorTextPath,
     [Alias('Json')][switch]$RouterResolveCliJson
 )
 Set-StrictMode -Version Latest
@@ -110,8 +112,10 @@ function Resolve-RouterRosterPick {
     if ($chosen -and (Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue)) {
         if (Get-RouterVendorBlocked -Vendor $chosen.vendor) {
             $blockedVendor = $chosen.vendor
-            if (-not $Lane -and $other -and -not (Get-RouterVendorBlocked -Vendor $other.vendor)) { $chosen = $other; $reason = "Backup used: $blockedVendor at its usage limit." }
-            else { $chosen = $null; $quotaWait = $true; $reason = "Wait: $blockedVendor at its usage limit; no available model for $job." }
+            $incident = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $blockedVendor -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'vendor_incident' })
+            $blockReason = if ($incident.Count) { 'under a vendor incident' } else { 'at its usage limit' }
+            if (-not $Lane -and $other -and -not (Get-RouterVendorBlocked -Vendor $other.vendor)) { $chosen = $other; $reason = "Backup used: $blockedVendor $blockReason." }
+            else { $chosen = $null; $quotaWait = $true; $reason = "Wait: $blockedVendor $blockReason; no available model for $job." }
         }
     }
     if ($chosen -and $chosen.vendor -eq 'codex' -and $Category -ne 'image-generation' -and $null -ne $localCatalog -and -not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
@@ -145,8 +149,31 @@ function Resolve-RouterModel {
         [switch]$ChatToStderr,
         [ValidateSet('codex','claude')][string]$AfterRefusal,
         [string]$RefusalText,
-        [datetimeoffset]$ResetAtUtc
+        [datetimeoffset]$ResetAtUtc,
+        [ValidateSet('codex','claude')][string]$Diagnose,
+        [string]$ErrorTextPath
     )
+    if ($Diagnose) {
+        if (-not $ErrorTextPath) { throw 'DIAGNOSE_ERROR_TEXT_PATH_REQUIRED: supply -ErrorTextPath with -Diagnose.' }
+        $diagnosis = Resolve-RouterDispatchFailure -Vendor $Diagnose -ErrorText ([IO.File]::ReadAllText((Convert-Path -LiteralPath $ErrorTextPath)))
+        if ($diagnosis.verdict -ne 'vendor_incident') { return $diagnosis }
+        # Constrain the backup to the other vendor, including when drift would
+        # otherwise select the failed vendor again. This is not quality escalation.
+        $backupArgs = @{ Category=$Category; Lane=$(if ($Diagnose -eq 'codex') { 'claude' } else { 'codex' }); Protected=$Protected; Catalog=$Catalog; SkipModelCheck=$SkipModelCheck; SendAlerts=$SendAlerts; ChatToStderr=$ChatToStderr }
+        $result = Resolve-RouterModel @backupArgs
+        foreach ($name in @('verdict','detail','incident_id','checks')) {
+            $result | Add-Member -NotePropertyName $name -NotePropertyValue $diagnosis.$name
+        }
+        return $result
+    }
+    # Fresh incident records block dispatch without any network check. Stale
+    # records reuse the shared status cache and component-specific recovery logic.
+    $now = [datetimeoffset](& $script:RouterDiagnosisClock)
+    $staleVendors = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object {
+        $_.PSObject.Properties['reason'] -and $_.reason -eq 'vendor_incident' -and
+        ($now - [datetimeoffset]$_.blocked_at_utc).TotalSeconds -ge 300
+    } | ForEach-Object { $_.vendor } | Select-Object -Unique)
+    foreach ($vendor in $staleVendors) { $null = Resolve-RouterDispatchFailure -Vendor $vendor -ErrorText '' }
     $recorded = $null
     if ($AfterRefusal) {
         if ($Lane -eq $AfterRefusal) { throw 'AFTER_REFUSAL_LANE_CONFLICT: omit -Lane or choose the other vendor after a refusal.' }
@@ -191,6 +218,8 @@ if ($MyInvocation.InvocationName -ne '.') {
     if ($PSBoundParameters.ContainsKey('RouterResolveCliAfterRefusal')) { $resolveArgs.AfterRefusal = $RouterResolveCliAfterRefusal }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliRefusalText')) { $resolveArgs.RefusalText = $RouterResolveCliRefusalText }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliResetAtUtc')) { $resolveArgs.ResetAtUtc = $RouterResolveCliResetAtUtc }
+    if ($PSBoundParameters.ContainsKey('RouterResolveCliDiagnose')) { $resolveArgs.Diagnose = $RouterResolveCliDiagnose }
+    if ($PSBoundParameters.ContainsKey('RouterResolveCliErrorTextPath')) { $resolveArgs.ErrorTextPath = $RouterResolveCliErrorTextPath }
     $result = Resolve-RouterModel @resolveArgs
     if ($RouterResolveCliJson) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
 }
