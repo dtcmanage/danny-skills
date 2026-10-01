@@ -17,12 +17,12 @@ param(
     [string]$Tier = 'light',
 
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max', 'ultra')]
-    [string]$ReasoningEffort = 'medium',
+    [string]$ReasoningEffort,
 
     [ValidateRange(1000, 3600000)]
     [int]$TimeoutMs = 300000,
 
-    # Required whenever the effort deviates from the tier default (complex=high, light=medium):
+    # Required whenever effort differs from the round-aware resolver default:
     # a one-line recorded reason, persisted in round metadata.
     [string]$EffortReason = '',
 
@@ -94,6 +94,8 @@ if ([string]$transition.mode -eq 'SAME_ROUND_RERUN') {
 
 . (Join-Path $RepoRoot 'scripts\security\redact-secrets.ps1')
 . (Join-Path $RepoRoot 'scripts\resolve-codex-model.ps1')
+. (Join-Path $RepoRoot 'scripts\model-router\resolve-model.ps1')
+. (Join-Path $ScriptDir 'round-effort.ps1')
 . (Join-Path $RepoRoot 'scripts\invoke-codex-process.ps1')
 . (Join-Path $ScriptDir 'validate-review-semantics.ps1')
 . (Join-Path $ScriptDir 'invocation-receipt.ps1')
@@ -106,11 +108,10 @@ if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) {
 $RequestedModel = $Model
 # Review rounds route through the model router's planning category; complex reviews are protected.
 $Model = Resolve-CodexModel -Category planning -Protected:($Tier -eq 'complex') -PreferredModel $Model -Strict
+$routerPick = Resolve-RouterModel -Category planning -Lane codex -Protected:($Tier -eq 'complex')
+$tierDefaultEffort = Get-DtReviewDefaultEffort -RouterEffort $routerPick.effort -Round $Round
+if (-not $PSBoundParameters.ContainsKey('ReasoningEffort')) { $ReasoningEffort = $tierDefaultEffort }
 [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Strict)
-# Complex rounds 1-2 are the full critique at high effort; rounds 3+ are verification rounds and
-# run at medium. A high-effort critic re-reading the whole draft every round manufactured findings
-# inside machinery it had itself requested (audit 2026-09-06).
-$tierDefaultEffort = if ($Tier -eq 'complex' -and $Round -le 2) { 'high' } else { 'medium' }
 if ($ReasoningEffort -cne $tierDefaultEffort -and [string]::IsNullOrWhiteSpace($EffortReason)) {
     throw "Effort '$ReasoningEffort' deviates from the $Tier-tier default '$tierDefaultEffort'. Record the reason with -EffortReason."
 }
@@ -235,6 +236,8 @@ try {
         requested_model = $RequestedModel
         resolved_model = $Model
         reasoning_effort = $ReasoningEffort
+        router_effort = $routerPick.effort
+        roster_source = $routerPick.roster_source
         effort_reason = $EffortReason
         blocking_downgrades = @($blockingDowngrades)
         lane = 'codex'

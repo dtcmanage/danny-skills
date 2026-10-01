@@ -70,8 +70,7 @@ try {
     }
     try { $catalog = Update-CodexModelCatalog -CodexCliPath $codexCli -TimeoutMs 15000 }
     catch { throw "Codex model catalog refresh failed; cannot verify current account availability ($($_.Exception.Message)). Detected: $versionText" }
-    $category = if ($Tier -eq 'light') { 'mechanical' } else { 'planning' }
-    $Model = Resolve-CodexModel -Category $category -Protected:($Tier -eq 'complex') -PreferredModel $Model -Catalog $catalog -Strict
+    $Model = Resolve-CodexModel -Category planning -Protected:($Tier -eq 'complex') -PreferredModel $Model -Catalog $catalog -Strict
     [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Catalog $catalog -Strict)
     $arguments = @(
         '-a', 'never',

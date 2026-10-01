@@ -96,7 +96,7 @@ New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 try {
     # Codex review rounds resolve through the model router (category planning; complex reviews
     # are protected). Router state is isolated: temp folder, fresh catalog-check stamp (no
-    # network), fake alert transport (no real alert), and a fixture table.
+    # network), fake alert transport (no real alert), and an approved fixture roster.
     $routerState = Join-Path $testRoot 'router-state'
     New-Item -ItemType Directory -Path $routerState -Force | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $routerState
@@ -104,20 +104,11 @@ try {
     $fakeAlertTransport = Join-Path $testRoot 'fake-alert-transport.ps1'
     Write-Utf8 $fakeAlertTransport "param(`$request)`nif (`$request['kind'] -eq 'secret') { return 'fake-secret' }`nif ([string]`$request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '1' } } }`nreturn [pscustomobject]@{ id = 'fake' }`n"
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
-    $routerTable = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'references\model-router\seed-table.json') | ConvertFrom-Json -Depth 30
-    $routerTable.source = 'research'
-    $routerTable.coverage = 'full'
-    $routerTable | Add-Member -Force -NotePropertyName evidence_routing_approved -NotePropertyValue $true
-    $routerTable.generated_at = '2026-09-27'
-    foreach ($fixtureRow in @(@('gpt-6.1-sol', 'strong', 10), @('gpt-6-luna', 'capable', 2), @('gpt-5.6-sol', 'capable', 5))) {
-        $candidate = @($routerTable.categories.planning.codex.candidates | Where-Object { $_.model -eq $fixtureRow[0] })[0]
-        $candidate.grade = $fixtureRow[1]
-        $candidate | Add-Member -Force -NotePropertyName confirmed_grade -NotePropertyValue $fixtureRow[1]
-        $candidate.citations = @([pscustomobject]@{ source = 'Fixture'; url = 'https://example.org/fixture'; independent = $true; note = 'Fixture' })
-        $candidate.est_burn = $fixtureRow[2]
-        $candidate.est_seconds = 10
-    }
-    Write-Utf8 (Join-Path $routerState 'router-table.json') ($routerTable | ConvertTo-Json -Depth 30)
+    $roster = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'references\model-router\default-roster.json') | ConvertFrom-Json -Depth 30
+    $roster.approved = $true
+    $roster.approved_at = (Get-Date).ToString('o')
+    $rosterPath = Join-Path $routerState 'roster.json'
+    Write-Utf8 $rosterPath ($roster | ConvertTo-Json -Depth 30)
     . (Join-Path $RepoRoot 'scripts\resolve-codex-model.ps1')
     $cachePath = Join-Path $testRoot 'models.json'
     $cache = [pscustomobject]@{
@@ -132,18 +123,67 @@ try {
     } | ConvertTo-Json -Depth 4
     Write-Utf8 $cachePath $cache
     Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'complex review (planning, protected) did not select the strongest eligible router candidate'
-    Assert-True ((Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'light review uses the mechanical category (no mechanical evidence keeps the luna incumbent)'
-    Assert-True ((Resolve-CodexModel -Tier light -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'legacy tier-only caller did not route through the router (mechanical keeps luna incumbent)'
+    Assert-True ((Resolve-CodexModel -Category planning -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'light review did not select the planning roster pick'
     Assert-True ((Resolve-CodexModel -Category planning -PreferredModel 'gpt-5.6-sol' -CachePath $cachePath -Strict 3>$null) -eq 'gpt-5.6-sol') 'selectable explicit override was not honored'
     Assert-Throws { Resolve-CodexModel -Category planning -PreferredModel 'dead' -CachePath $cachePath -Strict } 'not selectable' 'strict resolver accepted an unselectable override'
-    # Bridge mode (seed table, no research yet): dt-review keeps its pre-router picks.
-    $researchTablePath = Join-Path $routerState 'router-table.json'
-    $researchTableText = Get-Content -Raw -LiteralPath $researchTablePath
-    Remove-Item -LiteralPath $researchTablePath -Force
+    . (Join-Path $RepoRoot 'scripts\model-router\resolve-model.ps1')
+    Remove-Item -LiteralPath $rosterPath -Force
     try {
-        Assert-True ((Resolve-CodexModel -Category planning -Protected -CachePath $cachePath -Strict) -eq 'gpt-6.1-sol') 'bridge mode: complex review (planning, protected) did not keep gpt-6.1-sol'
-        Assert-True ((Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict) -eq 'gpt-6-luna') 'bridge mode: light review (mechanical) did not keep gpt-6-luna'
-    } finally { Write-Utf8 $researchTablePath $researchTableText }
+        $fallback = Resolve-RouterModel -Category planning -Lane claude
+        Assert-True ($fallback.model -eq 'claude-opus-5-5' -and $fallback.roster_source -eq 'default') 'missing roster did not use the default Claude planning pick'
+    } finally { Write-Utf8 $rosterPath ($roster | ConvertTo-Json -Depth 30) }
+
+    . (Join-Path $SkillRoot 'scripts\round-effort.ps1')
+    foreach ($tier in @('complex', 'light')) {
+        foreach ($lane in @('claude', 'codex')) {
+            $pick = Resolve-RouterModel -Category planning -Lane $lane -Protected:($tier -eq 'complex') -Catalog ($cache | ConvertFrom-Json)
+            Assert-True ((Get-DtReviewDefaultEffort -RouterEffort $pick.effort -Round 1) -eq 'high') "$tier $lane round 1 did not use resolver effort"
+            Assert-True ((Get-DtReviewDefaultEffort -RouterEffort $pick.effort -Round 3) -eq 'medium') "$tier $lane round 3 did not step down resolver effort"
+        }
+    }
+    Assert-True ((Get-DtReviewDefaultEffort -RouterEffort low -Round 3) -eq 'low') 'effort stepped below low'
+    $preflightText = Get-Content -Raw -LiteralPath (Join-Path $SkillRoot 'scripts\preflight-codex.ps1')
+    Assert-True ($preflightText -notmatch 'mechanical') 'Codex preflight still maps light to mechanical'
+
+    # Evaluate the invoker's actual argument expressions without invoking a model CLI.
+    $claudeInvoker = Join-Path $SkillRoot 'scripts\invoke-claude-round.ps1'
+    $tokens = $null; $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($claudeInvoker, [ref]$tokens, [ref]$parseErrors)
+    Assert-True ($parseErrors.Count -eq 0) 'Claude invoker did not parse'
+    $argAssignments = @($ast.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -in @('$preflightArgs', '$arguments')
+    }, $true))
+    Assert-True ($argAssignments.Count -eq 2) 'Claude preflight or round argument assembly is missing'
+    $RequestedModel = 'fixture-model'
+    foreach ($effort in @('high', 'medium')) {
+        $ReasoningEffort = $effort
+        foreach ($assignment in $argAssignments) {
+            $assembledArgs = @(Invoke-Expression $assignment.Right.Extent.Text)
+            $effortIndex = [array]::IndexOf($assembledArgs, '--effort')
+            $modelIndex = [array]::IndexOf($assembledArgs, '--model')
+            Assert-True ($effortIndex -eq ($modelIndex + 2) -and $assembledArgs[$effortIndex + 1] -eq $effort) 'Claude argument assembly did not pass effort beside model'
+        }
+    }
+    # A fake executable checks the echo-check arguments, never calling the Claude CLI.
+    $fakeClaude = Join-Path $testRoot 'fake-claude.ps1'
+    Write-Utf8 $fakeClaude @'
+param([switch]$p, [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)
+$effortIndex = [array]::IndexOf($Rest, '--effort')
+if ($effortIndex -lt 0 -or $Rest[$effortIndex + 1] -notin @('high', 'medium')) { exit 9 }
+if ($Rest[[array]::IndexOf($Rest, '--model') + 1] -ne 'opus') { exit 10 }
+if ([Console]::In.ReadToEnd() -notmatch 'single word OK') { exit 11 }
+'{"type":"result","is_error":false,"result":"OK","modelUsage":{"claude-opus-5-5":{"inputTokens":1,"outputTokens":1}}}'
+'@
+    foreach ($tier in @('complex', 'light')) {
+        foreach ($round in @(1, 3)) {
+            $echo = (& $claudeInvoker -ProjectPath $project -Tier $tier -Round $round -Preflight -ClaudeCliPath $fakeClaude) | ConvertFrom-Json
+            $expectedEffort = if ($round -eq 1) { 'high' } else { 'medium' }
+            Assert-True ($echo.reasoning_effort -eq $expectedEffort -and $echo.router_effort -eq 'high' -and $echo.roster_source -eq 'state') 'Claude echo-check lost resolver effort or provenance'
+        }
+    }
+    Assert-Throws { & $claudeInvoker -ProjectPath $project -Preflight -ReasoningEffort low -ClaudeCliPath $fakeClaude } 'EffortReason' 'Claude effort override without a reason was accepted'
+    Assert-Throws { & $claudeInvoker -ProjectPath $project -Preflight -Model other -ClaudeCliPath $fakeClaude } 'ModelReason' 'Claude model override without a reason was accepted'
 
     # Claude CLI envelope parser records the exact model version and fails closed on a
     # family mismatch or a missing model report.

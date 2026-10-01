@@ -284,7 +284,8 @@ $report
     # 4. Other consumers pass their fixed categories.
     $reviewRound = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/invoke-codex-round.ps1')
     $reviewPreflight = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/preflight-codex.ps1')
-    Assert-True ($reviewRound -match 'Resolve-CodexModel -Category planning' -and $reviewPreflight -match "if \(\`$Tier -eq 'light'\) \{ 'mechanical' \} else \{ 'planning' \}" -and $reviewPreflight -match 'Resolve-CodexModel -Category \$category') 'dt-review light preflight uses mechanical; other tiers and rounds use planning'
+    $claudeReviewRound = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/invoke-claude-round.ps1')
+    Assert-True ($reviewRound -match 'Resolve-CodexModel -Category planning' -and $reviewPreflight -match 'Resolve-CodexModel -Category planning -Protected:\(\$Tier -eq ''complex''\)' -and $reviewPreflight -notmatch 'mechanical' -and $claudeReviewRound -match 'Resolve-RouterModel -Category planning -Lane claude') 'dt-review rounds and preflight use planning with matching protection'
     $writing = Resolve-RouterModel -Category long-form-writing -Lane claude -SkipModelCheck
     Assert-True ($writing.protected -eq $true -and $writing.model -eq 'claude-opus-5-5') 'long-form-writing is protected by construction'
     foreach ($skill in @('dt-writing-draft','dt-writing-edit')) {

@@ -8,10 +8,8 @@ param(
 
     [string]$PromptPath = '',
 
-    # CLI alias, not a dated slug, so the pin self-heals when Anthropic rotates
-    # versions. Default by tier: complex -> opus, light -> sonnet. Override with a
-    # different alias only with a recorded reason (for example a top-tier alias the
-    # installed CLI supports).
+    # The router supplies the CLI alias, falling back to the model id.
+    # A different explicit model requires a recorded reason.
     [string]$Model = '',
 
     [ValidateSet('complex', 'light')]
@@ -20,8 +18,14 @@ param(
     [ValidateRange(1000, 3600000)]
     [int]$TimeoutMs = 600000,
 
-    # Required whenever -Model overrides the tier default alias.
+    # Required whenever -Model differs from the router pick.
     [string]$ModelReason = '',
+
+    [ValidateSet('low', 'medium', 'high', 'xhigh')]
+    [string]$ReasoningEffort,
+
+    # Required whenever effort differs from the round-aware resolver default.
+    [string]$EffortReason = '',
 
     [string]$ClaudeCliPath = '',
 
@@ -35,9 +39,8 @@ param(
 # Same canonical-prompt receipt chain, semantic validation, redaction, and round
 # metadata as the Codex lane. The claude CLI has no --output-schema, so the wrapper
 # appends the review output schema to the stdin payload and validates the returned
-# JSON with the same semantic validator that governs the Codex lane. There is no
-# reasoning-effort knob on the claude CLI; capability parity comes from the model
-# alias (opus for complex reviews).
+# JSON with the same semantic validator that governs the Codex lane. Model and
+# effort come from the router; the CLI receives both explicitly.
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -179,10 +182,18 @@ while ($null -ne $cursor) {
 }
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 
-$tierDefaultModel = if ($Tier -eq 'complex') { 'opus' } else { 'sonnet' }
+. (Join-Path $RepoRoot 'scripts\model-router\resolve-model.ps1')
+. (Join-Path $ScriptDir 'round-effort.ps1')
+$routerPick = Resolve-RouterModel -Category planning -Lane claude -Protected:($Tier -eq 'complex')
+$tierDefaultModel = if ($null -ne $routerPick.agent_alias) { $routerPick.agent_alias } else { $routerPick.model }
 $RequestedModel = if ([string]::IsNullOrWhiteSpace($Model)) { $tierDefaultModel } else { $Model }
 if ($RequestedModel -cne $tierDefaultModel -and [string]::IsNullOrWhiteSpace($ModelReason)) {
-    throw "Model '$RequestedModel' deviates from the $Tier-tier default '$tierDefaultModel'. Record the reason with -ModelReason."
+    throw "Model '$RequestedModel' deviates from the router pick '$tierDefaultModel'. Record the reason with -ModelReason."
+}
+$tierDefaultEffort = Get-DtReviewDefaultEffort -RouterEffort $routerPick.effort -Round $Round
+if (-not $PSBoundParameters.ContainsKey('ReasoningEffort')) { $ReasoningEffort = $tierDefaultEffort }
+if ($ReasoningEffort -cne $tierDefaultEffort -and [string]::IsNullOrWhiteSpace($EffortReason)) {
+    throw "Effort '$ReasoningEffort' deviates from the $Tier-tier default '$tierDefaultEffort'. Record the reason with -EffortReason."
 }
 
 . (Join-Path $RepoRoot 'scripts\claude-cli-result.ps1')
@@ -192,7 +203,7 @@ New-Item -ItemType Directory -Path $executionDir -Force | Out-Null
 
 if ($Preflight) {
     try {
-        $preflightArgs = @('-p', '--model', $RequestedModel, '--permission-mode', 'default', '--output-format', 'json')
+        $preflightArgs = @('-p', '--model', $RequestedModel, '--effort', $ReasoningEffort, '--permission-mode', 'default', '--output-format', 'json')
         $result = Invoke-ClaudeProcess -CliPath $claudeCli -Arguments $preflightArgs `
             -Prompt 'Reply with the single word OK and nothing else. Do not inspect or modify files.' `
             -WorkingDirectory $executionDir -TimeoutMs $TimeoutMs
@@ -206,6 +217,11 @@ if ($Preflight) {
             lane = 'claude'
             tier = $Tier
             model = $RequestedModel
+            reasoning_effort = $ReasoningEffort
+            effort_reason = $EffortReason
+            router_reason = $routerPick.reason
+            router_effort = $routerPick.effort
+            roster_source = $routerPick.roster_source
             resolved_model = $parsed.resolved_model
             duration_ms = $result.duration_ms
         } | ConvertTo-Json -Compress
@@ -292,6 +308,7 @@ try {
     $arguments = @(
         '-p',
         '--model', $RequestedModel,
+        '--effort', $ReasoningEffort,
         '--permission-mode', 'default',
         '--output-format', 'json'
     )
@@ -369,7 +386,11 @@ try {
         resolved_model = $cliResult.resolved_model
         models_used = @($cliResult.models_used)
         total_cost_usd = $cliResult.total_cost_usd
-        reasoning_effort = 'cli-session-default'
+        reasoning_effort = $ReasoningEffort
+        effort_reason = $EffortReason
+        router_reason = $routerPick.reason
+        router_effort = $routerPick.effort
+        roster_source = $routerPick.roster_source
         model_reason = $ModelReason
         blocking_downgrades = @($blockingDowngrades)
         lane = 'claude'

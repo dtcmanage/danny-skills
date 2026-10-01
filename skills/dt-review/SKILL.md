@@ -48,31 +48,30 @@ primarily authored the draft (Claude session -> `claude`; Codex session -> `code
 review through the opposite lane. The lane is fixed for the life of the review, like the tier. Default
 lane when authorship is mixed or unclear: `codex` (the Claude orchestrator authored or reconciled it).
 
-Use explicit tier resolution; never inherit `~/.codex/config.toml`. Explicit selection is
-about provenance, not economy — the complex tier deliberately runs at high effort to match a top-tier
-authoring model:
+Use explicit router resolution; never inherit `~/.codex/config.toml`. Explicit selection is
+about provenance, not economy. Effort comes from the resolver output and the invokers record it.
 
-| Role | Codex lane | Claude lane | Limit |
-| --- | --- | --- | --- |
-| Light review | model router, category `planning` (today `gpt-6.1-sol`), effort `medium` | `sonnet` | 3 rounds |
-| Complex review | model router, category `planning`, protected (strongest eligible; today `gpt-6.1-sol`), effort `high` in rounds 1-2, `medium` from round 3 | `opus` | 4 rounds |
-| Preflight | the same `planning` pick the rounds will use, effort `low` | tier model, echo check | 30 seconds |
+| Role | Codex lane | Claude lane | Effort | Limit |
+| --- | --- | --- | --- | --- |
+| Light review | model router, category `planning` | model router, category `planning` | resolver effort in rounds 1-2, one step down from round 3 | 3 rounds |
+| Complex review | model router, category `planning`, protected | model router, category `planning`, protected | resolver effort in rounds 1-2, one step down from round 3 | 4 rounds |
+| Preflight | the same `planning` pick and protection the rounds will use | the same `planning` pick and protection, echo check | Codex: low; Claude: resolver effort | 30 seconds |
 
 Rounds 1-2 are the full critique; rounds 3+ are verification rounds (check prior commitments, new
-findings only at high severity), so the complex tier drops to medium effort there and the invoker's
-round-aware default already expects it. Any deviation from the tier-default effort (Codex) or model alias (Claude) requires a one-line
-recorded reason — the invokers refuse it otherwise (`-EffortReason` / `-ModelReason`) and persist it in
+findings only at high severity), so both lanes step effort down from round 3. Any deviation from the
+round-default effort or router-selected Claude model requires a one-line
+recorded reason. The invokers refuse it otherwise (`-EffortReason` / `-ModelReason`) and persist it in
 round metadata.
 
 **Model-selection disclosure (tracking).** At Round 0, state in the chat output the selected lane and
-tier model with a one-sentence reason (authoring family + review class), e.g.
-`codex lane, gpt-6.1-sol @ high: Claude-authored draft, complex review`. Any mid-review deviation
+model and effort with a one-sentence reason (authoring family + review class), e.g.
+`codex lane, <model> @ <effort>: Claude-authored draft, complex review`. Any mid-review deviation
 restates the new model and its recorded reason in chat. One sentence is enough; this visible line is how
 Danny tracks that model routing works as intended — round metadata records the same facts but does not
 replace saying it.
 
-Per-round process timeouts: light rounds keep the enforced 300,000 ms budget; complex rounds run high
-effort and get 600,000 ms (10 minutes), matching dt-build's substantive-call budget. The Codex scripts
+Per-round process timeouts: light rounds keep the enforced 300,000 ms budget; complex rounds
+get 600,000 ms (10 minutes), matching dt-build's substantive-call budget. The Codex scripts
 also use `--ephemeral`, a hermetic temporary working directory, ignored user config, read-only sandbox,
 explicit ChatGPT auth, explicit model/effort, and structured output. The Claude lane mirrors this with
 a hermetic working directory, default permission mode, an embedded output schema, and the same receipt,
@@ -80,11 +79,11 @@ validation, and redaction chain. Claude rounds run with JSON output; round metad
 model version the CLI reports (`resolved_model`, `models_used`, `total_cost_usd`) beside the requested
 alias, and a run outside the requested family fails closed.
 
-Model slugs are never hardcoded. Codex rounds resolve through the shared model router with the fixed
-category `planning` (`Resolve-CodexModel -Category planning`, protected for complex reviews; see
+Model slugs are never hardcoded. Both lanes resolve through the shared model router with the fixed
+category `planning`, protected for complex reviews (Codex uses `Resolve-CodexModel -Category planning`; see
 `scripts/model-router/resolve-model.ps1`). Preflight refreshes the live account catalog (`codex debug models`),
-and the router's pick must be selectable on it: a pick the catalog cannot select fails closed. Frontier models
-(e.g. GPT-6 Astra, Fable-tier cost) run only on Danny's explicit request through `-Model` with a
+and the router's pick must be selectable on it: a pick the catalog cannot select fails closed. Model overrides
+run only on Danny's explicit request through `-Model` with a
 recorded reason; an unselectable override fails closed.
 
 ## References
@@ -132,13 +131,13 @@ budgets (10 + 10 + 15 + 30 seconds) plus bounded cleanup:
 
 ```powershell
 pwsh -NoProfile -File <skill>\scripts\preflight-codex.ps1 `
-  -ProjectPath <abs> -Tier light -ReasoningEffort low -TimeoutMs 30000
+  -ProjectPath <abs> -Tier light -TimeoutMs 30000
 ```
 
 This verifies CLI features (`--output-schema`, `--ephemeral`, `--ignore-user-config`), auth, model
 resolution, and response. Stop on failure.
 
-Claude lane — echo-check the tier model once before its first substantive round:
+Claude lane: echo-check the router-selected model once before its first substantive round:
 
 ```powershell
 pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
@@ -154,7 +153,7 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
      -ProjectPath <abs> -Round <N> -Tier <light|complex>
    ```
 
-2. Invoke the tier model through the review's fixed lane. Set the outer timeout slightly above the
+2. Invoke the router-selected model through the review's fixed lane. Set the outer timeout slightly above the
    script budget: light 300,000 ms budget / 320-second outer; complex 600,000 ms budget / 620-second
    outer.
 
@@ -163,8 +162,7 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
    ```powershell
    pwsh -NoProfile -File <skill>\scripts\invoke-codex-round.ps1 `
      -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> `
-     -Model <tier-model> -Tier <light|complex> `
-     -ReasoningEffort <light: medium | complex: high for rounds 1-2, medium from round 3> -TimeoutMs <300000|600000>
+     -Tier <light|complex> -TimeoutMs <300000|600000>
    ```
 
    Claude lane:
@@ -177,8 +175,8 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
 
    Invocation reassembles the canonical prompt and binds prompt, draft, state, tier, and any required
    authorization hashes before and after the model call. A stale or noncanonical `PromptPath` cannot run.
-   Effort/model deviations from the tier default require `-EffortReason` (Codex) or `-ModelReason`
-   (Claude); both land in `round-meta-v<N>.json`.
+   Effort deviations in either lane require `-EffortReason`; Claude model deviations require
+   `-ModelReason`. Both land in `round-meta-v<N>.json`.
 
 3. Parse and persist state:
 
