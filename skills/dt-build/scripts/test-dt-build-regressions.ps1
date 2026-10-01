@@ -496,11 +496,13 @@ if ($env:DT_FAKE_CLAUDE_ARGS) { [System.IO.File]::WriteAllText($env:DT_FAKE_CLAU
 $mode = [string]$env:DT_FAKE_CLAUDE_MODE
 $ranModel = if ($mode -eq 'wrongmodel') { 'claude-haiku-4-5-20251001' } else { 'claude-sonnet-5' }
 function Write-Envelope([string]$Text) {
+    if ($mode -like 'stamped*') { $Text = '[10:52:50] ' + $Text }
     $usage = [ordered]@{}; $usage[$ranModel] = @{ inputTokens = 10; outputTokens = 20; costUSD = 0.01 }
     Write-Output (@{ type = 'result'; is_error = $false; result = $Text; total_cost_usd = 0.01; modelUsage = $usage } | ConvertTo-Json -Depth 5 -Compress)
 }
 if ($mode -eq 'malformed') { Write-Envelope 'I cannot do that.'; exit 0 }
 if ($mode -eq 'preflight') { Write-Envelope 'OK'; exit 0 }
+if ($mode -eq 'stamped-preflight') { Write-Envelope 'OK'; exit 0 }
 if ($mode -eq 'rawtext') { Write-Output 'plain text, no envelope'; exit 0 }
 $report = @"
 DT_BUILD_REPORT_VERSION: 2
@@ -590,6 +592,13 @@ Write-Envelope $report
     $env:DT_FAKE_CLAUDE_MODE = 'preflight'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) 'Claude preflight works without -Effort'
+    $env:DT_FAKE_CLAUDE_MODE = 'stamped-preflight'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-stamped-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'timestamp-prefixed Claude OK passes preflight'
+    $env:DT_FAKE_CLAUDE_MODE = 'stamped-report'
+    $stampedOutput = Join-Path $tempRoot 'claude-stamped-report.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $stampedOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'stamped report regression' -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $stampedOutput) -match '\ADT_BUILD_REPORT_VERSION:') 'timestamp-prefixed Claude structured report parses and is retained without stamp'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
 
     # Every assembled prompt carries the standing context-discipline rules and

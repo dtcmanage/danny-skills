@@ -92,6 +92,10 @@ if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
     throw "CLAUDE_INVOKE_FAIL: project path not found: $ProjectPath"
 }
 $projectRoot = (Resolve-Path -LiteralPath $ProjectPath).Path
+# Outcome rows name the canonical repo (the main checkout's folder), also when building in a linked worktree.
+$outcomeRepo = Split-Path -Leaf $projectRoot
+$commonGitDir = @(& git -C $projectRoot rev-parse --path-format=absolute --git-common-dir 2>$null)
+if ($LASTEXITCODE -eq 0 -and $commonGitDir.Count -and $commonGitDir[0]) { $outcomeRepo = Split-Path -Leaf (Split-Path -Parent ([string]$commonGitDir[0]).Trim()) }
 $gitProbe = & git -C $projectRoot rev-parse --show-toplevel 2>&1
 if ($LASTEXITCODE -ne 0) {
     throw "CLAUDE_INVOKE_FAIL: project path is not a git repo: $projectRoot`n$($gitProbe -join "`n")"
@@ -137,6 +141,13 @@ if (-not $Preflight) {
 
 $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot "scripts\security\redact-secrets.ps1")
+# Child-process test seam: replace diagnosis network/clock and offline sleep together.
+$script:RouterDispatchSleep = { param([int]$Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
+if ($env:DT_BUILD_DISPATCH_SEAMS) {
+    [Console]::Error.WriteLine('DT_BUILD_DISPATCH_SEAMS_ACTIVE')
+    . $env:DT_BUILD_DISPATCH_SEAMS
+}
+
 . (Join-Path $repoRoot "scripts\claude-cli-result.ps1")
 . (Join-Path $repoRoot "scripts\resolve-codex-model.ps1")
 . (Join-Path $repoRoot "scripts\model-router\resolve-model.ps1")
@@ -232,6 +243,12 @@ $args = @(
 
 if ($Effort) { $args = @($args[0..2]) + @('--effort', $Effort) + @($args[3..($args.Count - 1)]) }
 
+$dispatchStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
+$dispatchId = [guid]::NewGuid().ToString('N')
+$diagnosis = $null
+$dispatchDiagnosis = $null
+$backupPick = $null
+$unexplainedRetried = $false
 $started = Get-Date
 $proc = $null
 $streamPath = "$OutputPath.stream.log"
@@ -263,6 +280,12 @@ try {
     $startInfo.WorkingDirectory = $projectRoot
     foreach ($arg in @($prefixArgs) + @($args)) { [void]$startInfo.ArgumentList.Add($arg) }
 
+    :dispatch do {
+    $diagnosis = $null
+    $dispatchDiagnosis = $null
+    if ($proc) { $proc.Dispose() }
+    # Never accept a retained message from an earlier failed launch.
+    Remove-Item -LiteralPath $OutputPath -Force -ErrorAction SilentlyContinue
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $startInfo
     if (-not $proc.Start()) { throw "CLAUDE_INVOKE_FAIL: failed to start claude CLI." }
@@ -273,8 +296,7 @@ try {
     $stderrTask = $proc.StandardError.ReadToEndAsync()
     $stdinTask = $proc.StandardInput.WriteAsync($prompt)
     $stdinClosed = $false
-    $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    while (-not $proc.HasExited -and $clock.ElapsedMilliseconds -lt $TimeoutMs) {
+    while (-not $proc.HasExited -and (([datetimeoffset](& $script:RouterDiagnosisClock) - $dispatchStarted).TotalMilliseconds -lt $TimeoutMs)) {
         if (-not $stdinClosed -and $stdinTask.IsCompleted) {
             [void]$stdinTask.GetAwaiter().GetResult()
             $proc.StandardInput.Close()
@@ -305,6 +327,7 @@ try {
     }
     if ($cliResult) { $actualModel = $cliResult.resolved_model }
     $lastMessage = Invoke-SecretRedaction -Text $(if ($cliResult) { $cliResult.result } else { '' })
+    $lastMessage = [regex]::Replace($lastMessage, '\A(?:\[\d{1,2}:\d{2}(?::\d{2})?\][ \t]*)+', '')
     $streamText = Invoke-SecretRedaction -Text $stderr
     if (-not $cliResult) { $streamText += "`n--- stdout ---`n" + (Invoke-SecretRedaction -Text $stdout) }
     [System.IO.File]::WriteAllText($streamPath, $streamText)
@@ -367,6 +390,70 @@ try {
             $failureReason = "ROUTER_LIMIT: claude at its usage limit until $($limitBlock.reset_at_utc)"
             $failureCategory = 'environment'
         }
+
+        elseif ($exitCode -ne 0) {
+            $dispatchDiagnosis = Resolve-RouterDispatchFailure -Vendor claude -ErrorText $claudeErrorText
+            $diagnosis = $dispatchDiagnosis.verdict
+            $failureCategory = 'environment'
+            # Only nonterminal events need a wrapper row; terminal events come from provenance.
+            $appendEvent = {
+                $row = [ordered]@{
+                    key = ($dispatchId + ':' + [guid]::NewGuid().ToString('N')); at = ([datetimeoffset](& $script:RouterDiagnosisClock)).ToUniversalTime().ToString('o')
+                    run_id = $(if ($Preflight) { 'preflight' } else { $promptRunId }); repo = $outcomeRepo
+                    lane = 'claude'; model = $resolvedModel; category = $Category; attempt = $Attempt
+                    pass = $false; escalated = $false; failure_category = 'environment'; diagnosis = $diagnosis; source = 'dt-build'; tier = $Tier
+                }
+                [IO.File]::AppendAllText((Join-Path (Get-RouterStateDir) 'outcomes.jsonl'), (($row | ConvertTo-Json -Compress) + "`n"))
+            }
+            switch ($diagnosis) {
+                'offline' {
+                    $outageStart = [datetimeoffset](& $script:RouterDiagnosisClock)
+                    do {
+                        $remaining = $TimeoutMs - (([datetimeoffset](& $script:RouterDiagnosisClock)) - $dispatchStarted).TotalMilliseconds
+                        if ($remaining -le 0) { break }
+                        & $script:RouterDispatchSleep ([int][Math]::Min(60000, $remaining))
+                        if ((([datetimeoffset](& $script:RouterDiagnosisClock)) - $dispatchStarted).TotalMilliseconds -ge $TimeoutMs) { break }
+                        $dispatchDiagnosis = Resolve-RouterDispatchFailure -Vendor claude -ErrorText ''
+                    } while ($dispatchDiagnosis.verdict -eq 'offline')
+                    if ($dispatchDiagnosis.verdict -ne 'offline' -and (([datetimeoffset](& $script:RouterDiagnosisClock)) - $dispatchStarted).TotalMilliseconds -lt $TimeoutMs) {
+                        if ((([datetimeoffset](& $script:RouterDiagnosisClock)) - $outageStart).TotalMinutes -gt 5) {
+                            $etZone = [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')
+                            $key = 'router-offline:' + [TimeZoneInfo]::ConvertTime($outageStart, $etZone).ToString('yyyy-MM-dd HH:mm') + ' ET'
+                            $null = Send-RouterAlert -Key $key -Message (Get-RouterAlertMessage -Key $key) -ChatToStderr:$Json
+                        }
+                        & $appendEvent
+                        if ($dispatchDiagnosis.verdict -eq 'vendor_incident') {
+                            $diagnosis = 'vendor_incident'
+                            $backupPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected -SkipModelCheck -SendAlerts -ChatToStderr:$Json
+                            $failureReason = 'ROUTER_VENDOR_INCIDENT'
+                            break
+                        }
+                        continue dispatch
+                    }
+                    $failureReason = 'ROUTER_OFFLINE'
+                }
+                'vendor_incident' {
+                    $backupPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected -SkipModelCheck -SendAlerts -ChatToStderr:$Json
+                    $failureReason = 'ROUTER_VENDOR_INCIDENT'
+                }
+                'unexplained' {
+                    if (-not $unexplainedRetried) { & $appendEvent; $unexplainedRetried = $true; continue dispatch }
+                    $failureReason = 'ROUTER_UNEXPLAINED'
+                    $key = 'vendor-error:claude:' + $dispatchId
+                    $message = Get-RouterAlertMessage -Key $key -Model $resolvedModel -Category $Category -ErrorText $claudeErrorText -Checks $dispatchDiagnosis.checks -ArtifactPath $provenancePath -PromptText $prompt -InvocationText ($startInfo.ArgumentList -join ' ')
+                    $null = Send-RouterAlert -Key $key -Message $message -ChatToStderr:$Json
+                }
+            }
+        }
+    }
+
+    break
+    } while ($true)
+    if ($failureReason -in @('ROUTER_OFFLINE','ROUTER_VENDOR_INCIDENT','ROUTER_UNEXPLAINED')) {
+        $failureCategory = 'environment'
+    } else {
+        $diagnosis = $null
+        $dispatchDiagnosis = $null
     }
 
     $cliVersion = if ([System.IO.Path]::GetExtension($claudeCli).ToLowerInvariant() -eq '.ps1') {
@@ -405,17 +492,25 @@ try {
         output_path         = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
         stream_log_path     = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }
         failure_category    = $failureCategory
+        diagnosis              = $diagnosis
+        dispatch_diagnosis     = $dispatchDiagnosis
+        backup_pick            = $backupPick
+        dispatch_id            = $dispatchId
         vendor_block        = $limitBlock
         termination_reason  = $failureReason
         output_shape_errors = @($shapeErrors)
     }
 
     if (-not $temporaryOutput) {
-        [System.IO.File]::WriteAllText($provenancePath, ($result | ConvertTo-Json -Depth 5))
+        [System.IO.File]::WriteAllText($provenancePath, ($result | ConvertTo-Json -Depth 8))
         $provenanceWritten = $true
         $result | Add-Member -NotePropertyName provenance_path -NotePropertyValue (Resolve-Path -LiteralPath $provenancePath).Path
     }
 
+    if (-not $result.pass -and $diagnosis) {
+        if ($Json) { $result | ConvertTo-Json -Depth 8 } else { $result }
+        exit 1
+    }
     if (-not $result.pass) { throw $failureReason }
     if ($Json) { $result | ConvertTo-Json -Depth 5 }
     else { $result }

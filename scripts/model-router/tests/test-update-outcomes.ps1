@@ -213,6 +213,31 @@ try {
     $unchanged = $true
     foreach ($file in $liveFiles) { if ($before[$file] -ne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash) { $unchanged = $false; break } }
     Assert-True ($liveResult.total_records -gt 0 -and $unchanged) 'LIVE bounded source mining is read-only'
+
+    # dt-build runs inside a linked worktree: its provenance is mined under the main checkout's repo name.
+    $stateBeforeWorktree = $env:DT_MODEL_ROUTER_STATE
+    try {
+        $wtBase = Join-Path $temp 'worktree-case'
+        $wtMain = Join-Path $wtBase 'main-repo'
+        $wtLinked = Join-Path $wtBase 'main-repo-feature'
+        [IO.Directory]::CreateDirectory($wtMain) | Out-Null
+        & git -C $wtMain init -q 2>$null | Out-Null
+        & git -C $wtMain -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init 2>$null | Out-Null
+        & git -C $wtMain worktree add -q $wtLinked -b feature-x 2>$null | Out-Null
+        $wtDir = Join-Path $wtLinked '.dt-build/wt-run/milestones/M01'
+        [IO.Directory]::CreateDirectory($wtDir) | Out-Null
+        @{ pass=$false; tier='standard'; resolved_model='gpt-6.1-sol'; attempt=1; at='2026-09-26T12:00:00Z'; failure_category='environment'; diagnosis='unexplained'; termination_reason='ROUTER_UNEXPLAINED'; category='routine-coding'; chunk_id='M01' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $wtDir 'output-attempt1.md.provenance.json')
+        '{"milestone_id":"M02","attempt":"root-remediation","resolved_model":"gpt-6.1-sol","status":"PASS","accepted_at_utc":"2026-09-26T12:00:00Z"}' | Set-Content -LiteralPath (Join-Path $wtLinked '.dt-build/wt-run/acceptance-rows.jsonl')
+        $wtSources = Join-Path $wtBase 'sources.json'
+        ConvertTo-Json -InputObject @($wtMain) | Set-Content -LiteralPath $wtSources
+        $env:DT_MODEL_ROUTER_STATE = Join-Path $wtBase 'state'
+        $null = Update-RouterOutcomes -Now $script:now -SourcesPath $wtSources
+        $wtRows = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.run_id -eq 'wt-run' })
+        $textAttempt = @($wtRows | Where-Object { $_.key -eq 'wt-run:M02:root-remediation' })
+        Assert-True ($textAttempt.Count -eq 1 -and $textAttempt[0].attempt -eq 2 -and $textAttempt[0].pass) 'non-numeric acceptance attempt label is mined as a later attempt'
+        $wtRows = @($wtRows | Where-Object { $_.key -ne 'wt-run:M02:root-remediation' })
+        Assert-True ($wtRows.Count -eq 1 -and $wtRows[0].repo -eq 'main-repo' -and $wtRows[0].diagnosis -eq 'unexplained' -and $wtRows[0].failure_category -eq 'environment') 'linked worktree provenance is mined under the main repo name with its diagnosis'
+    } finally { $env:DT_MODEL_ROUTER_STATE = $stateBeforeWorktree }
     Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $saved

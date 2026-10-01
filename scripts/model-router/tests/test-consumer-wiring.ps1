@@ -20,7 +20,7 @@ $fixtureResetUtc = $fixtureReset.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"
 $fixtureResetEt = $fixtureReset.ToString("yyyy-MM-dd'T'HH:mm:sszzz")
 $fixtureResetEpoch = $fixtureReset.ToUnixTimeSeconds()
 $saved = @{}
-foreach ($name in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CODEX_SESSIONS','CODEX_HOME','DT_FAKE_CLAUDE_MODE','DT_FAKE_CODEX_MODE')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+foreach ($name in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CODEX_SESSIONS','CODEX_HOME','DT_FAKE_CLAUDE_MODE','DT_FAKE_CODEX_MODE','DT_BUILD_DISPATCH_SEAMS','DT_FAKE_DIAGNOSIS','DT_FAKE_DISPATCH_COUNTER')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $temp = Join-Path $env:TEMP ('model-router-wiring-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
@@ -46,6 +46,30 @@ if ([string]`$request['uri'] -like '*/users/@me/channels') { return [pscustomobj
 return [pscustomobject]@{ id = 'fake-message' }
 "@
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeTransport
+    $seams = Join-Path $temp 'dispatch-seams.ps1'
+    Write-Utf8 $seams @'
+$script:fixtureTime = [datetimeoffset]'2026-10-01T14:00:00Z'
+$script:fixtureSleeps = 0
+$script:RouterDiagnosisClock = { $script:fixtureTime }
+$script:RouterDispatchSleep = {
+    param($Milliseconds)
+    $script:fixtureTime = $script:fixtureTime.AddMilliseconds($Milliseconds); $script:fixtureSleeps++
+    [IO.File]::AppendAllText(($env:DT_FAKE_DISPATCH_COUNTER + '.sleeps'), "$Milliseconds`n")
+}
+$script:RouterDiagnosisDns = { param($ApiHost) $env:DT_FAKE_DIAGNOSIS -notlike 'offline*' -or ($env:DT_FAKE_DIAGNOSIS -in @('offline-resume','offline-incident') -and $script:fixtureSleeps -ge 6) }
+$script:RouterDiagnosisHttp = {
+    param($Uri)
+    if ($Uri -like '*connecttest*') {
+        if ($env:DT_FAKE_DIAGNOSIS -like 'offline*' -and -not ($env:DT_FAKE_DIAGNOSIS -in @('offline-resume','offline-incident') -and $script:fixtureSleeps -ge 6)) { throw 'fixture offline' }
+        return 'connected'
+    }
+    if ($Uri -like '*unresolved*') { return [pscustomobject]@{ incidents=@([pscustomobject]@{ id='fixture-incident'; components=@([pscustomobject]@{ id='component' }) }) } }
+    $config = Get-Content -Raw (Join-Path $repoRoot 'references/model-router/vendor-status.json') | ConvertFrom-Json
+    $lane = if ($Uri -eq $config.codex.components_url) { $config.codex } else { $config.claude }
+    return [pscustomobject]@{ components=@($lane.components | ForEach-Object { [pscustomobject]@{ name=$_; id='component'; status=$(if ($env:DT_FAKE_DIAGNOSIS -in @('incident','offline-incident')) { 'degraded_performance' } else { 'operational' }) } }) }
+}
+'@
+    $env:DT_BUILD_DISPATCH_SEAMS = $seams
     function Get-TransportCount { if (Test-Path -LiteralPath $transportLog) { @(Get-Content -LiteralPath $transportLog).Count } else { 0 } }
 
     $rosterPath = Join-Path $state 'roster.json'
@@ -126,8 +150,19 @@ return [pscustomobject]@{ id = 'fake-message' }
 if (`$args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if (`$args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path `$env:CODEX_HOME 'models_cache.json'); exit 0 }
 [IO.File]::AppendAllText('$launchLog', "codex`n")
+if (`$env:DT_FAKE_DISPATCH_COUNTER) {
+    `$n = if (Test-Path `$env:DT_FAKE_DISPATCH_COUNTER) { [int](Get-Content `$env:DT_FAKE_DISPATCH_COUNTER) } else { 0 }
+    `$n++; [IO.File]::WriteAllText(`$env:DT_FAKE_DISPATCH_COUNTER, [string]`$n)
+    `$inputText = [Console]::In.ReadToEnd()
+    [IO.File]::AppendAllText((`$env:DT_FAKE_DISPATCH_COUNTER + '.calls'), ((@{ args=`$args; prompt=`$inputText } | ConvertTo-Json -Compress) + "`n"))
+    if (`$n -eq 1 -or `$env:DT_FAKE_DIAGNOSIS -in @('unexplained-fail','offline-timeout','incident')) { [Console]::Error.WriteLine('fixture vendor failure'); exit 1 }
+}
 if (`$env:DT_FAKE_CODEX_MODE -eq 'limit') { [Console]::Error.WriteLine('ERROR: usage limit reached; try again at $fixtureResetUtc'); exit 1 }
 if (`$env:DT_FAKE_CODEX_MODE -eq 'source-text') { [Console]::Error.WriteLine('Failed to compile rate_limits/usage_limit.ps1: rate limiting middleware'); exit 1 }
+if (`$env:DT_FAKE_DIAGNOSIS -eq 'unexplained-invalid') {
+    `$idx = [Array]::IndexOf([object[]]`$args, '--output-last-message')
+    [IO.File]::WriteAllText([string]`$args[`$idx + 1], 'invalid report'); exit 0
+}
 `$outIndex = [Array]::IndexOf([object[]]`$args, '--output-last-message')
 [void][Console]::In.ReadToEnd()
 [IO.File]::WriteAllText([string]`$args[`$outIndex + 1], @'
@@ -146,10 +181,12 @@ $report
     function Invoke-CodexWrapper([string]$Name, [string[]]$Extra, [switch]$OmitEffort) {
         $out = Join-Path $temp "$Name.md"
         $effortArgs = if ($OmitEffort) { @() } else { @('-Effort', (Get-WrapperEffort $Extra)) }
-        & pwsh -NoProfile -File (Join-Path $buildScripts 'invoke-codex-chunk.ps1') -ProjectPath $project -PromptPath $prompt -OutputPath $out -CodexCliPath $fakeCodex -SelectionReason 'fixture reason' -Attempt 1 -Json @effortArgs @Extra *> $null
+        $log = Join-Path $temp "$Name.log"
+        $errPath = Join-Path $temp "$Name.stderr.txt"
+        & pwsh -NoProfile -File (Join-Path $buildScripts 'invoke-codex-chunk.ps1') -ProjectPath $project -PromptPath $prompt -OutputPath $out -CodexCliPath $fakeCodex -SelectionReason 'fixture reason' -Attempt 1 -Json @effortArgs @Extra >$log 2>$errPath
         $code = $LASTEXITCODE
         $prov = if (Test-Path -LiteralPath "$out.provenance.json") { Get-Content -Raw -LiteralPath "$out.provenance.json" | ConvertFrom-Json } else { $null }
-        return [pscustomobject]@{ exit = $code; prov = $prov }
+        return [pscustomobject]@{ exit = $code; prov = $prov; stdout = (Get-Content -Raw $log); stderr = (Get-Content -Raw $errPath) }
     }
     $missingEffort = Invoke-CodexWrapper 'codex-missing-effort' @('-Category','routine-coding') -OmitEffort
     Assert-True ($missingEffort.exit -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $temp 'codex-missing-effort.md'))) 'Codex substantive wrapper without -Effort fails closed'
@@ -174,7 +211,7 @@ $report
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
     $env:DT_FAKE_CODEX_MODE = 'source-text'
     $r = Invoke-CodexWrapper 'codex-source-text' @('-Tier','standard')
-    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'tooling' -and -not $r.prov.vendor_block) 'Codex failed output with limit identifiers does not block vendor'
+    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.diagnosis -eq 'unexplained' -and -not $r.prov.vendor_block) 'Codex failed output with limit identifiers does not block vendor'
     $env:DT_FAKE_CODEX_MODE = $null
 
     # 3. Claude chunk wrapper: router Claude lane, no fixed tier map.
@@ -182,15 +219,26 @@ $report
     Write-Utf8 $fakeClaude @"
 if (`$args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
 [IO.File]::AppendAllText('$launchLog', "claude`n")
+if (`$env:DT_FAKE_DISPATCH_COUNTER) {
+    `$n = if (Test-Path `$env:DT_FAKE_DISPATCH_COUNTER) { [int](Get-Content `$env:DT_FAKE_DISPATCH_COUNTER) } else { 0 }
+    `$n++; [IO.File]::WriteAllText(`$env:DT_FAKE_DISPATCH_COUNTER, [string]`$n)
+    `$inputText = [Console]::In.ReadToEnd()
+    [IO.File]::AppendAllText((`$env:DT_FAKE_DISPATCH_COUNTER + '.calls'), ((@{ args=`$args; prompt=`$inputText } | ConvertTo-Json -Compress) + "`n"))
+    if (`$n -eq 1 -or `$env:DT_FAKE_DIAGNOSIS -in @('unexplained-fail','offline-timeout','incident')) { [Console]::Error.WriteLine('fixture vendor failure'); exit 1 }
+}
 if (`$env:DT_FAKE_CLAUDE_MODE -eq 'limit') { [Console]::Error.WriteLine('You have reached your usage limit. Resets at $fixtureResetEt'); exit 1 }
 if (`$env:DT_FAKE_CLAUDE_MODE -eq 'max-turns') { Write-Output (@{ type='result'; subtype='error_max_turns'; is_error=`$true; result='Source mentions rate limit reached'; modelUsage=@{} } | ConvertTo-Json -Compress); exit 0 }
 if (`$env:DT_FAKE_CLAUDE_MODE -eq 'json-limit') { Write-Output (@{ type='result'; subtype='error_during_execution'; is_error=`$true; result='Claude AI usage limit reached|$fixtureResetEpoch'; modelUsage=@{} } | ConvertTo-Json -Compress); exit 0 }
-[void][Console]::In.ReadToEnd()
+`$stdin = [Console]::In.ReadToEnd()
 `$ran = [string]`$args[[Array]::IndexOf([object[]]`$args, '--model') + 1]
 `$usage = [ordered]@{}; `$usage[`$ran] = @{ inputTokens = 1; outputTokens = 1; costUSD = 0.01 }
-Write-Output (@{ type = 'result'; is_error = `$false; result = @'
+`$message = @'
 $report
-'@; total_cost_usd = 0.01; modelUsage = `$usage } | ConvertTo-Json -Depth 5 -Compress)
+'@
+if (`$env:DT_FAKE_DIAGNOSIS -eq 'unexplained-invalid') { `$message = 'invalid report' }
+if (`$stdin -like '*single word OK*') { `$message = 'OK' }
+if (`$env:DT_FAKE_CLAUDE_MODE -eq 'stamp') { `$message = '[10:52:50] ' + `$message }
+Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_cost_usd = 0.01; modelUsage = `$usage } | ConvertTo-Json -Depth 5 -Compress)
 "@
     function Invoke-ClaudeWrapper([string]$Name, [string[]]$Extra, [switch]$OmitEffort) {
         $out = Join-Path $temp "$Name.md"
@@ -239,6 +287,83 @@ $report
     Assert-True (([regex]::Matches($r.stderr, 'ROUTER_ALERT_TEST_TRANSPORT_ACTIVE')).Count -eq 1) 'test transport seam writes its stderr marker once per process'
     $claudeText = Get-Content -Raw -LiteralPath (Join-Path $buildScripts 'invoke-claude-chunk.ps1')
     Assert-True ($claudeText -notmatch "'(opus|sonnet|haiku)'" -and $claudeText -match 'Resolve-RouterModel -Category \$Category -Lane claude') 'claude wrapper has no fixed tier map'
+
+    $env:DT_FAKE_CLAUDE_MODE = 'stamp'
+    $stamped = Invoke-ClaudeWrapper 'claude-stamped-report' @('-Tier','standard')
+    Assert-True ($stamped.exit -eq 0 -and $stamped.prov.output_shape_errors.Count -eq 0) 'stamped Claude report parses'
+    $stamped = Invoke-ClaudeWrapper 'claude-stamped-preflight' @('-Preflight')
+    Assert-True ($stamped.exit -eq 0) 'stamped Claude OK passes preflight'
+    $env:DT_FAKE_CLAUDE_MODE = $null
+    foreach ($lane in @('codex','claude')) {
+        foreach ($case in @('offline-resume','offline-timeout','incident','offline-incident','unexplained-invalid','unexplained-success','unexplained-fail')) {
+            Remove-Item (Join-Path $state 'vendor-status-cache.json'),(Join-Path $state 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
+            # Each fixture represents a separate outage, despite its fixed clock.
+            Remove-Item (Join-Path $state 'alert-log.jsonl') -Force -ErrorAction SilentlyContinue
+            $env:DT_FAKE_DIAGNOSIS = $case
+            $env:DT_FAKE_DISPATCH_COUNTER = Join-Path $temp "$lane-$case.counter"
+            $before = Get-TransportCount
+            $extra = @('-Category','routine-coding','-TimeoutMs',$(if ($case -eq 'offline-timeout') { '120000' } else { '600000' }))
+            $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-$case" $extra } else { Invoke-ClaudeWrapper "$lane-$case" $extra }
+            $count = [int](Get-Content $env:DT_FAKE_DISPATCH_COUNTER)
+            $success = $case -in @('offline-resume','unexplained-success')
+            Assert-True (($r.exit -eq 0) -eq $success -and $r.prov.failure_category -eq $(if ($success) { $null } elseif ($case -eq 'unexplained-invalid') { 'model-output' } else { 'environment' })) "$lane $case result and final category"
+            $want = if ($success -or $case -eq 'unexplained-invalid') { $null } elseif ($case -eq 'offline-incident') { 'vendor_incident' } elseif ($case -like 'offline*') { 'offline' } elseif ($case -in @('incident','offline-incident')) { 'vendor_incident' } else { 'unexplained' }
+            Assert-True ($r.prov.diagnosis -eq $want) "$lane $case diagnosis in provenance"
+            Assert-True ($count -eq $(if ($success -or $case -in @('unexplained-fail','unexplained-invalid')) { 2 } else { 1 })) "$lane $case bounded launch count"
+            $parsed = if ($case -eq 'unexplained-invalid') { $r.prov } else { $r.stdout | ConvertFrom-Json }
+            Assert-True ($r.stderr -match 'DT_BUILD_DISPATCH_SEAMS_ACTIVE') "$lane $case seam marker on stderr"
+            Assert-True ($parsed.dispatch_id -eq $r.prov.dispatch_id -and $parsed.diagnosis -eq $want) "$lane $case returns diagnosis as one JSON result"
+            $sleepPath = $env:DT_FAKE_DISPATCH_COUNTER + '.sleeps'
+            $sleeps = @(if (Test-Path $sleepPath) { Get-Content $sleepPath })
+            $sleepCount = if ($case -in @('offline-resume','offline-incident')) { 6 } elseif ($case -eq 'offline-timeout') { 2 } else { 0 }
+            Assert-True ($sleeps.Count -eq $sleepCount -and @($sleeps | Where-Object { $_ -ne '60000' }).Count -eq 0) "$lane $case waits only in bounded 60-second offline intervals"
+            if ($count -eq 2) {
+                $calls = @(Get-Content ($env:DT_FAKE_DISPATCH_COUNTER + '.calls') | ConvertFrom-Json)
+                Assert-True ($calls[0].prompt -ceq $calls[1].prompt -and ($calls[0].args -join '|') -ceq ($calls[1].args -join '|')) "$lane $case identical arguments and prompt on retry"
+            }
+            if (-not $success -and $case -ne 'unexplained-invalid') {
+                $termination = if ($case -eq 'offline-timeout') { 'ROUTER_OFFLINE' } elseif ($case -in @('incident','offline-incident')) { 'ROUTER_VENDOR_INCIDENT' } else { 'ROUTER_UNEXPLAINED' }
+                Assert-True ($r.prov.termination_reason -ceq $termination) "$lane $case exact termination string"
+            }
+            if ($case -in @('incident','offline-incident')) {
+                $other = if ($lane -eq 'codex') { 'claude' } else { 'codex' }
+                Assert-True ($r.prov.backup_pick.vendor -eq $other -and $r.prov.backup_pick.model -and $r.prov.dispatch_diagnosis.incident_id -eq 'fixture-incident') "$lane incident carries other-vendor backup and incident"
+                Assert-True ($parsed.backup_pick.model -eq $r.prov.backup_pick.model -and $parsed.backup_pick.vendor -eq $other) "$lane incident result carries backup pick"
+                $blocks = @(Get-Content -Raw (Join-Path $state 'vendor-blocks.json') | ConvertFrom-Json)
+                Assert-True ($blocks[0].reason -eq 'vendor_incident') "$lane incident persists A5 record"
+            }
+            if ($case -in @('offline-resume','offline-incident','unexplained-fail')) {
+                Assert-True ((Get-TransportCount) -gt $before) "$lane $case sends alert on reconnect or second failure"
+                $events = @(Get-Content (Join-Path $state 'alert-log.jsonl') | ConvertFrom-Json)
+                $keyPattern = if ($case -in @('offline-resume','offline-incident')) { '^router-offline:2026-10-01 10:00 ET$' } else { '^vendor-error:' + $lane + ':' + $r.prov.dispatch_id + '$' }
+                Assert-True (@($events | Where-Object { $_.key -match $keyPattern }).Count -gt 0) "$lane $case alert key"
+                Assert-True ($r.stderr -match 'ROUTER_ALERT:') "$lane $case chat copy on stderr"
+            } else { Assert-True ((Get-TransportCount) -eq $before) "$lane $case sends no premature alert" }
+            $rows = @(Get-Content (Join-Path $state 'outcomes.jsonl') | ConvertFrom-Json)
+            $eventRows = @($rows | Where-Object { $_.key -like ($r.prov.dispatch_id + ':*') })
+            $eventCount = if ($case -in @('offline-timeout','incident')) { 0 } else { 1 }
+            Assert-True ($eventRows.Count -eq $eventCount) "$lane $case only nonterminal wrapper events"
+            Assert-True (@($eventRows | Where-Object { $_.repo -ne (Split-Path -Leaf $project) -or $_.failure_category -ne 'environment' -or $_.diagnosis -ne $(if ($case -like 'offline*') { 'offline' } else { 'unexplained' }) }).Count -eq 0) "$lane $case event repo name and diagnosis"
+            if ($case -eq 'unexplained-fail') {
+                # Exercise the real provenance consumer with an isolated fixture build tree.
+                $fixtureRun = Join-Path $project ('.dt-build/' + $lane + '-stopped')
+                Write-Utf8 (Join-Path $fixtureRun 'piece.provenance.json') ($r.prov | ConvertTo-Json -Depth 8)
+                $sources = Join-Path $temp 'outcome-sources.json'
+                Write-Utf8 $sources (ConvertTo-Json -InputObject @($project))
+                $updateLog = Join-Path $temp "$lane-outcome-update.log"
+                & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/model-router/update-outcomes.ps1') -SourcesPath $sources -Json *> $updateLog
+                Assert-True ($LASTEXITCODE -eq 0) "$lane stopped provenance updater passes"
+                $derivedRows = @(Get-Content (Join-Path $state 'outcomes.jsonl') | ConvertFrom-Json | Where-Object { $_.key -eq ($lane + '-stopped:piece.provenance:1') })
+                Assert-True ($derivedRows.Count -eq 1 -and $eventRows.Count -eq 1 -and $derivedRows[0].diagnosis -eq 'unexplained' -and $derivedRows[0].repo -eq $eventRows[0].repo) "$lane stopped piece has one wrapper row and one derived row with matching repo"
+            }
+            if ($case -eq 'unexplained-invalid') {
+                Assert-True ($r.prov.termination_reason -match '_OUTPUT_INVALID:' -and -not $r.prov.dispatch_diagnosis -and $r.stderr -match '_OUTPUT_INVALID:') "$lane invalid retry keeps normal throw and provenance"
+            }
+        }
+    }
+    $env:DT_FAKE_DIAGNOSIS = $null
+    $env:DT_FAKE_DISPATCH_COUNTER = $null
+    Remove-Item (Join-Path $state 'vendor-status-cache.json'),(Join-Path $state 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
 
     # Approved roster: both wrappers keep their lane member, and a wait launches no model.
     $categories = @(Get-RouterDispatchCategories)

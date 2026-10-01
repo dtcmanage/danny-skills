@@ -49,6 +49,14 @@ function Write-RouterOutcomeJson {
     finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
 
+function ConvertTo-RouterOutcomeAttempt {
+    # Hand-written rows sometimes label a remediation attempt with text; any non-numeric label counts as a later attempt.
+    param([object]$Attempt)
+    $number = 0
+    if ([int]::TryParse([string]$Attempt, [ref]$number) -and $number -gt 0) { return $number }
+    return 2
+}
+
 function Update-RouterOutcomes {
     param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts)
     $state = Get-RouterStateDir
@@ -65,10 +73,26 @@ function Update-RouterOutcomes {
         }
     }
     $newCount = 0
+    # dt-build keeps run provenance in the worktree it built in, so scan each root's linked worktrees too;
+    # their rows carry the root's repo name.
+    $scanRoots = [System.Collections.Generic.List[object]]::new()
     foreach ($root in $roots) {
-        $build = Join-Path ([string]$root) '.dt-build'
+        $rootPath = [string]$root
+        $scanRoots.Add([pscustomobject]@{ path = $rootPath; repo = (Split-Path -Leaf $rootPath) })
+        if (-not (Test-Path -LiteralPath (Join-Path $rootPath '.git'))) { continue }
+        $listing = @(& git -C $rootPath worktree list --porcelain 2>$null)
+        if ($LASTEXITCODE -ne 0) { continue }
+        foreach ($line in $listing) {
+            if ($line -notmatch '^worktree (.+)$') { continue }
+            $worktreePath = [IO.Path]::GetFullPath($Matches[1])
+            if ($worktreePath.TrimEnd('\', '/') -ieq [IO.Path]::GetFullPath($rootPath).TrimEnd('\', '/')) { continue }
+            $scanRoots.Add([pscustomobject]@{ path = $worktreePath; repo = (Split-Path -Leaf $rootPath) })
+        }
+    }
+    foreach ($scanRoot in $scanRoots) {
+        $build = Join-Path ([string]$scanRoot.path) '.dt-build'
         if (-not (Test-Path -LiteralPath $build -PathType Container)) { continue }
-        $repo = Split-Path -Leaf ([string]$root)
+        $repo = [string]$scanRoot.repo
         foreach ($run in @(Get-ChildItem -LiteralPath $build -Directory)) {
             $folders = [System.Collections.Generic.List[string]]::new()
             $folders.Add($run.FullName)
@@ -97,7 +121,7 @@ function Update-RouterOutcomes {
                     $failureCategory = Get-RouterOutcomeValue $item @('failure_category')
                     $diagnosis = Get-RouterOutcomeValue $item @('diagnosis')
                     if ($failureCategory -ne 'environment' -or $diagnosis -cnotin @('offline','vendor_incident','unexplained')) { $diagnosis = $null }
-                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier $file.Name); attempt=[int]$attempt; pass=($pass -eq $true -or [string]$pass -eq 'true'); escalated=($file.Name -match '(?i)(?:-|_)(retry|fix|resume)'); failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
+                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier $file.Name); attempt=(ConvertTo-RouterOutcomeAttempt $attempt); pass=($pass -eq $true -or [string]$pass -eq 'true'); escalated=($file.Name -match '(?i)(?:-|_)(retry|fix|resume)'); failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
                     $newCount++
                 }
                 $acceptance = Join-Path $folder 'acceptance-rows.jsonl'
@@ -123,7 +147,7 @@ function Update-RouterOutcomes {
                     $failureCategory = Get-RouterOutcomeValue $item @('failure_category')
                     $diagnosis = Get-RouterOutcomeValue $item @('diagnosis')
                     if ($failureCategory -ne 'environment' -or $diagnosis -cnotin @('offline','vendor_incident','unexplained')) { $diagnosis = $null }
-                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier ([string]$chunk)); attempt=[int]$attempt; pass=([string](Get-RouterOutcomeValue $item @('status')) -eq 'PASS'); escalated=$false; failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
+                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier ([string]$chunk)); attempt=(ConvertTo-RouterOutcomeAttempt $attempt); pass=([string](Get-RouterOutcomeValue $item @('status')) -eq 'PASS'); escalated=$false; failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
                     $newCount++
                 }
             }
