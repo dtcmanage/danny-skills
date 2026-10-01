@@ -25,6 +25,10 @@ try {
     $script:requests = [System.Collections.Generic.List[object]]::new()
     $script:failDm = $false
     $script:failEmail = $false
+    $script:failPage = 0
+    $script:pagePosts = 0
+    $script:inspectKey = ''
+    $script:earlyDelivery = $false
     $script:fakeToken = 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
     $fake = {
         param($request)
@@ -36,6 +40,12 @@ try {
         if ($request.uri -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '123456789' } } }
         if ($request.uri -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm-channel' } }
         if ($request.uri -like '*/channels/*/messages') {
+            if ($script:inspectKey) {
+                $existing = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+                if (@($existing | Where-Object { $_.key -ceq $script:inspectKey -and $_.event -eq 'delivered' }).Count) { $script:earlyDelivery = $true }
+            }
+            $script:pagePosts++
+            if ($script:failPage -eq $script:pagePosts) { return [pscustomobject]@{ id = $null } }
             if ($script:failDm) { throw "Discord rejected $script:fakeToken" }
             return [pscustomobject]@{ id = 'discord-message' }
         }
@@ -186,9 +196,62 @@ try {
     $messageBody = $messageRequest.body | ConvertFrom-Json
     Assert-True ($messageResult.sent -and $messageBody.content -match 'gpt-test-readable' -and @($messageBody.allowed_mentions.parse).Count -eq 0) 'key-only alert gets readable Discord text with no mentions'
     $longText = '@everyone ' + ('x' * 2000)
+    $script:requests.Clear()
     $longResult = @(Send-RouterAlert -Key 'long-message' -Message $longText -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
-    $longBody = (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' })[-1].body | ConvertFrom-Json)
-    Assert-True ($longResult.sent -and $longBody.content.Length -eq 1900 -and @($longBody.allowed_mentions.parse).Count -eq 0) 'Discord body is capped at 1900 characters without mentions'
+    $longBodies = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' } | ForEach-Object { $_.body | ConvertFrom-Json })
+    Assert-True ($longResult.sent -and $longBodies.Count -eq 2 -and ($longBodies.content -join '') -ceq $longText) 'oversized line is paginated without dropping content'
+    Assert-True (@($longBodies | Where-Object { $_.content.Length -gt 1900 -or @($_.allowed_mentions.parse).Count -ne 0 }).Count -eq 0) 'every oversized-line page stays within limit with mentions disabled'
+    $script:requests.Clear()
+    $boundaryText = 'b' * 1900
+    $boundaryResult = @(Send-RouterAlert -Key 'one-page-boundary' -Message $boundaryText -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
+    $boundaryBodies = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' } | ForEach-Object { $_.body | ConvertFrom-Json })
+    Assert-True ($boundaryResult.sent -and $boundaryBodies.Count -eq 1 -and $boundaryBodies[0].content -ceq $boundaryText) '1900-character message preserves single-page behavior'
+
+    $ackCommand = "Acknowledge: pwsh -NoProfile -File '$ackPath' -Acknowledge '$vendorKey'"
+    $pagedText = (($vendorMessage + "`r`n") * 6) + ('z' * 1899) + [char]::ConvertFromUtf32(0x1F600) + ('y' * 2100) + "`r`n" + $ackCommand
+    $script:requests.Clear(); $script:pagePosts = 0
+    $script:inspectKey = 'weekly-report:paged'
+    $pagedResult = Send-RouterAlert -Key 'weekly-report:paged' -Message $pagedText -Transport $fake -ChatToStderr
+    $pages = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' } | ForEach-Object { $_.body | ConvertFrom-Json })
+    Assert-True ($pagedResult.sent -and $pagedResult.channel -eq 'discord' -and $pages.Count -gt 2 -and ($pages.content -join '') -ceq $pagedText) 'multi-page DM preserves complete redacted content and line endings'
+    Assert-True (@($pages | Where-Object { $_.content.Length -gt 1900 -or $_.content.Length -eq 0 -or @($_.allowed_mentions.parse).Count -ne 0 }).Count -eq 0) 'all multi-page bodies fit the limit and disable mentions'
+    $ackCount = ($pages | ForEach-Object { [regex]::Matches($_.content, [regex]::Escape($ackCommand)).Count } | Measure-Object -Sum).Sum
+    Assert-True ($ackCount -eq 7) 'ordinary acknowledgement commands stay intact on pages'
+    Assert-True (@($pages | Where-Object { [char]::IsHighSurrogate($_.content[$_.content.Length - 1]) -or [char]::IsLowSurrogate($_.content[0]) -or $_.content.EndsWith("`r") }).Count -eq 0) 'oversized lines keep Unicode pairs and CRLF boundaries intact'
+    Assert-True (@($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/users/@me/channels' }).Count -eq 1) 'all pages use one DM channel'
+    $events = @(Get-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($events | Where-Object { $_.key -ceq 'weekly-report:paged' -and $_.event -eq 'delivered' }).Count -eq 1) 'all pages produce one delivered logical key'
+    Assert-True (-not $script:earlyDelivery) 'logical delivery is not recorded before all page POSTs finish'
+    $script:inspectKey = ''
+    $requestCount = $script:requests.Count
+    $pagedAgain = Send-RouterAlert -Key 'weekly-report:paged' -Message $pagedText -Transport $fake
+    Assert-True ($pagedAgain.deduped -and $script:requests.Count -eq $requestCount) 'multi-page logical key dedupes without page requests'
+
+    $script:requests.Clear(); $script:pagePosts = 0; $script:failPage = 2; $script:failEmail = $false
+    $partial = Send-RouterAlert -Key 'paged-fallback' -Message $pagedText -Transport $fake -ChatToStderr
+    $email = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -eq 'https://api.resend.com/emails' })[-1]
+    Assert-True ($partial.sent -and $partial.channel -eq 'email' -and $script:pagePosts -eq 2 -and ($email.body | ConvertFrom-Json).text -ceq $pagedText) 'partial page failure stops Discord and falls back with the full message'
+    $events = @(Get-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    $fallbackEvents = @($events | Where-Object { $_.key -ceq 'paged-fallback' -and $_.event -eq 'delivered' })
+    Assert-True ($fallbackEvents.Count -eq 1 -and $fallbackEvents[0].channel -eq 'email') 'partial Discord success is never logged as delivered'
+    $requestCount = $script:requests.Count
+    $partialAgain = Send-RouterAlert -Key 'paged-fallback' -Message $pagedText -Transport $fake
+    Assert-True ($partialAgain.deduped -and $script:requests.Count -eq $requestCount) 'successful fallback dedupes the same logical key'
+
+    $script:requests.Clear(); $script:pagePosts = 0; $script:failEmail = $true
+    $partialFailed = Send-RouterAlert -Key 'paged-retry' -Message $pagedText -Transport $fake -ChatToStderr
+    $events = @(Get-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    $retryEvents = @($events | Where-Object { $_.key -ceq 'paged-retry' })
+    Assert-True (-not $partialFailed.sent -and $retryEvents.Count -eq 1 -and $retryEvents[0].event -eq 'delivery_failed') 'partial Discord and email failure leaves the logical key undelivered'
+    $script:requests.Clear(); $script:pagePosts = 0; $script:failPage = 0; $script:failEmail = $false
+    $partialRetry = Send-RouterAlert -Key 'paged-retry' -Message $pagedText -Transport $fake -ChatToStderr
+    $retryPages = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' } | ForEach-Object { $_.body | ConvertFrom-Json })
+    Assert-True ($partialRetry.sent -and -not $partialRetry.deduped -and ($retryPages.content -join '') -ceq $pagedText) 'failed logical key retries every page from the beginning'
+    $events = @(Get-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($events | Where-Object { $_.key -ceq 'paged-retry' -and $_.event -eq 'delivered' }).Count -eq 1) 'retry records exactly one delivered logical key'
+    $requestCount = $script:requests.Count
+    $retryAgain = Send-RouterAlert -Key 'paged-retry' -Message $pagedText -Transport $fake
+    Assert-True ($retryAgain.deduped -and $script:requests.Count -eq $requestCount) 'successful retry dedupes all pages'
     Assert-True ((Get-RouterAlertMessage -Key 'router-wait: resume after October 1, 2026 3:00 PM ET') -eq 'Model router: every eligible vendor is at its limit. resume after October 1, 2026 3:00 PM ET.') 'router-wait key renders the resume line'
     Assert-True ((Get-RouterAlertMessage -Key 'new-model:gpt-test') -match 'gpt-test' -and (Get-RouterAlertMessage -Key 'unknown:key') -eq 'unknown:key') 'known keys are explained and unknown keys stay intact'
 

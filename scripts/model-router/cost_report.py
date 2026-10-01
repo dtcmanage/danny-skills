@@ -109,6 +109,37 @@ def load_usage_all_sessions(path: Path) -> tuple[list[dict], list[dict]]:
     return usage, rate
 
 
+def load_jsonl(path: Path) -> list[dict]:
+    rows: list[dict] = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def summarize_routing(rows: list[dict]) -> dict:
+    stations: dict[str, dict] = {}
+    distribution: dict[tuple[str, str], int] = {}
+    for row in rows:
+        item = stations.setdefault(row["workstation"], {"sessions": set(), "delegations": 0,
+                                                       "routed": 0, "unrouted": 0})
+        item["sessions"].add(row["session_id"])
+        for key in ("delegations", "routed", "unrouted"):
+            item[key] += row[key]
+        for field, axis in (("by_category", "Category"), ("by_job", "Job")):
+            for name, count in row[field].items():
+                distribution[axis, name] = distribution.get((axis, name), 0) + count
+    return {"workstations": [{"workstation": name, **item, "sessions": len(item["sessions"])}
+                              for name, item in sorted(stations.items())],
+            "distribution": [{"axis": axis, "name": name, "delegations": count}
+                             for (axis, name), count in sorted(distribution.items())]}
+
+
 def resolve_price_key(model: str | None, models: dict) -> str | None:
     """Longest-prefix match: a logged model id often carries a date/version suffix
     (e.g. a snapshot tag) that the published price-table key does not. Never guess a
@@ -305,13 +336,20 @@ def build_vendor_week(host: str, iso_year: int, iso_week: int, rows: list[dict],
 
 def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: dict,
                           today_et: date | None = None,
-                          frontier_path: Path = FRONTIER_MODELS_PATH) -> list[dict]:
+                          frontier_path: Path = FRONTIER_MODELS_PATH,
+                          routing_rows: list[dict] | None = None) -> list[dict]:
     """One report dict per ISO week seen in either the usage rows or the codex rate-limit
     readings, each holding a VendorWeek per vendor that had any signal that week."""
     today_et = today_et or datetime.now(tz=ET_ZONE).date()
     frontier_models = json.loads(frontier_path.read_text(encoding="utf-8"))
     week_keys: set[tuple[int, int]] = set()
     rows_by_week_host: dict[tuple[int, int, str], list[dict]] = {}
+    routing_by_week: dict[tuple[int, int], list[dict]] = {}
+    for row in routing_rows or []:
+        if row.get("kind") == "routing" and row.get("host") == "claude":
+            wk = iso_week_of(row["date_et"])
+            week_keys.add(wk)
+            routing_by_week.setdefault(wk, []).append(row)
     for row in usage_rows:
         d = row.get("date_et")
         if not d:
@@ -339,7 +377,7 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
             if not rows and not rate_rows_for_week:
                 continue
             vendors[host] = build_vendor_week(host, iso_year, iso_week, rows, rate_rows_for_week, prices, today_et)
-        if not vendors:
+        if not vendors and not routing_by_week.get((iso_year, iso_week)):
             continue
         work: dict[str, dict] = {}
         frontier_sessions: set[tuple[str, str]] = set()
@@ -375,6 +413,7 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
                                               -(item["api_equivalent_usd"] or 0), item["model"]))
         reports.append({"iso_year": iso_year, "iso_week": iso_week, "label": week_label(iso_year, iso_week),
                         "vendors": vendors, "work_by_model": work_by_model,
+                        "routing": summarize_routing(routing_by_week.get((iso_year, iso_week), [])),
                         "frontier": {"api_equivalent_usd": frontier_cost, "sessions": len(frontier_sessions),
                                      "model_ids": sorted(frontier_ids)}})
     return reports
@@ -423,6 +462,39 @@ def render_claude_usage(reading: dict | None) -> str:
 
 
 CLAUDE_BLOCKED_NOTE = "Claude blocked-minutes are not computed (only the latest reading is kept, not a history)."
+
+
+def routing_tables(report: dict) -> list[tuple[str, list[str], list[list[str]]]]:
+    routing = report.get("routing", {})
+    stations = []
+    for item in routing.get("workstations", []):
+        pct = f"{100 * item['routed'] / item['delegations']:.1f}%" if item["delegations"] else "n/a"
+        stations.append([item["workstation"], str(item["sessions"]), str(item["delegations"]),
+                         str(item["routed"]), str(item["unrouted"]), pct])
+    distribution = [[item["axis"], item["name"], str(item["delegations"])]
+                    for item in routing.get("distribution", [])]
+    return [("Routing compliance by workstation (Claude sessions)",
+             ["Workstation", "Sessions", "Delegations", "Routed", "Unrouted", "Routed share"], stations),
+            ("Delegations by category and job", ["Axis", "Name", "Delegations"], distribution)]
+
+
+def render_routing_line(report: dict) -> str:
+    prefix = "Routing rule (Claude sessions)"
+    start = date(2026, 9, 30)
+    if (report["iso_year"], report["iso_week"]) == start.isocalendar()[:2]:
+        prefix += f" (rule started {start:%a %b} {start.day})"
+    items = report.get("routing", {}).get("workstations", [])
+    if not items:
+        return prefix + ": no routing data"
+    total = sum(item["delegations"] for item in items)
+    routed = sum(item["routed"] for item in items)
+    if not total:
+        return prefix + ": 0 delegations recorded last week"
+    line = f"{prefix}: {100 * routed / total:.0f}% of {total} delegations were routed last week"
+    worst = max(items, key=lambda item: item["unrouted"])
+    if worst["unrouted"]:
+        line += f"; most unrouted work came from {worst['workstation']} ({worst['unrouted']})"
+    return line + "."
 
 
 def render_markdown(report: dict) -> str:
@@ -475,6 +547,13 @@ def render_markdown(report: dict) -> str:
     else:
         lines.append("Frontier models: none this week")
     lines.append("")
+    for title, headers, rows in routing_tables(report):
+        lines.extend([f"## {title}", "", "| " + " | ".join(headers) + " |",
+                      "| " + " | ".join("---" for _ in headers) + " |"])
+        lines.extend("| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |" for row in rows)
+        if not rows:
+            lines.append("No routing data.")
+        lines.append("")
     return "\n".join(lines) + "\n"
 
 
@@ -526,6 +605,12 @@ def render_html(report: dict) -> str:
     else:
         frontier_line = "Frontier models: none this week"
 
+    tables = []
+    for title, headers, rows in routing_tables(report):
+        heading = "".join(f"<th>{html.escape(cell)}</th>" for cell in headers)
+        body = "".join("<tr>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in row) + "</tr>" for row in rows)
+        tables.append(f"<section><h2>{title}</h2><table><thead><tr>{heading}</tr></thead><tbody>{body}</tbody></table>"
+                      + ("" if rows else "<p>No routing data.</p>") + "</section>")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Model-router cost report {html.escape(report['label'])}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -545,6 +630,7 @@ p{{margin:6px 0}} ul{{margin:4px 0 8px 18px;padding:0}}
 <p class='label'>Subscription vs API-equivalent cost, priced at published vendor list rates. Reflects only sessions found in the swept logs -- never a certified full-account total.</p>
 {''.join(cards)}
 <section><h2>Work by model</h2><ul>{''.join(model_rows)}</ul><p>{frontier_line}</p></section>
+{''.join(tables)}
 </body></html>"""
 
 
@@ -692,6 +778,83 @@ def compute_active_drift_marks(state_dir: Path) -> list[dict]:
         return []
 
 
+def ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def research_episodes(state_dir: Path, repo_root: Path = REPO_ROOT) -> tuple[list[str], list[str]]:
+    """Mirror research recovery and cadence stopped-item records, without displaying raw errors."""
+    passes = load_jsonl(state_dir / "readings" / "passes.jsonl")
+    queue = _load_json_object(state_dir / "research-queue.json")
+    queue = queue if isinstance(queue, list) else []
+    failures: dict[str, list[tuple[datetime, Path]]] = {}
+    for path in (state_dir / "research-failures").glob("*.txt"):
+        match = re.match(r"^([^@]+)@(\d{8}T\d{9})(?:-|\.txt$)", path.name)
+        if match:
+            at = datetime.strptime(match[2], "%Y%m%dT%H%M%S%f").replace(tzinfo=ET_ZONE)
+            failures.setdefault(match[1], []).append((at, path))
+    lines: list[str] = []
+    needs: list[str] = []
+    for category, files in sorted(failures.items()):
+        reading = _load_json_object(state_dir / "readings" / f"{category}.json") or {}
+        recovered = None
+        if any(r.get("results") for r in reading.get("readings", [])):
+            recovered = parse_ts(reading.get("researched_at"))
+            if recovered is None:
+                times = [parse_ts(p.get("completed_at")) for p in passes
+                         if category in p.get("categories", []) and "failed_categories" in p
+                         and category not in p["failed_categories"] and not p.get("interrupted")
+                         and not p.get("deferred")]
+                recovered = max((t for t in times if t), default=None)
+        open_files = sorted((at, path) for at, path in files if recovered is None or at > recovered)
+        if not open_files:
+            continue
+        at, first_path = open_files[0]
+        stopped: dict[str, dict] = {}
+        for _, path in open_files:
+            for text in path.read_text(encoding="utf-8").splitlines():
+                if text.startswith("stopped_item: "):
+                    try:
+                        item = json.loads(text.removeprefix("stopped_item: "))
+                    except ValueError:
+                        continue
+                    stopped[json.dumps(item, sort_keys=True)] = item
+        for item in stopped.values():
+            script = repo_root / "scripts" / "model-router" / "run-router-cadence.ps1"
+            cmd = (f". {ps_quote(str(script))}; Add-RouterResearchQueueItem "
+                   f"-Model {ps_quote(item['model'])} -Trigger {ps_quote(item['trigger'])} "
+                   f"-Categories @({','.join(ps_quote(c) for c in item['categories'])}) "
+                   f"-DueAt (Get-Date) -Reason {ps_quote(item['reason'])}")
+            needs.append(f"research for the {category} check stopped unexplained. Re-enqueue: `{cmd}`")
+        queued = any(category in item.get("categories", []) for item in queue)
+        unexplained = bool(stopped) or (not queued and any(
+            p.get("interrupted") and p.get("diagnosis") == "unexplained"
+            and category in p.get("categories", [])
+            and any(str(p.get("pass_id", "")) in path.name for _, path in open_files)
+            for p in passes if p.get("pass_id")))
+        if unexplained and not stopped:
+            needs.append(f"the {category} research check stopped unexplained. Inspect `{first_path}` before rerunning.")
+        line = (f"Research: the {category} check has failed since {at:%a} {at.hour % 12 or 12}:{at:%M %p} ET. "
+                f"See `{first_path}`.")
+        if unexplained:
+            line += " See Needs you to re-enqueue the unexplained stop."
+        elif queued:
+            line += " It will run again at the next overnight run."
+        lines.append(line)
+    return lines, needs
+
+
+def vendor_error_needs(state_dir: Path, repo_root: Path = REPO_ROOT) -> list[str]:
+    events = load_jsonl(state_dir / "alert-log.jsonl")
+    acknowledged = {e.get("key") for e in events if e.get("event") == "acknowledged"}
+    delivered = {e["key"] for e in events if e.get("event") == "delivered"
+                 and str(e.get("key", "")).startswith("vendor-error:")}
+    script = repo_root / "scripts" / "model-router" / "send-router-alert.ps1"
+    return [f"{key.split(':')[1].capitalize()} stopped work after an unexplained error ({key}). "
+            f"Acknowledge: `pwsh -NoProfile -File {ps_quote(str(script))} -Acknowledge {ps_quote(key)}`"
+            for key in sorted(delivered - acknowledged)]
+
+
 def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> list[str]:
     lines: list[str] = []
     approve_script = repo_root / "scripts" / "model-router" / "approve-roster.ps1"
@@ -710,6 +873,8 @@ def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> lis
             f"the {job} job is on its backup ({friendly_model_name(backup)}) because "
             f"{friendly_model_name(first)} has been underperforming. Decide: `{cmd}`"
         )
+    lines.extend(research_episodes(state_dir, repo_root)[1])
+    lines.extend(vendor_error_needs(state_dir, repo_root))
     return lines
 
 
@@ -785,12 +950,6 @@ def render_frontier_line(report: dict, frontier_models: dict) -> str:
     return f"{label}: not used"
 
 
-def _cap_message(message: str, limit: int = 1500) -> str:
-    if len(message) <= limit:
-        return message
-    return message[: limit - 1].rstrip() + "…"
-
-
 def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
                             repo_root: Path = REPO_ROOT,
                             frontier_path: Path = FRONTIER_MODELS_PATH) -> tuple[str, str]:
@@ -801,14 +960,18 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
     label = week_label(iso_year, iso_week)
     monday, sunday = week_bounds_et(iso_year, iso_week)
     header = f"**Model router - week of {format_week_range(monday, sunday)}**"
-    needs_you_text = render_needs_you(compute_needs_you_lines(state_dir, repo_root))
+    research_lines, research_needs = research_episodes(state_dir, repo_root)
+    required_needs = research_needs + vendor_error_needs(state_dir, repo_root)
+    base_needs = [line for line in compute_needs_you_lines(state_dir, repo_root) if line not in required_needs]
+    needs_you_text = render_needs_you(base_needs) if not required_needs else "\n".join(base_needs)
+    required = research_lines + ([render_needs_you(required_needs)] if required_needs else [])
 
     report = next(
         (r for r in reports if (r["iso_year"], r["iso_week"]) == (iso_year, iso_week)), None
     )
     if report is None:
         message = "\n".join([header, "No model usage was recorded last week.", needs_you_text])
-        return label, _cap_message(message)
+        return label, "\n".join([message, *required])
 
     frontier_models = json.loads(frontier_path.read_text(encoding="utf-8"))
     lines = [header, render_headline(report)]
@@ -816,7 +979,9 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
     top = top_models(report["work_by_model"])
     if top:
         most_used = " - ".join(
-            f"{friendly_model_name(m['model'])} {round(m['share_pct'])}%" for m in top
+            f"{friendly_model_name(m['model'])} "
+            + (f"{round(m['share_pct'])}%" if m['share_pct'] is not None else "n/a")
+            for m in top
         )
         lines.append(f"Most used: {most_used}")
     lines.append(render_frontier_line(report, frontier_models))
@@ -826,10 +991,13 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
     if "claude" in report["vendors"]:
         lines.append(render_claude_usage(report.get("claude_usage")))
         lines.append(CLAUDE_BLOCKED_NOTE)
+    if "claude" in report["vendors"] or report.get("routing", {}).get("workstations"):
+        lines.append(render_routing_line(report))
     lines.append(needs_you_text)
     html_path = state_dir / "cost-reports" / f"weekly-{label}.html"
     lines.append(f"Full report: `{html_path}`")
-    return label, _cap_message("\n".join(lines))
+    # The alert transport paginates the complete report, including action commands.
+    return label, "\n".join([*lines, *required])
 
 
 def main() -> None:
@@ -845,7 +1013,8 @@ def main() -> None:
 
     prices = load_prices(args.prices)
     usage_rows, rate_rows = load_usage_all_sessions(usage_path)
-    reports = build_weekly_reports(usage_rows, rate_rows, prices)
+    routing_rows = [row for row in load_jsonl(usage_path) if row.get("kind") == "routing"]
+    reports = build_weekly_reports(usage_rows, rate_rows, prices, routing_rows=routing_rows)
     claude_usage = load_claude_usage(state_dir)
     for report in reports:
         report["claude_usage"] = claude_usage

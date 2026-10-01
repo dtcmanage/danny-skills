@@ -54,6 +54,13 @@ try {
         date_et = $dateEt; calls = 1; tokens = [ordered]@{ input = 1000000; cache_write = 0; cache_read = 0; output = 1000000 }
     }
     ConvertTo-Json -InputObject $row -Compress | Set-Content -LiteralPath (Join-Path $temp 'usage-all-sessions.jsonl')
+    $routing = @{ kind='routing'; host='claude'; session_id='cost-report-test'; project='fixture'; workstation='workspace root'; date_et=$dateEt; delegations=4; routed=3; unrouted=1; by_category=@{ planning=3 }; by_job=@{ 'deep-thinker'=3 } }
+    ConvertTo-Json -InputObject $routing -Compress | Add-Content -LiteralPath (Join-Path $temp 'usage-all-sessions.jsonl')
+    @{ event='delivered'; key='vendor-error:codex:dm-fixture' } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl')
+    $failureDir = Join-Path $temp 'research-failures'
+    New-Item -ItemType Directory -Path $failureDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $failureDir 'planning@20260930T011400000-fixture.txt') -Value 'error: fixture'
+    ConvertTo-Json -InputObject @(@{ categories=@('planning') }) -Compress | Set-Content -LiteralPath (Join-Path $temp 'research-queue.json')
 
     $script = Join-Path $PSScriptRoot '../cost-report.ps1'
     $output1 = @(& pwsh -NoProfile -File $script -StateDir $temp) -join "`n"
@@ -62,6 +69,12 @@ try {
     $summary = Get-Content -LiteralPath (Join-Path $temp 'cost-reports/discord-summary.json') -Raw | ConvertFrom-Json
     Assert-True ($summary.key -match '^weekly-report:\d{4}-W\d{2}$') 'summary key names the reported week'
     Assert-True ($summary.message -match '\*\*Model router - week of') 'summary message carries the header line'
+    Assert-True ($summary.message -match 'Routing rule \(Claude sessions\).*75% of 4 delegations') 'DM includes routing compliance'
+    Assert-True ($summary.message -match 'Research: the planning check') 'DM includes open research episode'
+    Assert-True ($summary.message -match 'next overnight run') 'queued research includes next-run sentence'
+    Assert-True ($summary.message -match "-Acknowledge 'vendor-error:codex:dm-fixture'") 'DM includes complete acknowledge command'
+    $report = Get-Content -LiteralPath (Join-Path $temp ('cost-reports/weekly-' + $summary.key.Replace('weekly-report:','') + '.html')) -Raw
+    Assert-True ($report -match 'Routing compliance by workstation' -and $report -match 'Delegations by category and job') 'HTML contains both routing tables'
     Assert-True ($output1 -match 'weekly summary sent \(discord\)') 'first run reports a real send'
     $sentRequests = (Get-Content -LiteralPath $requestLog).Count
     Assert-True ($sentRequests -gt 0) 'transport actually received requests on first send'
@@ -74,6 +87,19 @@ try {
     Assert-True (@($log -split '\r?\n' | Where-Object { $_ -match [regex]::Escape($key) -and $_ -match 'delivered' }).Count -eq 1) 'exactly one delivered record for the week key'
     $requestsAfterSecondRun = (Get-Content -LiteralPath $requestLog).Count
     Assert-True ($requestsAfterSecondRun -eq $sentRequests) 'dedup skips the transport entirely on the second run'
+    @{ event='acknowledged'; key='vendor-error:codex:dm-fixture' } | ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl')
+    $output3 = @(& pwsh -NoProfile -File $script -StateDir $temp) -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0) 'acknowledged rerender exits 0'
+    $summary3 = Get-Content -LiteralPath (Join-Path $temp 'cost-reports/discord-summary.json') -Raw | ConvertFrom-Json
+    Assert-True ($summary3.message -notmatch 'vendor-error:codex:dm-fixture') 'acknowledged stop drops from DM'
+
+    $row.tokens.input = 0; $row.tokens.output = 0
+    ConvertTo-Json -InputObject $row -Compress | Set-Content -LiteralPath (Join-Path $temp 'usage-all-sessions.jsonl')
+    $zeroOutput = @(& pwsh -NoProfile -File $script -StateDir $temp) -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0) 'zero-cost weekly report exits 0'
+    $zeroSummary = Get-Content -LiteralPath (Join-Path $temp 'cost-reports/discord-summary.json') -Raw | ConvertFrom-Json
+    Assert-True ($zeroSummary.message -match 'Most used: Opus 5.5 n/a') 'zero-cost DM renders undefined share gracefully'
+    Assert-True ($zeroOutput -match 'weekly summary already sent' -and (Get-Content -LiteralPath $requestLog).Count -eq $sentRequests) 'zero-cost rerender preserves logical-week dedup'
 
     Write-Output "SUMMARY: $script:passed passed"
 } finally {

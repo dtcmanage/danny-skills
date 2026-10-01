@@ -241,9 +241,20 @@ function Send-RouterAlert {
             }
             $dm = Invoke-RouterAlertRequest -Transport $Transport -Deadline $Deadline -Request @{ kind = 'http'; method = 'POST'; uri = 'https://discord.com/api/v10/users/@me/channels'; headers = $headers; body = (ConvertTo-Json -InputObject @{ recipient_id = $owner } -Compress) }
             if (-not $dm.id) { throw 'DM channel unavailable' }
-            $discordMessage = if ($Message.Length -gt 1900) { $Message.Substring(0, 1900) } else { $Message }
-            $posted = Invoke-RouterAlertRequest -Transport $Transport -Deadline $Deadline -Request @{ kind = 'http'; method = 'POST'; uri = "https://discord.com/api/v10/channels/$($dm.id)/messages"; headers = $headers; body = (ConvertTo-Json -InputObject @{ content = $discordMessage; allowed_mentions = @{ parse = @() } } -Compress -Depth 5) }
-            if (-not $posted.id) { throw 'DM delivery unconfirmed' }
+            $offset = 0
+            while ($offset -lt $Message.Length) {
+                $length = [Math]::Min(1900, $Message.Length - $offset)
+                if ($offset + $length -lt $Message.Length) {
+                    # Keep ordinary command lines together; split oversized lines without loss.
+                    $newline = $Message.LastIndexOf("`n", $offset + $length - 1, $length)
+                    if ($newline -ge $offset) { $length = $newline - $offset + 1 }
+                    elseif ($Message[$offset + $length - 1] -eq "`r" -or [char]::IsHighSurrogate($Message[$offset + $length - 1])) { $length-- }
+                }
+                $discordMessage = $Message.Substring($offset, $length)
+                $posted = Invoke-RouterAlertRequest -Transport $Transport -Deadline $Deadline -Request @{ kind = 'http'; method = 'POST'; uri = "https://discord.com/api/v10/channels/$($dm.id)/messages"; headers = $headers; body = (ConvertTo-Json -InputObject @{ content = $discordMessage; allowed_mentions = @{ parse = @() } } -Compress -Depth 5) }
+                if (-not $posted.id) { throw 'DM delivery unconfirmed' }
+                $offset += $length
+            }
             $status.sent = $true; $status.channel = 'discord'
         } catch { $discordError = 'Discord delivery failed' }
         if (-not $status.sent) {

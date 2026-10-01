@@ -537,6 +537,25 @@ def test_previous_complete_iso_week_monday_and_midweek():
     assert cr.previous_complete_iso_week(date(2026, 10, 1)) == (2026, 39)
 
 
+@pytest.mark.parametrize("scenario", ["zero_tokens", "zero_prices", "normal_prices"])
+def test_summary_most_used_handles_zero_cost_rows(tmp_path, scenario):
+    prices = json.loads(json.dumps(SYNTH_PRICES))
+    if scenario == "zero_prices":
+        for model in prices["models"].values():
+            model["prices_usd_per_mtok"] = {key: 0 for key in model["prices_usd_per_mtok"]}
+    tokens = 0 if scenario == "zero_tokens" else 1_000_000
+    rows = [_row("claude", "claude-test-model", "2026-09-30", input=tokens),
+            _row("codex", "gpt-test-model", "2026-09-30", input=tokens)]
+    reports = cr.build_weekly_reports(rows, [], prices, date(2026, 10, 5))
+    _, message = cr.render_discord_summary(reports, date(2026, 10, 5), tmp_path)
+    expected = "50%" if scenario == "normal_prices" else "n/a"
+    assert f"Test Model {expected}" in message
+    assert f"gpt-test-model {expected}" in message
+    assert "Most used:" in message
+    if scenario != "normal_prices":
+        assert all(model["share_pct"] is None for model in reports[0]["work_by_model"])
+
+
 def test_format_week_range_same_and_crossing_month():
     assert cr.format_week_range(date(2026, 9, 21), date(2026, 9, 27)) == "Sep 21-27"
     assert cr.format_week_range(date(2026, 9, 28), date(2026, 10, 4)) == "Sep 28-Oct 4"
@@ -768,7 +787,7 @@ def test_needs_you_multiple_findings_produce_a_bullet_each(tmp_path):
     assert text.count("\n- ") == 2
 
 
-# --- End-to-end render_discord_summary: no-data week, length cap, JSON file ---
+# --- End-to-end render_discord_summary: no-data week, complete actions, JSON file ---
 
 def test_render_discord_summary_no_data_week_still_includes_needs_you(tmp_path):
     state = tmp_path / "state"
@@ -783,7 +802,7 @@ def test_render_discord_summary_no_data_week_still_includes_needs_you(tmp_path):
     assert "Full report:" not in message
 
 
-def test_render_discord_summary_message_capped_at_1500_chars(tmp_path):
+def test_render_discord_summary_preserves_all_roster_actions(tmp_path):
     state = tmp_path / "state"
     marks = [{"model": "gpt-6-sol", "job": job, "marked_at": "2026-09-28T00:00:00Z"} for job in
               ("fast", "coder", "deep-thinker", "writer")]
@@ -795,7 +814,9 @@ def test_render_discord_summary_message_capped_at_1500_chars(tmp_path):
     _write_json(padding_proposal, {"jobs": {"illustrator": {"first": "gpt-image-2", "backup": None}}})
     _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(padding_proposal)})
     label, message = cr.render_discord_summary([], date(2026, 9, 28), state)
-    assert len(message) <= 1500
+    assert message.splitlines()[0] == "**Model router - week of Sep 21-27**"
+    for action in cr.compute_needs_you_lines(state):
+        assert action in message
 
 
 def test_cost_report_main_writes_discord_summary_json(tmp_path):
@@ -825,3 +846,171 @@ def test_cost_report_main_writes_discord_summary_json(tmp_path):
     assert isinstance(summary["message"], str) and summary["message"]
     assert "Claude weekly usage: 67%" in summary["message"]
     assert "resets Oct 3, 2:00 PM ET" in (state / "cost-reports/latest.md").read_text(encoding="utf-8")
+
+# M11: routing rows are counts, never priced usage.
+def _routing(day="2026-09-30", station="Skill Creation", session="routing-test", routed=2, unrouted=1):
+    return {"kind": "routing", "host": "claude", "session_id": session, "project": "fixture",
+            "workstation": station, "date_et": day, "delegations": routed + unrouted,
+            "routed": routed, "unrouted": unrouted, "by_category": {"planning": routed},
+            "by_job": {"deep-thinker": routed}}
+
+
+def test_routing_week_split_rollup_and_cost_isolation(tmp_path):
+    usage = {"kind": "usage", "host": "claude", "session_id": "priced", "model": "claude-test-model",
+             "date_et": "2026-09-30", "calls": 1, "tokens": {"input": 1000000}}
+    rows = [_routing(), _routing("2026-10-01"), _routing(station="workspace root", unrouted=4),
+            _routing(station="other", unrouted=8), _routing("2026-10-05")]
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("\n".join(json.dumps(r) for r in [usage, *rows]), encoding="utf-8")
+    usage_rows, rates = cr.load_usage_all_sessions(ledger)
+    routing = [r for r in cr.load_jsonl(ledger) if r["kind"] == "routing"]
+    reports = cr.build_weekly_reports(usage_rows, rates, SYNTH_PRICES, date(2026, 10, 12), routing_rows=routing)
+    assert len(reports) == 2
+    report = reports[0]
+    assert report["vendors"]["claude"].api_equivalent_usd == 10
+    stations = {s["workstation"]: s for s in report["routing"]["workstations"]}
+    assert stations["Skill Creation"]["sessions"] == 1
+    assert stations["Skill Creation"]["delegations"] == 6
+    assert set(stations) == {"Skill Creation", "workspace root", "other"}
+    assert report["routing"]["distribution"] == [
+        {"axis": "Category", "name": "planning", "delegations": 8},
+        {"axis": "Job", "name": "deep-thinker", "delegations": 8}]
+    for rendered in [cr.render_markdown(report), cr.render_html(report)]:
+        assert "Routing compliance by workstation" in rendered
+        assert "Delegations by category and job" in rendered
+        assert "workspace root" in rendered and "other" in rendered
+    assert cr.render_html(report).count("<table>") == 2
+    _, message = cr.render_discord_summary(reports, date(2026, 10, 5), tmp_path)
+    assert "rule started Wed Sep 30" in message
+    assert "36% of 22 delegations" in message
+    assert "other (8)" in message
+    assert "rule started" not in cr.render_routing_line(reports[1])
+
+
+def test_routing_unknown_zero_and_html_escape(tmp_path):
+    report = cr.build_weekly_reports([], [], SYNTH_PRICES, date(2026, 10, 5),
+                                    routing_rows=[_routing(station="<fixture>", routed=0, unrouted=0)])[0]
+    assert "0 delegations" in cr.render_routing_line(report)
+    assert "&lt;fixture&gt;" in cr.render_html(report)
+    report["routing"] = cr.summarize_routing([])
+    assert "no routing data" in cr.render_routing_line(report)
+
+
+def _failure(state, category="planning", stamp="20260930T011400000", extra=""):
+    path = state / "research-failures" / f"{category}@{stamp}-pass-fixture.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("error: secret raw invocation\n" + extra, encoding="utf-8")
+    return path
+
+
+def test_research_episode_queued_then_stopped_and_recovered(tmp_path):
+    _failure(tmp_path)
+    _failure(tmp_path, stamp="20261001T011400000")
+    _write_json(tmp_path / "research-queue.json", [{"categories": ["planning"]}])
+    lines, needs = cr.research_episodes(tmp_path)
+    assert len(lines) == 1 and not needs
+    assert "Wed 1:14 AM ET" in lines[0] and "next overnight run" in lines[0]
+    assert "secret raw invocation" not in lines[0]
+    item = {"model": "model's-name", "trigger": "refresh", "categories": ["planning"], "reason": "rerun"}
+    _failure(tmp_path, extra="stopped_item: " + json.dumps(item))
+    lines, needs = cr.research_episodes(tmp_path)
+    assert "next overnight run" not in lines[0] and "Needs you" in lines[0]
+    assert "Add-RouterResearchQueueItem" in needs[0] and "'model''s-name'" in needs[0]
+    _write_json(tmp_path / "readings" / "planning.json",
+                {"researched_at": "2026-10-01T06:00:00Z", "readings": [{"results": [{"score": 1}]}]})
+    assert cr.research_episodes(tmp_path) == ([], [])
+    # A new failure after recovery starts a new episode.
+    _failure(tmp_path, stamp="20261002T011400000")
+    assert "Fri 1:14 AM ET" in cr.research_episodes(tmp_path)[0][0]
+
+
+def test_research_legacy_recovery_requires_committed_success_and_results(tmp_path):
+    _failure(tmp_path)
+    _write_json(tmp_path / "readings" / "planning.json", {"readings": [{"results": [{"score": 1}]}]})
+    path = tmp_path / "readings" / "passes.jsonl"
+    record = {"categories": ["planning"], "failed_categories": [], "completed_at": "2026-10-01T06:00:00Z"}
+    for flag in ("interrupted", "deferred"):
+        path.write_text(json.dumps({**record, flag: True}), encoding="utf-8")
+        assert cr.research_episodes(tmp_path)[0]
+    path.write_text(json.dumps(record), encoding="utf-8")
+    assert not cr.research_episodes(tmp_path)[0]
+    _write_json(tmp_path / "readings" / "planning.json", {"readings": []})
+    assert cr.research_episodes(tmp_path)[0]
+
+
+def test_unqueued_and_manual_unexplained_research(tmp_path):
+    _failure(tmp_path)
+    lines, needs = cr.research_episodes(tmp_path)
+    assert "next overnight run" not in lines[0] and not needs
+    path = tmp_path / "readings" / "passes.jsonl"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"pass_id": "pass-fixture", "categories": ["planning"],
+                               "interrupted": True, "diagnosis": "unexplained"}), encoding="utf-8")
+    lines, needs = cr.research_episodes(tmp_path)
+    assert "Needs you" in lines[0] and "Inspect" in needs[0]
+
+
+def test_reenqueued_research_supersedes_historical_unexplained_stop(tmp_path):
+    item = {"model": "gpt-test-model", "trigger": "refresh", "categories": ["planning"], "reason": "rerun"}
+    failure = _failure(tmp_path, extra="stopped_item: " + json.dumps(item))
+    passes = tmp_path / "readings" / "passes.jsonl"
+    passes.parent.mkdir()
+    passes.write_text(json.dumps({"pass_id": "pass-fixture", "categories": ["planning"],
+                                 "interrupted": True, "diagnosis": "unexplained"}), encoding="utf-8")
+    _write_json(tmp_path / "research-queue.json", [])
+    lines, needs = cr.research_episodes(tmp_path)
+    assert "Needs you" in lines[0] and "next overnight run" not in lines[0]
+    assert "Add-RouterResearchQueueItem" in needs[0]
+
+    # Mirror explicit re-enqueue: the queue gains the item and its stopped marker is removed.
+    _write_json(tmp_path / "research-queue.json", [item])
+    failure.write_text("error: fixture\n", encoding="utf-8")
+    lines, needs = cr.research_episodes(tmp_path)
+    assert "next overnight run" in lines[0] and "Needs you" not in lines[0]
+    assert needs == []
+
+
+@pytest.mark.parametrize("with_usage", [True, False])
+def test_summary_preserves_full_report_when_actions_exceed_1500_chars(tmp_path, with_usage):
+    events = [{"event": "delivered", "key": f"vendor-error:codex:piece-{i}"} for i in range(7)]
+    (tmp_path / "alert-log.jsonl").write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
+    _failure(tmp_path)
+    _write_json(tmp_path / "research-queue.json", [{"categories": ["planning"]}])
+    assert len(cr.render_needs_you(cr.vendor_error_needs(tmp_path))) > 1500
+    reports = [dict(_synth_report(week=(2026, 40)), routing=cr.summarize_routing([_routing()]))] if with_usage else []
+    _, message = cr.render_discord_summary(reports, date(2026, 10, 5), tmp_path)
+    assert message.splitlines()[0] == "**Model router - week of Sep 28-Oct 4**"
+    if with_usage:
+        assert cr.render_routing_line(reports[0]) in message
+        assert cr.render_headline(reports[0]) in message
+        assert f"Full report: `{tmp_path / 'cost-reports' / 'weekly-2026-W40.html'}`" in message
+    else:
+        assert "No model usage was recorded last week." in message
+    for line in cr.research_episodes(tmp_path)[0]:
+        assert line in message
+    assert cr.render_needs_you(cr.vendor_error_needs(tmp_path)) in message
+
+
+def test_vendor_errors_every_delivered_unacknowledged_key_and_complete_commands(tmp_path):
+    events = [{"event": "delivered", "key": f"vendor-error:codex:piece-{i}"} for i in range(5)]
+    events += [events[0], {"event": "acknowledged", "key": "vendor-error:codex:piece-0"},
+               {"event": "delivery_failed", "key": "vendor-error:claude:unsent"},
+               {"event": "delivered", "key": "research-failure:planning:2026-09-30"}]
+    (tmp_path / "alert-log.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\ninvalid", encoding="utf-8")
+    lines = cr.vendor_error_needs(tmp_path)
+    assert len(lines) == 4
+    _, message = cr.render_discord_summary([], date(2026, 10, 5), tmp_path)
+    for i in range(1, 5):
+        assert f"-Acknowledge 'vendor-error:codex:piece-{i}'`" in message
+    assert "piece-0" not in message and "unsent" not in message
+
+
+def test_summary_research_with_no_usage_and_missing_routing_with_sessions(tmp_path):
+    _failure(tmp_path)
+    _, message = cr.render_discord_summary([], date(2026, 10, 5), tmp_path)
+    assert "Research: the planning check" in message
+    usage = {"host": "claude", "session_id": "fixture", "model": "claude-test-model",
+             "date_et": "2026-09-30", "calls": 1, "tokens": {"input": 1000000}}
+    reports = cr.build_weekly_reports([usage], [], SYNTH_PRICES, date(2026, 10, 5))
+    _, message = cr.render_discord_summary(reports, date(2026, 10, 5), tmp_path)
+    assert "Routing rule (Claude sessions) (rule started Wed Sep 30): no routing data" in message
