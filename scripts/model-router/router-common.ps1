@@ -130,6 +130,15 @@ function Get-RouterModelGeneration {
     return $null
 }
 
+function Get-RouterModelTier {
+    # Fixed size order used where "stronger" must not depend on per-category research scores:
+    # protected work may only move up this order, and drift demotion steps up it.
+    param([string]$Model)
+    if ($Model -match '^claude-(haiku|sonnet|opus|fable)-') { return @{ haiku = 0; sonnet = 1; opus = 2; fable = 3 }[$Matches[1]] }
+    if ($Model -match '^gpt-[0-9.]+-(luna|terra|sol|astra)$') { return @{ luna = 0; terra = 1; sol = 2; astra = 3 }[$Matches[1]] }
+    return $null
+}
+
 function Get-RouterPriceKey {
     param([string]$Model, [object]$Models)
     if (-not $Model -or -not $Models) { return $null }

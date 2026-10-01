@@ -18,7 +18,7 @@ param($request)
 if ($request['kind'] -eq 'secret') { return 'fake-secret' }
 if ($request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '123456789' } } }
 if ($request['uri'] -like '*/users/@me/channels') { return [pscustomobject]@{ id = 'dm-channel' } }
-if ($request['uri'] -like '*/messages' -and $request['body'] -like '*roster-*') { Add-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-deliveries.log') -Value ([string]$request['body']) }
+if ($request['uri'] -like '*/messages' -and $request['body'] -like '*roster*') { Add-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-deliveries.log') -Value ([string]$request['body']) }
 return [pscustomobject]@{ id = 'fake-message' }
 '@
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeScript
@@ -50,7 +50,7 @@ try {
     Assert-True ($read.source -eq 'default' -and $read.validation_error -match 'ROSTER_FRONTIER') 'invalid state falls back with validation error'
     $deliveryLog = Join-Path $temp 'fake-deliveries.log'
     $invalidPick = Resolve-RouterModel -SkipModelCheck -Category complex-coding -Lane codex -Catalog $catalog
-    Assert-True ($invalidPick.validation_error -match 'ROSTER_FRONTIER' -and @($invalidPick.alerts | Where-Object { $_ -like 'router-roster-invalid:*' }).Count -eq 1) 'v1 result records invalid roster alert'
+    Assert-True ($invalidPick.validation_error -match 'ROSTER_FRONTIER' -and @($invalidPick.alerts | Where-Object { $_ -like 'router-roster-invalid:*' }).Count -eq 1) 'result records invalid roster alert'
     Assert-True (-not (Test-Path -LiteralPath $deliveryLog)) 'roster alert is not delivered without SendAlerts'
     $null = Resolve-RouterModel -SkipModelCheck -SendAlerts -Category complex-coding -Lane codex -Catalog $catalog
     Assert-True ((Test-Path -LiteralPath $deliveryLog) -and @(Get-Content -LiteralPath $deliveryLog).Count -eq 1) 'roster alert delivered once with SendAlerts'
@@ -132,14 +132,14 @@ try {
     }
     Remove-Item (Join-Path $temp 'roster.json')
     $pick = Resolve-RouterModel -SkipModelCheck -Category analysis -Catalog $catalog
-    Assert-True ($pick.lane -eq 'claude' -and $pick.model -eq 'claude-opus-5-5' -and $pick.roster_source -eq 'default') 'v1 no lane takes default roster lane'
+    Assert-True ($pick.lane -eq 'claude' -and $pick.model -eq 'claude-opus-5-5' -and $pick.roster_source -eq 'default') 'no lane takes default roster lane'
     $script:blocked = @('claude')
     $pick = Resolve-RouterModel -SkipModelCheck -Category analysis -Catalog $catalog
-    Assert-True ($pick.lane -eq 'codex' -and $pick.model -eq 'gpt-6.1-sol') 'v1 no lane takes backup lane when first vendor blocked'
+    Assert-True ($pick.lane -eq 'codex' -and $pick.model -eq 'gpt-6.1-sol') 'no lane takes backup lane when first vendor blocked'
     $script:blocked = @()
     $cli = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../resolve-model.ps1') -Category analysis -SkipModelCheck -Json 2>$null | ConvertFrom-Json
     Assert-True ($LASTEXITCODE -eq 0 -and $cli.category -eq 'analysis' -and $cli.lane -eq 'claude') 'CLI without Lane returns JSON pick'
-    foreach ($category in @('math','analysis')) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category $category -Lane codex -Catalog $catalog).model -eq (Resolve-RouterModel -SkipModelCheck -Category planning -Lane codex -Catalog $catalog).model) "v1 $category maps to planning" }
-    foreach ($case in @(@('codex','gpt-6.1-sol'),@('claude','claude-opus-5-5'))) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $case[0] -EscalateFrom $case[1] -Catalog $catalog).model -eq $case[1]) "v1 frontier ceiling $($case[0])" }
+    foreach ($category in @('math','analysis')) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category $category -Lane codex -Catalog $catalog).model -eq (Resolve-RouterModel -SkipModelCheck -Category planning -Lane codex -Catalog $catalog).model) "$category uses the same roster model as planning" }
+    foreach ($case in @(@('codex','gpt-6.1-sol'),@('claude','claude-opus-5-5'))) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $case[0] -EscalateFrom $case[1] -Catalog $catalog).model -eq $case[1]) "escalation stops at the non-frontier ladder ceiling for $($case[0])" }
     Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport; $env:DT_MODEL_ROUTER_STATE = $prior; Remove-Item -LiteralPath $temp -Recurse -Force }

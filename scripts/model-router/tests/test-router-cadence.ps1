@@ -121,6 +121,8 @@ try {
     Assert-True ($script:researchCalls.Count -eq 0) 'CheckOnly scans but runs no research'
     function Invoke-RouterModelCheck { throw 'lookup called model check' }
     $catalog = [pscustomobject]@{models=@([pscustomobject]@{slug='gpt-6.1-sol';visibility='list'})}
+    # Clear earlier cadence drift marks so the default roster's Codex pick is available for this lookup check.
+    '[]' | Set-Content -LiteralPath (Join-Path $temp 'drift-marks.json')
     $first = Resolve-RouterModel -Category complex-coding -Lane codex -Catalog $catalog
     $second = Resolve-RouterModel -Category complex-coding -Lane codex -Catalog $catalog -SkipModelCheck
     Assert-True ($first.model -and $second.model) 'resolver lookup never invokes model check with or without compatibility switch'

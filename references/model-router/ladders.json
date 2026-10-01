@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Bridge mode: until a full-coverage research table exists, first picks match pre-router tiers. Ladders run weakest to strongest; a frontier rung is reached only by escalation after the frontier-spend check, never as a first pick.",
+  "purpose": "Per-lane escalation ladders run weakest to strongest; this file is never a fallback roster.",
   "lanes": {
     "codex": {
       "ladder": [

@@ -106,8 +106,8 @@ $errors = @(Test-RouterTable -Table $table)
 if ($errors.Count) { throw "Invalid router table: $($errors -join '; ')" }
 
 if ($Show -or $Approve) {
-    $bridgeMap = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/bridge-map.json') -Raw | ConvertFrom-Json
-    $current = @(Get-RouterPicksSnapshot -TablePath $path)
+    $bridgeMap = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json
+    $current = @(Get-RouterPicksSnapshot)
     $rows = foreach ($pick in $current) {
         $old = @($table.approved_picks | Where-Object { $_.category -eq $pick.category -and $_.lane -eq $pick.lane -and [bool]$_.protected -eq [bool]$pick.protected } | Select-Object -First 1)
         $bridge = if ($pick.protected -and $pick.category -ne 'image-generation') { $bridgeMap.lanes.($pick.lane).protected } else { $bridgeMap.lanes.($pick.lane).categories.($pick.category) }

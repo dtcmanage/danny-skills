@@ -107,6 +107,8 @@ function Write-RouterAlertLogWithRetry {
 function Get-RouterAlertMessage {
     param([string]$Key)
     switch -Regex -CaseSensitive ($Key) {
+        '^router-roster-missing$' { return 'Model router roster is missing; it is using the default roster.' }
+        '^router-roster-invalid: (.+)$' { return "Model router roster is invalid ($($Matches[1])); it is using the default roster." }
         '^router-seed-table-in-use$' { return 'Model router has no research table yet, so routing matches the pre-router defaults until research runs.' }
         '^router-picks-changed-needs-approval$' { return 'Model router research changed its picks; review and approve before they take effect.' }
         '^new-model:(.+)$' { return "Model router found a new model: $($Matches[1]). Research is needed before it can be selected." }
