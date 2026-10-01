@@ -182,6 +182,7 @@
   "references/model-router/seed-table.json": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "references/model-router/table-schema.md": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "references/model-router/vendors.json": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/archive-v1-state.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/build-roster.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/run-router-cadence.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/vendor-limits.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
