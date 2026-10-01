@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../invoke-codex-process.ps1')
 . (Join-Path $PSScriptRoot '../wrap-prompt-envelope.ps1')
 . (Join-Path $PSScriptRoot 'send-router-alert.ps1')
+. (Join-Path $PSScriptRoot 'vendor-limits.ps1')
 
 # Lock protocol: the lock file carries a random owner token plus the owner's PID and process start time. The owner
 # refreshes updated_at before and after every research call. A lock is stale when its owner process is gone (or the PID
@@ -12,31 +13,14 @@ $ErrorActionPreference = 'Stop'
 # research call. Only the holder of the token deletes the lock.
 $script:RouterResearchCallTimeoutMs = 3600000
 $script:RouterLockStaleMinutes = 10 + ($script:RouterResearchCallTimeoutMs / 60000)
-# A research call that throws (process crash, timeout, transport error) is retried after each delay here; tests set it to zeros.
-if (-not (Get-Variable RouterResearchRetryDelaysSeconds -Scope Script -ErrorAction SilentlyContinue)) { $script:RouterResearchRetryDelaysSeconds = @(15, 45) }
+if (-not (Get-Variable RouterResearchSleep -Scope Script -ErrorAction SilentlyContinue)) { $script:RouterResearchSleep = { param($Milliseconds) Start-Sleep -Milliseconds $Milliseconds } }
 
 function Format-RouterCodexFailure {
     # Keeps the diagnosable part of a failed Codex run; a bare "failed" message left no way to tell a crash from a timeout.
     param([string]$Label, [object]$Result)
     $stderr = [string]$Result.stderr
     if ($stderr.Length -gt 2000) { $stderr = $stderr.Substring($stderr.Length - 2000) }
-    return "$Label (exit_code=$($Result.exit_code); timed_out=$($Result.timed_out); duration_ms=$($Result.duration_ms)). stderr tail: $stderr"
-}
-
-function Invoke-RouterWithRetry {
-    # Runs $Action; on a throw, reports the attempt, waits, runs $BeforeRetry, and tries again until the delays run out.
-    param([Parameter(Mandatory)][scriptblock]$Action, [scriptblock]$OnFailure, [scriptblock]$BeforeRetry)
-    $delays = @($script:RouterResearchRetryDelaysSeconds)
-    for ($attempt = 1; ; $attempt++) {
-        try { return (& $Action) }
-        catch {
-            # Hook output is discarded so it can never leak into the returned reply.
-            if ($OnFailure) { $null = & $OnFailure $_ $attempt ($delays.Count + 1) }
-            if ($attempt -gt $delays.Count) { throw }
-            if ([double]$delays[$attempt - 1] -gt 0) { Start-Sleep -Seconds ([double]$delays[$attempt - 1]) }
-            if ($BeforeRetry) { $null = & $BeforeRetry }
-        }
-    }
+    return "$Label (exit_code=$($Result.exit_code); timed_out=$($Result.timed_out); duration_ms=$($Result.duration_ms)). stderr tail:`n$stderr"
 }
 
 function Write-RouterResearchFailure {
@@ -139,19 +123,24 @@ function Get-RouterCategoryCallArguments {
     param([string]$Lane, [string]$OutPath)
     if (-not (Get-Command Resolve-RouterModel -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'resolve-model.ps1') }
     $pick = Resolve-RouterModel -Category deep-research -Lane $Lane -SkipModelCheck
-    if (-not $pick.model -or ($pick.PSObject.Properties['status'] -and $pick.status -eq 'wait')) { throw "Category research has no available $Lane model: $($pick.reason)" }
+    $script:RouterResearchCurrentModel = $pick.model
+    if (-not $pick.model -or ($pick.PSObject.Properties['status'] -and $pick.status -eq 'wait')) {
+        $error = [InvalidOperationException]::new("Category research has no available $Lane model: $($pick.reason)")
+        $error.Data['router_status'] = 'wait'
+        throw $error
+    }
     if ($Lane -eq 'codex') { return @('--ask-for-approval','never','exec','--ignore-user-config','-c','web_search="live"','--sandbox','read-only','--cd',$PSScriptRoot,'--model',$pick.model,'--output-last-message',$OutPath,'-') }
     return @('-p','--model',$pick.model,'--allowedTools','WebSearch,WebFetch','--output-format','json')
 }
 
 function Invoke-RouterCategoryCall {
-    param([string]$Category, [string]$Lane, [string]$Prompt)
+    param([string]$Category, [string]$Lane, [string]$Prompt, [int]$TimeoutMs = $script:RouterResearchCallTimeoutMs)
     if ((Get-Variable RouterResearchInvoker -Scope Script -ErrorAction SilentlyContinue) -and $script:RouterResearchInvoker) { return (& $script:RouterResearchInvoker $Category $Lane $Prompt) }
     if ($Lane -eq 'codex') {
         $codex = (Get-Command codex -ErrorAction Stop).Source
         $out = Join-Path $env:TEMP ('router-category-' + [guid]::NewGuid().ToString('N') + '.json')
         try {
-            $result = Invoke-CodexProcess -CodexPath $codex -Arguments (Get-RouterCategoryCallArguments -Lane codex -OutPath $out) -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $script:RouterResearchCallTimeoutMs
+            $result = Invoke-CodexProcess -CodexPath $codex -Arguments (Get-RouterCategoryCallArguments -Lane codex -OutPath $out) -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $TimeoutMs
             if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw (Format-RouterCodexFailure -Label 'Category research process failed or timed out' -Result $result) }
             return [IO.File]::ReadAllText($out)
         } finally { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
@@ -165,7 +154,7 @@ function Invoke-RouterCategoryCall {
         $output = $process.StandardOutput.ReadToEndAsync()
         $errors = $process.StandardError.ReadToEndAsync()
         $process.StandardInput.Write($Prompt); $process.StandardInput.Close()
-        if (-not $process.WaitForExit($script:RouterResearchCallTimeoutMs)) { $process.Kill($true); throw 'Category research timed out.' }
+        if (-not $process.WaitForExit($TimeoutMs)) { $process.Kill($true); throw 'Category research timed out.' }
         if ($process.ExitCode -ne 0) { throw ('Category research failed: ' + $errors.Result) }
         $response = $output.Result | ConvertFrom-Json -Depth 40
         if ($response.PSObject.Properties['result']) { return [string]$response.result }
@@ -213,14 +202,19 @@ function Invoke-RouterCategoryResearch {
     $readingsDir = Join-Path $state 'readings'
     $passId = [guid]::NewGuid().ToString('N')
     $stage = Join-Path $readingsDir ('.pass-' + $passId)
+    $failed = [Collections.Generic.List[string]]::new()
+    $notes = [Collections.Generic.List[string]]::new()
+    $record = [pscustomobject]@{ pass_id=$passId; trigger=$Trigger; categories=@($Categories); models=@($Models); started_at=$Now.ToString('o'); completed_at=$null; failed_categories=@(); notes=@(); attempts=@{}; transient_failures=@{}; research_failure_keys=@{}; interrupted=$false; deferred=$false; diagnosis=$null }
+    foreach ($category in $Categories) {
+        $record.attempts[$category] = [Collections.Generic.List[object]]::new()
+        $record.transient_failures[$category] = [Collections.Generic.List[string]]::new()
+    }
     try {
         New-Item -ItemType Directory -Path $readingsDir -Force | Out-Null
         Get-ChildItem -LiteralPath $readingsDir -Directory -Filter '.pass-*' | Remove-Item -Recurse -Force
         New-Item -ItemType Directory -Path $stage | Out-Null
         $sources = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/benchmark-sources.json') -Raw | ConvertFrom-Json -Depth 20
         $fixed = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/research-category-prompt.md') -Raw) + "`n`n" + (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/readings-schema.md') -Raw)
-        $failed = [Collections.Generic.List[string]]::new()
-        $notes = [Collections.Generic.List[string]]::new()
         foreach ($category in $Categories) {
             if (-not $sources.PSObject.Properties[$category] -or $category -cnotmatch '^[a-z-]+$') { throw "Unknown research category: $category" }
             $pending = @(@{ models = @($Models); benchmarks = @() })
@@ -234,22 +228,86 @@ function Invoke-RouterCategoryResearch {
                 [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action heartbeat)
                 $raw = ''
                 $returned = $false
+                $callStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
+                $unexplainedRetried = $false
                 try {
-                    # A thrown call is retried (transient Codex crashes happen); every failed attempt leaves a diagnosable file.
-                    $raw = Invoke-RouterWithRetry -Action { Invoke-RouterCategoryCall -Category $category -Lane $Lane -Prompt $prompt } -OnFailure {
-                        param($failure, $attempt, $attempts)
-                        Write-RouterResearchFailure -StateDir $state -FileName ($category + '@' + (Get-Date).ToString('yyyyMMddTHHmmssfff') + "-attempt$attempt.txt") -Detail "attempt $attempt of ${attempts}: call threw`nerror: $($failure.Exception.Message)"
-                    } -BeforeRetry { [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action heartbeat) }
+                    while ($true) {
+                        $attempt = [pscustomobject]@{ attempt=($record.attempts[$category].Count + 1); lane=$Lane; succeeded=$false }
+                        $record.attempts[$category].Add($attempt)
+                        $script:RouterResearchCurrentModel = ''
+                        try {
+                            $remaining = [Math]::Max(1, $script:RouterResearchCallTimeoutMs - (([datetimeoffset](& $script:RouterDiagnosisClock)) - $callStarted).TotalMilliseconds)
+                            $raw = Invoke-RouterCategoryCall -Category $category -Lane $Lane -Prompt $prompt -TimeoutMs ([int]$remaining)
+                            break
+                        } catch {
+                            $failure = $_
+                            $errorText = $failure.Exception.Message
+                            $at = [datetimeoffset](& $script:RouterDiagnosisClock)
+                            $et = [TimeZoneInfo]::ConvertTime($at, [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time'))
+                            if (-not $record.research_failure_keys.ContainsKey($category)) { $record.research_failure_keys[$category] = "research-failure:${category}:" + $et.ToString('yyyy-MM-dd') }
+                            $record.transient_failures[$category].Add(($errorText -split '\r?\n')[0])
+                            $failurePath = Join-Path $state ('research-failures/' + $category + '@' + $et.ToString('yyyyMMddTHHmmssfff') + "-$passId-attempt$($attempt.attempt).txt")
+                            Write-RouterResearchFailure -StateDir $state -FileName ([IO.Path]::GetFileName($failurePath)) -Detail "attempt $($attempt.attempt): call threw`nalert_key: $($record.research_failure_keys[$category])`nerror: $errorText"
+                            $dispatch = Resolve-RouterDispatchFailure -Vendor $Lane -ErrorText $errorText
+                            $diagnosis = $dispatch.verdict
+                            $refusal = Test-RouterLimitRefusal -Vendor $Lane -Text $errorText
+                            if ($refusal.refused -or $failure.Exception.Data['router_status'] -eq 'wait' -or ($dispatch.PSObject.Properties['status'] -and $dispatch.status -eq 'wait')) { $diagnosis = 'quota' }
+                            if ($diagnosis -eq 'offline') {
+                                $outageStart = $at
+                                do {
+                                    $remaining = $script:RouterResearchCallTimeoutMs - (([datetimeoffset](& $script:RouterDiagnosisClock)) - $callStarted).TotalMilliseconds
+                                    if ($remaining -le 0) { break }
+                                    $null = & $script:RouterResearchSleep ([int][Math]::Min(60000, $remaining))
+                                    [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action heartbeat)
+                                    if ((([datetimeoffset](& $script:RouterDiagnosisClock)) - $callStarted).TotalMilliseconds -ge $script:RouterResearchCallTimeoutMs) { break }
+                                    $dispatch = Resolve-RouterDispatchFailure -Vendor $Lane -ErrorText ''
+                                } while ($dispatch.verdict -eq 'offline')
+                                if ($dispatch.verdict -ne 'offline' -and (([datetimeoffset](& $script:RouterDiagnosisClock)) - $callStarted).TotalMilliseconds -lt $script:RouterResearchCallTimeoutMs) {
+                                    if ((([datetimeoffset](& $script:RouterDiagnosisClock)) - $outageStart).TotalMinutes -gt 5) {
+                                        $key = 'router-offline:' + [TimeZoneInfo]::ConvertTime($outageStart, [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')).ToString('yyyy-MM-dd HH:mm') + ' ET'
+                                        $null = Send-RouterAlert -Key $key -Message (Get-RouterAlertMessage -Key $key)
+                                    }
+                                    if ($dispatch.verdict -ne 'vendor_incident' -and $dispatch.verdict -ne 'quota') { continue }
+                                    $diagnosis = $dispatch.verdict
+                                }
+                            }
+                            if ($diagnosis -in @('quota','vendor_incident')) {
+                                if ($diagnosis -eq 'quota') {
+                                    if ($refusal.refused) {
+                                        $blockArgs = @{ Vendor=$Lane }
+                                        if ($refusal.reset_at_utc) { $blockArgs.ResetAtUtc = [datetimeoffset]$refusal.reset_at_utc }
+                                        $null = Add-RouterVendorBlock @blockArgs
+                                    }
+                                }
+                                $other = if ($Lane -eq 'codex') { 'claude' } else { 'codex' }
+                                if (-not (Get-RouterVendorBlocked -Vendor $other)) { $Lane = $other; continue }
+                                $failed.Add($category); $record.deferred = $true; $record.diagnosis = $diagnosis
+                                return $record
+                            }
+                            if ($diagnosis -eq 'unexplained' -and -not $unexplainedRetried) { $unexplainedRetried = $true; continue }
+                            $record.interrupted = $true; $record.diagnosis = $diagnosis
+                            if ($diagnosis -eq 'unexplained') {
+                                $key = "vendor-error:${Lane}:$passId"
+                                $message = Get-RouterAlertMessage -Key $key -Model $script:RouterResearchCurrentModel -Category $category -ErrorText $errorText -Checks $dispatch.checks -ArtifactPath $failurePath -PromptText $prompt
+                                $null = Send-RouterAlert -Key $key -Message $message
+                            }
+                            throw $failure
+                        }
+                    }
                     $returned = $true
                     $body = ([string]$raw).Trim()
                     if ($body -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $body = $Matches[1] }
                     $parsed = $body | ConvertFrom-Json -Depth 40
                     if (-not (Test-RouterReadings -Readings $parsed -Category $category -Models $request.models)) { throw 'Invalid category readings' }
+                    $attempt.succeeded = $true
                 } catch {
-                    # A call that still throws after its retries interrupts the pass (discarded, rerun later); an empty or
-                    # invalid reply only fails this category. Thrown attempts already wrote their own failure files.
-                    if ($i -eq 0 -and -not $returned) { throw }
-                    if ($returned) { Write-RouterResearchFailure -StateDir $state -FileName ($category + '@' + (Get-Date).ToString('yyyyMMddTHHmmssfff') + '.txt') -Detail ("error: $($_.Exception.Message)`n" + [string]$raw) }
+                    # Diagnosed stops interrupt the entire pass; invalid replies only fail this category.
+                    if (-not $returned) { $failed.Add($category); throw }
+                    $errorText = $_.Exception.Message
+                    $record.transient_failures[$category].Add(($errorText -split '\r?\n')[0])
+                    $et = [TimeZoneInfo]::ConvertTime(([datetimeoffset](& $script:RouterDiagnosisClock)), [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time'))
+                    if (-not $record.research_failure_keys.ContainsKey($category)) { $record.research_failure_keys[$category] = "research-failure:${category}:" + $et.ToString('yyyy-MM-dd') }
+                    Write-RouterResearchFailure -StateDir $state -FileName ($category + '@' + $et.ToString('yyyyMMddTHHmmssfff') + "-$passId.txt") -Detail ("alert_key: $($record.research_failure_keys[$category])`nerror: $errorText`n" + [string]$raw)
                     if ($i -gt 0) { $notes.Add("$category follow-up failed: $($_.Exception.Message)") }
                     else { $failed.Add($category) }
                     break
@@ -298,10 +356,22 @@ function Invoke-RouterCategoryResearch {
             $saved = [pscustomobject]@{ category=$category; sources_checked=@($incoming.sources_checked); readings=@($all.ToArray()) }
             [IO.File]::WriteAllText($target,(ConvertTo-Json -InputObject $saved -Depth 40),[Text.UTF8Encoding]::new($false))
         }
-        $record = [pscustomobject]@{ pass_id=$passId; trigger=$Trigger; categories=@($Categories); models=@($Models); started_at=$Now.ToString('o'); completed_at=(Get-Date).ToString('o'); failed_categories=@($failed.ToArray()); notes=@($notes.ToArray()) }
-        [IO.File]::AppendAllText((Join-Path $readingsDir 'passes.jsonl'),((ConvertTo-Json -InputObject $record -Compress -Depth 10) + "`n"),[Text.UTF8Encoding]::new($false))
         return $record
-    } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }; [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action release) }
+    } catch {
+        $record.interrupted = $true
+        if (-not $record.diagnosis) { $record.diagnosis = 'unexplained' }
+        throw
+    } finally {
+        try {
+            $record.completed_at = ([datetimeoffset](& $script:RouterDiagnosisClock)).ToString('o')
+            $record.failed_categories = @($failed.ToArray()); $record.notes = @($notes.ToArray())
+            New-Item -ItemType Directory -Path $readingsDir -Force | Out-Null
+            [IO.File]::AppendAllText((Join-Path $readingsDir 'passes.jsonl'),((ConvertTo-Json -InputObject $record -Compress -Depth 10) + "`n"),[Text.UTF8Encoding]::new($false))
+        } finally {
+            if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+            [void](Update-RouterLockOwned -Path $lock -Token $entry.token -Action release)
+        }
+    }
 }
 
 function Invoke-RouterResearch {
