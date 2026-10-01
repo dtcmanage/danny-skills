@@ -1,0 +1,14 @@
+{
+  "codex": {
+    "api_host": "api.openai.com",
+    "components_url": "https://status.openai.com/api/v2/components.json",
+    "incidents_url": "https://status.openai.com/api/v2/incidents/unresolved.json",
+    "components": ["Codex API", "CLI", "Responses"]
+  },
+  "claude": {
+    "api_host": "api.anthropic.com",
+    "components_url": "https://status.anthropic.com/api/v2/components.json",
+    "incidents_url": "https://status.anthropic.com/api/v2/incidents/unresolved.json",
+    "components": ["Claude API (api.anthropic.com)", "Claude Code"]
+  }
+}

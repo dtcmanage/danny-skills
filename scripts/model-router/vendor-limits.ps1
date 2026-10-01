@@ -9,6 +9,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 
+# Injectable diagnosis I/O; each call is bounded and tests replace all three seams.
+if (-not (Get-Variable RouterDiagnosisHttp -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:RouterDiagnosisHttp = { param([string]$Uri) Invoke-RestMethod -Uri $Uri -TimeoutSec 5 }
+}
+if (-not (Get-Variable RouterDiagnosisDns -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:RouterDiagnosisDns = { param([string]$ApiHost) @(Resolve-DnsName -Name $ApiHost -DnsOnly -QuickTimeout -ErrorAction Stop).Count -gt 0 }
+}
+if (-not (Get-Variable RouterDiagnosisClock -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:RouterDiagnosisClock = { [datetimeoffset]::UtcNow }
+}
+
 if (-not (Get-Variable -Name RouterClaudeUsageFetcher -Scope Script -ErrorAction SilentlyContinue)) {
     $script:RouterClaudeUsageFetcher = {
         param([string]$Token)
@@ -130,16 +141,26 @@ function Get-RouterCodexUsage {
 }
 
 function Add-RouterVendorBlock {
-    param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor, [datetimeoffset]$ResetAtUtc, [string]$Reason)
-    $now = [datetimeoffset]::UtcNow
+    param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor, [datetimeoffset]$ResetAtUtc, [string]$Reason,
+        [string]$Component, [AllowNull()][string]$IncidentId)
+    $now = [datetimeoffset](& $script:RouterDiagnosisClock)
     $source = if ($PSBoundParameters.ContainsKey('ResetAtUtc')) { 'refusal-reset' } else { 'recheck' }
     if ($source -eq 'recheck') { $ResetAtUtc = $now.AddHours(1) }
     $path = Join-Path (Get-RouterStateDir) 'vendor-blocks.json'
     $entries = @(Read-RouterJsonArray -Path $path | Where-Object {
-        $_.PSObject.Properties['vendor'] -and $_.PSObject.Properties['reset_at_utc'] -and
-        $_.vendor -ne $Vendor -and [datetimeoffset]$_.reset_at_utc -gt $now
+        $isIncident = $_.PSObject.Properties['reason'] -and $_.reason -eq 'vendor_incident'
+        $live = $isIncident -or ($_.PSObject.Properties['reset_at_utc'] -and [datetimeoffset]$_.reset_at_utc -gt $now)
+        $replace = $_.vendor -eq $Vendor -and $(if ($Reason -eq 'vendor_incident') {
+            $isIncident -and $_.component -ceq $Component
+        } else { -not $isIncident })
+        $live -and -not $replace
     })
-    $block = [pscustomobject]@{ vendor=$Vendor; blocked_at_utc=$now.ToString('o'); reset_at_utc=$ResetAtUtc.ToUniversalTime().ToString('o'); reason=$Reason; resume_after_source=$source }
+    $block = if ($Reason -eq 'vendor_incident') {
+        if (-not $Component) { throw 'INCIDENT_COMPONENT_REQUIRED' }
+        [pscustomobject]@{ vendor=$Vendor; blocked_at_utc=$now.ToString('o'); reason='vendor_incident'; component=$Component; incident_id=$IncidentId }
+    } else {
+        [pscustomobject]@{ vendor=$Vendor; blocked_at_utc=$now.ToString('o'); reset_at_utc=$ResetAtUtc.ToUniversalTime().ToString('o'); reason=$Reason; resume_after_source=$source }
+    }
     $entries += $block
     $temp = Join-Path (Split-Path -Parent $path) ('.vendor-blocks-' + [guid]::NewGuid().ToString('N') + '.tmp')
     try {
@@ -186,8 +207,9 @@ function Test-RouterLimitRefusal {
                     $text = '{0} {1} {2} {3}' -f $english.Groups[1].Value, $english.Groups[2].Value, $english.Groups[3].Value, ($english.Groups[4].Value -replace '\s+', ' ')
                     if ([datetime]::TryParse($text, $culture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$clock)) { $reset = ([datetimeoffset]$clock).ToUniversalTime().ToString('o') }
                 } elseif ([datetime]::TryParse(($english.Groups[4].Value -replace '\s+', ' '), $culture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$clock)) {
-                    $at = [datetime]::Today.Add($clock.TimeOfDay)
-                    if ($at -le [datetime]::Now) { $at = $at.AddDays(1) }
+                    $localNow = ([datetimeoffset](& $script:RouterDiagnosisClock)).LocalDateTime
+                    $at = $localNow.Date.Add($clock.TimeOfDay)
+                    if ($at -le $localNow) { $at = $at.AddDays(1) }
                     $reset = ([datetimeoffset]$at).ToUniversalTime().ToString('o')
                 }
             }
@@ -195,7 +217,7 @@ function Test-RouterLimitRefusal {
         $relative = [regex]::Match($errorText, '(?i)try again in\s+((?:\d+\s+(?:days?|hours?|minutes?)[,\s]*(?:and\s+)?)+)')
         if (-not $reset -and $relative.Success) {
             # Codex leaves out zero parts ("4 days 2 hours", "45 minutes"); sum whatever parts are present.
-            $at = [datetimeoffset]::UtcNow
+            $at = [datetimeoffset](& $script:RouterDiagnosisClock)
             foreach ($part in [regex]::Matches($relative.Groups[1].Value, '(?i)(\d+)\s+(day|hour|minute)')) {
                 $n = [double]$part.Groups[1].Value
                 switch ($part.Groups[2].Value.ToLowerInvariant()) { 'day' { $at = $at.AddDays($n) } 'hour' { $at = $at.AddHours($n) } 'minute' { $at = $at.AddMinutes($n) } }
@@ -244,14 +266,87 @@ function Get-RouterResumeAfter {
 
 function Get-RouterVendorBlocked {
     param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor)
-    $now = [datetimeoffset]::UtcNow
+    $now = [datetimeoffset](& $script:RouterDiagnosisClock)
     $path = Join-Path (Get-RouterStateDir) 'vendor-blocks.json'
     foreach ($entry in @(Read-RouterJsonArray -Path $path)) {
+        if ($entry.vendor -eq $Vendor -and $entry.PSObject.Properties['reason'] -and $entry.reason -eq 'vendor_incident') { return $true }
         if ($entry.PSObject.Properties['vendor'] -and $entry.PSObject.Properties['reset_at_utc'] -and
             $entry.vendor -eq $Vendor -and [datetimeoffset]$entry.reset_at_utc -gt $now) { return $true }
     }
     if ($Vendor -eq 'codex') { $usage = Get-RouterCodexUsage; return ($null -ne $usage -and $usage.used_percent -ge 95) }
     $usage = Get-RouterClaudeUsage; return ($null -ne $usage -and $usage.used_percent -ge 95)
+}
+
+function Resolve-RouterDispatchFailure {
+    param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$ErrorText)
+    $checks = [ordered]@{ quota=$false; http=$null; dns=$null; status=$null; cache_hit=$false }
+    $result = [pscustomobject]@{ verdict='unexplained'; detail=''; incident_id=$null; checks=$checks }
+    $checks.quota = (Test-RouterLimitRefusal -Vendor $Vendor -Text $ErrorText).refused
+    if ($checks.quota) { $result.verdict = 'quota'; $result.detail = 'Vendor limit refusal matched'; return $result }
+    try {
+        $configPath = Join-Path (Get-RouterStateDir) 'vendor-status.json'
+        if (-not (Test-Path -LiteralPath $configPath)) { $configPath = Join-Path $PSScriptRoot '../../references/model-router/vendor-status.json' }
+        $config = Read-RouterJsonObject -Path $configPath
+        $lane = $config.$Vendor
+        if (-not $lane.api_host -or -not $lane.components_url -or -not $lane.incidents_url -or -not @($lane.components).Count) { throw 'Incomplete vendor configuration' }
+    } catch { $result.detail = "Component lookup configuration failed: $($_.Exception.Message)"; $checks.status = 'lookup_failed'; return $result }
+    try { $checks.http = $null -ne (& $script:RouterDiagnosisHttp 'http://www.msftconnecttest.com/connecttest.txt') } catch { $checks.http = $false }
+    try { $checks.dns = [bool](& $script:RouterDiagnosisDns ([string]$lane.api_host)) } catch { $checks.dns = $false }
+    if (-not $checks.http -and -not $checks.dns) { $result.verdict = 'offline'; $result.detail = 'Connectivity HTTP probe and vendor API DNS lookup both failed'; return $result }
+    try {
+        $now = [datetimeoffset](& $script:RouterDiagnosisClock)
+        $cachePath = Join-Path (Get-RouterStateDir) 'vendor-status-cache.json'
+        $cache = @{}
+        try {
+            if (Test-Path -LiteralPath $cachePath) { $cache = Get-Content -LiteralPath $cachePath -Raw | ConvertFrom-Json -AsHashtable -DateKind String }
+        } catch { $cache = @{} }
+        $reading = $null
+        if ($cache.ContainsKey($Vendor)) {
+            try {
+                $age = ($now - [datetimeoffset]$cache[$Vendor].fetched_at).TotalSeconds
+                if ($age -ge 0 -and $age -lt 300 -and $cache[$Vendor].components_url -ceq $lane.components_url -and $cache[$Vendor].incidents_url -ceq $lane.incidents_url) {
+                    $reading = $cache[$Vendor]; $checks.cache_hit = $true
+                }
+            } catch { $reading = $null }
+        }
+        if ($null -eq $reading) {
+            $response = & $script:RouterDiagnosisHttp ([string]$lane.components_url)
+            $map = @{}
+            foreach ($component in $response.components) {
+                if (-not $component.name -or -not $component.id -or -not $component.status) { throw 'Malformed component response' }
+                if ($map.ContainsKey([string]$component.name)) { throw "Duplicate component name: $($component.name)" }
+                $map[[string]$component.name] = @{ id=[string]$component.id; status=[string]$component.status }
+            }
+            $reading = @{ fetched_at=$now.ToUniversalTime().ToString('o'); components=$map; components_url=$lane.components_url; incidents_url=$lane.incidents_url }
+            $cache[$Vendor] = $reading
+            Write-RouterJsonAtomic -Path $cachePath -Value $cache
+        }
+        # Recovery is component-specific, so quota and other incident siblings survive.
+        $blockPath = Join-Path (Get-RouterStateDir) 'vendor-blocks.json'
+        $blocks = @(Read-RouterJsonArray -Path $blockPath)
+        $remaining = @($blocks | Where-Object {
+            -not ($_.vendor -eq $Vendor -and $_.reason -eq 'vendor_incident' -and
+                $reading.components.ContainsKey([string]$_.component) -and $reading.components[$_.component].status -ceq 'operational')
+        })
+        if ($remaining.Count -ne $blocks.Count) { Write-RouterJsonAtomic -Path $blockPath -Value $remaining }
+        $missing = @($lane.components | Where-Object { -not $reading.components.ContainsKey([string]$_) })
+        if ($missing.Count) { throw "Named component not found: $($missing -join ', ')" }
+        $degraded = @($lane.components | Where-Object { $reading.components[$_].status -cne 'operational' })
+        if (-not $degraded.Count) { $checks.status = 'operational'; $result.detail = 'Named lane components are operational'; return $result }
+        $checks.status = 'non_operational'
+        $incidents = & $script:RouterDiagnosisHttp ([string]$lane.incidents_url)
+        $null = $incidents.incidents # Validate the unresolved endpoint shape even when empty.
+        foreach ($name in $degraded) {
+            $componentId = $reading.components[$name].id
+            $matched = @($incidents.incidents | Where-Object { @($_.components | Where-Object { $_.id -ceq $componentId }).Count } | Select-Object -First 1)
+            $incidentId = if ($matched.Count) { [string]$matched[0].id } else { $null }
+            $null = Add-RouterVendorBlock -Vendor $Vendor -Reason vendor_incident -Component $name -IncidentId $incidentId
+            if ($name -ceq $degraded[0]) { $result.incident_id = $incidentId }
+        }
+        $result.verdict = 'vendor_incident'; $result.detail = "Non-operational lane component: $($degraded -join ', ')"
+    } catch { $checks.status = 'lookup_failed'; $result.detail = "Component lookup failed: $($_.Exception.Message)" }
+    return $result
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
@@ -262,7 +357,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         $null = Add-RouterVendorBlock @recordArgs
     }
     $usage = if ($RouterLimitsCliVendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterClaudeUsage }
-    $block = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $RouterLimitsCliVendor -and [datetimeoffset]$_.reset_at_utc -gt [datetimeoffset]::UtcNow } | Select-Object -First 1)
+    $block = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $RouterLimitsCliVendor -and ($_.reason -eq 'vendor_incident' -or [datetimeoffset]$_.reset_at_utc -gt [datetimeoffset]::UtcNow) } | Select-Object -First 1)
     $blocked = ($block.Count -gt 0 -or ($null -ne $usage -and $usage.used_percent -ge 95))
     $result = [pscustomobject]@{ vendor=$RouterLimitsCliVendor; blocked=$blocked; reason=$(if ($block.Count) { $block[0].reason } elseif ($blocked) { if ($RouterLimitsCliVendor -eq 'claude') { 'Claude weekly usage at or above 95%' } else { 'Codex usage at or above 95%' } } else { $null }); used_percent=$(if ($null -ne $usage) { $usage.used_percent } else { $null }); resets_at_utc=$(if ($null -ne $usage) { $usage.resets_at_utc } else { $null }) }
     if ($RouterLimitsCliVendor -eq 'claude') { $result | Add-Member -NotePropertyName session_percent -NotePropertyValue $(if ($null -ne $usage) { $usage.session_percent } else { $null }) }
