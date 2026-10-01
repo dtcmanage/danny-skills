@@ -153,6 +153,111 @@ try {
     $twoPassProposal = if ($latest) { Read-RouterJsonObject -Path ([string]$latest.proposal) } else { $null }
     Assert-True ($twoPass.ran.Count -eq 2 -and $twoPassProposal -and $twoPassProposal.PSObject.Properties['pass_id']) 'two covered cadence passes propose change after approved seed'
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $twoPassState 'research-queue.json') | Where-Object trigger -eq 'followup').Count -eq 1) 'first conclusive confirmation still queues followup after proposal'
+    # Isolated M08 drain cases: each writes the same record shape as M07, including throws after persistence.
+    $drainState = Join-Path $temp 'drain-rules'; [IO.Directory]::CreateDirectory($drainState) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $drainState
+    $drainReadings = Join-Path $drainState 'readings'; [IO.Directory]::CreateDirectory($drainReadings) | Out-Null
+    $failureDir = Join-Path $drainState 'research-failures'; [IO.Directory]::CreateDirectory($failureDir) | Out-Null
+    $script:drainCalls = [Collections.Generic.List[string]]::new()
+    function Build-RouterRosterProposal { param($Now) $script:proposalCalls++ }
+    function Invoke-RouterCategoryResearch {
+        param($Categories,$Models,$NewModel,$Trigger,$Lane,$Now)
+        $mode = [string]$Models[0]
+        $script:drainCalls.Add($mode)
+        if ($mode -eq 'no-record') { throw 'failed before recording' }
+        $record = [pscustomobject]@{pass_id=[guid]::NewGuid().ToString('N');trigger=$Trigger;categories=$Categories;models=$Models;deferred=($mode -like 'deferred-*');interrupted=($mode -like 'interrupted-*');diagnosis=($mode -replace '^(deferred|interrupted)-','')}
+        if ($record.diagnosis -eq 'unexplained') {
+            Write-RouterResearchFailure -StateDir $drainState -FileName "mechanical@20260929T010000000-$($record.pass_id).txt" -Detail 'error: synthetic stop'
+        }
+        [IO.File]::AppendAllText((Join-Path $drainReadings 'passes.jsonl'),(($record | ConvertTo-Json -Compress -Depth 10) + "`n"))
+        if ($record.interrupted) { throw "synthetic $mode" }
+        return $record
+    }
+    $modes = @('no-record','deferred-quota','deferred-vendor_incident','interrupted-quota','interrupted-offline','interrupted-unexplained','success')
+    foreach ($mode in $modes) {
+        [void](Add-RouterResearchQueueItem -Model $mode -Trigger refresh -Categories @('mechanical') -DueAt $now -Reason "operator's rerun; literal text")
+    }
+    $proposalBefore = $script:proposalCalls
+    $drainOutput = @(Invoke-RouterCadence -Now $now 3>&1)
+    $warnings = @($drainOutput | Where-Object { $_ -is [Management.Automation.WarningRecord] })
+    $drain = $drainOutput[-1]
+    $remainingModels = @(Read-RouterJsonArray -Path (Join-Path $drainState 'research-queue.json') | ForEach-Object model)
+    Assert-True ($script:drainCalls.Count -eq $modes.Count -and $script:drainCalls[-1] -eq 'success') 'one failing item never stops the remaining drain'
+    Assert-True ($warnings.Count -eq 4 -and ($warnings -join ' ') -match 'no-record' -and ($warnings -join ' ') -match 'interrupted-unexplained') 'drain logs each thrown item'
+    foreach ($mode in @('no-record','deferred-quota','deferred-vendor_incident','interrupted-quota','interrupted-offline')) {
+        Assert-True ($remainingModels -contains $mode) "$mode stays queued"
+    }
+    Assert-True ($remainingModels -notcontains 'interrupted-unexplained' -and $remainingModels -notcontains 'success' -and $drain.ran.Count -eq 2) 'unexplained stop and successful written record consume their items'
+    Assert-True ($script:proposalCalls -eq $proposalBefore + 1) 'stopped and deferred research never builds proposals'
+    Assert-True ($drain.needs_you.Count -eq 1 -and $drain.needs_you[0] -match 'Add-RouterResearchQueueItem') 'unexplained stop adds Needs-you re-enqueue command'
+    $failure = @(Get-ChildItem -LiteralPath $failureDir -File)[0]
+    Assert-True ((Get-Content -LiteralPath $failure.FullName -Raw).Contains($drain.needs_you[0])) 'Needs-you command persists with the research failure'
+    [void](Add-RouterResearchQueueItem -Model 'interrupted-unexplained' -Trigger refresh -Categories @('mechanical') -DueAt $now.AddDays(1) -Reason 'stale-reading' -Automatic)
+    Assert-True (@(Read-RouterJsonArray -Path (Join-Path $drainState 'research-queue.json') | Where-Object model -eq 'interrupted-unexplained').Count -eq 0) 'automatic stale refresh cannot recreate stopped item'
+    # Execute the actual command and verify it recreates the consumed item, preserving quoted text.
+    $command = ($drain.needs_you[0] -split 'Re-enqueue: ',2)[1]
+    [void](Invoke-Expression $command)
+    $reenqueued = @(Read-RouterJsonArray -Path (Join-Path $drainState 'research-queue.json') | Where-Object model -eq 'interrupted-unexplained')
+    Assert-True ($reenqueued.Count -eq 1 -and $reenqueued[0].trigger -eq 'refresh' -and $reenqueued[0].categories[0] -eq 'mechanical' -and $reenqueued[0].reason -eq "operator's rerun; literal text") 'copy-paste command recreates exact queue inputs with safe quoting'
+    Assert-True (@(Get-RouterStoppedResearchFiles -Model 'interrupted-unexplained' -Categories @('mechanical')).Count -eq 0) 'operator command clears persistent stop and restores dispatch eligibility'
+
+    # Prune only older-than-30-day failures with a later successful reading in that category.
+    $env:DT_MODEL_ROUTER_STATE = $drainState
+    $pruneNow = [datetime]'2026-10-01T05:00:00Z'
+    $pruneFiles = @{
+        'mechanical@20260801T010000000-old.txt' = $false
+        'mechanical@20260802T010000000-old.txt' = $false
+        'mechanical@20260701T010000000.txt' = $false
+        'planning@20260701T010000000.txt' = $true
+        'math@20260701T010000000.txt' = $false
+        'mechanical@20260920T010000000-recent.txt' = $true
+        'mechanical@20260901T010000000-boundary.txt' = $true
+        'planning@20260801T010000000-unresolved.txt' = $true
+        'routine-coding@20260801T010000000-prior.txt' = $true
+        'complex-coding@20260801T010000000-equal.txt' = $true
+        'deep-research@20260801T010000000-empty.txt' = $true
+    }
+    foreach ($name in $pruneFiles.Keys) { Set-Content -LiteralPath (Join-Path $failureDir $name) -Value 'failure' }
+    foreach ($case in @(@('mechanical','2026-08-03T05:00:00Z'),@('routine-coding','2026-07-31T05:00:00Z'),@('complex-coding','2026-08-01T05:00:00Z'),@('deep-research','2026-09-25T05:00:00Z'))) {
+        $results = if ($case[0] -eq 'deep-research') { @() } else { @([pscustomobject]@{model='gpt-6.1-sol';score=80}) }
+        Write-RouterJsonAtomic -Path (Join-Path $drainReadings ($case[0] + '.json')) -Value ([pscustomobject]@{category=$case[0];researched_at=$case[1];readings=@([pscustomobject]@{date='2026-07-01';results=$results})})
+    }
+    Write-RouterJsonAtomic -Path (Join-Path $drainReadings 'math.json') -Value ([pscustomobject]@{category='math';readings=@([pscustomobject]@{date='2026-06-01';results=@([pscustomobject]@{model='gpt-6.1-sol';score=80})})})
+    $legacyRecovery = [pscustomobject]@{pass_id='legacy-recovery';categories=@('math');failed_categories=@();completed_at='2026-09-01T05:00:00Z';interrupted=$false;deferred=$false}
+    [IO.File]::AppendAllText((Join-Path $drainReadings 'passes.jsonl'), (($legacyRecovery | ConvertTo-Json -Compress) + "`n"))
+    # The check-only cadence also performs maintenance without dispatching research.
+    function Invoke-RouterModelCheck { param([switch]$Force,$Now) return [pscustomobject]@{new_models=@()} }
+    function Add-RouterCadenceRefreshes { param($Now) return 0 }
+    $pruned = Invoke-RouterCadence -Now $pruneNow -CheckOnly
+    foreach ($name in $pruneFiles.Keys) {
+        Assert-True ((Test-Path -LiteralPath (Join-Path $failureDir $name)) -eq $pruneFiles[$name]) "pruning keep/delete: $name"
+    }
+    Assert-True ($pruned.ran.Count -eq 0) 'failure pruning dispatches no research in check-only mode'
+    # Reviewer reproduction: the same stale model on consecutive overnight runs.
+    . (Join-Path $PSScriptRoot '../run-router-cadence.ps1')
+    $episodeState = Join-Path $temp 'stopped-episode'; [IO.Directory]::CreateDirectory($episodeState) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $episodeState
+    $script:cadenceClock = [datetimeoffset]'2026-08-01T05:00:00Z'
+    $script:RouterDiagnosisClock = { $script:cadenceClock }
+    function Invoke-RouterModelCheck { param([switch]$Force,$Now) return [pscustomobject]@{new_models=@()} }
+    function Get-RouterStaleReadingModels { param($Months,$Now) return @('gpt-6.1-sol') }
+    function Get-RouterCodexUsage { return $null }
+    function Resolve-RouterDispatchFailure { param($Vendor,$ErrorText) return [pscustomobject]@{verdict='unexplained';checks=@{http=$true;dns=$true;status='operational'}} }
+    function Send-RouterAlert { param($Key,$Message) }
+    $script:episodeCalls = 0
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:episodeCalls++; throw 'reviewer unexplained failure' }
+    $nightOne = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -WarningAction SilentlyContinue
+    Assert-True ($script:episodeCalls -eq 2 -and $nightOne.ran.Count -eq 1 -and $nightOne.pending -eq 0) 'stale refresh unexplained stop is consumed after exactly two calls'
+    $script:cadenceClock = $script:cadenceClock.AddDays(1)
+    $nightTwo = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -WarningAction SilentlyContinue
+    Assert-True ($script:episodeCalls -eq 2 -and $nightTwo.ran.Count -eq 0 -and $nightTwo.pending -eq 0) 'next overnight stale refresh makes zero additional dispatches'
+    $script:cadenceClock = $script:cadenceClock.AddDays(1)
+    & {
+        function Get-Date { return $script:cadenceClock.LocalDateTime }
+        [void](Invoke-Expression (($nightOne.needs_you[0] -split 'Re-enqueue: ',2)[1]))
+    }
+    $nightThree = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -WarningAction SilentlyContinue
+    Assert-True ($script:episodeCalls -eq 4 -and $nightThree.ran.Count -eq 1) 'generated operator command restores actual research dispatch'
     Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState

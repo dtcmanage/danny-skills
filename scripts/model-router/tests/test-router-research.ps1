@@ -223,6 +223,50 @@ try {
     $claudeArgs = @(Get-RouterCategoryCallArguments -Lane claude -OutPath '')
     $claudeModel = $claudeArgs[[array]::IndexOf($claudeArgs,'--model') + 1]
     Assert-True ($claudeArgs -contains '--model' -and $claudeModel -like 'claude-*' -and $frontier -notcontains $claudeModel) 'claude category research pins an explicit non-frontier model'
+    # Reviewer wait reproduction: both deep-thinker roster models drifting, vendors unblocked.
+    $originalCall = (Get-Command Invoke-RouterCategoryCall).ScriptBlock
+    $entry = (Read-RouterRoster).roster.jobs.'deep-thinker'
+    Write-RouterJsonAtomic -Path (Join-Path $temp 'drift-marks.json') -Value @(@($entry.first,$entry.backup) | ForEach-Object { [pscustomobject]@{model=$_;job='deep-thinker'} })
+    Remove-Item (Join-Path $temp 'vendor-blocks.json') -ErrorAction SilentlyContinue
+    $script:waitCalls = [Collections.Generic.List[object]]::new()
+    $script:expireWait = $false
+    function Invoke-RouterCategoryCall {
+        param($Category,$Lane,$Prompt,$TimeoutMs)
+        $script:waitCalls.Add([pscustomobject]@{lane=$Lane;timeout=$TimeoutMs})
+        if ($script:expireWait) { $script:testClock = $script:testClock.AddHours(2) }
+        $null = Get-RouterCategoryCallArguments -Lane $Lane -OutPath 'unused'
+        throw 'FAIL: drifting fixture unexpectedly allowed dispatch'
+    }
+    $bounded = Invoke-RouterCategoryResearch -Categories mechanical -Models gpt-6.1-sol -Now $script:testClock.LocalDateTime
+    Assert-True ($bounded.deferred -and $script:waitCalls.Count -eq 2 -and $script:waitCalls[0].lane -eq 'codex' -and $script:waitCalls[1].lane -eq 'claude') 'both unblocked drifting lanes defer after one try per lane'
+    $script:waitCalls.Clear(); $script:expireWait = $true
+    $expired = Invoke-RouterCategoryResearch -Categories mechanical -Models gpt-6.1-sol -Now $script:testClock.LocalDateTime
+    $written = Get-Content (Join-Path $temp 'readings/passes.jsonl') | Select-Object -Last 1 | ConvertFrom-Json
+    Assert-True ($expired.deferred -and $written.deferred -and $script:waitCalls.Count -eq 1 -and $script:waitCalls[0].timeout -eq 3600000) 'exhausted wait ceiling writes deferred record without another call'
+    Set-Item function:Invoke-RouterCategoryCall -Value $originalCall
+    Remove-Item (Join-Path $temp 'drift-marks.json')
+    # Episode survives multiple ET dates and closes on committed research of an old benchmark.
+    $episodeState = Join-Path $temp 'episode'; [IO.Directory]::CreateDirectory($episodeState) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $episodeState
+    $script:testClock = [datetimeoffset]'2026-08-01T05:00:00Z'
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) $error = [InvalidOperationException]::new('resolver wait'); $error.Data['router_status']='wait'; throw $error }
+    $firstFailure = Invoke-RouterCategoryResearch -Categories mechanical -Models gpt-6.1-sol
+    $script:testClock = $script:testClock.AddDays(1)
+    $secondFailure = Invoke-RouterCategoryResearch -Categories mechanical -Models gpt-6.1-sol
+    Assert-True ($firstFailure.research_failure_keys.mechanical -eq 'research-failure:mechanical:2026-08-01' -and $secondFailure.research_failure_keys.mechanical -eq $firstFailure.research_failure_keys.mechanical) 'consecutive unresolved dates retain episode first ET date'
+    $script:testClock = $script:testClock.AddDays(1)
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) Fixture $category 'gpt-6.1-sol' '2026-07-01' | ConvertTo-Json -Depth 20 }
+    $recovery = Invoke-RouterCategoryResearch -Categories mechanical -Models gpt-6.1-sol
+    $saved = Read-RouterJsonObject -Path (Join-Path $episodeState 'readings/mechanical.json')
+    Assert-True (-not $recovery.interrupted -and $saved.readings[0].date -eq '2026-07-01' -and ([datetimeoffset]$saved.researched_at) -eq $script:testClock) 'recovery provenance records August research rather than July benchmark'
+    $script:testClock = $script:testClock.AddDays(1)
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) return 'invalid reply' }
+    $nextFailure = Invoke-RouterCategoryResearch -Categories mechanical -Models gpt-6.1-sol
+    Assert-True ($nextFailure.research_failure_keys.mechanical -eq 'research-failure:mechanical:2026-08-04') 'invalid reply after recovery starts new episode key'
+    $script:testClock = $script:testClock.AddDays(1)
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) $error = [InvalidOperationException]::new('resolver wait'); $error.Data['router_status']='wait'; throw $error }
+    $continuedFailure = Invoke-RouterCategoryResearch -Categories mechanical -Models gpt-6.1-sol
+    Assert-True ($continuedFailure.research_failure_keys.mechanical -eq $nextFailure.research_failure_keys.mechanical) 'thrown attempt reuses unresolved invalid-reply episode'
     Write-Output "SUMMARY: PASS ($script:passed checks)"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorAlerts; $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorSessions
