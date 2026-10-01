@@ -206,6 +206,30 @@ try {
     $null = Add-RouterVendorBlock -Vendor claude -Reason 'refusal wins'
     Assert-True ((Get-RouterVendorBlocked -Vendor claude)) 'Claude refusal still blocks at 67 percent'
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
+    # Resume selection uses only fixture state, usage cache and session logs.
+    Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json') -ErrorAction SilentlyContinue
+    $usage.used_percent = 96
+    $usage.observed_at_utc = [datetimeoffset]::UtcNow.ToString('o')
+    $usage.resets_at_utc = [datetimeoffset]::UtcNow.AddHours(2).ToString('o')
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    $later = [datetimeoffset]::UtcNow.AddHours(4)
+    $null = Add-RouterVendorBlock -Vendor claude -ResetAtUtc $later -Reason 'refusal'
+    $resume = Get-RouterResumeAfter -Vendors claude
+    Assert-True ($resume.resume_after_utc -eq $later.ToString('o') -and $resume.resume_after_source -eq 'refusal-reset') 'later refusal reset wins over usage reset'
+    $null = Add-RouterVendorBlock -Vendor claude -ResetAtUtc ([datetimeoffset]::UtcNow.AddMinutes(20)) -Reason 'refusal'
+    $resume = Get-RouterResumeAfter -Vendors claude
+    Assert-True ($resume.resume_after_utc -eq $usage.resets_at_utc -and $resume.resume_after_source -eq 'usage-reset') 'later usage reset wins over refusal reset'
+    $usage.used_percent = 94.9
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    $block = Add-RouterVendorBlock -Vendor claude -Reason 'refusal'
+    $resume = Get-RouterResumeAfter -Vendors claude
+    Assert-True ($resume.resume_after_source -eq 'recheck' -and $resume.resume_after_utc -eq $block.reset_at_utc -and $resume.resume_after_et.StartsWith('recheck after ')) 'no-reset refusal reports exact one-hour recheck'
+    $null = Add-RouterVendorBlock -Vendor codex -ResetAtUtc $later -Reason 'refusal'
+    $resume = Get-RouterResumeAfter -Vendors codex,claude
+    Assert-True ($resume.resume_after_utc -eq $block.reset_at_utc -and $resume.resume_after_source -eq 'recheck') 'minimum vendor reset retains its constraint source'
+    Assert-True ((Format-RouterResumeAfterEt -AtUtc '2026-07-01T18:00:00Z' -Source usage-reset) -ceq 'resume after Wed 2026-07-01 2:00 PM ET') 'EDT rendering uses Eastern time zone'
+    Assert-True ((Format-RouterResumeAfterEt -AtUtc '2026-01-01T19:00:00Z' -Source refusal-reset) -ceq 'resume after Thu 2026-01-01 2:00 PM ET') 'EST rendering uses Eastern time zone'
     Write-Output "SUMMARY: $script:passed passed"
 } finally { $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials; Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState

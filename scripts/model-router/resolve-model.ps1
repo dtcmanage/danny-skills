@@ -6,6 +6,9 @@ param(
     [Alias('Catalog')][object]$RouterResolveCliCatalog,
     [Alias('SkipModelCheck')][switch]$RouterResolveCliSkipModelCheck,
     [Alias('SendAlerts')][switch]$RouterResolveCliSendAlerts,
+    [Alias('AfterRefusal')][ValidateSet('codex','claude')][string]$RouterResolveCliAfterRefusal,
+    [Alias('RefusalText')][string]$RouterResolveCliRefusalText,
+    [Alias('ResetAtUtc')][datetimeoffset]$RouterResolveCliResetAtUtc,
     [Alias('Json')][switch]$RouterResolveCliJson
 )
 Set-StrictMode -Version Latest
@@ -68,6 +71,7 @@ function Resolve-RouterRosterPick {
     $entry = $Read.roster.jobs.$job
     $first = [pscustomobject]@{ model=$entry.first; vendor=$entry.first_vendor; effort=$entry.first_effort }
     $backup = if ($null -ne $entry.backup) { [pscustomobject]@{ model=$entry.backup; vendor=$entry.backup_vendor; effort=$entry.backup_effort } } else { $null }
+    $quotaWait = $false
     $chosen = $first
     $other = $backup
     $reason = "roster job $job first choice"
@@ -107,7 +111,7 @@ function Resolve-RouterRosterPick {
         if (Get-RouterVendorBlocked -Vendor $chosen.vendor) {
             $blockedVendor = $chosen.vendor
             if (-not $Lane -and $other -and -not (Get-RouterVendorBlocked -Vendor $other.vendor)) { $chosen = $other; $reason = "Backup used: $blockedVendor at its usage limit." }
-            else { $chosen = $null; $reason = "Wait: $blockedVendor at its usage limit; no available model for $job." }
+            else { $chosen = $null; $quotaWait = $true; $reason = "Wait: $blockedVendor at its usage limit; no available model for $job." }
         }
     }
     if ($chosen -and $chosen.vendor -eq 'codex' -and $Category -ne 'image-generation' -and $null -ne $localCatalog -and -not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
@@ -119,6 +123,13 @@ function Resolve-RouterRosterPick {
     }
     $model = if ($chosen) { $chosen.model } else { $null }
     $result = [pscustomobject]@{ model=$model; agent_alias=$null; effort=$(if ($chosen) { $chosen.effort } else { $null }); category=$Category; lane=$null; protected=$IsProtected; reason=$reason; table_source=$null; table_date=$null; validation_error=$Read.validation_error; alerts=@($alerts.ToArray()); ranked=[object[]]@($model | Where-Object { $_ }) }
+    $resume = if ($quotaWait) {
+        $vendors = @($first, $backup | Where-Object { $null -ne $_ -and (-not $Lane -or $_.vendor -eq $Lane) } | ForEach-Object { $_.vendor })
+        Get-RouterResumeAfter -Vendors $vendors
+    } else { [pscustomobject]@{ resume_after_utc=$null; resume_after_source=$null; resume_after_et=$null } }
+    foreach ($name in @('resume_after_utc','resume_after_source','resume_after_et')) {
+        $result | Add-Member -NotePropertyName $name -NotePropertyValue $resume.$name
+    }
     return (Complete-RouterResult -Result $result -Job $job -RosterSource $Read.source)
 }
 
@@ -131,10 +142,25 @@ function Resolve-RouterModel {
         [object]$Catalog,
         [switch]$SkipModelCheck,
         [switch]$SendAlerts,
-        [switch]$ChatToStderr
+        [switch]$ChatToStderr,
+        [ValidateSet('codex','claude')][string]$AfterRefusal,
+        [string]$RefusalText,
+        [datetimeoffset]$ResetAtUtc
     )
+    $recorded = $null
+    if ($AfterRefusal) {
+        if ($Lane -eq $AfterRefusal) { throw 'AFTER_REFUSAL_LANE_CONFLICT: omit -Lane or choose the other vendor after a refusal.' }
+        $blockArgs = @{ Vendor=$AfterRefusal; Reason='refusal' }
+        if ($PSBoundParameters.ContainsKey('ResetAtUtc')) { $blockArgs.ResetAtUtc = $ResetAtUtc }
+        elseif ($RefusalText) {
+            $refusal = Test-RouterLimitRefusal -Vendor $AfterRefusal -Text $RefusalText
+            if ($refusal.reset_at_utc) { $blockArgs.ResetAtUtc = [datetimeoffset]$refusal.reset_at_utc }
+        }
+        $recorded = Add-RouterVendorBlock @blockArgs
+    }
     $rosterRead = Read-RouterRoster
     $result = Resolve-RouterRosterPick -Read $rosterRead -Category $Category -Lane $Lane -IsProtected ([bool]$Protected -or $Category -eq 'long-form-writing') -EscalateFrom $EscalateFrom -Catalog $Catalog
+    $result | Add-Member -NotePropertyName vendor_block_recorded -NotePropertyValue $recorded
     if ($rosterRead.source -eq 'default') {
         $alert = if (Test-Path -LiteralPath (Join-Path (Get-RouterStateDir) 'roster.json')) {
             $errorText = if ($rosterRead.validation_error) { $rosterRead.validation_error } else { 'ROSTER_NOT_APPROVED: roster is not approved' }
@@ -162,6 +188,9 @@ function Get-RouterPicksSnapshot {
 if ($MyInvocation.InvocationName -ne '.') {
     $resolveArgs = @{ Category = $RouterResolveCliCategory; Protected = $RouterResolveCliProtected; EscalateFrom = $RouterResolveCliEscalateFrom; Catalog = $RouterResolveCliCatalog; SkipModelCheck = $RouterResolveCliSkipModelCheck; SendAlerts = $RouterResolveCliSendAlerts; ChatToStderr = $RouterResolveCliJson }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliLane')) { $resolveArgs.Lane = $RouterResolveCliLane }
+    if ($PSBoundParameters.ContainsKey('RouterResolveCliAfterRefusal')) { $resolveArgs.AfterRefusal = $RouterResolveCliAfterRefusal }
+    if ($PSBoundParameters.ContainsKey('RouterResolveCliRefusalText')) { $resolveArgs.RefusalText = $RouterResolveCliRefusalText }
+    if ($PSBoundParameters.ContainsKey('RouterResolveCliResetAtUtc')) { $resolveArgs.ResetAtUtc = $RouterResolveCliResetAtUtc }
     $result = Resolve-RouterModel @resolveArgs
     if ($RouterResolveCliJson) { $result | ConvertTo-Json -Depth 12 -Compress } else { $result }
 }

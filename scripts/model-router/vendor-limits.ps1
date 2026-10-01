@@ -132,13 +132,14 @@ function Get-RouterCodexUsage {
 function Add-RouterVendorBlock {
     param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor, [datetimeoffset]$ResetAtUtc, [string]$Reason)
     $now = [datetimeoffset]::UtcNow
-    if (-not $PSBoundParameters.ContainsKey('ResetAtUtc')) { $ResetAtUtc = $now.AddHours(1) }
+    $source = if ($PSBoundParameters.ContainsKey('ResetAtUtc')) { 'refusal-reset' } else { 'recheck' }
+    if ($source -eq 'recheck') { $ResetAtUtc = $now.AddHours(1) }
     $path = Join-Path (Get-RouterStateDir) 'vendor-blocks.json'
     $entries = @(Read-RouterJsonArray -Path $path | Where-Object {
         $_.PSObject.Properties['vendor'] -and $_.PSObject.Properties['reset_at_utc'] -and
         $_.vendor -ne $Vendor -and [datetimeoffset]$_.reset_at_utc -gt $now
     })
-    $block = [pscustomobject]@{ vendor=$Vendor; blocked_at_utc=$now.ToString('o'); reset_at_utc=$ResetAtUtc.ToUniversalTime().ToString('o'); reason=$Reason }
+    $block = [pscustomobject]@{ vendor=$Vendor; blocked_at_utc=$now.ToString('o'); reset_at_utc=$ResetAtUtc.ToUniversalTime().ToString('o'); reason=$Reason; resume_after_source=$source }
     $entries += $block
     $temp = Join-Path (Split-Path -Parent $path) ('.vendor-blocks-' + [guid]::NewGuid().ToString('N') + '.tmp')
     try {
@@ -203,6 +204,42 @@ function Test-RouterLimitRefusal {
         }
     }
     return [pscustomobject]@{ refused=[bool]$refused; reset_at_utc=$reset }
+}
+
+function Format-RouterResumeAfterEt {
+    param([Parameter(Mandatory)][datetimeoffset]$AtUtc, [Parameter(Mandatory)][string]$Source)
+    $et = [TimeZoneInfo]::ConvertTime($AtUtc, [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time'))
+    $prefix = if ($Source -eq 'recheck') { 'recheck after' } else { 'resume after' }
+    return "$prefix $($et.ToString('ddd yyyy-MM-dd h:mm tt', [Globalization.CultureInfo]::InvariantCulture)) ET"
+}
+
+function Get-RouterResumeAfter {
+    param([Parameter(Mandatory)][string[]]$Vendors)
+    $now = [datetimeoffset]::UtcNow
+    $blocks = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json'))
+    $times = foreach ($vendor in @($Vendors | Select-Object -Unique)) {
+        $at = $null; $source = $null
+        $usage = if ($vendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterClaudeUsage }
+        if ($null -ne $usage -and $usage.used_percent -ge 95 -and [datetimeoffset]$usage.resets_at_utc -gt $now) {
+            $at = [datetimeoffset]$usage.resets_at_utc; $source = 'usage-reset'
+        }
+        foreach ($block in $blocks) {
+            if (-not $block.PSObject.Properties['vendor'] -or -not $block.PSObject.Properties['reset_at_utc'] -or $block.vendor -ne $vendor) { continue }
+            $reset = [datetimeoffset]$block.reset_at_utc
+            if ($reset -le $now -or ($null -ne $at -and $reset -lt $at)) { continue }
+            $at = $reset
+            $source = if ($block.PSObject.Properties['resume_after_source']) { $block.resume_after_source }
+                elseif ($block.PSObject.Properties['blocked_at_utc'] -and ($reset - [datetimeoffset]$block.blocked_at_utc).TotalSeconds -eq 3600) { 'recheck' }
+                else { 'refusal-reset' }
+        }
+        if ($null -ne $at) { [pscustomobject]@{ at=$at; source=$source } }
+    }
+    $first = @($times | Sort-Object at | Select-Object -First 1)
+    return [pscustomobject]@{
+        resume_after_utc=$(if ($first.Count) { $first[0].at.ToUniversalTime().ToString('o') } else { $null })
+        resume_after_source=$(if ($first.Count) { $first[0].source } else { $null })
+        resume_after_et=$(if ($first.Count) { Format-RouterResumeAfterEt -AtUtc $first[0].at -Source $first[0].source } else { $null })
+    }
 }
 
 function Get-RouterVendorBlocked {

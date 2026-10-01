@@ -94,6 +94,41 @@ try {
     $b = Resolve-RouterModel -Category routine-coding -Catalog $catalog | ConvertTo-Json -Depth 12 -Compress
     Assert-True ($a -ceq $b) 'identical input produces identical JSON'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $temp 'alert-log.jsonl'))) 'alerts are not delivered without SendAlerts'
+    # Restore real limit functions for fixture-backed integration and CLI tests.
+    . (Join-Path $PSScriptRoot '../vendor-limits.ps1')
+    $cachePath = Join-Path $temp 'claude-usage.json'
+    Write-RouterJsonAtomic -Path $cachePath -Value ([pscustomobject]@{ used_percent=0; resets_at_utc=[datetimeoffset]::UtcNow.AddDays(1).ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o') })
+    $blockPath = Join-Path $temp 'vendor-blocks.json'
+    $codexReset = [datetimeoffset]::UtcNow.AddHours(4)
+    $null = Add-RouterVendorBlock -Vendor codex -ResetAtUtc $codexReset -Reason 'refusal'
+    $claudeBlock = Add-RouterVendorBlock -Vendor claude -Reason 'refusal'
+    $pick = Resolve-RouterModel -Category routine-coding -Catalog $catalog
+    Assert-True ($pick.status -eq 'wait' -and $pick.resume_after_utc -eq $claudeBlock.reset_at_utc -and $pick.resume_after_source -eq 'recheck') 'both blocked wait takes earlier vendor constraint'
+    $pick = Resolve-RouterModel -Category routine-coding -Lane codex -Catalog $catalog
+    Assert-True ($pick.resume_after_utc -eq $codexReset.ToString('o') -and $pick.resume_after_source -eq 'refusal-reset') 'constrained wait ignores other vendor time'
+    Write-RouterJsonAtomic -Path (Join-Path $temp 'drift-marks.json') -Value @([pscustomobject]@{ model='gpt-6.1-sol'; job='coder' })
+    $pick = Resolve-RouterModel -Category routine-coding -Lane codex -Catalog $catalog
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.resume_after_utc -and $null -eq $pick.resume_after_source -and $null -eq $pick.resume_after_et) 'drift wait has null resume fields even with active block'
+    Remove-Item -LiteralPath (Join-Path $temp 'drift-marks.json'),$blockPath
+    $pick = Resolve-RouterModel -Category routine-coding -Lane codex -Catalog $noSol
+    Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.resume_after_utc -and $null -eq $pick.resume_after_source -and $null -eq $pick.resume_after_et) 'unselectable wait has null resume fields'
+    $message = "ERROR: You've hit your usage limit. Try again at $($codexReset.ToString('o'))."
+    $pick = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../resolve-model.ps1') -Category routine-coding -AfterRefusal codex -RefusalText $message -Json | ConvertFrom-Json
+    $blocks = @(Read-RouterJsonArray -Path $blockPath)
+    Assert-True ($blocks.Count -eq 1 -and $blocks[0].vendor -eq 'codex' -and $blocks[0].reason -eq 'refusal' -and [datetimeoffset]$blocks[0].reset_at_utc -eq $codexReset) 'AfterRefusal CLI persists parsed Codex reset'
+    Assert-True ($pick.status -eq 'ok' -and $pick.vendor -eq 'claude' -and $pick.vendor_block_recorded.vendor -eq 'codex' -and $pick.vendor_block_recorded.reset_at_utc -eq $blocks[0].reset_at_utc) 'same refusal CLI call returns Claude backup and recorded block'
+    Assert-True ($pick.PSObject.Properties['resume_after_utc'] -and $null -eq $pick.resume_after_utc -and $null -eq $pick.resume_after_source -and $null -eq $pick.resume_after_et) 'non-wait has stable null resume keys'
+    foreach ($text in @('', 'ordinary output')) {
+        $pick = Resolve-RouterModel -Category routine-coding -AfterRefusal codex -RefusalText $text -Catalog $catalog
+        $blocks = @(Read-RouterJsonArray -Path $blockPath)
+        Assert-True ($blocks[0].resume_after_source -eq 'recheck' -and ([datetimeoffset]$blocks[0].reset_at_utc - [datetimeoffset]$blocks[0].blocked_at_utc).TotalSeconds -eq 3600) "AfterRefusal without parsable reset writes one-hour block ($text)"
+    }
+    $pick = Resolve-RouterModel -Category routine-coding -AfterRefusal codex -ResetAtUtc $codexReset -Catalog $catalog
+    Assert-True ($pick.vendor_block_recorded.reset_at_utc -eq $codexReset.ToString('o')) 'AfterRefusal accepts explicit reset'
+    $before = [IO.File]::ReadAllText($blockPath)
+    $failed = $false
+    try { $null = Resolve-RouterModel -Category routine-coding -AfterRefusal codex -Lane codex -Catalog $catalog } catch { $failed = $_.Exception.Message -like 'AFTER_REFUSAL_LANE_CONFLICT:*' }
+    Assert-True ($failed -and [IO.File]::ReadAllText($blockPath) -ceq $before) 'same-vendor lane refusal errors before writing'
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
     Exit-RouterTestCodexHome $fixtureCodexHome
