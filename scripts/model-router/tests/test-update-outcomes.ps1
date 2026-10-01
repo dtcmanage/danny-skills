@@ -125,7 +125,7 @@ try {
     $latest = Read-RouterJsonObject -Path (Join-Path $sequenceState 'roster-proposals/latest.json')
     $allSwapped = Read-RouterJsonObject -Path ([string]$latest.proposal)
     Assert-True ($allSwapped.jobs.coder.first -eq 'claude-opus-5-5' -and $allSwapped.jobs.writer.first -eq 'gpt-6.1-sol' -and ((Get-Content -LiteralPath $latest.report -Raw) -match 'coder.*drift threshold met') -and ((Get-Content -LiteralPath $latest.report -Raw) -match 'writer.*drift threshold met')) 'writer drift proposal retains coder swap and reports both'
-    $approval = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster -DeclineDrift -Job coder 2>&1) -join "`n"
+    $approval = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -DeclineDrift -Job coder 2>&1) -join "`n"
     $marksBefore = @(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json'))
     $proposalBefore = (Get-FileHash -LiteralPath (Join-Path $sequenceState 'roster-proposals/latest.json') -Algorithm SHA256).Hash
     $afterDecline = Run-Update

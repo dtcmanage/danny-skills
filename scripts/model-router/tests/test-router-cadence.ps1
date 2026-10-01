@@ -131,8 +131,8 @@ try {
     Assert-True (@($tasks | Where-Object { $_.name -eq 'ModelRouterCadenceCheck' -and $_.schedule -eq 'daily 13:00 ET' -and $_.action -match 'run-hidden\.vbs' -and $_.action -match '-CheckOnly' }).Count -eq 1) 'check schedule uses hidden shim'
     $twoPassState = Join-Path $temp 'two-pass'; [IO.Directory]::CreateDirectory($twoPassState) | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $twoPassState
-    & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster -Seed | Out-Null
-    & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster -Approve | Out-Null
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Seed | Out-Null
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Approve | Out-Null
     $twoPassReadings = Join-Path $twoPassState 'readings'; [IO.Directory]::CreateDirectory($twoPassReadings) | Out-Null
     $rows = @(@('bench-one','bench-two') | ForEach-Object { [pscustomobject]@{benchmark=$_;version='1';harness='h';effort_class='medium';independent=$true;results=@([pscustomobject]@{model='claude-opus-5-5';score=80;margin=1},[pscustomobject]@{model='gpt-6.1-sol';score=50;margin=1})} })
     [pscustomobject]@{category='complex-coding';readings=$rows} | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $twoPassReadings 'complex-coding.json')

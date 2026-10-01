@@ -675,7 +675,9 @@ def test_needs_you_pending_proposal_when_never_approved(tmp_path):
     lines = cr.compute_needs_you_lines(state)
     assert len(lines) == 1
     assert "a proposed change to the model list is waiting for your OK" in lines[0]
-    assert "-Roster -Show" in lines[0]
+    assert "approve-roster.ps1" in lines[0]
+    assert "-Show" in lines[0]
+    assert "-Roster" not in lines[0]
 
 
 def test_needs_you_nothing_when_proposal_fully_approved(tmp_path):

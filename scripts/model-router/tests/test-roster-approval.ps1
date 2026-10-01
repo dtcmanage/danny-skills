@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $script:passed = 0
 function Assert-True([bool]$Condition,[string]$Name) { if (-not $Condition) { throw "FAIL: $Name" }; $script:passed++; Write-Output "PASS: $Name" }
 function Read-Seed { Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30 }
-function Invoke-Approval { param([string[]]$Options) & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') -Roster @Options 2>&1 }
+function Invoke-Approval { param([string[]]$Options) & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') @Options 2>&1 }
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $priorSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
@@ -27,13 +27,15 @@ try {
     $show = @(Invoke-Approval -Options @('-Show')) -join "`n"
     Assert-True ((Test-Path -LiteralPath $latest.proposal) -and $show -match '\| Job \| Current \| Proposed' -and $show -match 'Current roster') 'seed writes proposal and show prints report'
     $before = Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog
-    Assert-True ($before.roster_source -eq 'default') 'seed alone keeps v1 path'
+    Assert-True ($before.roster_source -eq 'default') 'seed alone uses default roster'
     $null = Invoke-Approval -Options @('-Approve')
     $approved = Get-Content -LiteralPath (Join-Path $temp 'roster.json') -Raw | ConvertFrom-Json
     $next = Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog
     Assert-True ($approved.approved -eq $true -and $approved.approved_at -and $next.roster_source -eq 'state') 'approve writes roster and next resolver call uses state'
     $null = Invoke-Approval -Options @('-Revoke')
-    Assert-True ((Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog).roster_source -eq 'default') 'revoke returns to v1 path'
+    Assert-True (Test-Path -LiteralPath (Join-Path $temp 'roster.json')) 'revoke preserves roster file'
+    $revoked = Get-Content -LiteralPath (Join-Path $temp 'roster.json') -Raw | ConvertFrom-Json
+    Assert-True ($revoked.approved -eq $false -and (Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog).roster_source -eq 'default') 'revoke clears approval and resolver uses default roster'
     $proposal = Read-Seed
     $proposal.jobs.fast.backup = 'claude-sonnet-5'
     $proposal.jobs.writer.backup = 'gpt-5.6-sol'
@@ -70,8 +72,8 @@ try {
     $marks = @(Read-RouterJsonArray -Path (Join-Path $temp 'drift-marks.json'))
     Assert-True ($marks.Count -eq 1 -and $marks[0].job -eq 'fast') 'approval clears marks only for changed first choice'
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $temp 'drift-declines.json')).Count -eq 0) 'approval clears decline when first choice changes'
-    foreach ($options in @(@('-Seed'),@('-DeclineDrift','-Job','coder'),@('-Roster','-Show','-Job','coder'))) {
-        $output = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-router-table.ps1') @options 2>&1) -join "`n"
+    foreach ($options in @(@('-Show','-Job','coder'),@('-Show','-Jobs','coder'))) {
+        $output = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') @options 2>&1) -join "`n"
         Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'require') "ignored switch rejected: $($options -join ' ')"
     }
     Write-Output "PASS: $script:passed tests"

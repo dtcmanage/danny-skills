@@ -636,7 +636,7 @@ def _live_roster_jobs(state_dir: Path) -> dict:
 
 
 def compute_pending_roster_proposal(state_dir: Path) -> bool:
-    """Mirrors approve-router-table.ps1 -Roster: a proposal file's own `approved` field is
+    """Mirrors approve-roster.ps1: a proposal file's own `approved` field is
     never mutated by -Approve (only <state>/roster.json is), so pending-ness is decided by
     comparing the proposal's job picks against the live, approved roster -- covering a
     partial -Jobs approval, where only some jobs match."""
@@ -666,7 +666,7 @@ def compute_pending_roster_proposal(state_dir: Path) -> bool:
 
 def compute_active_drift_marks(state_dir: Path) -> list[dict]:
     """Active drift marks: entries in drift-marks.json not matched by a drift-declines.json
-    entry for the same job/model (approve-router-table.ps1 -DeclineDrift normally removes the
+    entry for the same job/model (approve-roster.ps1 -DeclineDrift normally removes the
     mark outright; the decline-list cross-check is a defensive extra)."""
     try:
         marks = _load_json_object(state_dir / "drift-marks.json")
@@ -694,9 +694,9 @@ def compute_active_drift_marks(state_dir: Path) -> list[dict]:
 
 def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> list[str]:
     lines: list[str] = []
-    approve_script = repo_root / "scripts" / "model-router" / "approve-router-table.ps1"
+    approve_script = repo_root / "scripts" / "model-router" / "approve-roster.ps1"
     if compute_pending_roster_proposal(state_dir):
-        cmd = f'pwsh -NoProfile -File "{approve_script}" -Roster -Show'
+        cmd = f'pwsh -NoProfile -File "{approve_script}" -Show'
         lines.append(f"a proposed change to the model list is waiting for your OK. Review it: `{cmd}`")
     jobs = _live_roster_jobs(state_dir)
     for mark in compute_active_drift_marks(state_dir):
@@ -705,7 +705,7 @@ def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> lis
         backup = (jobs.get(job) or {}).get("backup")
         if not backup:
             continue
-        cmd = f'pwsh -NoProfile -File "{approve_script}" -Roster -DeclineDrift -Job {job}'
+        cmd = f'pwsh -NoProfile -File "{approve_script}" -DeclineDrift -Job {job}'
         lines.append(
             f"the {job} job is on its backup ({friendly_model_name(backup)}) because "
             f"{friendly_model_name(first)} has been underperforming. Decide: `{cmd}`"

@@ -190,7 +190,7 @@ function Build-RouterRosterProposal {
     $alertMessage = "Model list change proposed: $($first.job) $($first.from) -> $($first.to). Report: $reportPath"
     if ($overCap) {
         $jobs = @($conflicts | ForEach-Object job | Sort-Object -Unique) -join ','
-        $alertMessage += " Over the 5-model cap; choose which of these jobs to change: $jobs. Approve your pick with approve-router-table.ps1 -Roster -Approve -Jobs <job,...> (the full list exceeds the cap)."
+        $alertMessage += " Over the 5-model cap; choose which of these jobs to change: $jobs. Approve your pick with approve-roster.ps1 -Approve -Jobs <job,...> (the full list exceeds the cap)."
     }
     Send-RouterAlerts -Alerts @([pscustomobject]@{key="roster-proposal:$hash";message=$alertMessage}) | Out-Null
     return [pscustomobject]@{changed=$true;pass_id=$passId;changes=@($changes);proposal=$jsonPath;report=$reportPath;over_cap=$overCap;conflicts=$conflicts;validation_errors=$errors}
