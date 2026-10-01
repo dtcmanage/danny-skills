@@ -1,4 +1,4 @@
-param([Alias('Key')][string]$RouterAlertCliKey, [Alias('Message')][string]$RouterAlertCliMessage, [Alias('Severity')][ValidateSet('info','warn')][string]$RouterAlertCliSeverity = 'warn', [Alias('Json')][switch]$RouterAlertCliJson)
+param([Alias('Acknowledge')][string]$RouterAlertCliAcknowledge, [Alias('Key')][string]$RouterAlertCliKey, [Alias('Message')][string]$RouterAlertCliMessage, [Alias('Severity')][ValidateSet('info','warn')][string]$RouterAlertCliSeverity = 'warn', [Alias('Json')][switch]$RouterAlertCliJson)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
@@ -104,8 +104,31 @@ function Write-RouterAlertLogWithRetry {
     }
 }
 
+# Acknowledgement uses the delivery mutex so concurrent log appends stay serialized.
+function Acknowledge-RouterAlert {
+    param([Parameter(Mandatory)][string]$Key)
+    $mutex = [System.Threading.Mutex]::new($false, 'Local\DtModelRouterAlert')
+    $owned = $false
+    try {
+        try { $owned = $mutex.WaitOne(5000) }
+        catch [System.Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) { throw 'Alert log is busy' }
+        $state = Get-RouterStateDir
+        [IO.Directory]::CreateDirectory($state) | Out-Null
+        Write-RouterAlertLogWithRetry -Path (Join-Path $state 'alert-log.jsonl') -Record @{ event='acknowledged'; key=$Key; at=(Get-Date).ToString('o') }
+        return [pscustomobject]@{ key=$Key; acknowledged=$true }
+    } finally {
+        if ($owned) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
 function Get-RouterAlertMessage {
-    param([string]$Key)
+    param(
+        [string]$Key, [string]$Model, [string]$Category,
+        [string]$ErrorText, [object]$Checks, [string]$ArtifactPath,
+        [string]$PromptText, [string]$InvocationText, [switch]$ErrorEchoesInput
+    )
     switch -Regex -CaseSensitive ($Key) {
         '^router-wait: (.+)$' { return "Model router: every eligible vendor is at its limit. $($Matches[1])." }
         '^router-roster-missing$' { return 'Model router roster is missing; it is using the default roster.' }
@@ -115,7 +138,50 @@ function Get-RouterAlertMessage {
         '^model-missing:(.+)$' { return "Model router can no longer find model $($Matches[1]) in the vendor catalog." }
         '^catalog-check-timeout$' { return 'Model router catalog check timed out; it will retry later.' }
         '^catalog-check-error:(.+)$' { return "Model router catalog check failed for $($Matches[1]); it will retry later." }
-        '^drift:' { return "Model router detected table drift: $Key" }
+        '^research-failure:([^:]+):(\d{4}-\d{2}-\d{2})$' { return "Research: the $($Matches[1]) check has failed since $($Matches[2]) ET. See the research failure record for details." }
+        '^router-offline:(\d{4}-\d{2}-\d{2} \d{2}:\d{2} ET)$' { return "Model router connectivity has returned after an outage starting $($Matches[1])." }
+        '^vendor-error:(codex|claude):([^:]+)(?::([^:]+))?$' {
+            $vendor = $Matches[1]
+            if (-not $Model -and $Matches.ContainsKey(3)) { $Model = $Matches[3] }
+            $echoed = [bool]$ErrorEchoesInput
+            # Compare raw and JSON-unescaped forms of both sides (whitespace collapsed, case-folded), so an
+            # escaped echo matches a raw prompt and a prompt holding backslash sequences still matches its raw echo.
+            $variants = {
+                param([string]$Text)
+                if (-not $Text) { return @() }
+                $decoded = [regex]::Replace($Text, '\\u[0-9a-fA-F]{4}|\\["\\/bfnrt]', {
+                    param($match)
+                    return ConvertFrom-Json ('"' + $match.Value + '"')
+                })
+                @($Text, $decoded) | ForEach-Object { ([regex]::Replace($_, '\s+', ' ')).ToUpperInvariant() } | Select-Object -Unique
+            }
+            $errorForms = @(& $variants $ErrorText)
+            foreach ($inputText in @(& $variants $PromptText) + @(& $variants $InvocationText)) {
+                foreach ($errorForm in $errorForms) {
+                    if ($echoed) { break }
+                    if ($errorForm.Contains($inputText)) { $echoed = $true; break }
+                    for ($offset = 0; -not $echoed -and $offset -le $inputText.Length - 24; $offset++) {
+                        if ($errorForm.Contains($inputText.Substring($offset, 24))) { $echoed = $true }
+                    }
+                }
+            }
+            # Inspect the whole error: invocation/prompt echoes can appear after the first line.
+            $echoed = $echoed -or $ErrorText -match '(?im)(\bprompt\b|\binvocation\b|\bcodex(?:\.exe)?\s+exec\b|\bclaude(?:\.exe)?\s+.*(?:-p\b|--print\b)|--prompt\b)'
+            $description = 'The vendor call failed again after one immediate retry. Error text omitted because it may contain prompt or invocation text.'
+            $firstLine = @($ErrorText -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+            if (-not $echoed -and $firstLine.Count) {
+                $description = Invoke-SecretRedaction -Text $firstLine[0]
+                if ($description.Length -gt 300) { $description = $description.Substring(0, 300) }
+            } elseif (-not $echoed) { $description = 'The vendor call failed again after one immediate retry.' }
+            $checkText = if ($null -ne $Checks) { Invoke-SecretRedaction -Text (ConvertTo-Json -InputObject $Checks -Compress -Depth 8) } else { 'connectivity: unavailable; vendor status: unavailable' }
+            $pathText = if ($ArtifactPath) { Invoke-SecretRedaction -Text $ArtifactPath } else { 'unavailable' }
+            $safeModel = if ([string]::IsNullOrWhiteSpace($Model)) { 'unknown' } else { Invoke-SecretRedaction -Text $Model }
+            $safeCategory = if ([string]::IsNullOrWhiteSpace($Category)) { 'unknown' } else { Invoke-SecretRedaction -Text $Category }
+            $safeKey = (Invoke-SecretRedaction -Text $Key).Replace("'", "''")
+            $ackPath = (Join-Path $PSScriptRoot 'send-router-alert.ps1').Replace("'", "''")
+            return "Work stopped on $vendor (model: $safeModel; category: $safeCategory). Error: $description`nChecks (connectivity and vendor status): $checkText`nRecord: $pathText`nAcknowledge: pwsh -NoProfile -File '$ackPath' -Acknowledge '$safeKey'"
+        }
+        '^drift:'  { return "Model router detected table drift: $Key" }
         '^fallback_unselectable' { return "Model router fallback cannot be selected: $Key" }
         '^UNSELECTABLE_CODEX_MODEL:\s*(.+)$' { return "Model $($Matches[1]) is not selectable in the Codex catalog; the router used the next option." }
         default { return $Key }
@@ -222,6 +288,11 @@ function Send-RouterAlerts {
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
+    if ($RouterAlertCliAcknowledge) {
+        $result = Acknowledge-RouterAlert -Key $RouterAlertCliAcknowledge
+        if ($RouterAlertCliJson) { $result | ConvertTo-Json -Compress } else { $result }
+        return
+    }
     if ([string]::IsNullOrEmpty($RouterAlertCliMessage)) {
         $RouterAlertCliMessage = Get-RouterAlertMessage -Key $RouterAlertCliKey
         if ([string]::IsNullOrEmpty($RouterAlertCliMessage)) {

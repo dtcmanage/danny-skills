@@ -87,6 +87,78 @@ try {
     Assert-True ($log -notmatch [regex]::Escape($script:fakeToken) -and (($first + $again + $fallback + $failed + $retried | Out-String) -notmatch [regex]::Escape($script:fakeToken))) 'log and output contain no fake token'
     Assert-True (@($log -split '\r?\n' | Where-Object { $_ -match 'delivery_failed' }).Count -eq 1) 'failed delivery logged'
 
+    $checks = @{ http=$true; dns=$true; status='operational' }
+    $vendorKey = 'vendor-error:codex:dispatch-42'
+    $vendorMessage = Get-RouterAlertMessage -Key $vendorKey -Model 'gpt-test' -Category 'routine-coding' -ErrorText "Rejected ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`nsecond line must stay private" -Checks $checks -ArtifactPath 'state/dispatch.provenance.json'
+    Assert-True ($vendorMessage -match '\[REDACTED-SECRET\]' -and $vendorMessage -notmatch 'ghp_|second line' -and $vendorMessage -match 'gpt-test.*routine-coding' -and $vendorMessage -match '"http":true' -and $vendorMessage -match '"dns":true' -and $vendorMessage -match '"status":"operational"' -and $vendorMessage -match 'dispatch.provenance.json') 'vendor template redacts first error line and includes model, category, checks and record'
+    Assert-True ($vendorMessage.EndsWith("-Acknowledge '$vendorKey'")) 'vendor text ends with acknowledge command'
+    $ackPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../send-router-alert.ps1')).Replace("'", "''")
+    Assert-True ($vendorMessage.EndsWith("Acknowledge: pwsh -NoProfile -File '$ackPath' -Acknowledge '$vendorKey'")) 'acknowledge command quotes the absolute script path'
+    $quotedKey = "vendor-error:codex:dispatch'42"
+    Assert-True ((Get-RouterAlertMessage -Key $quotedKey).EndsWith("-Acknowledge 'vendor-error:codex:dispatch''42'")) 'acknowledge command doubles key quotes'
+    $secretKey = 'vendor-error:codex:sk-ant-api03-Example_0123456789-ABC'
+    $safeKeyMessage = Get-RouterAlertMessage -Key $secretKey
+    Assert-True ($safeKeyMessage.EndsWith("-Acknowledge 'vendor-error:codex:[REDACTED-SECRET]'")) 'key text in acknowledge command is redacted'
+    Assert-True ((Get-RouterAlertMessage -Key $vendorKey) -match 'model: unknown; category: unknown') 'missing model and category render unknown'
+    $nonblank = Get-RouterAlertMessage -Key $vendorKey -ErrorText "`r`n  `r`nService failed`r`nlater details"
+    Assert-True ($nonblank -match 'Error: Service failed' -and $nonblank -notmatch 'later details') 'first non-blank error line is used'
+    foreach ($credential in @('sk-ant-api03-Example_0123456789-ABC','sk-proj-Example_0123456789-ABC','sk-0123456789abcdefghij','Bearer Example_0123456789-ABC')) {
+        $safeError = Get-RouterAlertMessage -Key $vendorKey -ErrorText "Rejected $credential"
+        Assert-True ($safeError.Contains('[REDACTED-SECRET]') -and -not $safeError.Contains($credential)) 'vendor error path redacts vendor credentials'
+    }
+    $longError = Get-RouterAlertMessage -Key $vendorKey -ErrorText ('x' * 299 + 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
+    $description = (($longError -split "`n")[0] -split 'Error: ',2)[1]
+    Assert-True ($description.Length -eq 300 -and $description -eq ('x' * 299 + '[')) 'error is redacted before the 300 character cap'
+    $prompt = 'private work instructions with customer data'
+    foreach ($errorCase in @("Prompt: $prompt", "codex exec --model gpt-test '$prompt'", "Call failed`ninvocation: claude -p '$prompt'", $prompt)) {
+        $echo = Get-RouterAlertMessage -Key $vendorKey -ErrorText $errorCase -PromptText $prompt
+        Assert-True ($echo -match 'Error text omitted' -and $echo -notmatch [regex]::Escape($prompt) -and $echo -notmatch 'codex exec|claude -p') 'prompt and invocation echoes use generic description'
+    }
+    $echo = Get-RouterAlertMessage -Key $vendorKey -ErrorText 'execute private contents' -InvocationText 'execute private contents'
+    Assert-True ($echo -match 'Error text omitted') 'known invocation echo uses generic description'
+    $echo = Get-RouterAlertMessage -Key $vendorKey -ErrorText 'private partial echo' -ErrorEchoesInput
+    Assert-True ($echo -match 'Error text omitted' -and $echo -notmatch 'private partial echo') 'caller can flag a partial prompt echo'
+    $prompt = 'Private customer "records" require careful review of every entry before responding.'
+    $partial = $prompt.Substring(0, 40)
+    foreach ($errorCase in @("Rejected: $partial", ("Rejected: $partial").ToUpperInvariant(), ("Rejected: $partial" -replace ' ', "`n  "), ('Rejected: ' + (ConvertTo-Json -InputObject $partial -Compress)), ('Rejected: ' + ($partial.Replace(' ', '\n').Replace('"', '\"'))))) {
+        $echo = Get-RouterAlertMessage -Key $vendorKey -ErrorText $errorCase -PromptText $prompt
+        Assert-True ($echo -match 'Error text omitted' -and $echo -notmatch 'Private customer') 'partial reflowed and JSON-escaped input echoes use generic text'
+    }
+    $echo = Get-RouterAlertMessage -Key $vendorKey -ErrorText ('Rejected: ' + $prompt.Substring(15, 24)) -InvocationText $prompt
+    Assert-True ($echo -match 'Error text omitted') 'any shared 24 character invocation run is suppressed'
+    $short = Get-RouterAlertMessage -Key $vendorKey -ErrorText $prompt.Substring(15, 23) -PromptText $prompt
+    Assert-True ($short -notmatch 'Error text omitted') '23 character partial match does not meet the echo threshold'
+    $pathPrompt = 'D:\new\tmp\rpt\fin\bank\nov\a.txt'
+    $pathEcho = Get-RouterAlertMessage -Key $vendorKey -ErrorText 'cannot open "D:\\new\\tmp\\rpt\\fin\\bank\\nov\\a.txt"' -PromptText $pathPrompt
+    Assert-True ($pathEcho -match 'Error text omitted') 'JSON-escaped echo of a prompt holding backslash sequences is suppressed'
+    $rawPathEcho = Get-RouterAlertMessage -Key $vendorKey -ErrorText ('cannot open ' + $pathPrompt) -PromptText $pathPrompt
+    Assert-True ($rawPathEcho -match 'Error text omitted') 'raw echo of a prompt holding backslash sequences is suppressed'
+    Assert-True ((Get-RouterAlertMessage -Key 'research-failure:planning:2026-09-30') -match 'planning.*2026-09-30 ET') 'research episode template carries first failure ET date'
+    Assert-True ((Get-RouterAlertMessage -Key 'router-offline:2026-09-30 23:58 ET') -match 'connectivity has returned.*2026-09-30 23:58 ET') 'reconnect template carries outage start with ET minutes'
+    Assert-True ((Get-RouterAlertMessage -Key 'vendor-error:claude:research-pass-42' -ArtifactPath 'research-failures/planning.json') -match 'stopped on claude' ) 'research vendor error template'
+    Assert-True ((Get-RouterAlertMessage -Key 'vendor-error:codex:canary-run-42:gpt-test') -match 'model: gpt-test') 'canary template extracts model from per run key'
+    $keys = @($vendorKey, 'vendor-error:codex:dispatch-43', 'vendor-error:claude:research-pass-42', 'vendor-error:codex:canary-run-42:gpt-test', 'vendor-error:codex:canary-run-42:gpt-other', 'research-failure:planning:2026-09-30', 'research-failure:planning:2026-10-01', 'router-offline:2026-09-30 23:58 ET', 'router-offline:2026-10-01 00:05 ET')
+    foreach ($key in $keys) {
+        $message = if ($key -eq $vendorKey) { $vendorMessage } else { Get-RouterAlertMessage -Key $key }
+        $sent = @(Send-RouterAlert -Key $key -Message $message -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
+        $requestCount = $script:requests.Count
+        $repeated = Send-RouterAlert -Key $key -Message $message -Transport $fake
+        Assert-True ($sent.sent -and -not $sent.deduped -and $repeated.deduped -and $script:requests.Count -eq $requestCount) "observability key delivers independently and dedupes: $key"
+    }
+    $requestCount = $script:requests.Count
+    $ackLines = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../send-router-alert.ps1') -Acknowledge $vendorKey -Json)
+    $ackExit = $LASTEXITCODE
+    $ack = $ackLines[0] | ConvertFrom-Json
+    $events = @(Get-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True ($ackExit -eq 0 -and $ackLines.Count -eq 1 -and $ack.acknowledged -and $ack.key -ceq $vendorKey -and @($events | Where-Object { $_.event -eq 'acknowledged' -and $_.key -ceq $vendorKey -and $_.at }).Count -eq 1 -and $script:requests.Count -eq $requestCount) 'acknowledge CLI appends timestamped event without delivery'
+    $ackedSend = Send-RouterAlert -Key $vendorKey -Message $vendorMessage -Transport $fake
+    Assert-True ($ackedSend.deduped -and $script:requests.Count -eq $requestCount) 'acknowledgement preserves delivered dedup'
+    $null = Acknowledge-RouterAlert -Key 'ack-before-delivery'
+    $afterAck = @(Send-RouterAlert -Key 'ack-before-delivery' -Message 'New alert' -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]
+    Assert-True ($afterAck.sent -and -not $afterAck.deduped) 'acknowledged event alone does not dedup delivery'
+    $body = @($script:requests | Where-Object { $_.kind -eq 'http' -and $_.uri -like '*/channels/*/messages' -and $_.body -match 'dispatch.provenance.json' })[0].body
+    Assert-True ($body -notmatch 'ghp_' -and $body -match 'REDACTED-SECRET' -and (Get-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl') -Raw) -notmatch 'ghp_') 'vendor secret stays redacted in transport and persisted log'
+
     $script:logAttempts = 0
     function Write-RouterAlertLog { $script:logAttempts++; throw 'synthetic log lock' }
     $logFailure = @(Send-RouterAlert -Key 'log-failure' -Message 'Delivered despite log lock' -Transport $fake 6>&1 | Where-Object { $_ -is [pscustomobject] })[-1]

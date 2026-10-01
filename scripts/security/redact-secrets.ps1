@@ -21,6 +21,12 @@ function Invoke-SecretRedaction {
     # Ordered list of credential-shaped patterns. Each is anchored to a
     # distinctive prefix or query-parameter context so safe strings are untouched.
     $patterns = @(
+        # Anthropic API keys: distinctive sk-ant- prefix and key alphabet.
+        # The lookbehind keeps hyphenated words such as "task-runner-..." or "risk-assessment-..." intact.
+        '(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{8,}',
+        # OpenAI project keys and legacy keys (20+ key characters).
+        '(?<![A-Za-z0-9_-])sk-proj-[A-Za-z0-9_-]{8,}',
+        '(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}',
         # GitHub PAT: ghp_ followed by 20+ base62 chars.
         'ghp_[A-Za-z0-9]{20,}',
         # Generic pat token: pat_ followed by 10+ word chars.
@@ -38,6 +44,8 @@ function Invoke-SecretRedaction {
     foreach ($pattern in $patterns) {
         $result = [regex]::Replace($result, $pattern, $token)
     }
+    # Authorization scheme is retained; only the credential is replaced.
+    $result = [regex]::Replace($result, '(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]{12,}', '${1}' + $token)
 
     return $result
 }

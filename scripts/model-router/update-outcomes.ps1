@@ -94,7 +94,10 @@ function Update-RouterOutcomes {
                     $lane = [string](Get-RouterOutcomeValue $item @('lane'))
                     if ($lane -notin @('codex','claude')) { $lane = if ($model -match '^claude-') { 'claude' } else { 'codex' } }
                     $pass = Get-RouterOutcomeValue $item @('pass')
-                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier $file.Name); attempt=[int]$attempt; pass=($pass -eq $true -or [string]$pass -eq 'true'); escalated=($file.Name -match '(?i)(?:-|_)(retry|fix|resume)'); failure_category=(Get-RouterOutcomeValue $item @('failure_category')); source='dt-build'; tier=$tier }
+                    $failureCategory = Get-RouterOutcomeValue $item @('failure_category')
+                    $diagnosis = Get-RouterOutcomeValue $item @('diagnosis')
+                    if ($failureCategory -ne 'environment' -or $diagnosis -cnotin @('offline','vendor_incident','unexplained')) { $diagnosis = $null }
+                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier $file.Name); attempt=[int]$attempt; pass=($pass -eq $true -or [string]$pass -eq 'true'); escalated=($file.Name -match '(?i)(?:-|_)(retry|fix|resume)'); failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
                     $newCount++
                 }
                 $acceptance = Join-Path $folder 'acceptance-rows.jsonl'
@@ -117,7 +120,10 @@ function Update-RouterOutcomes {
                     $tier = [string](Get-RouterOutcomeValue $item @('tier'))
                     $lane = [string](Get-RouterOutcomeValue $item @('lane'))
                     if ($lane -notin @('codex','claude')) { $lane = if ($model -match '^claude-') { 'claude' } else { 'codex' } }
-                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier ([string]$chunk)); attempt=[int]$attempt; pass=([string](Get-RouterOutcomeValue $item @('status')) -eq 'PASS'); escalated=$false; failure_category=(Get-RouterOutcomeValue $item @('failure_category')); source='dt-build'; tier=$tier }
+                    $failureCategory = Get-RouterOutcomeValue $item @('failure_category')
+                    $diagnosis = Get-RouterOutcomeValue $item @('diagnosis')
+                    if ($failureCategory -ne 'environment' -or $diagnosis -cnotin @('offline','vendor_incident','unexplained')) { $diagnosis = $null }
+                    $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier ([string]$chunk)); attempt=[int]$attempt; pass=([string](Get-RouterOutcomeValue $item @('status')) -eq 'PASS'); escalated=$false; failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
                     $newCount++
                 }
             }

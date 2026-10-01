@@ -59,6 +59,28 @@ $mustRedact = Get-Fixtures -Lines $corpusLines `
 $mustNotRedact = Get-Fixtures -Lines $corpusLines `
     -BeginMarker '<!-- MUST-NOT-REDACT-BEGIN -->' -EndMarker '<!-- MUST-NOT-REDACT-END -->'
 
+# Exact expectations catch partial redaction and preserve the Bearer scheme.
+$vendorCases = @(
+    @{ text='sk-ant-api03-Example_0123456789-ABC'; expected='[REDACTED-SECRET]' },
+    @{ text='sk-proj-Example_0123456789-ABC'; expected='[REDACTED-SECRET]' },
+    @{ text='sk-0123456789abcdefghij'; expected='[REDACTED-SECRET]' },
+    @{ text='Authorization: Bearer Example_0123456789-ABC+/='; expected='Authorization: Bearer [REDACTED-SECRET]' },
+    @{ text='authorization: bearer token.test~123'; expected='authorization: bearer [REDACTED-SECRET]' },
+    @{ text='sk-short'; expected='sk-short' },
+    @{ text='0123456789abcdef0123456789abcdef'; expected='0123456789abcdef0123456789abcdef' },
+    @{ text='task-runner-abcdefghijklmnopqrstu'; expected='task-runner-abcdefghijklmnopqrstu' },
+    @{ text='risk-assessment-for-the-quarterly-plan'; expected='risk-assessment-for-the-quarterly-plan' },
+    @{ text='disk-0123456789abcdefghijk'; expected='disk-0123456789abcdefghijk' },
+    @{ text='ask-ant-x'; expected='ask-ant-x' },
+    @{ text='missing Bearer token'; expected='missing Bearer token' },
+    @{ text='key=sk-ant-api03-Example_0123456789'; expected='key=[REDACTED-SECRET]' }
+)
+$vendorFailures = 0
+foreach ($case in $vendorCases) {
+    if ((Invoke-SecretRedaction -Text $case.text) -cne $case.expected) { $vendorFailures++ }
+}
+Write-Output "Vendor credential assertions: $($vendorCases.Count) checks; $vendorFailures failures"
+
 $totalMustRedact = $mustRedact.Count
 $totalMustNotRedact = $mustNotRedact.Count
 
@@ -103,7 +125,7 @@ if ($fpCount -gt 0) {
 }
 
 $summary = "leaks=$leakCount, false_positives=$fpCount, fp_rate=" + ("{0:P2}" -f $fpRate)
-if (($leakCount -eq 0) -and ($fpRate -lt 0.05)) {
+if (($leakCount -eq 0) -and ($fpRate -lt 0.05) -and ($vendorFailures -eq 0)) {
     Write-Output "$summary; PASS"
     exit 0
 } else {

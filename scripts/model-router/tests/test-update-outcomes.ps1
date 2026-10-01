@@ -9,11 +9,11 @@ function Assert-True([bool]$Condition, [string]$Name) {
     $script:passed++
     Write-Output "PASS: $Name"
 }
-function Write-Provenance([string]$Run, [string]$Chunk, [int]$Attempt, [string]$Model, [bool]$Pass, [string]$At, [string]$Tier = 'standard', [string]$Failure = '', [string]$Category = '') {
+function Write-Provenance([string]$Run, [string]$Chunk, [int]$Attempt, [string]$Model, [bool]$Pass, [string]$At, [string]$Tier = 'standard', [string]$Failure = '', [string]$Category = '', [string]$Diagnosis = '') {
     $dir = Join-Path $script:repo ".dt-build/$Run/milestones/$Chunk"
     [IO.Directory]::CreateDirectory($dir) | Out-Null
     $name = if ($Attempt -gt 1) { "output-$Attempt-retry.md.provenance.json" } else { 'output-1.md.provenance.json' }
-    @{ pass=$Pass; tier=$Tier; resolved_model=$Model; attempt=$Attempt; at=$At; failure_category=$Failure; category=$Category; chunk_id=$Chunk } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir $name)
+    @{ pass=$Pass; tier=$Tier; resolved_model=$Model; attempt=$Attempt; at=$At; failure_category=$Failure; diagnosis=$Diagnosis; category=$Category; chunk_id=$Chunk } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir $name)
 }
 function Run-Update { Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources }
 function Read-Records { @(Get-Content -LiteralPath (Join-Path $script:state 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -DateKind String }) }
@@ -79,12 +79,31 @@ try {
     Write-Provenance 'roster-analysis' 'M01' 1 'claude-opus-5-5' $true '2026-09-25T12:00:00Z' 'standard' '' 'analysis'
     for ($i=1; $i -le 10; $i++) { Write-Provenance "roster-prior-$i" 'M01' 1 'gpt-6.1-sol' $true '2026-08-01T12:00:00Z' 'complex' '' 'complex-coding' }
     for ($i=1; $i -le 20; $i++) { Write-Provenance "roster-recent-$i" 'M01' 1 'gpt-6.1-sol' ($i -le 17) '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
+    foreach ($diagnosis in @('offline','vendor_incident','unexplained')) {
+        for ($i=1; $i -le 10; $i++) { Write-Provenance "environment-$diagnosis-$i" 'M01' 1 'gpt-6.1-sol' $false '2026-09-25T12:00:00Z' 'complex' 'environment' 'complex-coding' $diagnosis }
+    }
+    $environmentAcceptanceDir = Join-Path $script:repo '.dt-build/environment-acceptance'
+    [IO.Directory]::CreateDirectory($environmentAcceptanceDir) | Out-Null
+    @{ milestone_id='M01'; model='gpt-6.1-sol'; status='FAIL'; at='2026-09-25T12:00:00Z'; category='complex-coding'; failure_category='environment'; diagnosis='vendor_incident' } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $environmentAcceptanceDir 'acceptance-rows.jsonl')
     $rosterDrift = Run-Update
     Assert-True (@(Read-Records | Where-Object { $_.key -eq 'roster-analysis:M01:1' -and $_.category -eq 'analysis' }).Count -eq 1) 'approved roster preserves analysis category during import'
+    $diagnosed = @(Read-Records | Where-Object failure_category -eq 'environment')
+    foreach ($diagnosis in @('offline','vendor_incident','unexplained')) {
+        Assert-True (@($diagnosed | Where-Object { $_.diagnosis -eq $diagnosis }).Count -eq $(if ($diagnosis -eq 'vendor_incident') { 11 } else { 10 })) "environment diagnosis preserved: $diagnosis"
+    }
+    Assert-True ((Run-Update).new_records -eq 0 -and @(Read-Records | Where-Object { $_.failure_category -eq 'environment' -and $_.diagnosis }).Count -eq 31) 'diagnosed rows survive idempotent reimport'
     $marks = @(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json'))
     $latest = Read-RouterJsonObject -Path (Join-Path $rosterState 'roster-proposals/latest.json')
     $swap = Read-RouterJsonObject -Path ([string]$latest.proposal)
-    Assert-True ($marks.Count -eq 1 -and $marks[0].job -eq 'coder' -and $marks[0].model -eq 'gpt-6.1-sol' -and [math]::Abs($marks[0].recent_rate - 0.85) -lt 0.00001) 'approved roster drift marks first choice across job categories'
+    Assert-True ($marks.Count -eq 1 -and $marks[0].job -eq 'coder' -and $marks[0].model -eq 'gpt-6.1-sol' -and [math]::Abs($marks[0].recent_rate - 0.85) -lt 0.00001) 'approved roster drift excludes 31 diagnosed environment failures and retains 0.85 quality rate'
+    Write-Provenance 'invalid-diagnosis' 'M01' 1 'gpt-6.1-sol' $false '2026-09-25T12:00:00Z' 'complex' 'environment' 'complex-coding' 'unexpected'
+    Write-Provenance 'quality-diagnosis' 'M01' 1 'gpt-6.1-sol' $true '2026-08-01T12:00:00Z' 'complex' '' 'complex-coding' 'offline'
+    @{ milestone_id='invalid'; model='gpt-6.1-sol'; status='FAIL'; at='2026-09-25T12:00:00Z'; category='complex-coding'; failure_category='environment'; diagnosis='OFFLINE' } | ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $environmentAcceptanceDir 'acceptance-rows.jsonl')
+    Run-Update | Out-Null
+    $invalid = @(Read-Records | Where-Object { $_.key -in @('invalid-diagnosis:M01:1','quality-diagnosis:M01:1','environment-acceptance:invalid:1') })
+    Assert-True ($invalid.Count -eq 3 -and @($invalid | Where-Object { $_.diagnosis }).Count -eq 0) 'unsupported diagnoses and quality-row diagnosis are dropped on both import paths'
+    $marks = @(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json'))
+    Assert-True ([math]::Abs($marks[0].recent_rate - 0.85) -lt 0.00001) 'environment rows with dropped diagnosis remain excluded from quality math'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $rosterState 'alert-log.jsonl'))) 'dot-sourced roster update returns alert without delivery'
     Assert-True (@($rosterDrift.alerts | Where-Object { $_.key -eq 'drift:gpt-6.1-sol:coder:202609' -and $_.message -match 'uses its backup' -and $_.message -match 'swap first and backup' }).Count -eq 1) 'roster drift yields one backup and swap alert'
     Assert-True (@(Test-RouterRoster $swap).Count -eq 0) 'drift swap proposal validates'
@@ -194,7 +213,7 @@ try {
     $unchanged = $true
     foreach ($file in $liveFiles) { if ($before[$file] -ne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash) { $unchanged = $false; break } }
     Assert-True ($liveResult.total_records -gt 0 -and $unchanged) 'LIVE bounded source mining is read-only'
-    Write-Output "PASS: $script:passed tests"
+    Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $saved
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $savedTransport
