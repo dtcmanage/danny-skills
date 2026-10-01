@@ -154,7 +154,8 @@ try {
     Reset-Fixture
     $script:components[0].status = 'partial_outage'; $script:incidentsOk = $false
     $result = Invoke-Diagnosis
-    Assert-True ($result.verdict -eq 'unexplained' -and $result.detail -like '*lookup failed*incidents unreachable*') 'failed incident lookup is unexplained'
+    $blocks = @(Read-RouterJsonArray -Path (Join-Path $temp 'vendor-blocks.json'))
+    Assert-True ($result.verdict -eq 'vendor_incident' -and $null -eq $result.incident_id -and $blocks.Count -eq 1 -and $blocks[0].reason -eq 'vendor_incident' -and [string]::IsNullOrEmpty($blocks[0].incident_id)) 'degraded component with unreachable incident feed is still a vendor incident without an id'
     $catalog = [pscustomobject]@{ models=@([pscustomobject]@{ slug='gpt-6.1-sol'; visibility='list' }) }
     foreach ($vendor in @('codex','claude')) {
         Reset-Fixture $vendor

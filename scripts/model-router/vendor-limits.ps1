@@ -346,8 +346,12 @@ function Resolve-RouterDispatchFailure {
         $degraded = @($lane.components | Where-Object { $reading.components[$_].status -cne 'operational' })
         if (-not $degraded.Count) { $checks.status = 'operational'; $result.detail = 'Named lane components are operational'; return $result }
         $checks.status = 'non_operational'
-        $incidents = & $script:RouterDiagnosisHttp ([string]$lane.incidents_url)
-        $null = $incidents.incidents # Validate the unresolved endpoint shape even when empty.
+        # The incident id is a courtesy detail. OpenAI's Statuspage serves components.json but returns 404 for
+        # incidents/unresolved.json (checked 2026-10-01), so a failed incident lookup must not turn a real
+        # non-operational component into "unexplained" and page Danny during a vendor outage.
+        $incidents = $null
+        try { $incidents = & $script:RouterDiagnosisHttp ([string]$lane.incidents_url) } catch { $incidents = $null }
+        if ($null -eq $incidents -or -not $incidents.PSObject.Properties['incidents']) { $incidents = [pscustomobject]@{ incidents=@() } }
         foreach ($name in $degraded) {
             $componentId = $reading.components[$name].id
             $matched = @($incidents.incidents | Where-Object { @($_.components | Where-Object { $_.id -ceq $componentId }).Count } | Select-Object -First 1)
