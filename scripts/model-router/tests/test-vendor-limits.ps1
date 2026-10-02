@@ -167,6 +167,21 @@ try {
     Write-RouterJsonAtomic -Path $credentialsPath -Value $credentials
     $calls = $script:claudeFetchCalls
     Assert-True ($null -eq (Get-RouterClaudeUsage) -and $script:claudeFetchCalls -eq $calls) 'expired Claude token never fetches'
+    $usage.used_percent = 98
+    $usage.observed_at_utc = [datetimeoffset]::UtcNow.AddMinutes(-10).ToString('o')
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    $retained = Get-RouterClaudeUsage
+    Assert-True ($retained.used_percent -eq 98 -and $retained.observed_at_utc -eq $usage.observed_at_utc -and $script:claudeFetchCalls -eq $calls -and (Get-RouterVendorBlocked -Vendor claude)) 'expired token preserves known ceiling and original observation until reset without fetching'
+    $usage.used_percent = 67
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    Assert-True ($null -eq (Get-RouterClaudeUsage)) 'expired token does not represent old under-limit reading as availability'
+    $usage.used_percent = 98
+    $savedReset = $usage.resets_at_utc
+    $usage.resets_at_utc = [datetimeoffset]::UtcNow.AddMinutes(-1).ToString('o')
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    Assert-True ($null -eq (Get-RouterClaudeUsage)) 'expired token does not retain ceiling beyond reset'
+    $usage.resets_at_utc = $savedReset
+    Remove-Item -LiteralPath $cachePath
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing.json'
     Assert-True ($null -eq (Get-RouterClaudeUsage)) 'missing Claude credentials return unknown'
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $credentialsPath

@@ -60,7 +60,15 @@ function Get-RouterClaudeUsage {
             } catch { $cached = $null }
         }
         $credential = & $script:RouterClaudeCredentialProvider
-        if ($credential.status -ne 'available') { return $null }
+        if ($credential.status -ne 'available') {
+            # Token expiry cannot undo an observed quota ceiling before its reset.
+            # Keep the original observation age; this is not a successful refresh.
+            if ($credential.status -eq 'expired' -and $null -ne $cached -and
+                $cached.used_percent -ge 95 -and [datetimeoffset]$cached.resets_at_utc -gt $now) {
+                return $cached
+            }
+            return $null
+        }
         $response = & $script:RouterClaudeUsageFetcher ([string]$credential.token)
         if ($null -eq $response -or -not $response.PSObject.Properties['seven_day'] -or $null -eq $response.seven_day -or
             -not $response.seven_day.PSObject.Properties['utilization'] -or $null -eq $response.seven_day.utilization -or
