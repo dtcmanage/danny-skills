@@ -22,7 +22,9 @@ function New-TestRoster {
     return $r
 }
 $prior = @{}
-foreach ($key in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_SHARED','DT_MODEL_ROUTER_CODEX_SESSIONS','DT_MODEL_ROUTER_ALERT_TRANSPORT')) { $prior[$key] = [Environment]::GetEnvironmentVariable($key) }
+foreach ($key in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_SHARED','DT_MODEL_ROUTER_CODEX_SESSIONS','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CLAUDE_CREDENTIALS')) { $prior[$key] = [Environment]::GetEnvironmentVariable($key) }
+$priorFetcher = $script:RouterClaudeUsageFetcher
+$script:RouterClaudeUsageFetcher = { param($Token) throw 'Unexpected live quota fetch in fixture' }
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('mac-integration-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp) | Out-Null
 $platformFixture = [pscustomobject]@{ Value = 'Windows' }
@@ -31,6 +33,8 @@ try {
     $win = Join-Path $temp 'windows'; $mac = Join-Path $temp 'mac'; $shared = Join-Path $temp 'synced'
     $env:DT_MODEL_ROUTER_STATE = $win; $env:DT_MODEL_ROUTER_SHARED = $shared
     $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'sessions'
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-credentials.json'
+    Assert-True ((Get-RouterClaudeCredential).status -eq 'missing') 'fixture selects exclusive missing credential source'
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = Join-Path $temp 'transport.ps1'
     Set-Content -LiteralPath $env:DT_MODEL_ROUTER_ALERT_TRANSPORT -Value 'param($request) throw "Unexpected alert send"'
     $main = Join-Path $temp 'repo'; $tree = Join-Path $temp 'tree'
@@ -104,17 +108,19 @@ try {
     . (Join-Path $PSScriptRoot '../vendor-limits.ps1')
     $platformFixture.Value = 'Windows'; $env:DT_MODEL_ROUTER_STATE = $win
     $null = Add-RouterVendorBlock -Vendor codex -ResetAtUtc ([datetimeoffset]::UtcNow.AddHours(2)) -Reason quota
-    $usage = [pscustomobject]@{used_percent=97; resets_at_utc=[datetimeoffset]::UtcNow.AddDays(1).ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o')}
+    $usage = [pscustomobject]@{used_percent=97; resets_at_utc=[datetimeoffset]::UtcNow.AddDays(1).ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o'); credential_locator_identity=(Get-RouterClaudeCredentialIdentity)}
     Write-RouterJsonAtomic -Path (Join-Path $win 'claude-usage.json') -Value $usage
     Assert-True ((Get-RouterClaudeUsage).used_percent -eq 97 -and (Get-RouterVendorBlocked codex)) 'Windows local observations recorded'
     $platformFixture.Value = 'MacOS'; $env:DT_MODEL_ROUTER_STATE = $mac
     Assert-True (-not (Test-Path (Join-Path $mac 'claude-usage.json')) -and -not (Get-RouterVendorBlocked codex)) 'Mac does not import Windows usage or refusal reset'
     $usage.used_percent = 11
+    $usage.credential_locator_identity = Get-RouterClaudeCredentialIdentity
     Write-RouterJsonAtomic -Path (Join-Path $mac 'claude-usage.json') -Value $usage
     $null = Add-RouterVendorBlock -Vendor claude -ResetAtUtc ([datetimeoffset]::UtcNow.AddHours(1)) -Reason quota
     Assert-True ((Get-RouterClaudeUsage).used_percent -eq 11) 'Mac reads its own fresh usage cache'
-    $env:DT_MODEL_ROUTER_STATE = $win
+    $platformFixture.Value = 'Windows'; $env:DT_MODEL_ROUTER_STATE = $win
     Assert-True ((Get-RouterClaudeUsage).used_percent -eq 97 -and @(Read-RouterJsonArray (Join-Path $win 'vendor-blocks.json')).Count -eq 1) 'Mac local writes cannot alter Windows observations'
+    $platformFixture.Value = 'MacOS'
     $guardState = Join-Path $temp 'guard-state'; $env:DT_MODEL_ROUTER_STATE = $guardState
     foreach ($action in @('Seed','Approve','Revoke','DeclineDrift')) {
         $options = @{}; $options[$action] = $true
@@ -232,6 +238,7 @@ Publish-RouterRoster
     Assert-True (@(Get-ChildItem $temp -Recurse -File | Where-Object { -not $_.FullName.StartsWith($temp + [IO.Path]::DirectorySeparatorChar) }).Count -eq 0) 'fixture writes remain inside isolated directory'
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
+    $script:RouterClaudeUsageFetcher = $priorFetcher
     foreach ($key in $prior.Keys) { [Environment]::SetEnvironmentVariable($key, $prior[$key]) }
     if ([IO.Path]::GetFullPath($temp).StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

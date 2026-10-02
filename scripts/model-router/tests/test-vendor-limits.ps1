@@ -141,7 +141,7 @@ try {
     $usage = Get-RouterClaudeUsage
     Assert-True ($usage.used_percent -eq 67 -and $usage.session_percent -eq 8 -and -not (Get-RouterVendorBlocked -Vendor claude)) 'Claude 67 percent and session parse without blocking'
     Assert-True ((Test-Path -LiteralPath $cachePath) -and [IO.File]::ReadAllText($cachePath) -notmatch 'fixture-token-never-cache') 'Claude cache written without token'
-    Assert-True ($usage.source -eq 'oauth-usage' -and ([datetimeoffset]$usage.resets_at_utc).Offset -eq [timespan]::Zero -and @($usage.PSObject.Properties).Count -eq 6) 'Claude reading has only six fields and UTC reset'
+    Assert-True ($usage.source -eq 'oauth-usage' -and ([datetimeoffset]$usage.resets_at_utc).Offset -eq [timespan]::Zero -and @($usage.PSObject.Properties).Count -eq 7 -and $usage.credential_locator_identity -eq (Get-RouterClaudeCredentialIdentity)) 'Claude reading has six quota fields plus nonsecret locator identity and UTC reset'
     $calls = $script:claudeFetchCalls
     $cached = Get-RouterClaudeUsage
     Assert-True ($script:claudeFetchCalls -eq $calls) 'fresh Claude cache skips fetch'
@@ -192,7 +192,10 @@ try {
     Assert-True ($null -eq (Get-RouterClaudeUsage)) 'stale cache does not mask missing credentials'
     $usage.observed_at_utc = [datetimeoffset]::UtcNow.ToString('o')
     Write-RouterJsonAtomic -Path $cachePath -Value $usage
-    Assert-True ((Get-RouterClaudeUsage).used_percent -eq 67) 'fresh cache may precede missing credentials'
+    Assert-True ($null -eq (Get-RouterClaudeUsage)) 'fresh cache cannot follow a changed credential locator'
+    $usage.credential_locator_identity = Get-RouterClaudeCredentialIdentity
+    Write-RouterJsonAtomic -Path $cachePath -Value $usage
+    Assert-True ((Get-RouterClaudeUsage).used_percent -eq 67) 'fresh cache may precede unavailable credentials at the same locator'
     $usage.resets_at_utc = [datetimeoffset]::UtcNow.AddMinutes(-1).ToString('o')
     Write-RouterJsonAtomic -Path $cachePath -Value $usage
     Assert-True ((Get-RouterClaudeUsage).used_percent -eq 0) 'past Claude cached reset zeroes weekly usage'
@@ -207,6 +210,7 @@ try {
     Assert-True ((Get-RouterVendorBlocked -Vendor claude)) 'Claude refusal still blocks at 67 percent'
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
     # Resume selection uses only fixture state, usage cache and session logs.
+    $usage.credential_locator_identity = Get-RouterClaudeCredentialIdentity
     Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json') -ErrorAction SilentlyContinue
     $usage.used_percent = 96

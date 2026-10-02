@@ -8,13 +8,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
+. (Join-Path $PSScriptRoot 'router-credentials.ps1')
+if (-not (Get-Variable RouterClaudeCredentialProvider -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:RouterClaudeCredentialProvider = { Get-RouterClaudeCredential }
+}
 
 # Injectable diagnosis I/O; each call is bounded and tests replace all three seams.
 if (-not (Get-Variable RouterDiagnosisHttp -Scope Script -ErrorAction SilentlyContinue)) {
     $script:RouterDiagnosisHttp = { param([string]$Uri) Invoke-RestMethod -Uri $Uri -TimeoutSec 5 }
 }
 if (-not (Get-Variable RouterDiagnosisDns -Scope Script -ErrorAction SilentlyContinue)) {
-    $script:RouterDiagnosisDns = { param([string]$ApiHost) @(Resolve-DnsName -Name $ApiHost -DnsOnly -QuickTimeout -ErrorAction Stop).Count -gt 0 }
+    $script:RouterDiagnosisDns = { param([string]$ApiHost) Test-RouterDns -ApiHost $ApiHost }
 }
 if (-not (Get-Variable RouterDiagnosisClock -Scope Script -ErrorAction SilentlyContinue)) {
     $script:RouterDiagnosisClock = { [datetimeoffset]::UtcNow }
@@ -33,10 +37,14 @@ function Get-RouterClaudeUsage {
     $cached = $null
     try {
         $path = Join-Path (Get-RouterStateDir) 'claude-usage.json'
+        $identity = Get-RouterClaudeCredentialIdentity
         $cached = Read-RouterJsonObject -Path $path
         $now = [datetimeoffset]::UtcNow
         if ($null -ne $cached) {
             try {
+                if (-not $cached.PSObject.Properties['credential_locator_identity'] -or $cached.credential_locator_identity -cne $identity) {
+                    throw 'CLAUDE_CACHE_SOURCE_CHANGED'
+                }
                 $cached = [pscustomobject]@{
                     used_percent=[double]$cached.used_percent
                     resets_at_utc=([datetimeoffset]$cached.resets_at_utc).ToUniversalTime().ToString('o')
@@ -44,23 +52,16 @@ function Get-RouterClaudeUsage {
                     session_percent=$(if ($cached.PSObject.Properties['session_percent'] -and $null -ne $cached.session_percent) { [double]$cached.session_percent } else { $null })
                     session_resets_at_utc=$(if ($cached.PSObject.Properties['session_resets_at_utc'] -and $null -ne $cached.session_resets_at_utc) { ([datetimeoffset]$cached.session_resets_at_utc).ToUniversalTime().ToString('o') } else { $null })
                     source='oauth-usage'
+                    credential_locator_identity=$identity
                 }
                 if (-not [double]::IsFinite($cached.used_percent)) { throw 'CLAUDE_CACHE_PERCENT' }
                 if ([datetimeoffset]$cached.resets_at_utc -le $now) { $cached.used_percent = 0.0 }
                 if (($now - [datetimeoffset]$cached.observed_at_utc).TotalMinutes -lt 5) { return $cached }
             } catch { $cached = $null }
         }
-        $credentialsPath = if ($env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS) { $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS }
-            elseif ($env:CLAUDE_CONFIG_DIR) { Join-Path $env:CLAUDE_CONFIG_DIR '.credentials.json' }
-            else { Join-Path (Join-Path $HOME '.claude') '.credentials.json' }
-        try { $credentials = Read-RouterJsonObject -Path $credentialsPath } catch { return $null }
-        if ($null -eq $credentials -or -not $credentials.PSObject.Properties['claudeAiOauth'] -or $null -eq $credentials.claudeAiOauth) { return $null }
-        $oauth = $credentials.claudeAiOauth
-        if (-not $oauth.PSObject.Properties['accessToken'] -or [string]::IsNullOrWhiteSpace([string]$oauth.accessToken)) { return $null }
-        try {
-            if (-not $oauth.PSObject.Properties['expiresAt'] -or [datetimeoffset]::FromUnixTimeMilliseconds([long]$oauth.expiresAt) -le $now) { return $null }
-        } catch { return $null }
-        $response = & $script:RouterClaudeUsageFetcher ([string]$oauth.accessToken)
+        $credential = & $script:RouterClaudeCredentialProvider
+        if ($credential.status -ne 'available') { return $null }
+        $response = & $script:RouterClaudeUsageFetcher ([string]$credential.token)
         if ($null -eq $response -or -not $response.PSObject.Properties['seven_day'] -or $null -eq $response.seven_day -or
             -not $response.seven_day.PSObject.Properties['utilization'] -or $null -eq $response.seven_day.utilization -or
             -not $response.seven_day.PSObject.Properties['resets_at']) { throw 'CLAUDE_USAGE_SHAPE' }
@@ -77,7 +78,7 @@ function Get-RouterClaudeUsage {
                 $sessionReset = ([datetimeoffset]$response.five_hour.resets_at).ToUniversalTime().ToString('o')
             }
         }
-        $reading = [pscustomobject]@{ used_percent=$used; resets_at_utc=$reset.ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o'); session_percent=$session; session_resets_at_utc=$sessionReset; source='oauth-usage' }
+        $reading = [pscustomobject]@{ used_percent=$used; resets_at_utc=$reset.ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o'); session_percent=$session; session_resets_at_utc=$sessionReset; source='oauth-usage'; credential_locator_identity=$identity }
         Write-RouterJsonAtomic -Path $path -Value $reading
         if ($reset -le [datetimeoffset]::UtcNow) { $reading.used_percent = 0.0 }
         return $reading

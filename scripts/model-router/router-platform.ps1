@@ -74,3 +74,42 @@ function Get-RouterSharedDir {
     if (-not $MainCheckout) { $MainCheckout = Get-RouterMainCheckout }
     return [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $MainCheckout) 'model-router/shared'))
 }
+
+# Captured output is private to the caller (Keychain output must never be logged).
+function Invoke-RouterBoundedProcess {
+    param([Parameter(Mandatory)][string]$FilePath, [string[]]$Arguments = @(),
+        [ValidateRange(1, 30000)][int]$TimeoutMs = 5000)
+    $process = [Diagnostics.Process]::new()
+    try {
+        $process.StartInfo = [Diagnostics.ProcessStartInfo]::new($FilePath)
+        $process.StartInfo.UseShellExecute = $false
+        $process.StartInfo.CreateNoWindow = $true
+        $process.StartInfo.RedirectStandardOutput = $true
+        $process.StartInfo.RedirectStandardError = $true
+        foreach ($argument in $Arguments) { $process.StartInfo.ArgumentList.Add($argument) }
+        $null = $process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutMs)) {
+            $process.Kill($true)
+            return [pscustomobject]@{ status='timeout'; exit_code=$null; output='' }
+        }
+        if (-not [Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdout,$stderr), $TimeoutMs)) {
+            return [pscustomobject]@{ status='timeout'; exit_code=$null; output='' }
+        }
+        return [pscustomobject]@{ status='completed'; exit_code=$process.ExitCode; output=$stdout.Result }
+    } catch { return [pscustomobject]@{ status='unavailable'; exit_code=$null; output='' } }
+    finally { $process.Dispose() }
+}
+
+function Test-RouterDns {
+    param([string]$ApiHost, [string]$Platform = (Get-RouterPlatform),
+        [ValidateRange(1, 10000)][int]$TimeoutMs = 5000,
+        [scriptblock]$Resolver = { param($Name) [Net.Dns]::GetHostAddressesAsync($Name) })
+    if ($Platform -eq 'Windows') { return @(Resolve-DnsName -Name $ApiHost -DnsOnly -QuickTimeout -ErrorAction Stop).Count -gt 0 }
+    try {
+        $task = & $Resolver $ApiHost
+        if (-not $task.Wait($TimeoutMs)) { return $false }
+        return $task.GetAwaiter().GetResult().Count -gt 0
+    } catch { return $false }
+}

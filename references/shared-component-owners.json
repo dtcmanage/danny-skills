@@ -1,4 +1,9 @@
 {
+  "scripts/model-router/router-credentials.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/run-mac-observer.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/register-mac-router-schedules.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/router-state-inventory.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test-mac-observer.ps1": {"consumers": [], "summary_token": "model router"},
   "assets/visualize/template.html": {
     "consumers": ["dt-roadmap", "dt-visualize-design", "dt-visualize-plan"],
     "summary_token": "visualize harness"
