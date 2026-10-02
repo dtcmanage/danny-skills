@@ -311,7 +311,7 @@ function Invoke-RouterCategoryResearch {
                                 category=$category; attempt=$attempt.attempt; pass=$false; escalated=$false
                                 failure_category='environment'; diagnosis=$diagnosis; source='research'; tier='research'; failure_file=$failurePath
                             }
-                            [IO.File]::AppendAllText((Join-Path $state 'outcomes.jsonl'), (($outcome | ConvertTo-Json -Compress) + "`n"))
+                            Add-RouterOutcome -StateDir $state -Row $outcome
                             if ($diagnosis -eq 'offline') {
                                 $outageStart = $at
                                 do {

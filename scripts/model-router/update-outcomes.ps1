@@ -57,7 +57,7 @@ function ConvertTo-RouterOutcomeAttempt {
     return 2
 }
 
-function Update-RouterOutcomes {
+function Update-RouterOutcomesLocked {
     param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts)
     $state = Get-RouterStateDir
     [IO.Directory]::CreateDirectory($state) | Out-Null
@@ -161,7 +161,11 @@ function Update-RouterOutcomes {
     }
     if ($newCount) {
         $lines = @($values | Sort-Object key | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 10 })
-        [IO.File]::WriteAllLines($outcomePath,$lines,[Text.UTF8Encoding]::new($false))
+        $temp = Join-Path $state ('.outcomes.' + [guid]::NewGuid().ToString('N') + '.tmp')
+        try {
+            [IO.File]::WriteAllLines($temp,$lines,[Text.UTF8Encoding]::new($false))
+            [IO.File]::Move($temp,$outcomePath,$true)
+        } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
     }
     $nowUtc = $Now.ToUniversalTime()
     $eligible = @($values | Where-Object { $_.attempt -eq 1 -and $_.failure_category -notin @('environment','tooling') })
@@ -244,9 +248,17 @@ function Update-RouterOutcomes {
         $latest = Read-RouterJsonObject -Path $latestPath
         if ($latest -and $latest.PSObject.Properties['proposal'] -and [string]$latest.proposal -like '*-drift.json') { Remove-Item -LiteralPath $latestPath -Force }
     }
-    if ($SendAlerts -and $alerts.Count) { Send-RouterAlerts -Alerts @($alerts.ToArray()) -ChatToStderr:$RouterOutcomesCliJson | Out-Null }
     return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; alerts=@($alerts.ToArray()); proposal=$proposalPath }
 
+}
+
+function Update-RouterOutcomes {
+    param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts)
+    # Reread outcomes, roster, marks and declines only after obtaining the shared writer lock.
+    $state = Get-RouterStateDir
+    $result = Use-RouterOutcomeMutex -StateDir $state -Action { Update-RouterOutcomesLocked -Now $Now -SourcesPath $SourcesPath }
+    if ($SendAlerts -and $result.alerts.Count) { Send-RouterAlerts -Alerts @($result.alerts) -ChatToStderr:$RouterOutcomesCliJson | Out-Null }
+    return $result
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

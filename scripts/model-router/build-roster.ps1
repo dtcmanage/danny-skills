@@ -101,8 +101,8 @@ function Get-RouterProposalJobVerdict {
     return [pscustomobject]@{ result=$result; evidence=$(if ($winner) {$winner.evidence} else {$tradeoffs -join '; '}); tradeoffs=@($tradeoffs) }
 }
 
-function Build-RouterRosterProposal {
-    param([datetime]$Now = (Get-Date))
+function Build-RouterRosterProposalLocked {
+    param([datetime]$Now = (Get-Date), [object]$Notification)
     $state = Get-RouterStateDir
     $current = (Read-RouterRoster).roster
     $readDir = Join-Path $state 'readings'
@@ -197,8 +197,16 @@ function Build-RouterRosterProposal {
         $jobs = @($conflicts | ForEach-Object job | Sort-Object -Unique) -join ','
         $alertMessage += " Over the 5-model cap; choose which of these jobs to change: $jobs. Approve your pick with approve-roster.ps1 -Approve -Jobs <job,...> (the full list exceeds the cap)."
     }
-    Send-RouterAlerts -Alerts @([pscustomobject]@{key="roster-proposal:$hash";message=$alertMessage}) | Out-Null
+    $Notification.alert = [pscustomobject]@{key="roster-proposal:$hash";message=$alertMessage}
     return [pscustomobject]@{changed=$true;pass_id=$passId;changes=@($changes);proposal=$jsonPath;report=$reportPath;over_cap=$overCap;conflicts=$conflicts;validation_errors=$errors}
+}
+
+function Build-RouterRosterProposal {
+    param([datetime]$Now = (Get-Date))
+    $notification = [pscustomobject]@{ alert=$null }
+    $result = Use-RouterOutcomeMutex -StateDir (Get-RouterStateDir) -Action { Build-RouterRosterProposalLocked -Now $Now -Notification $notification }
+    if ($notification.alert) { Send-RouterAlerts -Alerts @($notification.alert) | Out-Null }
+    return $result
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

@@ -233,10 +233,10 @@ function Invoke-RouterCanary {
                         $failureRow = $row.PSObject.Copy()
                         $failureRow.key = "$($row.key):failure:$($failure.attempt)"; $failureRow.attempt=$failure.attempt
                         $failureRow.pass=$false; $failureRow.failure_category='environment'; $failureRow.diagnosis=$failure.diagnosis
-                        [IO.File]::AppendAllText($outcomes,($failureRow | ConvertTo-Json -Compress) + "`n")
+                        Add-RouterOutcome -StateDir $state -Row $failureRow
                     }
                     if ($task -eq 'pelican' -and -not $stopped) { continue }
-                    [IO.File]::AppendAllText($outcomes,($row | ConvertTo-Json -Compress) + "`n")
+                    Add-RouterOutcome -StateDir $state -Row $row
                     $results.Add([pscustomobject]@{ model=$model.model; task=$task; run=$run; pass=$passed; error=$errorText; stopped=$stopped; diagnosis=$diagnosis; attempts=$attempt })
                     if ($stopped) { break }
                 }

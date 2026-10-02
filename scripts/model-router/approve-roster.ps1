@@ -35,6 +35,7 @@ if ($DeclineDrift -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster jo
 if ($Job -and -not $DeclineDrift) { throw '-Job requires -DeclineDrift.' }
 if ($Jobs -and -not $Approve) { throw '-Jobs requires -Approve.' }
 $state = Get-RouterStateDir
+Use-RouterOutcomeMutex -StateDir $state -Action {
 $rosterPath = Join-Path $state 'roster.json'
 $marksPath = Join-Path $state 'drift-marks.json'
 $declinesPath = Join-Path $state 'drift-declines.json'
@@ -111,3 +112,5 @@ if ($Show) {
     Write-RouterApprovalJson $marksPath @((Read-RouterJsonArray -Path $marksPath) | Where-Object { $_.job -ne $Job })
     "Drift declined for $Job." | Write-Output
 }
+
+} # shared outcome / roster mutation lock

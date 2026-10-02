@@ -235,3 +235,28 @@ function Write-RouterJsonAtomic {
         [IO.File]::Move($temp, $Path, $true)
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
+
+function Use-RouterOutcomeMutex {
+    # Keep the file in place: unlinking a lock file can let waiters lock different inodes on Unix.
+    # The OS releases the exclusive handle on process exit, including a crash.
+    param([Parameter(Mandatory)][string]$StateDir, [Parameter(Mandatory)][scriptblock]$Action, [int]$TimeoutMs = 30000)
+    [IO.Directory]::CreateDirectory($StateDir) | Out-Null
+    $path = Join-Path $StateDir 'outcomes.mutex'
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $handle = $null
+    while ($null -eq $handle) {
+        try { $handle = [IO.FileStream]::new($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch [IO.IOException] {
+            if ($watch.ElapsedMilliseconds -ge $TimeoutMs) { throw 'ROUTER_OUTCOME_MUTEX_TIMEOUT' }
+            Start-Sleep -Milliseconds 50
+        }
+    }
+    try { & $Action } finally { $handle.Dispose() }
+}
+
+function Add-RouterOutcome {
+    param([Parameter(Mandatory)][object]$Row, [string]$StateDir = (Get-RouterStateDir))
+    Use-RouterOutcomeMutex -StateDir $StateDir -Action {
+        [IO.File]::AppendAllText((Join-Path $StateDir 'outcomes.jsonl'), ((ConvertTo-Json -InputObject $Row -Compress -Depth 20) + "`n"), [Text.UTF8Encoding]::new($false))
+    }
+}

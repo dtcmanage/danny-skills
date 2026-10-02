@@ -397,7 +397,7 @@ try {
                     lane = 'codex'; model = $resolvedModel; category = $Category; attempt = $Attempt
                     pass = $false; escalated = $false; failure_category = 'environment'; diagnosis = $diagnosis; source = 'dt-build'; tier = $Tier
                 }
-                [IO.File]::AppendAllText((Join-Path (Get-RouterStateDir) 'outcomes.jsonl'), (($row | ConvertTo-Json -Compress) + "`n"))
+                Add-RouterOutcome -Row $row
             }
             switch ($diagnosis) {
                 'offline' {
