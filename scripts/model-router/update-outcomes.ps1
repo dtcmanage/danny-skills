@@ -254,6 +254,7 @@ function Update-RouterOutcomesLocked {
 
 function Update-RouterOutcomes {
     param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts)
+    Assert-RouterWindowsOwner -Action 'Outcome import and drift proposal construction'
     # Reread outcomes, roster, marks and declines only after obtaining the shared writer lock.
     $state = Get-RouterStateDir
     $result = Use-RouterOutcomeMutex -StateDir $state -Action { Update-RouterOutcomesLocked -Now $Now -SourcesPath $SourcesPath }

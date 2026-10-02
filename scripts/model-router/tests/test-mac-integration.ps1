@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../run-router-cadence.ps1')
 . (Join-Path $PSScriptRoot '../register-router-schedules.ps1')
 . (Join-Path $PSScriptRoot '../canary/run-canary.ps1')
+. (Join-Path $PSScriptRoot '../update-outcomes.ps1')
 $script:passed = 0
 function Assert-True([bool]$Condition, [string]$Name) {
     if (-not $Condition) { throw "FAIL: $Name" }
@@ -124,6 +125,7 @@ try {
     Assert-Owner { Invoke-RouterCadence -CheckOnly } 'Mac refuses cadence'
     Assert-Owner { Invoke-RouterCategoryResearch -Categories routine-coding -Models gpt-6.1-sol } 'Mac refuses direct research'
     Assert-Owner { Build-RouterRosterProposal } 'Mac refuses direct proposal construction'
+    Assert-Owner { Update-RouterOutcomes } 'Mac refuses outcome import and drift proposal construction'
     Assert-Owner { Invoke-RouterModelCheck -Force } 'Mac refuses direct release polling'
     Assert-Owner { Register-RouterSchedules } 'Mac refuses schedule registration'
     Assert-Owner { Invoke-RouterCanary -DryRun } 'Mac refuses canary'
