@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.15.2 (2026-10-02): Isolate regression-suite Claude credentials and Codex sessions so live account quota cannot alter routing fixtures.
+
 - 1.15.1 (2026-10-01): Consume shared model router diagnosis verdicts, vendor-incident failover, research and canary reliability, acknowledge support, and routing compliance reporting.
 
 - 1.15.0 (2026-10-01): model router consolidation: both lanes resolve planning through the router (protected for complex), effort comes from the resolver and steps down one level from round 3, preflight resolves planning, skill text no longer names models or effort levels

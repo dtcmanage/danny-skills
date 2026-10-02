@@ -89,6 +89,8 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 $testRoot = Join-Path $env:TEMP ("dt-review-tests-{0}" -f [guid]::NewGuid().ToString('N'))
 $priorRouterState = $env:DT_MODEL_ROUTER_STATE
 $priorAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
+$priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
+$priorCodexSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
 $project = Join-Path $testRoot 'project'
 $scratch = Join-Path $project 'design\_review'
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
@@ -100,6 +102,10 @@ try {
     $routerState = Join-Path $testRoot 'router-state'
     New-Item -ItemType Directory -Path $routerState -Force | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $routerState
+    # Isolate quota inputs in this process and child invokers as well as router state.
+    # Missing fixture credentials/sessions mean no usage reading; never consult the account.
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $testRoot 'absent-credentials.json'
+    $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $testRoot 'absent-sessions'
     Write-Utf8 (Join-Path $routerState 'last-check.json') (@{ checked_at = (Get-Date).ToString('o') } | ConvertTo-Json)
     $fakeAlertTransport = Join-Path $testRoot 'fake-alert-transport.ps1'
     Write-Utf8 $fakeAlertTransport "param(`$request)`nif (`$request['kind'] -eq 'secret') { return 'fake-secret' }`nif ([string]`$request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '1' } } }`nreturn [pscustomobject]@{ id = 'fake' }`n"
@@ -618,6 +624,8 @@ Set-Content -LiteralPath (Join-Path $PSScriptRoot 'held-output-child.pid') -Valu
 finally {
     $env:DT_MODEL_ROUTER_STATE = $priorRouterState
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorAlertTransport
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
+    $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorCodexSessions
     if (Test-Path -LiteralPath $testRoot) {
         $resolved = (Resolve-Path -LiteralPath $testRoot).Path
         $tempPrefix = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
