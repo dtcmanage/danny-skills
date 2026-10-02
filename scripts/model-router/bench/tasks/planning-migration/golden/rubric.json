@@ -1,0 +1,33 @@
+{
+  "threshold": 0.8,
+  "score_values": [
+    0,
+    1
+  ],
+  "lines": [
+    {
+      "id": "compare",
+      "criterion": "Compares all three approaches with specific trade-offs."
+    },
+    {
+      "id": "choice",
+      "criterion": "Makes a single expand-contract recommendation justified by constraints."
+    },
+    {
+      "id": "coexist",
+      "criterion": "Preserves old readers for seven days, dual-writes and retains original ambiguous names."
+    },
+    {
+      "id": "backfill",
+      "criterion": "Uses batched resumable backfill and verifies row counts/name preservation before switching."
+    },
+    {
+      "id": "rollback",
+      "criterion": "Keeps old columns and offers a read-path rollback within 10 minutes; no early destructive drop."
+    },
+    {
+      "id": "constraints",
+      "criterion": "Explicitly honors <=60-second downtime, one operator and no paid new infrastructure."
+    }
+  ]
+}

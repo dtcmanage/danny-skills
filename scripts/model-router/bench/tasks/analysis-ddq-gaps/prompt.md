@@ -1,0 +1,1 @@
+Review the synthetic DDQ in fixtures/input.json. Name missing or inconsistent items with section evidence and a concrete clarification/remediation. Limit to actual defects. Do not treat synthetic names or absent real-world facts as flaws.

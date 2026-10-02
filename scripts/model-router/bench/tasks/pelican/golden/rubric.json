@@ -1,0 +1,6 @@
+{
+  "scoring": "artifact-only",
+  "threshold": 0.8,
+  "lines": [],
+  "note": "Unchanged canary: save SVG, omit pelican from pass counts and graded outcomes. No automatic visual judge."
+}

@@ -1,2 +1,0 @@
-import re
-def slugify(s): return re.sub('[^a-z0-9]+','-',s.lower()).strip('-')

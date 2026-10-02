@@ -1,0 +1,45 @@
+{
+  "entities": [
+    "Alpha",
+    "Beta",
+    "Gamma"
+  ],
+  "entries": [
+    {
+      "entity": "Alpha",
+      "account": "cash",
+      "debit": 192,
+      "credit": 0
+    },
+    {
+      "entity": "Alpha",
+      "account": "capital",
+      "debit": 0,
+      "credit": 192
+    },
+    {
+      "entity": "Beta",
+      "account": "cash",
+      "debit": 194,
+      "credit": 0
+    },
+    {
+      "entity": "Beta",
+      "account": "capital",
+      "debit": 0,
+      "credit": 194
+    },
+    {
+      "entity": "Gamma",
+      "account": "cash",
+      "debit": 174,
+      "credit": 0
+    },
+    {
+      "entity": "Gamma",
+      "account": "capital",
+      "debit": 0,
+      "credit": 174
+    }
+  ]
+}

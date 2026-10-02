@@ -1,0 +1,16 @@
+{
+  "fees": [
+    {
+      "vehicle": "Vehicle A",
+      "management_pct": 0.75,
+      "performance_pct": 15,
+      "page": 1
+    },
+    {
+      "vehicle": "Vehicle B",
+      "management_pct": 1.0,
+      "performance_pct": 20,
+      "page": 2
+    }
+  ]
+}

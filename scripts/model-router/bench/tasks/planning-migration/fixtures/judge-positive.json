@@ -1,0 +1,10 @@
+{
+  "scores": {
+    "compare": 1,
+    "choice": 1,
+    "coexist": 1,
+    "backfill": 1,
+    "rollback": 1,
+    "constraints": 1
+  }
+}

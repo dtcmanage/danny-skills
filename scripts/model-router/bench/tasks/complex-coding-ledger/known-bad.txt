@@ -1,0 +1,2 @@
+def post(entries: list[dict]) -> dict:
+    return {}

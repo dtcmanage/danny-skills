@@ -1,0 +1,1 @@
+Draft ONE 250-word investor-letter section (acceptable range 230-270) from the supplied synthetic facts. Business voice: plain active prose, short coherent paragraphs, measured claims, concrete drivers. No headings, bullets, hype, promises, invented holdings or figures. Do not use delve, foster, leverage, "it is worth noting", or "Bottom Line".

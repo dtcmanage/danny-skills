@@ -1,0 +1,2 @@
+import React from 'react';
+export function App({items}) { return <div>{items[0].name}</div>; }

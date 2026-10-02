@@ -1,0 +1,1 @@
+Choose in-place and shadow database simultaneously. Delete the original names first; downtime is unimportant.

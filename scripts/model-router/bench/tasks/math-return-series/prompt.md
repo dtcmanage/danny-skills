@@ -1,0 +1,1 @@
+Monthly decimal returns in fixtures/input.json. Start wealth and running peak at 1. Chain wealth *= (1 + return). Running peak includes starting wealth. Drawdown = wealth/peak - 1 (negative). Return JSON with arrays wealth, peaks, drawdowns in month order and max_drawdown (the minimum drawdown, signed). Tolerance 1e-8.

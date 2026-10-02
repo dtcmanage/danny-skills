@@ -1,0 +1,16 @@
+{
+  "change": "Split display_name into given_name/family_name; preserve original for ambiguous names.",
+  "constraints": [
+    "20 million rows",
+    "old and new readers coexist for 7 days",
+    "downtime <= 60 seconds",
+    "one operator",
+    "rollback within 10 minutes",
+    "no paid new infrastructure"
+  ],
+  "approaches": {
+    "in_place": "Rename columns and rewrite all rows in one exclusive transaction.",
+    "expand_contract": "Add nullable columns, dual-write, batch backfill, validate, switch reads; drop old after coexistence.",
+    "shadow_database": "Duplicate database and CDC replication; needs new paid database and specialist."
+  }
+}

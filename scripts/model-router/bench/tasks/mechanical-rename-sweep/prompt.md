@@ -1,0 +1,1 @@
+Rename every occurrence of the old label to the new label in fixtures/input.json. Return JSON {"files": {"relative/path": "complete post-rename contents"}, "touched": [paths sorted lexicographically]}. Include unchanged files. Preserve all other bytes.

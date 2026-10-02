@@ -1,0 +1,12 @@
+{
+  "ddq": {
+    "1 valuation": "Monthly NAV; daily NAV published to investors.",
+    "2 fees": "Management fee 1%; Appendix A management fee 2%.",
+    "3 liquidity": "Monthly redemptions with 30-day notice; appendix says quarterly with 90-day notice.",
+    "4 auditor": "Auditor: [blank].",
+    "5 custody": "Custodian: [blank].",
+    "6 performance": "2025 return 8%; gross/net basis: [blank].",
+    "7 continuity": "Nightly backups; recovery drill quarterly, recovery owner: Operations.",
+    "8 leverage": "No borrowing or derivatives."
+  }
+}

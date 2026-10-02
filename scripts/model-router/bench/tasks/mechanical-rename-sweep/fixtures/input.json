@@ -1,0 +1,10 @@
+{
+  "old": "worker-327",
+  "new": "engine-791",
+  "files": {
+    "app.json": "{\"service\": \"worker-327\", \"retry\": 3}",
+    "jobs/nightly.yml": "target: worker-327\nmode: dry-run\n",
+    "docs/readme.md": "Use worker-327 for the synthetic batch.\n",
+    "unchanged.txt": "Keep this byte for byte.\n"
+  }
+}

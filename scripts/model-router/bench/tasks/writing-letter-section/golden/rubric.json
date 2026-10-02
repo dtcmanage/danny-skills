@@ -1,0 +1,29 @@
+{
+  "threshold": 0.8,
+  "score_values": [
+    0,
+    1
+  ],
+  "lines": [
+    {
+      "id": "facts",
+      "criterion": "Keeps return, benchmark, cash and both drivers exactly as supplied."
+    },
+    {
+      "id": "unsupported",
+      "criterion": "No invented figures, holdings, causal attribution weights or promises of future returns."
+    },
+    {
+      "id": "length",
+      "criterion": "230-270 words in one section with no headings or bullet list."
+    },
+    {
+      "id": "voice",
+      "criterion": "Plain active sentences and coherent paragraphs; restrained business tone, no hype."
+    },
+    {
+      "id": "padding",
+      "criterion": "No banned phrases (delve, foster, leverage, it is worth noting, Bottom Line) or canned concluding summary."
+    }
+  ]
+}

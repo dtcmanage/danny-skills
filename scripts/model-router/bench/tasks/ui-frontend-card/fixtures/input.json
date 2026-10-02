@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "id": "part-1",
+      "name": "Synthetic part 1",
+      "detail": "Stock 63 units"
+    },
+    {
+      "id": "part-2",
+      "name": "Synthetic part 2",
+      "detail": "Stock 12 units"
+    },
+    {
+      "id": "part-3",
+      "name": "Synthetic part 3",
+      "detail": "Stock 16 units"
+    }
+  ]
+}

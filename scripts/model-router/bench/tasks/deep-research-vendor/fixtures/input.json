@@ -1,0 +1,24 @@
+{
+  "sources": [
+    {
+      "id": "S1",
+      "text": "Product guide: EU storage region is selectable on paid plans."
+    },
+    {
+      "id": "S2",
+      "text": "Retention guide: live objects delete after configured retention (minimum 7 days); backups persist another 35 days."
+    },
+    {
+      "id": "S3",
+      "text": "Quota guide: standard plan supports 500 GB; overage requires approval."
+    },
+    {
+      "id": "S4",
+      "text": "Support note: logs process in US; EU log routing is a beta feature, with no general availability commitment."
+    },
+    {
+      "id": "S5",
+      "text": "Contract excerpt: region covers stored objects only; backups and support telemetry residency not specified."
+    }
+  ]
+}

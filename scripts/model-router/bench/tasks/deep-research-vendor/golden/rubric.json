@@ -1,0 +1,29 @@
+{
+  "threshold": 0.8,
+  "score_values": [
+    0,
+    1
+  ],
+  "lines": [
+    {
+      "id": "coverage",
+      "criterion": "Uses all five exact source identifiers with claims supported by each excerpt."
+    },
+    {
+      "id": "capacity",
+      "criterion": "States 200 GB fits the 500 GB standard quota [S3]."
+    },
+    {
+      "id": "retention",
+      "criterion": "States live retention is configurable but extra 35-day backups prevent guaranteed 30-day deletion [S2]."
+    },
+    {
+      "id": "residency",
+      "criterion": "Distinguishes EU paid object storage [S1] from US logs/beta routing [S4] and unspecified backup/telemetry residency [S5]."
+    },
+    {
+      "id": "conclusion",
+      "criterion": "Does not certify compliance; asks for backup deletion/residency and log guarantees without unsupported claims."
+    }
+  ]
+}

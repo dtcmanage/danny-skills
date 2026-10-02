@@ -1,0 +1,9 @@
+{
+  "return_pct": 4,
+  "benchmark_pct": 3,
+  "cash_pct": 12,
+  "drivers": [
+    "demand recovery",
+    "lower input costs"
+  ]
+}

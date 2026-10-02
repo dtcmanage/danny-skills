@@ -1,0 +1,11 @@
+{
+  "scores": {
+    "valuation": 1,
+    "fee": 1,
+    "liquidity": 1,
+    "auditor": 1,
+    "custody": 1,
+    "basis": 1,
+    "precision": 1
+  }
+}

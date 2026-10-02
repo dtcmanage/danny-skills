@@ -1,0 +1,1 @@
+Extract all fee rows from fixtures/document.txt. Return JSON {"fees": [{"vehicle": string, "management_pct": number, "performance_pct": number, "page": integer}]} in document order. Percent values are percentage points; cite the source page.

@@ -1,0 +1,9 @@
+{
+  "dimension_framework": "provisional",
+  "fixture_seed": 20260930,
+  "rubric_threshold": 0.8,
+  "judges": {"claude": "claude-fable-5-1", "codex": "gpt-6-astra"},
+  "judge_disagreement_threshold": 0.3,
+  "judge_answer_envelope": "scripts/wrap-prompt-envelope.ps1",
+  "pelican_scoring": "artifact-only; unchanged canary behavior"
+}

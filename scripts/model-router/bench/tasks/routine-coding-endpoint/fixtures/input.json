@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "name": "Part A",
+      "quantity": 10
+    },
+    {
+      "id": 2,
+      "name": "Part B",
+      "quantity": 21
+    },
+    {
+      "id": 3,
+      "name": "Part C",
+      "quantity": 17
+    }
+  ]
+}
