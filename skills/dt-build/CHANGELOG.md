@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.18.1
+
+- Update the shared vendor-failure diagnosis consumer version for degraded-component handling when the incident feed is unavailable.
+
 ## 2.18.0
 
 - Add router diagnosis verdicts, vendor-incident failover, research and canary reliability, acknowledge support, and a routing compliance report with execution-aware command counts.

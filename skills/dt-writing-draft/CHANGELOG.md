@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.1.15 (2026-10-02): Update the shared vendor-failure diagnosis consumer version for degraded-component handling when the incident feed is unavailable.
+
 - 0.1.14 (2026-10-01): Consume shared model router diagnosis verdicts, vendor-incident failover, research and canary reliability, acknowledge support, and routing compliance reporting.
 
 - 0.1.13 (2026-10-01): model router consolidation: v1 evidence routing retired, roster-only resolver with effort, approve-roster.ps1 replaces approve-router-table.ps1, ladders.json replaces bridge-map.json
