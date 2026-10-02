@@ -114,6 +114,20 @@ def test_escaped_data_and_cache_hash(service):
     assert review.bank_hash(tasks) == before
 
 
+def test_render_includes_accessible_review_flow(service):
+    server, tasks, state = service
+    status, html = request(server, "GET")
+    assert status == 200
+    assert '<svg class="flow"' in html and 'role="img"' in html
+    assert 'aria-labelledby="flow-title flow-desc"' in html
+    for transition in (
+        "Per-task: pending", "approved", "needs-change",
+        "All 12 approved → bank approved",
+        "Any bank byte or path edit", "all tasks pending; bank returns to shadow mode",
+    ):
+        assert transition in html
+
+
 @pytest.mark.parametrize("port", [8792, 8802, 9222])
 def test_reserved_ports(tmp_path: Path, port: int):
     with pytest.raises(ValueError, match="reserved"):
