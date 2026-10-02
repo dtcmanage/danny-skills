@@ -1,4 +1,6 @@
 {
+  "scripts/model-router/tests/test-mac-regressions.ps1": {"consumers": [], "summary_token": "model router"},
+  "references/model-router/mac-integration.md": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/router-credentials.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/run-mac-observer.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/register-mac-router-schedules.ps1": {"consumers": [], "summary_token": "model router"},
