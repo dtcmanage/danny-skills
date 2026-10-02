@@ -63,6 +63,11 @@ function Get-RouterClaudeCredential {
         $status='source-disagreement'; $source='none'; $token=$null
     } elseif ($file.status -ne 'available' -and $native.status -eq 'available') {
         $status='available'; $source='keychain'; $token=$native.token
-    } elseif ($file.status -ne 'available') { $source='none' }
+    } elseif ($file.status -ne 'available') {
+        $source='none'
+        # Preserve a verified native expiry so the quota reader can retain a
+        # same-locator observed ceiling until reset, without using an old token.
+        if ($file.status -eq 'missing' -and $native.status -eq 'expired') { $status='expired' }
+    }
     [pscustomobject]@{ status=$status; source=$source; file_status=$file.status; keychain_status=$native.status; token=$token }
 }

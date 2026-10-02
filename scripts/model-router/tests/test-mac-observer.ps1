@@ -88,6 +88,11 @@ try {
         $result = Get-RouterClaudeCredential -UserHome $userHome -Process $fakeSecurity
         Assert-True ($result.status -ne 'available' -and $null -eq $result.token -and ($result | ConvertTo-Json) -notmatch 'fixture-private') "$mode source unavailable and secret safe"
     }
+    $script:nativeMode = 'expired'
+    $result = Get-RouterClaudeCredential -UserHome $userHome -Process $fakeSecurity
+    Assert-True ($result.status -eq 'expired' -and $result.file_status -eq 'missing' -and $result.keychain_status -eq 'expired' -and $null -eq $result.token) 'native expiry survives credential projection for quota ceiling retention'
+    $script:nativeExpiredResult = $result
+    $script:nativeMode = 'throw'
     [IO.File]::WriteAllText($credentialFile,(New-CredentialText -Expired $true))
     Assert-True ((Get-RouterClaudeCredential -UserHome $userHome -Process $fakeSecurity).status -eq 'expired') 'expired file rejected'
     $env:DT_MODEL_ROUTER_CLAUDE_KEYCHAIN_SERVICE = $null
@@ -226,6 +231,13 @@ try {
     $env:CLAUDE_CONFIG_DIR=$custom
     $env:DT_MODEL_ROUTER_CLAUDE_KEYCHAIN_SERVICE='fixture-exact-account'
     $cache.credential_locator_identity=Get-RouterClaudeCredentialIdentity
+    $cache.used_percent=98
+    $cache.observed_at_utc=[datetimeoffset]::UtcNow.AddMinutes(-6).ToString('o')
+    Write-RouterJsonAtomic -Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'claude-usage.json') -Value $cache
+    $script:RouterClaudeCredentialProvider = { $script:nativeExpiredResult }
+    $retained=Get-RouterClaudeUsage
+    Assert-True ($null -ne $retained -and $retained.used_percent -eq 98 -and $retained.observed_at_utc -eq $cache.observed_at_utc -and $script:fetchCalls -eq 1) 'native expired source retains same-locator observed weekly ceiling without fetch or freshness rewrite'
+    $cache.used_percent=67
     $script:RouterClaudeCredentialProvider = { [pscustomobject]@{ status='available'; token='fixture-private-new-account' } }
     $script:RouterClaudeUsageFetcher = { param($Token) throw 'fixture fetch failure' }
     foreach ($name in @('DT_MODEL_ROUTER_CLAUDE_CREDENTIALS','CLAUDE_CONFIG_DIR','DT_MODEL_ROUTER_CLAUDE_KEYCHAIN_SERVICE')) {
