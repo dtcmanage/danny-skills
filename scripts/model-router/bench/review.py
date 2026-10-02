@@ -133,7 +133,7 @@ class Review:
                 '<path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker></defs>'
                 '<rect class="node" x="24" y="38" width="200" height="68" rx="10"/>'
                 '<text x="124" y="79" text-anchor="middle">Per-task: pending</text>'
-                '<path class="edge" d="M224 62 H304"/><path class="edge" d="M224 82 H304"/>'
+                '<path class="edge" d="M224 62 H304"/><path class="edge" d="M224 82 H264 V126 H304"/>'
                 '<rect class="node approved" x="304" y="24" width="210" height="60" rx="10"/>'
                 '<text x="409" y="61" text-anchor="middle">approved</text>'
                 '<rect class="node changed" x="304" y="96" width="210" height="60" rx="10"/>'

@@ -120,6 +120,7 @@ def test_render_includes_accessible_review_flow(service):
     assert status == 200
     assert '<svg class="flow"' in html and 'role="img"' in html
     assert 'aria-labelledby="flow-title flow-desc"' in html
+    assert '<path class="edge" d="M224 82 H264 V126 H304"/>' in html
     for transition in (
         "Per-task: pending", "approved", "needs-change",
         "All 12 approved → bank approved",
