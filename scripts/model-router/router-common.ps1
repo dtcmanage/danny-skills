@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'router-platform.ps1')
 
 function Get-RouterCategories {
     return @('complex-coding','routine-coding','code-review','ui-frontend','planning','deep-research','long-form-writing','mechanical','image-generation')
@@ -120,21 +121,22 @@ function Test-RouterRoster {
 }
 
 function Read-RouterRoster {
+    param([string]$Platform = (Get-RouterPlatform))
     $defaultPath = Join-Path $PSScriptRoot '../../references/model-router/default-roster.json'
-    $statePath = Join-Path (Get-RouterStateDir) 'roster.json'
+    $statePath = if ($Platform -eq 'MacOS') { Join-Path (Get-RouterSharedDir) 'roster.json' } else { Join-Path (Get-RouterStatePath -Platform $Platform) 'roster.json' }
     $validationError = $null
     if (Test-Path -LiteralPath $statePath) {
         try {
             $roster = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -Depth 20
             $errors = @(Test-RouterRoster -Roster $roster)
-            if (-not $errors.Count -and $roster.approved -eq $true) { return [pscustomobject]@{ roster=$roster; source='state'; validation_error=$null } }
+            if (-not $errors.Count -and $roster.approved -eq $true) { return [pscustomobject]@{ roster=$roster; source=$(if ($Platform -eq 'MacOS') { 'shared' } else { 'state' }); validation_error=$null; path=$statePath } }
             if ($errors.Count) { $validationError = $errors -join '; ' }
         } catch { $validationError = "ROSTER_PARSE: $($_.Exception.Message)" }
     }
     $roster = Get-Content -LiteralPath $defaultPath -Raw | ConvertFrom-Json -Depth 20
     $errors = @(Test-RouterRoster -Roster $roster)
     if ($errors.Count) { throw "DEFAULT_ROSTER_INVALID: $($errors -join '; ')" }
-    return [pscustomobject]@{ roster=$roster; source='default'; validation_error=$validationError }
+    return [pscustomobject]@{ roster=$roster; source='default'; validation_error=$validationError; path=$statePath }
 }
 
 function Get-RouterModelGeneration {
@@ -171,14 +173,7 @@ function Get-RouterGradeRank {
 }
 
 function Get-RouterStateDir {
-    if ($env:DT_MODEL_ROUTER_STATE) { $state = [System.IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE) }
-    else {
-        $common = & git -C $PSScriptRoot rev-parse --path-format=absolute --git-common-dir 2>$null | Select-Object -First 1
-        if (-not $common) { throw 'ROUTER_GIT_COMMON_DIR: Cannot locate main checkout.' }
-        $common = $common.Trim()
-        $main = Split-Path -Parent $common
-        $state = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $main) 'model-router/state'))
-    }
+    $state = Get-RouterStatePath
     [IO.Directory]::CreateDirectory($state) | Out-Null
     $ignore = Join-Path $state '.gitignore'
     if (-not (Test-Path -LiteralPath $ignore)) {

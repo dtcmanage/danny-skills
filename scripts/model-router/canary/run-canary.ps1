@@ -141,6 +141,7 @@ function Get-CanaryAnswerBody {
 
 function Invoke-RouterCanary {
     param([string[]]$Models,[ValidateSet('monthly','post-release','manual')][string]$Reason='manual',[scriptblock]$Invoker,[switch]$DryRun,[datetime]$Now=(Get-Date),[switch]$ExplicitModels)
+    Assert-RouterWindowsOwner -Action 'Router canary'
     $scope = @(Get-CanaryScope -OnlyModels $Models -ExcludeFrontier:($Reason -ne 'manual' -and -not $ExplicitModels))
     $burn = Get-CanaryBurn -Scope $scope
     if ($DryRun) { return [pscustomobject]@{ dry_run=$true; scope=$scope; burn=$burn } }
@@ -275,6 +276,7 @@ function Invoke-RouterCanary {
 
 function Start-RouterCanaryDetached {
     param([Parameter(Mandatory)][string[]]$Models)
+    Assert-RouterWindowsOwner -Action 'Detached benchmark launch'
     $shim = 'D:\Claude\_system-tools\run-hidden\run-hidden.vbs'
     $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
     $wscript = (Get-Command wscript.exe -ErrorAction Stop).Source

@@ -20,6 +20,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -1001,6 +1002,8 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
 
 
 def main() -> None:
+    if sys.platform != "win32":
+        raise SystemExit("ROUTER_WINDOWS_OWNER: Weekly cost reporting is owned by Windows.")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--prices", type=Path, default=DEFAULT_PRICES_PATH)

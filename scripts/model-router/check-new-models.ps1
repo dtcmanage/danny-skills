@@ -49,6 +49,7 @@ function Get-RouterVendorModels {
 
 function Invoke-RouterModelCheck {
     param([switch]$Force, [int]$TimeoutSeconds = 30, [datetime]$Now = (Get-Date))
+    Assert-RouterWindowsOwner -Action 'Vendor release polling'
     $state = Get-RouterStateDir
     $stamp = Join-Path $state 'last-check.json'
     $result = [ordered]@{ skipped = $false; offline = $false; timed_out = $false; checked_at = $null; new_models = @(); missing_models = @(); errors = @(); alerts = @() }

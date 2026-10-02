@@ -1,9 +1,11 @@
 param([switch]$Apply, [switch]$Json)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'router-platform.ps1')
 
 function Register-RouterSchedules {
     param([switch]$Apply)
+    Assert-RouterWindowsOwner -Action 'Router schedules'
     $shim = 'D:\Claude\_system-tools\run-hidden\run-hidden.vbs'
     $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
     $wscript = (Get-Command wscript.exe -ErrorAction Stop).Source

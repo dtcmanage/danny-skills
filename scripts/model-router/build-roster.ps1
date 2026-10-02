@@ -203,6 +203,7 @@ function Build-RouterRosterProposalLocked {
 
 function Build-RouterRosterProposal {
     param([datetime]$Now = (Get-Date))
+    Assert-RouterWindowsOwner -Action 'Roster proposal construction'
     $notification = [pscustomobject]@{ alert=$null }
     $result = Use-RouterOutcomeMutex -StateDir (Get-RouterStateDir) -Action { Build-RouterRosterProposalLocked -Now $Now -Notification $notification }
     if ($notification.alert) { Send-RouterAlerts -Alerts @($notification.alert) | Out-Null }

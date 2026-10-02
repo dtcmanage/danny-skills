@@ -189,7 +189,7 @@ function Resolve-RouterModel {
     $result = Resolve-RouterRosterPick -Read $rosterRead -Category $Category -Lane $Lane -IsProtected ([bool]$Protected -or $Category -eq 'long-form-writing') -EscalateFrom $EscalateFrom -Catalog $Catalog
     $result | Add-Member -NotePropertyName vendor_block_recorded -NotePropertyValue $recorded
     if ($rosterRead.source -eq 'default') {
-        $alert = if (Test-Path -LiteralPath (Join-Path (Get-RouterStateDir) 'roster.json')) {
+        $alert = if (Test-Path -LiteralPath $rosterRead.path) {
             $errorText = if ($rosterRead.validation_error) { $rosterRead.validation_error } else { 'ROSTER_NOT_APPROVED: roster is not approved' }
             "router-roster-invalid: $errorText"
         } else { 'router-roster-missing' }

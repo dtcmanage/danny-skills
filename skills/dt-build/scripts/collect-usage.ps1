@@ -14,6 +14,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Reporting has one Windows owner; the Mac observes local quotas independently.
+. (Join-Path $PSScriptRoot '../../../scripts/model-router/router-platform.ps1')
+if ((Get-RouterPlatform) -ne 'Windows') {
+    Write-Output 'DT_BUILD_USAGE: Reporting sweep is owned by Windows; Mac collection skipped.'
+    exit 0
+}
+
 try {
     $python = $null
     foreach ($name in @('python', 'python3', 'py')) {

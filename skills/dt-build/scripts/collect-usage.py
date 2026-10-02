@@ -19,6 +19,7 @@ import re
 import socket
 import statistics
 import subprocess
+import sys
 from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -863,6 +864,9 @@ Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}.</p><div class="tiles">{ti
 
 
 def main() -> None:
+    if sys.platform != "win32":
+        print("DT_BUILD_USAGE: Reporting sweep is owned by Windows; Mac collection skipped.")
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=None, help="output folder")
     parser.add_argument("--baseline", default="2026-09-20", help="ISO date the current policy took effect")

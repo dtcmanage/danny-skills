@@ -21,6 +21,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'resolve-model.ps1')
+. (Join-Path $PSScriptRoot 'publish-roster.ps1')
+if ($Seed -or $Approve -or $Revoke -or $DeclineDrift) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
 if ($Jobs) { $Jobs = @($Jobs | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 
 function Write-RouterApprovalJson {
@@ -34,13 +36,13 @@ if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$S
 if ($DeclineDrift -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
 if ($Job -and -not $DeclineDrift) { throw '-Job requires -DeclineDrift.' }
 if ($Jobs -and -not $Approve) { throw '-Jobs requires -Approve.' }
-$state = Get-RouterStateDir
-Use-RouterOutcomeMutex -StateDir $state -Action {
+$approvalAction = {
+$state = if ($Show) { Get-RouterStatePath } else { Get-RouterStateDir }
 $rosterPath = Join-Path $state 'roster.json'
 $marksPath = Join-Path $state 'drift-marks.json'
 $declinesPath = Join-Path $state 'drift-declines.json'
 $dir = Join-Path $state 'roster-proposals'
-[IO.Directory]::CreateDirectory($dir) | Out-Null
+if (-not $Show) { [IO.Directory]::CreateDirectory($dir) | Out-Null }
 $latest = Read-RouterJsonObject -Path (Join-Path $dir 'latest.json')
 if ($Show) {
     if ($latest -and $latest.PSObject.Properties['report'] -and (Test-Path -LiteralPath ([string]$latest.report))) { Get-Content -LiteralPath ([string]$latest.report) -Raw | Write-Output }
@@ -86,6 +88,7 @@ if ($Show) {
     $errors = @(Test-RouterRoster -Roster $proposal)
     if ($errors.Count) { throw "Invalid roster proposal: $($errors -join '; ')" }
     Write-RouterApprovalJson $rosterPath $proposal
+    Publish-RouterRoster
     $changed = @(Get-RouterJobs | Where-Object { $before.jobs.$_.first -ne $proposal.jobs.$_.first })
     if ($changed.Count) {
         Write-RouterApprovalJson $marksPath @((Read-RouterJsonArray -Path $marksPath) | Where-Object { $_.job -notin $changed })
@@ -102,6 +105,7 @@ if ($Show) {
     }
     $current.approved = $false
     Write-RouterApprovalJson $rosterPath $current
+    Publish-RouterRoster
     'Roster approval cleared. Routing falls back to the default roster with an alert.' | Write-Output
 } else {
     $current = Read-RouterRoster
@@ -112,5 +116,11 @@ if ($Show) {
     Write-RouterApprovalJson $marksPath @((Read-RouterJsonArray -Path $marksPath) | Where-Object { $_.job -ne $Job })
     "Drift declined for $Job." | Write-Output
 }
-
-} # shared outcome / roster mutation lock
+}
+if ($Show) { & $approvalAction } else {
+    $state = Get-RouterStateDir
+    # One lock order: outcomes before roster. Publication only takes the reentrant roster lock.
+    Use-RouterOutcomeMutex -StateDir $state -Action {
+        Use-RouterRosterMutex -StateDir $state -Body $approvalAction
+    }
+}

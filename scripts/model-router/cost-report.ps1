@@ -13,6 +13,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot 'router-platform.ps1')
+Assert-RouterWindowsOwner -Action 'Weekly cost report'
+
 try {
     $python = $null
     foreach ($name in @('python', 'python3', 'py')) {

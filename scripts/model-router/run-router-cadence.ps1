@@ -2,6 +2,7 @@ param([Alias('Now')][datetime]$RouterCadenceCliNow = (Get-Date), [Alias('CheckOn
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
+. (Join-Path $PSScriptRoot 'publish-roster.ps1')
 . (Join-Path $PSScriptRoot 'check-new-models.ps1')
 . (Join-Path $PSScriptRoot 'run-router-research.ps1')
 . (Join-Path $PSScriptRoot 'build-roster.ps1')
@@ -141,6 +142,8 @@ function Remove-RouterResolvedResearchFailures {
 
 function Invoke-RouterCadence {
     param([datetime]$Now = (Get-Date), [switch]$CheckOnly)
+    Assert-RouterWindowsOwner -Action 'Router cadence'
+    Publish-RouterRoster
     $state = Get-RouterStateDir
     $queuePath = Join-Path $state 'research-queue.json'
     $added = 0
