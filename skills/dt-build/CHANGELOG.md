@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.19.3
+
+- Make benchmark answers tool-free, reject shadow effort proposals, and ignore unrelated duplicate vendor status names.
+
 ## 2.19.2
 
 - Use active CLI discovery for benchmarks, disable inherited time reminders, and price cache writes explicitly.

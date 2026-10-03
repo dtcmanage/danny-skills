@@ -55,6 +55,9 @@ for line in sys.stdin:
    if mode=='duplicate':event('warning',{'threadId':'t','message':text})
   p=q['params'];assert p['environments']==[] and p['ephemeral'] is True and p['dynamicTools']==[] and p['selectedCapabilityRoots']==[] and p['allowProviderModelFallback'] is False
   assert p['model']=='gpt-6.1-sol' and p['config']['model_reasoning_effort']=='high'
+  assert p['baseInstructions']==('You are a benchmark response generator. Solve the supplied task from its prompt '
+   'and embedded fixtures only. Return only the requested answer text in one final response. '
+   'Do not use tools, inspect files, execute commands, ask questions, or describe planned actions.')
   emit({'id':rid,'result':{'model':'gpt-6-luna' if scenario=='model' else p['model'],'reasoningEffort':'high','modelProvider':'openai','thread':{'id':'' if scenario=='id' else 't','turns':[]}}});continue
  if m=='turn/start':
   p=q['params'];assert p['environments']==[] and p['model']=='gpt-6.1-sol' and p['effort']=='high' and p['input']==[{'type':'text','text':'Synthetic fixture\nexact bytes'}]

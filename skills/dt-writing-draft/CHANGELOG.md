@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.3 (2026-10-02): Make benchmark answers tool-free, reject shadow effort proposals, and ignore unrelated duplicate vendor status names.
+
 - 0.2.2 (2026-10-02): Use active CLI discovery for benchmarks, disable inherited time reminders, and price cache writes explicitly.
 
 - 0.2.1 (2026-10-02): Refresh a rejected automatic Codex catalog from the current CLI; preserve quota and fallback behavior.

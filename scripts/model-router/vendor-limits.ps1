@@ -334,6 +334,9 @@ function Resolve-RouterDispatchFailure {
             $response = & $script:RouterDiagnosisHttp ([string]$lane.components_url)
             $map = @{}
             foreach ($component in $response.components) {
+                # Vendors may reuse names outside this lane (for example Login).
+                # Only monitored components participate in diagnosis or ambiguity checks.
+                if ([string]$component.name -notin $lane.components) { continue }
                 if (-not $component.name -or -not $component.id -or -not $component.status) { throw 'Malformed component response' }
                 if ($map.ContainsKey([string]$component.name)) { throw "Duplicate component name: $($component.name)" }
                 $map[[string]$component.name] = @{ id=[string]$component.id; status=[string]$component.status }

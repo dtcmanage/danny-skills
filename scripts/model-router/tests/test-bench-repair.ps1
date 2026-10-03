@@ -27,6 +27,9 @@ try {
     $roster.jobs.fast.first='gpt-6.1-sol'; $roster.jobs.fast.first_effort='medium'
     Write-RouterJsonAtomic (Join-Path $a 'roster.json') $roster; Write-RouterJsonAtomic (Join-Path $b 'roster.json') $roster
     $before=(Get-FileHash (Join-Path $b 'roster.json')).Hash
+    # Approve only this disposable bank before the positive proposal-scope test.
+    & python -B -c 'import sys;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from review import Review;r=Review(Path(sys.argv[1])/"tasks",Path(sys.argv[2])/"bench");a=r.refresh();[r.choose(i,"approved",a["task_bank_sha256"]) for i in r.ids]' (Join-Path $PSScriptRoot '../bench') $a
+    if($LASTEXITCODE -ne 0){throw 'Fixture golden approval failed'}
     $fake={param($r) $id=if($r.prompt.Contains('fee table')){'mechanical-extract-table'}else{'mechanical-rename-sweep'}; @{status='ok';answer=(Get-Content (Join-Path $PSScriptRoot "../bench/tasks/$id/known-good.txt") -Raw);usage=@{input=100;output=10};resolved_model=$r.model}}
     $result=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $a -CliInvoker $fake -Limits {param($v) @{blocked=$false}} -NoAlerts
     Check ($result.effort_down_qualified -and (Test-Path (Join-Path $a 'effort-proposals/fast.json'))) 'F1 explicit proposal'
@@ -132,7 +135,7 @@ throw 'Unexpected fake transport request'
     $qualified={param($r)
         $script:requests.Add($r)
         $down=@{medium='low';high='medium'}[[string]$r.effort]
-        [pscustomobject]@{raw_gate='pass';gate='advisory';price_recommendation=$r.incumbent;shortfall_tasks=0;effort_down_qualified=($r.job -eq 'coder');incumbent=@{passed=3};effort_down=@{model=$r.incumbent;effort=$down;passed=3};report_paths=@{markdown='fixture-effort-report'}}
+        [pscustomobject]@{shadow=$false;raw_gate='pass';gate='advisory';price_recommendation=$r.incumbent;shortfall_tasks=0;effort_down_qualified=($r.job -eq 'coder');incumbent=@{passed=3};effort_down=@{model=$r.incumbent;effort=$down;passed=3};report_paths=@{markdown='fixture-effort-report'}}
     }
     $now=[datetime]'2026-10-02T12:00:00Z'
     $null=Invoke-RouterModelCheck -Force -Now $now -BenchInvoker $qualified

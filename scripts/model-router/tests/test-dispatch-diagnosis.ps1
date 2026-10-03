@@ -88,6 +88,14 @@ try {
     $result = Invoke-Diagnosis
     Assert-True ($result.verdict -eq 'unexplained' -and $null -eq $result.incident_id -and -not (Test-Path (Join-Path $temp 'vendor-blocks.json'))) 'degraded unrelated component does not create incident'
     Reset-Fixture
+    $script:components += @([pscustomobject]@{id='login-one';name='Login';status='operational'},[pscustomobject]@{id='login-two';name='Login';status='major_outage'})
+    $result = Invoke-Diagnosis
+    Assert-True ($result.checks.status -eq 'operational' -and -not(Test-Path (Join-Path $temp 'vendor-blocks.json'))) 'duplicate unrelated names do not invalidate lane diagnosis'
+    Reset-Fixture
+    $script:components += [pscustomobject]@{id='duplicate-codex';name='Codex API';status='operational'}
+    $result = Invoke-Diagnosis
+    Assert-True ($result.checks.status -eq 'lookup_failed' -and $result.detail -like '*Duplicate component name: Codex API*') 'duplicate monitored names remain ambiguous'
+    Reset-Fixture
     $script:components[0].name = 'Renamed API'
     $result = Invoke-Diagnosis
     Assert-True ($result.verdict -eq 'unexplained' -and $result.detail -like '*Named component not found: Codex API*') 'renamed component names lookup failure'

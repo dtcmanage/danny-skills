@@ -226,6 +226,7 @@ function Build-RouterRosterProposalLocked {
 function Save-RouterEffortProposal {
     param([object]$Request, [object]$Bench)
     # Caller holds the outcome lock and has revalidated the roster snapshot.
+    if (-not $Bench.PSObject.Properties['shadow'] -or $Bench.shadow -isnot [bool] -or $Bench.shadow) { return }
     if (-not $Bench.PSObject.Properties['effort_down_qualified'] -or -not $Bench.effort_down_qualified -or $Bench.raw_gate -eq 'unknown') { return }
     $current = (Read-RouterRoster).roster.jobs.($Request.job)
     if ($current.first -cne $Request.incumbent -or $current.first_effort -cne $Request.effort) { return }

@@ -30,7 +30,17 @@ try {
     [IO.Directory]::CreateDirectory($temp) | Out-Null
     $roster = (Read-RouterRoster).roster
     $request = [pscustomobject]@{job='coder';incumbent=$roster.jobs.coder.first;effort=$roster.jobs.coder.first_effort}
-    $bench = [pscustomobject]@{raw_gate='pass';effort_down_qualified=$true;incumbent=@{passed=3};effort_down=[pscustomobject]@{model=$request.incumbent;effort='low';passed=3};report_paths=@{markdown='synthetic'}}
+    $bench = [pscustomobject]@{shadow=$false;raw_gate='pass';effort_down_qualified=$true;incumbent=@{passed=3};effort_down=[pscustomobject]@{model=$request.incumbent;effort='low';passed=3};report_paths=@{markdown='synthetic'}}
+    $path = Join-Path $temp 'effort-proposals/coder.json'
+    foreach($badShadow in @($true, 'false', $null)) {
+        $bench.shadow=$badShadow
+        Save-RouterEffortProposal $request $bench
+        Check (-not(Test-Path $path)) 'Unapproved or invalid shadow state writes no effort proposal'
+    }
+    $bench.PSObject.Properties.Remove('shadow')
+    Save-RouterEffortProposal $request $bench
+    Check (-not(Test-Path $path)) 'Missing shadow state writes no effort proposal'
+    $bench | Add-Member -NotePropertyName shadow -NotePropertyValue $false
     Save-RouterEffortProposal $request $bench
     $path = Join-Path $temp 'effort-proposals/coder.json'
     if (-not (Test-Path $path)) { throw 'Qualified effort-only proposal missing' }
@@ -71,6 +81,15 @@ try {
     $swap.current_effort = 'medium'; $swap.model = 'stale-model'; Write-RouterJsonAtomic $path $swap
     $failure = & pwsh -NoProfile -File $approval -ApproveEffort -Job coder 2>&1 | Out-String
     Check ($LASTEXITCODE -ne 0 -and $failure -match 'EFFORT_STALE_ROSTER') 'Effort stale model refuses approval'
+    $writerRequest=[pscustomobject]@{job='writer';incumbent=$roster.jobs.writer.first;effort='medium'}
+    $writerBench=[pscustomobject]@{shadow=$false;gate='advisory';raw_gate='pass';effort_down_qualified=$true;incumbent=@{passed=1};effort_down=[pscustomobject]@{model=$writerRequest.incumbent;effort='low';passed=1};report_paths=@{markdown='synthetic-approved-writer'}}
+    Save-RouterEffortProposal $writerRequest $writerBench
+    $writerPath=Join-Path $temp 'effort-proposals/writer.json'
+    Check (Test-Path $writerPath) 'Approved writer advisory still proposes effort swap'
+    $writerBefore=[IO.File]::ReadAllText($writerPath)
+    $writerBench.shadow=$true
+    Save-RouterEffortProposal $writerRequest $writerBench
+    Check ([IO.File]::ReadAllText($writerPath) -ceq $writerBefore) 'Shadow result cannot replace existing approved proposal'
     "SUMMARY: $($researchPassed + $repairPassed + $integrationChecks) passed; 0 failed (research=$researchPassed; repair=$repairPassed; integration=$integrationChecks)"
 
 } finally { $env:DT_MODEL_ROUTER_STATE = $prior; Exit-RouterTestCodexHome $integrationFixture }

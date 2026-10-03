@@ -6,6 +6,8 @@ $script:benchChecks=0
 function Assert($Condition,$Message){if(-not $Condition){throw $Message};$script:benchChecks++}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('router-bench-tests-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
+$priorState=$env:DT_MODEL_ROUTER_STATE
+$env:DT_MODEL_ROUTER_STATE=Join-Path $root 'fallback-state'
 try {
     $script:calls=0;$script:envelopes=0;$script:diagnoses=0
     $limits={param($v) @{blocked=$false;used_percent=12}}
@@ -44,6 +46,7 @@ try {
     }
     $writer=Invoke-RouterBench -Job writer -Candidate gpt-6.1-sol -Incumbent claude-opus-5-5 -StateDir (Join-Path $root 'writer') -CliInvoker $judge -Limits $limits -NoAlerts
     Assert ($script:envelopes -eq 18 -and $writer.effort_down_qualified) 'Independent judge/effort-down failure'
+    Assert ($writer.shadow -and -not(Test-Path (Join-Path $root 'writer/effort-proposals/writer.json'))) 'Shadow writer must not propose effort swap'
     $image=Invoke-RouterBench -Job illustrator -Candidate gpt-image-2 -Incumbent gpt-image-2 -StateDir (Join-Path $root 'image') -CliInvoker {throw 'image must not dispatch'} -Limits $limits -NoAlerts
     Assert ($image.raw_gate -eq 'unknown' -and $image.gate -eq 'unknown') 'Image support classification failure'
     $request=@{vendor='codex';model='gpt-6.1-sol';effort='high';prompt="Synthetic fixture`nexact bytes"}
@@ -219,7 +222,7 @@ if($env:BENCH_FAKE_SLEEP -eq 'yes'){Start-Sleep -Seconds 30}
     $manual=Invoke-RouterBench -Job fast -Candidate gpt-6-astra -Incumbent gpt-6-luna -Trigger manual -StateDir $root -Limits {param($v) @{blocked=$true}} -NoAlerts
     Assert ($manual.candidate.model -eq 'gpt-6-astra') 'Manual frontier rejected'
     Write-Output 'PASS: existing checks plus Claude process/model/cache/timeout/cleanup/resolver; roster fallback/override; actual CLI scopes/monthly/frontier'
-} finally {Exit-RouterTestCodexHome $fixtureCodexHome; Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'router-bench-tests-'}
+} finally {$env:DT_MODEL_ROUTER_STATE=$priorState; Exit-RouterTestCodexHome $fixtureCodexHome; Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'router-bench-tests-'}
 
 # Fresh child processes keep each refusal suite's state/config seams isolated.
 $ownChecks=$script:benchChecks
