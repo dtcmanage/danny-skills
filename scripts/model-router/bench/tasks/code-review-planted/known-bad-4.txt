@@ -1,1 +1,2 @@
-Line 13 uses the wrong OR operator. The banned-user check should be fixed elsewhere because it allows access.
+LINE: 13
+FIX: not user.is_banned

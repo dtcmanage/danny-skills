@@ -1,8 +1,9 @@
 # Internal benchmark task bank and golden review
 
 `generate-fixtures.py --output <temporary-folder>` reproduces seeded synthetic
-fixtures without changing the bank. Retained canary source and harness support
-are copied from the bank; tests independently pin original canary source hashes.
+fixtures without changing the bank. Retained legacy task fixtures and harness
+support are copied from the bank; tests independently pin original source hashes.
+The obsolete canary runner is removed; historical outcomes remain readable.
 
 Python grader dependencies are pinned in `requirements-grading.txt`. The React
 render harness owns `tasks/ui-frontend-card/harness/package.json` and its lockfile.
@@ -36,8 +37,9 @@ token. It sends no alerts and changes no runner, trigger, roster, or live state.
 
 ## Release test counts
 
-The combined Windows gate retains 14 suites and replaces the retired canary suite
-with six exact benchmark successors, for 20 declared suites. Read the generated evidence for the actual pass/fail result; declared suites alone do not establish acceptance.
+The combined Windows gate declares 23 suites: the previous 20 plus cache-duration,
+judge-effort and proposal-validity regressions. Read the generated evidence for the
+actual pass/fail result; declared suites alone do not establish acceptance.
 
 Each PowerShell benchmark suite increments its counter only after an existing
 `Assert` succeeds, including checks inside loops and injected callbacks. The runner

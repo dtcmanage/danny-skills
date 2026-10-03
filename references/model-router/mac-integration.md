@@ -53,9 +53,10 @@ cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"
 pwsh -NoProfile -File scripts/model-router/tests/test-mac-regressions.ps1
 ```
 
-This actual-OS Windows-only gate declares 20 suites: the 14 retained suites plus
+This actual-OS Windows-only gate declares 23 suites: the 14 retained suites plus
 `test_bench_tasks.py`, `test_bench_review.py`, `test_bench_runner.py`,
-`test-bench-runner.ps1`, `test_bench_integration.py`, and `test-bench-integration.ps1`.
+`test-bench-runner.ps1`, `test_bench_integration.py`, `test-bench-integration.ps1`,
+`test-bench-cache-duration.ps1`, `test-bench-judge-effort.ps1`, and `test-proposal-validity.ps1`.
 The obsolete `test-canary.ps1` entry is removed. Use the generated per-suite evidence and final summary for the actual result; the declared list alone is not a passing gate.
 
 M01 contains Windows authority, named-mutex and `Start-Process -WindowStyle Hidden`
@@ -76,15 +77,15 @@ Any child failure, timeout, missing count or unexpected alert fails the gate. Wa
 remain visible and full output is retained. Python uses `-B`, no pytest cache provider
 and an owned `--basetemp` directory.
 
-## Native Mac ship gate: UNVERIFIED
+## Native Mac release verification
 
-Actual Mac credentials, service label, tool/model availability and launchd/login
-behavior remain **UNVERIFIED**. Authenticated capture requires a **Mac-local session**
-(or separately authorized working SSH access). Windows fixtures cannot pass this gate.
-Root also owns aggregate release/version bumps and the version-policy gate; no bump
-or live installation is part of this milestone.
+Record actual Mac credentials, service label, tool/model availability and launchd/login
+evidence against the exact released commit in the release verification report.
+Authenticated capture requires a **Mac-local session** or authorized working SSH
+access. Windows fixtures cannot establish native operation. Preserve prior natural-login
+evidence when the installed observer is unchanged; do not force another logout.
 
-In that later session, replace `/absolute/main/danny-skills` with the synced permanent
+Replace `/absolute/main/danny-skills` with the synced permanent
 checkout on `main`, and use the verified absolute PowerShell executable:
 
 ```powershell
@@ -97,13 +98,13 @@ pwsh -NoProfile -File scripts/model-router/register-mac-router-schedules.ps1 -Re
 ```
 
 Inventory is read-only and prints effective paths, provenance and availability, never
-tokens. Its credential status remains UNVERIFIED until actual account/source checks.
+tokens. Credential status requires actual account/source checks.
 Inspect the observer receipt at `<runtime>/mac-observer-receipt.json`; confirm fresh
 local quota, approved shared roster availability and resolver backup/wait behavior
 using local fixture refusals, without paid model calls or production refusal writes.
 
 The installer defaults to preview with no writes; it rejects worktree installation.
-After preview approval at the later ship boundary, add `-Apply` to the same command.
+For an authorized installation, after reviewing the preview, add `-Apply` to the same command.
 It owns only `~/Library/LaunchAgents/com.danny.model-router.observer.plist`, renders
 absolute paths and captured configuration, `RunAtLoad`, a four-hour `StartInterval`
 (14400 seconds), finite observation and runtime stdout/stderr file logs. Reinstall

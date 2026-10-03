@@ -1,1 +1,1 @@
-ArchiveBox is fully EU compliant and always deletes everything at 30 days [S1].
+SyntheticVault-Example is fully EU compliant and always deletes everything at 30 days [S1].

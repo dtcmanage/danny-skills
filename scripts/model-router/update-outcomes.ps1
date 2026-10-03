@@ -240,6 +240,7 @@ function Complete-RouterDriftBench {
         -not @($declines | Where-Object { $_.job -eq $mark.job -and $_.model -eq $mark.model }).Count -and
         $BenchResults.ContainsKey($_.job) -and $BenchResults[$_.job].raw_gate -ne 'unknown' -and $BenchResults[$_.job].gate -notin @('fail','unknown') -and -not ($_.job -in @('fast','coder','deep-thinker') -and $BenchResults[$_.job].raw_gate -eq 'fail') -and $BenchResults[$_.job].price_recommendation -ne $_.model
     })
+    $marks = @($marks | Where-Object { -not (Get-RouterBenchProposalEvidenceError -Job $_.job -Evidence (New-RouterBenchProposalEvidence -Job $_.job -Bench $BenchResults[$_.job])) })
     $proposalPath = $null
     if ($marks.Count -gt 0 -and @($marks | Where-Object { $roster.jobs.($_.job).backup }).Count) {
         $proposal = $roster | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
@@ -249,6 +250,7 @@ function Complete-RouterDriftBench {
             }
         }
         $proposal.generated_at = $nowUtc.ToString('o'); $proposal.approved = $false; $proposal.approved_at = $null
+        $changes = @()
         foreach ($mark in $marks) {
             $target = $proposal.jobs.($mark.job)
             if (-not $target.backup) { continue }
@@ -256,7 +258,9 @@ function Complete-RouterDriftBench {
             $target.first = $target.backup; $target.first_vendor = $target.backup_vendor
             $target.first_effort = $effort
             $target.backup = $first; $target.backup_vendor = $vendor; $target.backup_effort = $effort
+            $changes += [pscustomobject]@{job=$mark.job;slot='first';from=$first;to=$target.first;evidence='Drift; Bench comparison';bench_evidence=(New-RouterBenchProposalEvidence -Job $mark.job -Bench $BenchResults[$mark.job])}
         }
+        $proposal | Add-Member -NotePropertyName changes -NotePropertyValue $changes -Force
         $dir = Join-Path $state 'roster-proposals'; [IO.Directory]::CreateDirectory($dir) | Out-Null
         $stem = $nowUtc.ToString('yyyy-MM-ddTHHmmss') + '-drift'
         $proposalPath = Join-Path $dir ($stem + '.json'); $reportPath = Join-Path $dir ($stem + '.md')
@@ -267,6 +271,8 @@ function Complete-RouterDriftBench {
             $evidence = if ($mark.Count) { "Pass rate $($mark[0].prior_rate) to $($mark[0].recent_rate); drift threshold met; Bench $($BenchResults[$job].gate); shortfall $($BenchResults[$job].shortfall_tasks); report $($BenchResults[$job].report_paths.markdown)" } else { 'No change' }
             $lines += "| $job | $($roster.jobs.$job.first) | $($proposal.jobs.$job.first) (effort $($proposal.jobs.$job.first_effort)) | $evidence | $($proposal.jobs.$job.backup) (effort $($proposal.jobs.$job.backup_effort)) |"
         }
+        $lines += @('','## Benchmark basis','')
+        $lines += @($changes | ForEach-Object { "- $($_.job)/$($_.slot): $(ConvertTo-Json $_.bench_evidence -Compress -Depth 10)" })
         [IO.File]::WriteAllText($reportPath,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
         Write-RouterOutcomeJson (Join-Path $dir 'latest.json') ([pscustomobject]@{proposal=$proposalPath;report=$reportPath})
     } elseif (@($marks | Where-Object { $roster.jobs.($_.job).backup }).Count -eq 0) {

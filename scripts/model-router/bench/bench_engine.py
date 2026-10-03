@@ -5,6 +5,7 @@ StateDir is the router state root. No implicit live state, alerts, or approvals.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from fractions import Fraction
 import json
 import math
 import os
@@ -63,7 +64,7 @@ def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, A
         work = Path(directory)
         env.update({key: directory for key in ('TMP', 'TEMP', 'TMPDIR')})
         evidence = work / 'answer.txt'
-        evidence.write_text(answer_body(answer), encoding='utf-8')
+        evidence.write_text(answer_body(answer), encoding='utf-8', newline='')
         try:
             process = subprocess.Popen(
                 [sys.executable, str(BENCH / 'grader-runner.py'), str(task.resolve()), str(evidence)],
@@ -109,8 +110,11 @@ def compare(candidate: dict[str, Any], incumbent: dict[str, Any]) -> str:
 
 
 def baseline_key(job: str, model: str, effort: str | None, digest: str,
-                 judges: dict[str, str] | None) -> str:
-    return json.dumps([job, model, effort, digest, judges], sort_keys=True, separators=(',', ':'))
+                 judges: dict[str, str] | None, judge_effort: str | None = None) -> str:
+    identity = [job, model, effort, digest, judges]
+    if judges is not None:
+        identity.append(judge_effort)
+    return json.dumps(identity, sort_keys=True, separators=(',', ':'))
 
 
 def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
@@ -127,6 +131,9 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     if (job != 'illustrator' and effort not in {'low', 'medium', 'high'}) or (
         job == 'illustrator' and effort is not None):
         raise ValueError('Explicit approved effort required (illustrator uses null)')
+    judge_effort = config.get('judge_effort')
+    if not isinstance(judge_effort, str) or judge_effort not in {'low', 'medium', 'high'}:
+        raise ValueError('Explicit configured judge_effort must be low, medium or high')
     state = state_dir / 'bench'
     review = Review(tasks, state)
     approval = review.refresh()
@@ -163,7 +170,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             except Exception as error:
                 result = {'status': 'unknown', 'failure_category': 'environment', 'detail': str(error)}
             result = {**result, 'quota': quota}
-        calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result})
+        calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result, 'effort': level})
         return result
 
     def table(model: str, level: str | None, side: str) -> dict[str, Any]:
@@ -209,8 +216,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                             scores = []
                             status = 'pass'
                             for judge in judges.values():
-                                judged = call(judge, level, prompt, 'judge')
-                                record = {'model': judge, 'response': judged,
+                                judged = call(judge, judge_effort, prompt, 'judge')
+                                record = {'model': judge, 'effort': judge_effort, 'response': judged,
                                           'weight': 2 if model in judges.values() and judge != model else 1}
                                 try:
                                     if judged.get('status') != 'ok':
@@ -222,12 +229,15 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                                 scores.append(record)
                             row['judge_scores'] = scores
                             row['judge_models'] = list(judges.values())
+                            row['judge_effort'] = judge_effort
                             if status != 'unknown':
-                                average = sum(s['score'] * s['weight'] for s in scores) / sum(s['weight'] for s in scores)
-                                row['judge_average'] = average
+                                # Preserve exact binary-score fractions through weighting and threshold.
+                                average = sum(Fraction(sum(s['scores'].values()), len(s['scores'])) * s['weight']
+                                              for s in scores) / sum(s['weight'] for s in scores)
+                                row['judge_average'] = float(average)
                                 row['judge_disagreement'] = abs(scores[0]['score'] - scores[1]['score'])
                                 row['disagreement'] = row['judge_disagreement'] > config.get('judge_disagreement_threshold', .3)
-                                status = 'pass' if average >= rubric.get('threshold', config.get('rubric_threshold', .8)) else 'fail'
+                                status = 'pass' if average >= Fraction(str(rubric.get('threshold', config.get('rubric_threshold', .8)))) else 'fail'
                         else:
                             graded = grade(task, answer)
                             row['grading'] = graded
@@ -256,7 +266,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         raw_gate = 'advisory'
     result = {'gate': 'unknown' if raw_gate == 'unknown' else ('advisory' if shadow or job in {'writer', 'illustrator'} else raw_gate),
               'raw_gate': raw_gate, 'shadow': shadow, 'job': job, 'trigger': trigger,
-              'task_bank_sha256': digest, 'judge_pair': judges,
+              'task_bank_sha256': digest, 'judge_pair': judges, 'judge_effort': judge_effort,
               'dimension_framework': config.get('dimension_framework', 'provisional'),
               'candidate': candidate_table, 'incumbent': incumbent_table,
               'effort_down': down_table,
@@ -271,7 +281,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     for score_table in [candidate_table, incumbent_table] + ([down_table] if down_table else []):
         if score_table['unknown'] or job == 'illustrator':
             continue
-        key = baseline_key(job, score_table['model'], score_table['effort'], digest, judges if rubric_present else None)
+        key = baseline_key(job, score_table['model'], score_table['effort'], digest, judges if rubric_present else None,
+                           judge_effort if rubric_present else None)
         previous = baselines.get(key)
         if previous is not None and score_table['passed'] < previous['passed']:
             result['baseline_drops'].append({'model': score_table['model'], 'effort': score_table['effort'],
@@ -295,7 +306,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
              f"Shortfall: {result['shortfall_tasks']} task(s)",
              f"Price recommendation: {result['price_recommendation']}",
              f"Effort-down qualified: {result['effort_down_qualified']}",
-             f"Judge pair: {json.dumps(judges)}", f"Bank: {digest}"]
+             f"Judge pair: {json.dumps(judges)}; effort: {judge_effort}", f"Bank: {digest}"]
     for label, score_table in [('Candidate', candidate_table), ('Incumbent', incumbent_table), ('Effort-down', down_table)]:
         if score_table:
             lines += ['', f"{label}: {score_table['model']} / {score_table['effort']}",
@@ -333,7 +344,7 @@ def summarize_calls(calls: list[dict[str, Any]], prices: dict[str, Any]) -> dict
             cost, priced = 0.0, True
             for key, value in usage.items():
                 data['tokens'][key] = data['tokens'].get(key, 0) + value
-                rate = rates.get(key)
+                rate = None if vendor == 'claude' and key == 'cache_write' else rates.get(key)
                 if value and (type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0):
                     priced = False
                 elif type(rate) in (int, float) and math.isfinite(rate) and rate >= 0:

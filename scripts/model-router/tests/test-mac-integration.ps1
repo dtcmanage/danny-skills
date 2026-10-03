@@ -4,7 +4,6 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../publish-roster.ps1')
 . (Join-Path $PSScriptRoot '../run-router-cadence.ps1')
 . (Join-Path $PSScriptRoot '../register-router-schedules.ps1')
-. (Join-Path $PSScriptRoot '../canary/run-canary.ps1')
 . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
 $script:passed = 0
 function Assert-True([bool]$Condition, [string]$Name) {
@@ -134,7 +133,6 @@ try {
     Assert-Owner { Update-RouterOutcomes } 'Mac refuses outcome import and drift proposal construction'
     Assert-Owner { Invoke-RouterModelCheck -Force } 'Mac refuses direct release polling'
     Assert-Owner { Register-RouterSchedules } 'Mac refuses schedule registration'
-    Assert-Owner { Invoke-RouterCanary -DryRun } 'Mac refuses canary'
     Assert-Owner { Invoke-RouterModelCheck -Force } 'Mac refuses new-model benchmark trigger'
     . (Join-Path $PSScriptRoot '../bench/run-bench.ps1')
     $guardState = Join-Path $temp 'bench-guard-no-create'

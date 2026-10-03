@@ -53,7 +53,7 @@ SYNTH_PRICES = {
     "models": {
         "claude-test-model": {
             "vendor": "anthropic",
-            "prices_usd_per_mtok": {"input": 10, "cache_write": 12.5, "cache_read": 1, "output": 50},
+            "prices_usd_per_mtok": {"input": 10, "cache_write_5m": 12.5, "cache_write_1h": 20, "cache_read": 1, "output": 50},
         },
         "gpt-test-model": {
             "vendor": "openai",
@@ -73,9 +73,9 @@ SYNTH_PRICES = {
 
 def test_anthropic_pricing_math_per_token_type():
     row = {"host": "claude", "model": "claude-test-model",
-           "tokens": {"input": 1_000_000, "cache_write": 1_000_000, "cache_read": 1_000_000, "output": 1_000_000}}
+           "tokens": {"input": 1_000_000, "cache_write_5m": 1_000_000, "cache_write_1h": 1_000_000, "cache_read": 1_000_000, "output": 1_000_000}}
     cost, tokens = cr.price_usage_row(row, SYNTH_PRICES)
-    assert cost == pytest.approx(10 + 12.5 + 1 + 50)
+    assert cost == pytest.approx(10 + 12.5 + 20 + 1 + 50)
     assert tokens == row["tokens"]
 
 
@@ -1043,3 +1043,120 @@ def test_summary_research_with_no_usage_and_missing_routing_with_sessions(tmp_pa
     reports = cr.build_weekly_reports([usage], [], SYNTH_PRICES, date(2026, 10, 5))
     _, message = cr.render_discord_summary(reports, date(2026, 10, 5), tmp_path)
     assert "Routing rule (Claude sessions) (rule started Wed Sep 30): no routing data" in message
+
+
+@pytest.mark.parametrize("tokens,expected", [
+    ({"cache_write_5m": 10, "cache_write_1h": 20}, .000525),
+    ({"cache_write": 30}, None),
+    ({"cache_write": 30, "cache_write_5m": 10, "cache_write_1h": 20}, None),
+    ({"cache_write": 0}, 0),
+])
+def test_claude_duration_pricing_never_doubles_or_guesses(tokens, expected):
+    row = dict(host="claude", model="claude-test-model", tokens=tokens)
+    cost, _ = cr.price_usage_row(row, SYNTH_PRICES)
+    assert cost == (pytest.approx(expected) if expected is not None else None)
+
+
+@pytest.mark.parametrize("key", ["cache_write_5m", "cache_write_1h"])
+@pytest.mark.parametrize("rate", [None, True, -1, "20", float("nan"), float("inf")])
+def test_duration_rate_missing_invalid_is_unpriced(key, rate):
+    prices = json.loads(json.dumps(SYNTH_PRICES))
+    prices["models"]["claude-test-model"]["prices_usd_per_mtok"][key] = rate
+    assert cr.price_usage_row(dict(host="claude", model="claude-test-model", tokens={key: 1}), prices)[0] is None
+
+
+@pytest.mark.parametrize("split,expected", [
+    ({"ephemeral_5m_input_tokens": 3, "ephemeral_1h_input_tokens": 7},
+     {"cache_write_5m": 3, "cache_write_1h": 7}),
+    (None, {"cache_write": 10}),
+    ({"ephemeral_5m_input_tokens": 3}, {"cache_write": 10, "invalid_usage": 1}),
+    ({"ephemeral_5m_input_tokens": True, "ephemeral_1h_input_tokens": 9}, {"cache_write": 10, "invalid_usage": 1}),
+    ({"ephemeral_5m_input_tokens": -1, "ephemeral_1h_input_tokens": 11}, {"cache_write": 10, "invalid_usage": 1}),
+    ({"ephemeral_5m_input_tokens": 3, "ephemeral_1h_input_tokens": 6}, {"cache_write": 10, "invalid_usage": 1}),
+    ([], {"cache_write": 10, "invalid_usage": 1}),
+])
+def test_claude_transcript_preserves_or_marks_unknown_cache_duration(cu, split, expected):
+    usage = {"cache_creation_input_tokens": 10}
+    if split is not None: usage["cache_creation"] = split
+    assert cu.claude_cache_write_buckets(usage) == expected
+
+
+def test_claude_duration_main_subagent_dedup_rollup(cu, tmp_path):
+    def line(mid, five, hour):
+        return _assistant_line("2026-09-21T14:00:00Z", mid, "claude-test-model",
+            {"input_tokens": 1, "output_tokens": 2, "cache_read_input_tokens": 3,
+             "cache_creation_input_tokens": five + hour,
+             "cache_creation": {"ephemeral_5m_input_tokens": five, "ephemeral_1h_input_tokens": hour}})
+    main = line("m1", 3, 7)
+    path = _write_claude_session(tmp_path, "project", "session", [main, main])
+    sub = path.with_suffix("") / "subagents"
+    sub.mkdir(parents=True)
+    (sub / "child.jsonl").write_text(json.dumps(line("m2", 4, 6)) + "\n")
+    rows = cu.all_sessions_claude_rows(path)
+    assert len(rows) == 1 and rows[0]["calls"] == 2
+    assert rows[0]["tokens"] == dict(input=2, output=4, cache_read=6,
+                                     cache_write=0, cache_write_5m=7, cache_write_1h=13)
+    week = cr.build_vendor_week("claude", 2026, 39, rows, [], SYNTH_PRICES, date(2026, 9, 21))
+    assert week.api_equivalent_usd == pytest.approx(.0005735)
+    assert sum(week.priced_totals.values()) == 32
+    unknown = dict(rows[0], tokens=dict(input=2, output=4, cache_read=6, cache_write=20))
+    week = cr.build_vendor_week("claude", 2026, 39, [unknown], [], SYNTH_PRICES, date(2026, 9, 21))
+    assert week.api_equivalent_usd == 0 and sum(week.unpriced_tokens_by_model["claude-test-model"].values()) == 32
+
+
+def test_published_cache_rates_have_duration_source_and_codex_is_unchanged():
+    prices = json.loads(cr.DEFAULT_PRICES_PATH.read_text())
+    for model in prices["models"].values():
+        rates = model["prices_usd_per_mtok"]
+        if model["vendor"] == "anthropic":
+            assert "cache_write" not in rates
+            assert rates["cache_write_5m"] == rates["input"] * 1.25
+            assert rates["cache_write_1h"] == rates["input"] * 2
+            assert model["source_url"] == "https://platform.claude.com/docs/en/about-claude/pricing"
+            assert model["cache_write_checked_at"] == "2026-10-03T18:57:00Z"
+        else:
+            assert "cache_write_5m" not in rates and "cache_write_1h" not in rates
+
+
+@pytest.mark.parametrize("token", [True, False, -1, .5, float("nan"), float("inf"), None, "1"])
+@pytest.mark.parametrize("bucket", ["input", "cache_write_5m", "cache_write_1h", "cache_read", "output"])
+def test_weekly_invalid_token_counts_stay_unpriced(token, bucket):
+    assert cr.price_usage_row(dict(host="claude", model="claude-test-model", tokens={bucket: token}), SYNTH_PRICES)[0] is None
+
+
+def test_zero_aggregate_with_positive_split_is_incomplete_unpriced(cu, tmp_path):
+    usage = {"input_tokens": 1, "output_tokens": 2, "cache_read_input_tokens": 3,
+             "cache_creation_input_tokens": 0,
+             "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 10}}
+    path = _write_claude_session(tmp_path, "project", "session", [
+        _assistant_line("2026-09-21T14:00:00Z", "m1", "claude-test-model", usage)])
+    rows = cu.all_sessions_claude_rows(path)
+    assert rows[0]["usage_incomplete"] is True
+    assert sum(rows[0]["tokens"].values()) == 6
+    assert "invalid_usage" not in rows[0]["tokens"]
+    assert cr.price_usage_row(rows[0], SYNTH_PRICES)[0] is None
+    assert cu.claude_cache_write_buckets(usage) == {"cache_write": 0, "invalid_usage": 1}
+
+
+@pytest.mark.parametrize('tokens', [
+    ['invalid'], 'invalid', {'input': '100', 'output': 2},
+    {'input': float('nan'), 'output': 2}, {'input': float('inf'), 'output': 2},
+    {'input': .5, 'output': 2}, {'input': True, 'output': 2},
+    {'input': None, 'output': 2}, {'input': -1, 'output': 2},
+])
+def test_invalid_stored_tokens_do_not_corrupt_unpriced_display(tokens, tmp_path):
+    row = dict(host='claude', model='claude-test-model', tokens=tokens,
+               session_id='synthetic', date_et='2026-09-21')
+    week = cr.build_vendor_week('claude', 2026, 39, [row], [], SYNTH_PRICES, date(2026, 9, 21))
+    assert week.api_equivalent_usd == 0
+    bucket = week.unpriced_tokens_by_model['claude-test-model']
+    assert bucket['input'] == 0
+    assert bucket['output'] == (2 if isinstance(tokens, dict) else 0)
+    assert all(type(value) is int and value >= 0 for value in bucket.values())
+    assert cr.fmt_tok(sum(bucket.values())) == ('2' if isinstance(tokens, dict) else '0')
+    frontier = tmp_path / 'frontier.json'
+    frontier.write_text('{"codex_models": [], "claude_patterns": []}', encoding='utf-8')
+    report = cr.build_weekly_reports([row], [], SYNTH_PRICES, date(2026, 9, 21), frontier)[0]
+    for rendered in (cr.render_markdown(report), cr.render_html(report)):
+        assert 'claude-test-model' in rendered
+        assert 'nan' not in rendered and 'inf tokens' not in rendered

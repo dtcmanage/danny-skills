@@ -104,17 +104,9 @@ def test_rubric_schema_and_binary_grading(task_id: str):
 
 def test_retained_sources():
     # SHA256 captured from the original primary-tree canary (base 356e7ae).
-    # Portable, independent proof: generator copies alone cannot bless changes.
+    # The corrected structured-review task is covered by behavioral tests below.
+    # Portable, independent proof of the unchanged pelican prompt.
     expected = {
-        "code-review-planted/grader.py": "f0783465411a2f9623d33362001750f17812061f562296151836562c4e057655",
-        "code-review-planted/prompt.md": "be4af7059561222e212da85dc766d9d9101bc12bd500dd86c55a45bd648210b8",
-        "code-review-planted/known-good.txt": "77882ae88216ea2fa1c9c4ac52946fe9ff5f916390d7344466f41dc8ce0d2fb4",
-        "code-review-planted/known-bad.txt": "bf48225b6dc59f2827c73906b77f1a32c7b7d85c73589795bd0e02361a82d1ed",
-        "code-review-planted/known-bad-2.txt": "543b85acac41b9561c2f8caf5c9351a906e8b6c6066ee54c5b429308d2f468e1",
-        "code-review-planted/known-bad-3.txt": "4881952491b2743580cdb5341e6debf2f63096d1f1a85bba5e78f0b2141b7822",
-        "code-review-planted/known-bad-4.txt": "247b1604b98ca473f700d6536c9bc1a1a3953ed3261ba32470ed2d4804ac49e6",
-        "code-review-planted/known-bad-5.txt": "62a660c558517abd78e7e3ef7a2abc7e93bf0857b1518464c6d5c1386ea803c3",
-        "code-review-planted/known-bad-6.txt": "d527908fa3f539dce9b8d53856b414706400af89c7317f6e325f7eabd49fe300",
         "pelican/prompt.md": "2cc61ef0770f69e75ee8c44bff9b94ee7b5701026c763f42d0413d8176d043a7"}
     for relative, digest in expected.items():
         assert hashlib.sha256((TASKS / relative).read_bytes()).hexdigest() == digest
@@ -147,3 +139,97 @@ def test_socket_guard_allows_event_loop_only(tmp_path: Path):
         '    with pytest.raises(RuntimeError, match="network disabled"):\n'
         '        socket.create_connection(("127.0.0.1", 9))\n')
     assert grading.grade_python(task, answer)
+
+
+@pytest.mark.parametrize("expression", [
+    "user.is_active and not user.is_banned",
+    "not (not user.is_active or user.is_banned)",
+    "(user.is_banned == False) and (user.is_active is True)",
+    "False or (user.is_active and not user.is_banned)",
+])
+def test_review_equivalent_corrections(expression: str) -> None:
+    module = load("structured_review", TASKS / "code-review-planted/grader.py")
+    assert module.grade("LINE: 13\nFIX: " + expression)
+
+
+@pytest.mark.parametrize("answer", [
+    "LINE: 11\nFIX: user.is_active and not user.is_banned",
+    "LINE: 13\nFIX: user.is_active or user.is_banned",
+    "LINE: 13\nFIX: user.is_active and user.is_banned",
+    "LINE: 13\nFIX: not user.is_banned",
+    "LINE: 13\nFIX: return user.is_active and not user.is_banned",
+    "LINE: 13\nFIX: user.is_active and not user.is_banned\nExtra explanation",
+    "Line 13 should use and not user.is_banned.",
+    "LINE: 13\nFIX: False and __import__('os').system('unsafe')",
+    "LINE: 13\nFIX: user.is_active and not user.is_banned or (False and user.other)",
+    "LINE: 13\nFIX: user.is_active and not user.is_banned # hidden comment",
+    "LINE: 13\nFIX: [user.is_active][0] and not user.is_banned",
+    "LINE: 13\nFIX: (lambda: True)()",
+    "LINE: 13\nFIX: user.is_active and (",
+])
+def test_review_rejects_wrong_malformed_unsafe(answer: str) -> None:
+    module = load("structured_review", TASKS / "code-review-planted/grader.py")
+    assert not module.grade(answer)
+
+
+def test_endpoint_handler_name_is_not_contract(tmp_path: Path) -> None:
+    task = TASKS / "routine-coding-endpoint"
+    golden = (task / "golden/answer.py").read_text()
+    answer = tmp_path / "renamed.py"
+    answer.write_text(golden.replace("get_item", "read_item"))
+    assert grading.grade_python(task, answer)
+    answer.write_text(golden.replace("get_item", "read_item").replace(" -> Item", ""))
+    assert not grading.grade_python(task, answer)
+
+
+@pytest.mark.parametrize("wrong_peak", ["ignore-start", "global-maximum"])
+def test_math_rejects_wrong_peak_algorithms(tmp_path: Path, wrong_peak: str) -> None:
+    task = TASKS / "math-return-series"
+    fixture = json.loads((task / "fixtures/input.json").read_text())
+    expected = json.loads((task / "golden/answer.json").read_text())
+    wealth = expected["wealth"]
+    peaks = ([max(wealth[:i + 1]) for i in range(len(wealth))] if wrong_peak == "ignore-start"
+             else [max([1, *wealth])] * len(wealth))
+    draws = [level / peak - 1 for level, peak in zip(wealth, peaks)]
+    answer = tmp_path / "math.json"
+    answer.write_text(json.dumps(dict(wealth=wealth, peaks=peaks, drawdowns=draws, max_drawdown=min(draws))))
+    assert fixture["returns"][0] < 0 and max(wealth) > 1
+    assert not grading.grade(task, answer)
+
+
+def test_math_decimal_oracle_and_month_only_arrays(tmp_path: Path) -> None:
+    from decimal import Decimal
+    task = TASKS / "math-return-series"
+    fixture = json.loads((task / "fixtures/input.json").read_text(), parse_float=Decimal)
+    level = peak = Decimal(1)
+    wealth, peaks, drawdowns = [], [], []
+    for change in fixture["returns"]:
+        level *= 1 + change
+        peak = max(peak, level)
+        wealth.append(float(level)); peaks.append(float(peak)); drawdowns.append(float(level / peak - 1))
+    oracle = dict(wealth=wealth, peaks=peaks, drawdowns=drawdowns, max_drawdown=min(drawdowns))
+    answer = tmp_path / "math.json"
+    answer.write_text(json.dumps(oracle))
+    assert grading.grade(task, answer)
+    for key, start in (("wealth", 1), ("peaks", 1), ("drawdowns", 0)):
+        oracle[key].insert(0, start)
+    answer.write_text(json.dumps(oracle))
+    assert not grading.grade(task, answer)
+    assert "one entry per month excluding the start" in (task / "prompt.md").read_text()
+
+
+def test_rubric_prompt_and_golden_alignment() -> None:
+    planning = (TASKS / "planning-migration/prompt.md").read_text()
+    assert "batched resumable backfill" in planning
+    research = (TASKS / "deep-research-vendor/prompt.md").read_text()
+    assert "fictional vendor SyntheticVault-Example" in research
+    assert "all copies stay in the EU and are deleted within 30 days" in research
+    writing = (TASKS / "writing-letter-section/golden/answer.md").read_text()
+    assert 230 <= len(writing.split()) <= 270
+    assert len(writing.strip().split("\n\n")) >= 3
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_review_accepts_platform_line_endings(newline: str) -> None:
+    module = load("structured_review", TASKS / "code-review-planted/grader.py")
+    assert module.grade("LINE: 13" + newline + "FIX: user.is_active and not user.is_banned" + newline)

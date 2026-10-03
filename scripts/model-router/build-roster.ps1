@@ -163,10 +163,13 @@ function Build-RouterRosterProposalLocked {
                     $bench = $BenchResults[$key]
                     if ($bench.raw_gate -eq 'unknown' -or $bench.gate -in @('unknown','fail') -or ($job -in @('fast','coder','deep-thinker') -and $bench.raw_gate -eq 'fail')) { continue }
                     if ($bench.price_recommendation -eq $currentEntry.$slot) { continue }
+                    $benchEvidence = New-RouterBenchProposalEvidence -Job $job -Bench $bench
+                    if (Get-RouterBenchProposalEvidenceError -Job $job -Evidence $benchEvidence) { continue }
                     $verdict.evidence += "; Bench $($bench.gate); shortfall $($bench.shortfall_tasks) task(s); report $($bench.report_paths.markdown)"
                 }
                 $entry.$slot = $target; $entry."${slot}_vendor" = Get-RouterProposalVendor $target
                 $changes += [pscustomobject]@{job=$job;slot=$slot;from=$currentEntry.$slot;to=$target;evidence=$verdict.evidence}
+                if (-not $StageOnly) { $changes[-1] | Add-Member -NotePropertyName bench_evidence -NotePropertyValue $benchEvidence }
             } elseif ($verdict.result -eq 'keep') { $tradeoffs += "$job/$slot`: $($verdict.evidence)" }
         }
     }
@@ -205,13 +208,15 @@ function Build-RouterRosterProposalLocked {
         $evidence = @($changes | Where-Object job -eq $job | ForEach-Object evidence) -join '; '
         $lines += "| $job | $($current.jobs.$job.first) | $($proposed.jobs.$job.first) (effort $($proposed.jobs.$job.first_effort)) | $evidence | $($proposed.jobs.$job.backup) (effort $($proposed.jobs.$job.backup_effort)) |"
     }
+    $lines += @('','## Benchmark basis','')
+    $lines += @($changes | ForEach-Object { "- $($_.job)/$($_.slot): $(ConvertTo-Json $_.bench_evidence -Compress -Depth 10)" })
     $lines += @('','## Conflicts','')
     if ($conflicts.Count) { $lines += @($conflicts | ForEach-Object { "- $($_.job)/$($_.slot): $($_.from) -> $($_.to). $($_.evidence)" }) } else { $lines += 'None.' }
     $lines += @('','## Tradeoffs for keep jobs','')
     if ($tradeoffs.Count) { $lines += @($tradeoffs | ForEach-Object { "- $_" }) } else { $lines += 'None.' }
     [IO.File]::WriteAllText($reportPath,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $dir 'latest.json'),(ConvertTo-Json -InputObject ([pscustomobject]@{proposal=$jsonPath;report=$reportPath}) -Compress),[Text.UTF8Encoding]::new($false))
-    $alertChanges = @($changes | ForEach-Object { [pscustomobject]@{job=$_.job;slot=$_.slot;from=$_.from;to=$_.to} })
+    $alertChanges = @($changes | ForEach-Object { [pscustomobject]@{job=$_.job;slot=$_.slot;from=$_.from;to=$_.to;bench_evidence=$_.bench_evidence} })
     $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $alertChanges -Compress -Depth 20)))).ToLowerInvariant()
     $first = $changes[0]
     $alertMessage = "Model list change proposed: $($first.job) $($first.from) -> $($first.to). Report: $reportPath"
@@ -232,12 +237,14 @@ function Save-RouterEffortProposal {
     if ($current.first -cne $Request.incumbent -or $current.first_effort -cne $Request.effort) { return }
     $down = @{medium='low';high='medium'}[[string]$Request.effort]
     if (-not $down -or $Bench.effort_down.model -cne $current.first -or $Bench.effort_down.effort -cne $down) { return }
+    $evidence = New-RouterBenchProposalEvidence -Job $Request.job -Bench $Bench
+    if (Get-RouterBenchProposalEvidenceError -Job $Request.job -Evidence $evidence) { return }
     $dir = Join-Path (Get-RouterStateDir) 'effort-proposals'
     [IO.Directory]::CreateDirectory($dir) | Out-Null
     $path = Join-Path $dir ($Request.job + '.json')
     $old = Read-RouterJsonObject $path
-    if ($old -and $old.model -ceq $current.first -and $old.current_effort -ceq $Request.effort -and $old.proposed_effort -ceq $down) { return }
-    Write-RouterJsonAtomic -Path $path -Value ([pscustomobject]@{type='effort-swap';job=$Request.job;model=$current.first;current_effort=$Request.effort;proposed_effort=$down;status='pending';incumbent=$Bench.incumbent;effort_down=$Bench.effort_down;report=$Bench.report_paths.markdown;dimension_framework='provisional'})
+    if ($old -and $old.model -ceq $current.first -and $old.current_effort -ceq $Request.effort -and $old.proposed_effort -ceq $down -and $old.PSObject.Properties['bench_evidence'] -and (ConvertTo-Json $old.bench_evidence -Compress -Depth 10) -ceq (ConvertTo-Json $evidence -Compress -Depth 10)) { return }
+    Write-RouterJsonAtomic -Path $path -Value ([pscustomobject]@{type='effort-swap';job=$Request.job;model=$current.first;current_effort=$Request.effort;proposed_effort=$down;status='pending';bench_evidence=$evidence;incumbent=$Bench.incumbent;effort_down=$Bench.effort_down;report=$Bench.report_paths.markdown;dimension_framework='provisional'})
 }
 
 
@@ -246,8 +253,10 @@ function Send-RouterEffortAlerts {
     if (-not (Test-Path -LiteralPath $dir)) { return }
     foreach ($file in @(Get-ChildItem -LiteralPath $dir -Filter '*.json')) {
         $swap = Read-RouterJsonObject $file.FullName
-        if ($swap.status -eq 'pending') {
-            Send-RouterAlerts -Alerts @([pscustomobject]@{key="effort-swap:$($swap.job)/$($swap.model)/$($swap.current_effort)/$($swap.proposed_effort)";message="Effort swap for $($swap.job): $($swap.model), $($swap.current_effort) -> $($swap.proposed_effort). Review $($swap.report)."}) | Out-Null
+        $evidence = if ($swap.PSObject.Properties['bench_evidence']) { $swap.bench_evidence } else { $null }
+        if ($swap.status -eq 'pending' -and -not (Get-RouterBenchProposalEvidenceError -Job $swap.job -Evidence $evidence)) {
+            $identity = ConvertTo-Json $evidence -Compress -Depth 10
+            Send-RouterAlerts -Alerts @([pscustomobject]@{key="effort-swap:$($swap.job)/$($swap.model)/$($swap.current_effort)/$($swap.proposed_effort)/$identity";message="Effort swap for $($swap.job): $($swap.model), $($swap.current_effort) -> $($swap.proposed_effort). Review $($swap.report)."}) | Out-Null
         }
     }
 }
@@ -262,17 +271,20 @@ function Invoke-RouterTriggeredComparison {
     $state = Get-RouterStateDir
     $configPath = Join-Path $state 'bench/judge-config.json'
     if (-not (Test-Path -LiteralPath $configPath)) { $configPath = Join-Path $PSScriptRoot 'bench/bench-config.json' }
-    $judges = (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json).judges
+    $judgeConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    $judges = $judgeConfig.judges
+    $judgeEffort = if ($judgeConfig.PSObject.Properties['judge_effort']) { $judgeConfig.judge_effort } else { (Get-Content (Join-Path $PSScriptRoot 'bench/bench-config.json') -Raw | ConvertFrom-Json).judge_effort }
     $digest = & python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review import bank_hash; print(bank_hash(Path(sys.argv[1])/"tasks"))' (Join-Path $PSScriptRoot 'bench')
     if ($LASTEXITCODE -ne 0) { throw 'BENCH_IDENTITY_FAILED' }
     try { $bench = & $BenchInvoker $Request }
     catch { $bench = [pscustomobject]@{raw_gate='unknown';gate='unknown';effort_down_qualified=$false;error=$_.Exception.Message} }
     if ($bench.PSObject.Properties['task_bank_sha256']) { $digest = $bench.task_bank_sha256 }
     if ($bench.PSObject.Properties['judge_pair']) { $judges = $bench.judge_pair }
-    $identity = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$digest/$($judges.claude)/$($judges.codex)"))).ToLowerInvariant()
+    if ($bench.PSObject.Properties['judge_effort']) { $judgeEffort = $bench.judge_effort }
+    $identity = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$digest/$($judges.claude)/$($judges.codex)/$judgeEffort"))).ToLowerInvariant()
     Use-RouterOutcomeMutex -StateDir $state -Action {
         $dir = Join-Path $state 'bench'; [void][IO.Directory]::CreateDirectory($dir)
-        $row = [pscustomobject]@{trigger=$Trigger;job=$Request.job;candidate=$Request.candidate;incumbent=$Request.incumbent;effort=$Request.effort;gate=$bench.gate;at=(Get-Date).ToUniversalTime().ToString('o')}
+        $row = [pscustomobject]@{trigger=$Trigger;job=$Request.job;candidate=$Request.candidate;incumbent=$Request.incumbent;effort=$Request.effort;judge_effort=$judgeEffort;gate=$bench.gate;at=(Get-Date).ToUniversalTime().ToString('o')}
         [IO.File]::AppendAllText((Join-Path $dir 'trigger-log.jsonl'), (($row | ConvertTo-Json -Compress)+"`n"), [Text.UTF8Encoding]::new($false))
     } | Out-Null
     if ($SendAlerts -and $bench.gate -eq 'unknown') {

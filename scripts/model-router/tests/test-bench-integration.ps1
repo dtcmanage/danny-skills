@@ -19,6 +19,7 @@ $researchSummaries = @($researchOutput | Where-Object { $_ -match '^TOTAL PASS: 
 if ($researchSummaries.Count -ne 1 -or $researchSummaries[0] -notmatch '^TOTAL PASS: ([1-9]\d*)$') { throw 'Research test summary missing or invalid' }
 $researchPassed = [int]$Matches[1]
 . (Join-Path $PSScriptRoot '../build-roster.ps1')
+. (Join-Path $PSScriptRoot 'fixtures/bench-proposal-evidence.ps1')
 $integrationChecks = 0
 function Check([bool]$ok, [string]$name) { if (-not $ok) { throw $name }; $script:integrationChecks++ }
 $prior = $env:DT_MODEL_ROUTER_STATE
@@ -28,10 +29,12 @@ $env:DT_MODEL_ROUTER_STATE = $temp
 $integrationFixture = Enter-RouterTestCodexHome
 try {
     [IO.Directory]::CreateDirectory($temp) | Out-Null
+    Initialize-TestBenchEvidence
     $roster = (Read-RouterRoster).roster
     $request = [pscustomobject]@{job='coder';incumbent=$roster.jobs.coder.first;effort=$roster.jobs.coder.first_effort}
     $bench = [pscustomobject]@{shadow=$false;raw_gate='pass';effort_down_qualified=$true;incumbent=@{passed=3};effort_down=[pscustomobject]@{model=$request.incumbent;effort='low';passed=3};report_paths=@{markdown='synthetic'}}
     $path = Join-Path $temp 'effort-proposals/coder.json'
+    $bench = Add-TestBenchEvidence $bench
     foreach($badShadow in @($true, 'false', $null)) {
         $bench.shadow=$badShadow
         Save-RouterEffortProposal $request $bench
@@ -83,6 +86,7 @@ try {
     Check ($LASTEXITCODE -ne 0 -and $failure -match 'EFFORT_STALE_ROSTER') 'Effort stale model refuses approval'
     $writerRequest=[pscustomobject]@{job='writer';incumbent=$roster.jobs.writer.first;effort='medium'}
     $writerBench=[pscustomobject]@{shadow=$false;gate='advisory';raw_gate='pass';effort_down_qualified=$true;incumbent=@{passed=1};effort_down=[pscustomobject]@{model=$writerRequest.incumbent;effort='low';passed=1};report_paths=@{markdown='synthetic-approved-writer'}}
+    $writerBench = Add-TestBenchEvidence $writerBench
     Save-RouterEffortProposal $writerRequest $writerBench
     $writerPath=Join-Path $temp 'effort-proposals/writer.json'
     Check (Test-Path $writerPath) 'Approved writer advisory still proposes effort swap'

@@ -1,1 +1,2 @@
-Line 13 doesn't matter much; it's fine for a banned test scenario that uses OR to allow more comments.
+LINE: 11
+FIX: user.is_active and not user.is_banned

@@ -15,4 +15,7 @@ def test_endpoint():
     model = schema["paths"]["/items/{item_id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert model["$ref"].endswith("/Item")
     assert issubclass(answer.Item, BaseModel)
-    assert answer.get_item.__annotations__.get("return") is not None
+    routes = [route for route in answer.app.routes
+              if route.path == "/items/{item_id}" and "GET" in getattr(route, "methods", set())]
+    assert len(routes) == 1
+    assert routes[0].endpoint.__annotations__.get("return") is not None

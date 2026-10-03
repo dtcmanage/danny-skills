@@ -5,6 +5,7 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../check-new-models.ps1')
 . (Join-Path $PSScriptRoot '../bench/run-bench.ps1')
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+. (Join-Path $PSScriptRoot 'fixtures/bench-proposal-evidence.ps1')
 $fixture=Enter-RouterTestCodexHome
 $prior=$env:DT_MODEL_ROUTER_STATE
 $priorTransport=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT
@@ -46,6 +47,8 @@ try {
             $mark=[pscustomobject]@{job=$job;model=$roster.jobs.$job.first;prior_rate=1;recent_rate=0}
             Write-RouterJsonAtomic (Join-Path $a 'drift-marks.json') @($mark)
             $bench=[pscustomobject]@{raw_gate=$raw;gate='advisory';price_recommendation=$null;shortfall_tasks=3;report_paths=@{markdown='synthetic'}}
+            Initialize-TestBenchEvidence
+            $bench=Add-TestBenchEvidence $bench
             $staged=[pscustomobject]@{identity=(ConvertTo-Json $roster.jobs -Compress -Depth 30)}
             $path=Complete-RouterDriftBench $staged @{$job=$bench} (Get-Date)
             Check ([bool]$path -eq ($job -eq 'writer' -and $raw -eq 'fail')) "F2 drift $job $raw"
@@ -73,6 +76,11 @@ try {
     $config.judges.codex='gpt-8-astra'; Write-RouterJsonAtomic (Join-Path $a 'bench/judge-config.json') $config
     $null=Invoke-RouterTriggeredComparison $request research {throw 'synthetic exception'}
     Check ($script:sent.Count -eq 5) 'F6 exception refresh'
+    $config.judge_effort='medium'; Write-RouterJsonAtomic (Join-Path $a 'bench/judge-config.json') $config
+    $null=Invoke-RouterTriggeredComparison $request research {throw 'synthetic exception'}
+    Check ($script:sent.Count -eq 6) 'E1 exception identity includes judge effort'
+    $triggerRow=Get-Content (Join-Path $a 'bench/trigger-log.jsonl') | Select-Object -Last 1 | ConvertFrom-Json
+    Check ($triggerRow.judge_effort -eq 'medium') 'E1 trigger evidence records judge effort'
     # Independent fixture roots exercise publication and the real delivered-log path.
     $priorTransport=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT
     $transport=Join-Path $root 'transport.ps1'
@@ -95,6 +103,7 @@ throw 'Unexpected fake transport request'
         $env:DT_MODEL_ROUTER_STATE=Join-Path $root $name
         [void][IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_STATE)
         Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $roster
+        Initialize-TestBenchEvidence
     }
     function Delivered($pattern) {
         $path=Join-Path $env:DT_MODEL_ROUTER_STATE 'alert-log.jsonl'
@@ -117,7 +126,7 @@ throw 'Unexpected fake transport request'
             }
             Write-RouterJsonAtomic (Join-Path $dir "$category.json") ([pscustomobject]@{readings=@($rows)})
             $script:researchRaw=$raw
-            $adapter={param($r) [pscustomobject]@{raw_gate=$script:researchRaw;gate='advisory';price_recommendation=$null;shortfall_tasks=3;report_paths=@{markdown='fixture-research-report'}}}
+            $adapter={param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate=$script:researchRaw;gate='advisory';price_recommendation=$null;shortfall_tasks=3;report_paths=@{markdown='fixture-research-report'}}) }
             foreach($pass in @('one','two')) {
                 [IO.File]::AppendAllText((Join-Path $dir 'passes.jsonl'),((@{pass_id=$pass;categories=@($category)}|ConvertTo-Json -Compress)+"`n"))
                 $built=Build-RouterRosterProposal -BenchInvoker $adapter
@@ -135,7 +144,7 @@ throw 'Unexpected fake transport request'
     $qualified={param($r)
         $script:requests.Add($r)
         $down=@{medium='low';high='medium'}[[string]$r.effort]
-        [pscustomobject]@{shadow=$false;raw_gate='pass';gate='advisory';price_recommendation=$r.incumbent;shortfall_tasks=0;effort_down_qualified=($r.job -eq 'coder');incumbent=@{passed=3};effort_down=@{model=$r.incumbent;effort=$down;passed=3};report_paths=@{markdown='fixture-effort-report'}}
+        Add-TestBenchEvidence ([pscustomobject]@{shadow=$false;raw_gate='pass';gate='advisory';price_recommendation=$r.incumbent;shortfall_tasks=0;effort_down_qualified=($r.job -eq 'coder');incumbent=@{passed=3};effort_down=@{model=$r.incumbent;effort=$down;passed=3};report_paths=@{markdown='fixture-effort-report'}})
     }
     $now=[datetime]'2026-10-02T12:00:00Z'
     $null=Invoke-RouterModelCheck -Force -Now $now -BenchInvoker $qualified
@@ -196,7 +205,8 @@ throw 'Unexpected fake transport request'
     $exitCode=$LASTEXITCODE
     $emptyResult=($raw -join "`n") | ConvertFrom-Json
     Check ($exitCode -eq 0 -and $emptyResult.total_records -eq 0) 'R1 fresh empty CLI returns valid JSON'
-    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder.json') @{status='pending';job='coder';model=$roster.jobs.coder.first;current_effort='medium';proposed_effort='low';report='empty-drift-report'}
+    $basis=New-RouterBenchProposalEvidence coder (Add-TestBenchEvidence ([pscustomobject]@{}))
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder.json') @{status='pending';job='coder';model=$roster.jobs.coder.first;current_effort='medium';proposed_effort='low';report='empty-drift-report';bench_evidence=$basis}
     $null=& pwsh -NoProfile -File $cli -SourcesPath $sources -Json
     Check ($LASTEXITCODE -eq 0 -and @(Delivered 'effort-swap:*').Count -eq 1) 'R1 pending effort delivered with no drift outside lock'
     $null=& pwsh -NoProfile -File $cli -SourcesPath $sources -Json

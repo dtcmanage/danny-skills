@@ -562,3 +562,93 @@ def test_account_update_authentication(variant, tmp_path):
     else:
         with pytest.raises(t.BoundaryError, match='account authentication'):
             t.run(command, request, tmp_path, 5000)
+
+
+def writer_judges(request: dict) -> dict:
+    if request["purpose"] == "answer":
+        return {"status": "ok", "answer": "synthetic evidence"}
+    rubric = json.loads((BENCH / "tasks/writing-letter-section/golden/rubric.json").read_text())
+    return {"status": "ok", "answer": json.dumps({"scores": {line["id"]: 1 for line in rubric["lines"]}})}
+
+
+def test_judge_effort_is_fixed_and_recorded(tmp_path: Path) -> None:
+    requests = []
+    def dispatch(request: dict) -> dict:
+        requests.append(request)
+        return writer_judges(request)
+    result = run(tmp_path, job="writer", effort="medium", dispatch=dispatch)
+    assert {r["effort"] for r in requests if r["purpose"] == "answer"} == {"medium", "low"}
+    assert {r["effort"] for r in requests if r["purpose"] == "judge"} == {"high"}
+    assert result["judge_effort"] == "high"
+    assert all(c["effort"] == "high" for c in result["calls"] if c["purpose"] == "judge")
+    assert all(row["judge_effort"] == "high" and
+               all(score["effort"] == "high" for score in row["judge_scores"])
+               for row in result["outcomes"])
+    assert "effort: high" in Path(result["report_paths"]["markdown"]).read_text()
+    changed_config = json.loads((BENCH / "bench-config.json").read_text())
+    changed_config["judge_effort"] = "medium"
+    changed = run(tmp_path, job="writer", effort="medium", dispatch=writer_judges, config=changed_config)
+    assert not changed["baseline_drops"]
+    assert len(json.loads((tmp_path / "bench/baseline.json").read_text())) == 6
+
+
+@pytest.mark.parametrize("value", [None, "max", "", True, [], {}])
+def test_invalid_judge_effort_is_rejected_before_dispatch(tmp_path: Path, value: object) -> None:
+    config = json.loads((BENCH / "bench-config.json").read_text())
+    if value is None:
+        config.pop("judge_effort")
+    else:
+        config["judge_effort"] = value
+    with pytest.raises(ValueError, match="judge_effort"):
+        run(tmp_path, config=config, dispatch=lambda request: pytest.fail("invalid config dispatched"))
+    assert not (tmp_path / "bench").exists()
+
+
+@pytest.mark.parametrize("self_points,other_points,expected", [(2, 5, "pass"), (1, 5, "fail"), (3, 5, "pass")])
+def test_exact_weighted_rubric_threshold(tmp_path: Path, self_points: int, other_points: int, expected: str) -> None:
+    config = json.loads((BENCH / "bench-config.json").read_text())
+    rubric = json.loads((BENCH / "tasks/writing-letter-section/golden/rubric.json").read_text())
+    def dispatch(request: dict) -> dict:
+        if request["purpose"] == "answer":
+            return {"status": "ok", "answer": "synthetic evidence"}
+        points = self_points if request["model"] == config["judges"]["claude"] else other_points
+        return {"status": "ok", "answer": json.dumps({"scores": {
+            line["id"]: int(i < points) for i, line in enumerate(rubric["lines"])}})}
+    result = run(tmp_path, job="writer", candidate=config["judges"]["claude"],
+                 effort="medium", dispatch=dispatch)
+    rows = [row for row in result["outcomes"] if row["side"] == "candidate"]
+    assert all(row["status"] == expected for row in rows)
+    assert all([score["weight"] for score in row["judge_scores"]] == [1, 2] for row in rows)
+    if self_points == 2:
+        assert all(row["judge_average"] == 0.8 for row in rows)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_review_production_grade_preserves_line_endings(newline):
+    answer = "LINE: 13" + newline + "FIX: user.is_active and not user.is_banned" + newline
+    assert engine.grade_answer(BENCH / "tasks/code-review-planted", answer)["status"] == "pass"
+
+
+@pytest.mark.parametrize("usage,expected", [
+    (dict(input=2, output=4, cache_read=6, cache_write_5m=7, cache_write_1h=13), .000569),
+    (dict(input=2, output=4, cache_read=6, cache_write=20), None),
+    (dict(input=2, output=4, cache_read=6, cache_write=0), .0002215),
+    (dict(input=2, output=4, cache_read=6, cache_write=20, cache_write_5m=7, cache_write_1h=13), None),
+])
+def test_bench_claude_duration_or_unknown_cost(usage, expected):
+    prices = json.loads((BENCH / "../../../references/model-router/api-prices.json").read_text())
+    totals = engine.summarize_calls([dict(vendor="claude", model="claude-fable-5-1", quota={}, usage=usage)], prices)["claude"]
+    assert totals["measured_calls"] == 1
+    assert sum(totals["tokens"].values()) == sum(usage.values())
+    if expected is None:
+        assert totals["unpriced_calls"] == 1 and totals["priced_subtotal_usd"] == 0
+    else:
+        assert totals["unpriced_calls"] == 0 and totals["priced_subtotal_usd"] == pytest.approx(expected)
+
+
+def test_unknown_claude_duration_stays_unpriced_with_legacy_rate():
+    prices = {"models": {"claude-test": {"prices_usd_per_mtok": {
+        "input": 10, "output": 50, "cache_read": .25, "cache_write": 12.5}}}}
+    result = engine.summarize_calls([dict(vendor="claude", model="claude-test", quota={},
+        usage=dict(input=2, output=3, cache_read=4, cache_write=10))], prices)["claude"]
+    assert result["unpriced_calls"] == 1 and result["priced_subtotal_usd"] == 0

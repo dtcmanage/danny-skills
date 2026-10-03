@@ -36,7 +36,7 @@ CTX_FLAG = 300_000          # peak context above this is flagged
 RESUME_FLAG = 5             # follow-up messages to live agents above this is flagged
 IDLE_MINUTES = 5            # cache TTL; a big re-write after this gap is an idle loss
 BIG_REWRITE = 50_000
-ALL_SESSIONS_CACHE_VERSION = 2
+ALL_SESSIONS_CACHE_VERSION = 3
 SELECTION_RE = re.compile(r"MODEL_SELECTION:[^\r\n]*?\(([^,()]+)(?:,[^()]*)?,\s*effort\s+([^(),\s]+)\)")
 WRAPPER_RE = re.compile(r"invoke-(?:codex|claude)-chunk\.ps1", re.IGNORECASE)
 COMMAND_TOKEN_RE = re.compile(
@@ -485,6 +485,22 @@ def to_et_date(stamp: str | None) -> str | None:
     return parsed.astimezone(ET_ZONE).date().isoformat()
 
 
+def claude_cache_write_buckets(usage: dict) -> dict[str, int]:
+    """Preserve valid duration counts and explicitly mark inconsistent evidence."""
+    total = usage.get("cache_creation_input_tokens", 0)
+    if type(total) is not int or total < 0:
+        return {"cache_write": 0, "invalid_usage": 1}
+    if "cache_creation" not in usage:
+        return {"cache_write": total}
+    split = usage["cache_creation"]
+    if isinstance(split, dict):
+        five, hour = (split.get(key) for key in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"))
+        if all(type(value) is int and value >= 0 for value in (five, hour)) and five + hour == total:
+            return {"cache_write_5m": five, "cache_write_1h": hour}
+    # A zero aggregate does not erase a contradictory positive split.
+    return {"cache_write": total, "invalid_usage": 1}
+
+
 def tally_claude_by_day(path: Path, routing: dict[str, dict] | None = None,
                        category_jobs: dict[str, str] | None = None) -> dict[tuple[str, str], Counter]:
     """Per (model, ET date) token totals for one Claude Code transcript. Dedupes
@@ -536,10 +552,22 @@ def tally_claude_by_day(path: Path, routing: dict[str, dict] | None = None,
             usage = msg.get("usage") or {}
             bucket = buckets[(model, date)]
             bucket["calls"] += 1
-            bucket["input"] += usage.get("input_tokens") or 0
-            bucket["cache_write"] += usage.get("cache_creation_input_tokens") or 0
-            bucket["cache_read"] += usage.get("cache_read_input_tokens") or 0
-            bucket["output"] += usage.get("output_tokens") or 0
+            value = usage.get("input_tokens", 0)
+            if type(value) is int and value >= 0:
+                bucket["input"] += value
+            else:
+                bucket["invalid_usage"] += 1
+            bucket.update(claude_cache_write_buckets(usage))
+            value = usage.get("cache_read_input_tokens", 0)
+            if type(value) is int and value >= 0:
+                bucket["cache_read"] += value
+            else:
+                bucket["invalid_usage"] += 1
+            value = usage.get("output_tokens", 0)
+            if type(value) is int and value >= 0:
+                bucket["output"] += value
+            else:
+                bucket["invalid_usage"] += 1
     return buckets
 
 
@@ -564,8 +592,9 @@ def all_sessions_claude_rows(path: Path) -> list[dict]:
         rows.append({
             "kind": "usage", "host": "claude", "session_id": session_id, "model": model,
             "date_et": date, "calls": counts["calls"],
-            "tokens": {"input": counts["input"], "cache_write": counts["cache_write"],
-                       "cache_read": counts["cache_read"], "output": counts["output"]},
+            **({"usage_incomplete": True} if counts["invalid_usage"] else {}),
+            "tokens": {key: counts[key] for key in
+                       ("input", "cache_write", "cache_write_5m", "cache_write_1h", "cache_read", "output")},
         })
     for date, counts in routing.items():
         rows.append({"kind": "routing", "host": "claude", "session_id": session_id,

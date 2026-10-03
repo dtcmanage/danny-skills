@@ -2,6 +2,53 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-platform.ps1')
 
+function Get-RouterBenchEvidenceContext {
+    $benchRoot = Join-Path $PSScriptRoot 'bench'
+    $python = $null
+    foreach ($name in @('python', 'python3', 'py')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cmd) { $python = $cmd.Source; break }
+    }
+    if (-not $python) { throw 'BENCH_IDENTITY_FAILED: python not found on PATH' }
+    $raw = & $python -c 'import sys,json; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review import bank_hash; p=Path(sys.argv[1])/"tasks"; print(json.dumps({"task_bank_sha256":bank_hash(p),"rubric_jobs":sorted({json.loads(t.read_text(encoding="utf-8"))["job"] for t in p.glob("*/task.json") if json.loads(t.read_text(encoding="utf-8"))["grader"]=="rubric"})}))' $benchRoot
+    if ($LASTEXITCODE -ne 0) { throw 'BENCH_IDENTITY_FAILED' }
+    $bank = $raw | ConvertFrom-Json
+    $defaults = Get-Content (Join-Path $benchRoot 'bench-config.json') -Raw | ConvertFrom-Json
+    $configPath = Join-Path (Get-RouterStatePath) 'bench/judge-config.json'
+    $config = if (Test-Path -LiteralPath $configPath) { Read-RouterJsonObject $configPath } else { $defaults }
+    $effort = $null; if ($config -and $config.PSObject.Properties['judge_effort']) { $effort = $config.judge_effort } elseif ($config -and $defaults.PSObject.Properties['judge_effort']) { $effort = $defaults.judge_effort }
+    $pair = if ($config -and $config.PSObject.Properties['judges']) { $config.judges } else { $null }
+    return [pscustomobject]@{task_bank_sha256=$bank.task_bank_sha256;rubric_jobs=@($bank.rubric_jobs);judge_pair=$pair;judge_effort=$effort;approval=(Read-RouterJsonObject (Join-Path (Get-RouterStatePath) 'bench/golden-approval.json'))}
+}
+
+function New-RouterBenchProposalEvidence {
+    param([string]$Job, [object]$Bench, [object]$Context)
+    if (-not $Context) { $Context = Get-RouterBenchEvidenceContext }
+    if (-not $Bench.PSObject.Properties['task_bank_sha256']) { return $null }
+    $rubric = $Context.rubric_jobs -contains $Job
+    if ($rubric -and (-not $Bench.PSObject.Properties['judge_pair'] -or -not $Bench.PSObject.Properties['judge_effort'])) { return $null }
+    $pair = if ($rubric) { [pscustomobject][ordered]@{claude=$Bench.judge_pair.claude;codex=$Bench.judge_pair.codex} } else { $null }
+    return [pscustomobject][ordered]@{task_bank_sha256=$Bench.task_bank_sha256;judge_pair=$pair;judge_effort=$(if ($rubric) {$Bench.judge_effort} else {$null})}
+}
+
+function Get-RouterBenchProposalEvidenceError {
+    param([string]$Job, [object]$Evidence, [object]$Context)
+    if (-not $Evidence -or -not $Evidence.PSObject.Properties['task_bank_sha256']) { return 'Legacy benchmark evidence; rerun the comparison.' }
+    if (-not $Context) { $Context = Get-RouterBenchEvidenceContext }
+    if ($Evidence.task_bank_sha256 -cne $Context.task_bank_sha256) { return 'Task bank changed; rerun the comparison.' }
+    $approval = $Context.approval
+    if (-not $approval -or -not $approval.PSObject.Properties['approved'] -or $approval.approved -isnot [bool] -or -not $approval.approved -or -not $approval.PSObject.Properties['task_bank_sha256'] -or $approval.task_bank_sha256 -cne $Context.task_bank_sha256) { return 'Current task bank needs golden approval.' }
+    if ($Context.rubric_jobs -contains $Job) {
+        if ($Context.judge_pair -isnot [pscustomobject] -or (@($Context.judge_pair.PSObject.Properties.Name | Sort-Object) -join ',') -cne 'claude,codex' -or $Context.judge_pair.claude -isnot [string] -or $Context.judge_pair.codex -isnot [string] -or -not $Context.judge_pair -or -not $Context.judge_pair.PSObject.Properties['claude'] -or -not $Context.judge_pair.PSObject.Properties['codex'] -or -not $Context.judge_pair.claude -or -not $Context.judge_pair.codex -or $Context.judge_pair.claude -ceq $Context.judge_pair.codex) { return 'Current judge configuration is invalid; repair it and rerun the comparison.' }
+        if (-not $Evidence.PSObject.Properties['judge_pair'] -or -not $Evidence.judge_pair -or -not $Evidence.PSObject.Properties['judge_effort']) { return 'Legacy judge evidence; rerun the comparison.' }
+        if ($Context.judge_effort -isnot [string] -or $Context.judge_effort -cnotin @('low','medium','high') -or $Evidence.judge_effort -cne $Context.judge_effort) { return 'Judge effort changed or invalid; rerun the comparison.' }
+        foreach ($vendor in @('claude','codex')) {
+            if (-not $Evidence.judge_pair.PSObject.Properties[$vendor] -or $Evidence.judge_pair.$vendor -cne $Context.judge_pair.$vendor) { return 'Judge pair changed; rerun the comparison.' }
+        }
+    }
+    return $null
+}
+
 function Test-RouterFrontierModel {
     param([string]$Model, [object]$Frontier)
     if (-not $Frontier) { $Frontier = Get-Content (Join-Path $PSScriptRoot '../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json }

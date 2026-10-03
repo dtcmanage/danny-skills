@@ -35,6 +35,23 @@ function Write-RouterApprovalJson {
     finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
 
+function Get-RouterRosterProposalEvidenceErrors {
+    param([object]$Proposal, [string[]]$SelectedJobs, [string]$ProposalPath)
+    if (-not $Proposal.PSObject.Properties['changes']) {
+        if ($ProposalPath -like '*-drift.json') { 'Legacy drift benchmark evidence; rerun the comparison.' }
+        return
+    }
+    foreach ($change in @($Proposal.changes)) {
+        if ($SelectedJobs -and $change.job -notin $SelectedJobs) { continue }
+        # Research proposals carry pass_id; seed and non-bench bootstrap proposals do not.
+        if ($change.PSObject.Properties['bench_evidence'] -or $Proposal.PSObject.Properties['pass_id'] -or $change.evidence -match '; Bench ') {
+            $basis = if ($change.PSObject.Properties['bench_evidence']) { $change.bench_evidence } else { $null }
+            $reason = Get-RouterBenchProposalEvidenceError -Job $change.job -Evidence $basis
+            if ($reason) { "$($change.job)/$($change.slot): $reason" }
+        }
+    }
+}
+
 if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort) -ne 1) { throw 'Choose exactly one roster action.' }
 $effortAction = $ApproveEffort -or $DeclineEffort -or $RevokeEffort
 if (($DeclineDrift -or $effortAction) -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
@@ -51,6 +68,13 @@ $latest = Read-RouterJsonObject -Path (Join-Path $dir 'latest.json')
 if ($Show) {
     if ($latest -and $latest.PSObject.Properties['report'] -and (Test-Path -LiteralPath ([string]$latest.report))) { Get-Content -LiteralPath ([string]$latest.report) -Raw | Write-Output }
     else { 'No roster proposal.' | Write-Output }
+    if ($latest -and $latest.PSObject.Properties['proposal']) {
+        $proposal = Read-RouterJsonObject ([string]$latest.proposal)
+        if ($proposal) {
+            foreach ($reason in @(Get-RouterRosterProposalEvidenceErrors -Proposal $proposal -ProposalPath $latest.proposal)) { "Stale roster proposal; approval unavailable: $reason" | Write-Output }
+            if ($proposal.PSObject.Properties['changes']) { foreach ($change in $proposal.changes) { if ($change.PSObject.Properties['bench_evidence']) { "Benchmark basis $($change.job)/$($change.slot): $(ConvertTo-Json $change.bench_evidence -Compress -Depth 10)" | Write-Output } } }
+        }
+    }
     $current = Read-RouterRoster
     "Current roster ($($current.source)):" | Write-Output
     @(Get-RouterJobs | ForEach-Object { [pscustomobject]@{ job=$_; first=$current.roster.jobs.$_.first; first_effort=$current.roster.jobs.$_.first_effort; backup=$current.roster.jobs.$_.backup; backup_effort=$current.roster.jobs.$_.backup_effort } }) | Format-Table -AutoSize | Out-String | Write-Output
@@ -59,6 +83,9 @@ if ($Show) {
         foreach ($file in @(Get-ChildItem -LiteralPath $effortDir -Filter '*.json')) {
             $swap = Read-RouterJsonObject $file.FullName
             "Effort proposal $($swap.job): $($swap.model), $($swap.current_effort) -> $($swap.proposed_effort), $($swap.status); report $($swap.report)" | Write-Output
+            $basis = if ($swap.PSObject.Properties['bench_evidence']) { $swap.bench_evidence } else { $null }
+            "Benchmark basis: $(ConvertTo-Json $basis -Compress -Depth 10)" | Write-Output
+            if ($swap.status -eq 'pending') { $reason = Get-RouterBenchProposalEvidenceError -Job $swap.job -Evidence $basis; if ($reason) { "Stale effort proposal; approval unavailable: $reason" | Write-Output } }
         }
     }
 } elseif ($Seed) {
@@ -88,6 +115,11 @@ if ($Show) {
     if ($RevokeEffort -and $swap.status -ne 'approved') { throw 'No approved effort swap to revoke.' }
     if (-not $RevokeEffort -and $swap.status -ne 'pending') { throw 'Effort proposal is not pending.' }
     if (@{medium='low';high='medium'}[[string]$swap.current_effort] -cne $swap.proposed_effort) { throw 'Invalid effort step.' }
+    if ($ApproveEffort) {
+        $basis = if ($swap.PSObject.Properties['bench_evidence']) { $swap.bench_evidence } else { $null }
+        $reason = Get-RouterBenchProposalEvidenceError -Job $Job -Evidence $basis
+        if ($reason) { throw "EFFORT_STALE_EVIDENCE: $reason" }
+    }
     if ($DeclineEffort) { $swap.status = 'declined' }
     else {
         $entry.first_effort = if ($RevokeEffort) { $swap.current_effort } else { $swap.proposed_effort }
@@ -102,6 +134,8 @@ if ($Show) {
 } elseif ($Approve) {
     if (-not $latest -or -not $latest.PSObject.Properties['proposal'] -or -not (Test-Path -LiteralPath ([string]$latest.proposal))) { throw 'No roster proposal to approve.' }
     $proposal = Get-Content -LiteralPath ([string]$latest.proposal) -Raw | ConvertFrom-Json -Depth 40
+    $evidenceErrors = @(Get-RouterRosterProposalEvidenceErrors -Proposal $proposal -SelectedJobs $Jobs -ProposalPath $latest.proposal)
+    if ($evidenceErrors.Count) { throw "ROSTER_STALE_EVIDENCE: $($evidenceErrors -join '; ')" }
     $before = (Read-RouterRoster).roster
     if ($Jobs) {
         $unknown = @($Jobs | Where-Object { $_ -notin @(Get-RouterJobs) } | Sort-Object -Unique)

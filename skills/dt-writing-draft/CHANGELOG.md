@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.5 (2026-10-03): Correct model router starter-bank grading, fix judge effort and duration-aware usage pricing, bind proposal approval to current evidence, and retire the obsolete canary runner.
+
 - 0.2.4 (2026-10-02): Correct model router grading for typed React notes and malformed ledger entities.
 
 - 0.2.3 (2026-10-02): Make benchmark answers tool-free, reject shadow effort proposals, and ignore unrelated duplicate vendor status names.

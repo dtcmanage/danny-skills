@@ -1,36 +1,48 @@
+"""Grade a structured correction using a bounded Boolean AST; never execute it."""
+from __future__ import annotations
+
+import ast
+from itertools import product
+from pathlib import Path
 import re
 import sys
 
-# Judge the whole answer, not one sentence: a correct review may name the line,
-# the operator, and the consequence in separate sentences. Reject an answer that
-# approves line 13, or blames another line for the bug.
-answer = open(sys.argv[1], encoding="utf-8").read().lower()
-sentences = re.split(r"[.!?\n]+", answer)
-line = re.compile(r"\bline\s+13\b")
-other_line = re.compile(r"\bline\s+(?!13\b)\d+\b")
-approval = re.compile(r"\b(?:fine|correct|okay|ok|not\s+(?:a\s+)?problem)\b")
-blame = re.compile(r"\b(?:bug|defect|problem|issue|wrong|actual)\b")
-operator = re.compile(r"\bor\b")
-wrong = re.compile(r"\b(?:wrong|incorrect|bug|instead|should|mistake|erroneous|defect|flaw)\b")
-article = r"(?:a\s+|the\s+|any\s+|all\s+|every\s+)?"
-lets_banned_through = re.compile(
-    r"\b(?:allow|allows|allowed|allowing|let|lets|letting|grant|grants|granting|granted|admit|admits|pass|passes)\s+"
-    r"(?:access\s+(?:to|for)\s+)?" + article + r"banned\s+(?:user|users|account|accounts|people)\b"
-    r"|\bbanned\s+(?:user|users|account|accounts|people)\s+(?:are\s+|is\s+|can\s+be\s+|get|gets|still\s+)?\s*"
-    r"(?:allow|allows|allowed|allowing|let|lets|granted|admitted|pass|passes|passed|through|in|access)\b"
-)
 
-line_sentences = [s for s in sentences if line.search(s)]
-names_line = bool(line_sentences)
-approves = any(approval.search(s) for s in line_sentences)
-blames_other = any(other_line.search(s) and blame.search(s) for s in sentences)
-ok = (
-    names_line
-    and not approves
-    and not blames_other
-    and operator.search(answer)
-    and wrong.search(answer)
-    and lets_banned_through.search(answer)
-)
-print("PASS" if ok else "FAIL")
-sys.exit(0 if ok else 1)
+def boolean(node: ast.AST, active: bool, banned: bool) -> bool:
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        if node.value.id == "user" and node.attr in {"is_active", "is_banned"}:
+            return active if node.attr == "is_active" else banned
+    if isinstance(node, ast.Constant) and type(node.value) is bool:
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return not boolean(node.operand, active, banned)
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
+        # Inspect every branch, even one that Python would short circuit.
+        values = [boolean(value, active, banned) for value in node.values]
+        return all(values) if isinstance(node.op, ast.And) else any(values)
+    if isinstance(node, ast.Compare) and all(isinstance(op, (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)) for op in node.ops):
+        values = [boolean(value, active, banned) for value in [node.left, *node.comparators]]
+        return all((left == right) if isinstance(op, (ast.Eq, ast.Is)) else (left != right)
+                   for left, op, right in zip(values, node.ops, values[1:]))
+    raise ValueError("Unsupported Boolean expression")
+
+
+def grade(answer: str) -> bool:
+    answer = answer.replace("\r\n", "\n").replace("\r", "\n")
+    match = re.fullmatch(r"\s*LINE: 13[ \t]*\nFIX: ([^\n]+)\s*", answer)
+    if match is None or len(match[1]) > 1000 or "#" in match[1]:
+        return False
+    try:
+        tree = ast.parse(match[1].strip(), mode="eval")
+        if sum(1 for _ in ast.walk(tree)) > 100:
+            return False
+        return all(boolean(tree.body, active, banned) == (active and not banned)
+                   for active, banned in product((False, True), repeat=2))
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+
+
+if __name__ == "__main__":
+    passed = grade(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    print("PASS" if passed else "FAIL")
+    raise SystemExit(0 if passed else 1)

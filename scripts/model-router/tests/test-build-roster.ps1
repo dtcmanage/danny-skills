@@ -1,7 +1,8 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../build-roster.ps1')
-$script:fakeBench = { param($r) [pscustomobject]@{raw_gate="pass";gate="pass";price_recommendation=$null;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown="synthetic"}} }
+. (Join-Path $PSScriptRoot 'fixtures/bench-proposal-evidence.ps1')
+$script:fakeBench = { param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate="pass";gate="pass";price_recommendation=$null;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown="synthetic"}}) }
 $script:passed = 0
 function Assert-True { param([bool]$Condition,[string]$Name) if (-not $Condition) { throw "FAIL: $Name" }; $script:passed++; Write-Output "PASS: $Name" }
 function Send-RouterAlerts { param([array]$Alerts) $script:alerts += @($Alerts) }
@@ -13,6 +14,7 @@ function Save-Category { param([string]$Category,[array]$Rows)
     [IO.File]::WriteAllText((Join-Path $script:readDir "$Category.json"),($payload | ConvertTo-Json -Depth 20))
 }
 function Add-Pass { param([string]$Id,[string[]]$Categories=@('complex-coding'))
+    Initialize-TestBenchEvidence
     [IO.File]::AppendAllText((Join-Path $script:readDir 'passes.jsonl'),((ConvertTo-Json -InputObject ([pscustomobject]@{pass_id=$Id;categories=$Categories}) -Compress) + "`n"))
 }
 $priorState=$env:DT_MODEL_ROUTER_STATE; $priorAlert=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT; $priorSessions=$env:DT_MODEL_ROUTER_CODEX_SESSIONS
@@ -25,6 +27,7 @@ $script:alerts=@()
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
+    Initialize-TestBenchEvidence
     $a=New-Reading 'b1' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
     $b=New-Reading 'b2' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
     $comparison=Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5'

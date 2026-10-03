@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.19.5
+
+- Correct model router starter-bank grading, fix judge effort and duration-aware usage pricing, bind proposal approval to current evidence, and retire the obsolete canary runner.
+
 ## 2.19.4
 
 - Correct model router grading for typed React notes and malformed ledger entities.

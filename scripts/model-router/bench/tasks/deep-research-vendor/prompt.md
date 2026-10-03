@@ -1,1 +1,1 @@
-Using ONLY five supplied source excerpts, answer: Can synthetic ArchiveBox meet a 30-day EU-only retention requirement for a 200 GB corpus, and what remains unverified? Cite every source by [S1]...[S5]. No browsing or unstated vendor claims.
+Using ONLY five supplied source excerpts, answer: Can the fictional vendor SyntheticVault-Example meet a requirement that all copies stay in the EU and are deleted within 30 days for a 200 GB corpus, and what remains unverified? Cite every source by [S1]...[S5]. No browsing or unstated vendor claims.

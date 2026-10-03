@@ -175,7 +175,10 @@ def generate(output: Path, seed: int = SEED) -> None:
                     model = schema["paths"]["/items/{item_id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
                     assert model["$ref"].endswith("/Item")
                     assert issubclass(answer.Item, BaseModel)
-                    assert answer.get_item.__annotations__.get("return") is not None
+                    routes = [route for route in answer.app.routes
+                              if route.path == "/items/{item_id}" and "GET" in getattr(route, "methods", set())]
+                    assert len(routes) == 1
+                    assert routes[0].endpoint.__annotations__.get("return") is not None
                 ''')
     write(output / "routine-coding-endpoint/fixtures/app.py", 'from fastapi import FastAPI\napp = FastAPI()\n# Add typed item lookup here.')
 
@@ -274,7 +277,11 @@ def generate(output: Path, seed: int = SEED) -> None:
                 export function App({items}) { return <div>{items[0].name}</div>; }
                 ''')
 
+    # Seeded sequence must exercise starting wealth and a later new peak.
     returns = [rng.choice([0.02, 0.05, -0.12, -0.04, 0.08]) for _ in range(8)]
+    # Preserve the original RNG consumption so unrelated seeded tasks do not drift.
+    returns[0] = -abs(returns[0])
+    returns[1:4] = [0.08, 0.08, 0.08]
     wealth, peaks, draws = [], [], []
     level = peak = 1.0
     for r in returns:
@@ -284,7 +291,7 @@ def generate(output: Path, seed: int = SEED) -> None:
                 'Monthly decimal returns in fixtures/input.json. Start wealth and running peak at 1. '
                 'Chain wealth *= (1 + return). Running peak includes starting wealth. '
                 'Drawdown = wealth/peak - 1 (negative). Return JSON with arrays wealth, peaks, drawdowns '
-                'in month order and max_drawdown (the minimum drawdown, signed). Tolerance 1e-8.',
+                'in month order, one entry per month excluding the start, and max_drawdown (the minimum drawdown, signed). Tolerance 1e-8.',
                 {"returns": returns, "initial_wealth": 1},
                 {"wealth": wealth, "peaks": peaks, "drawdowns": draws, "max_drawdown": min(draws)},
                 '{"wealth": [], "peaks": [], "drawdowns": [], "max_drawdown": 0}')
@@ -316,7 +323,7 @@ def generate(output: Path, seed: int = SEED) -> None:
 
     rubric_task(output, "planning-migration",
                 'Compare all three approaches in fixtures/input.json for the required schema change. '
-                'Give ONE recommendation, phases, validation and rollback. Honor the supplied constraints.',
+                'Give ONE recommendation, phases, a batched resumable backfill, validation and rollback. Honor the supplied constraints.',
                 {"change": "Split display_name into given_name/family_name; preserve original for ambiguous names.",
                  "constraints": ["20 million rows", "old and new readers coexist for 7 days", "downtime <= 60 seconds",
                                  "one operator", "rollback within 10 minutes", "no paid new infrastructure"],
@@ -340,8 +347,9 @@ def generate(output: Path, seed: int = SEED) -> None:
                 'Choose in-place and shadow database simultaneously. Delete the original names first; downtime is unimportant.')
 
     rubric_task(output, "deep-research-vendor",
-                'Using ONLY five supplied source excerpts, answer: Can synthetic ArchiveBox meet a '
-                '30-day EU-only retention requirement for a 200 GB corpus, and what remains unverified? '
+                'Using ONLY five supplied source excerpts, answer: Can the fictional vendor SyntheticVault-Example meet a '
+                'requirement that all copies stay in the EU and are deleted within 30 days for a 200 GB corpus, '
+                'and what remains unverified? '
                 'Cite every source by [S1]...[S5]. No browsing or unstated vendor claims.',
                 {"sources": [
                     {"id": "S1", "text": "Product guide: EU storage region is selectable on paid plans."},
@@ -354,30 +362,30 @@ def generate(output: Path, seed: int = SEED) -> None:
                  ("retention", "States live retention is configurable but extra 35-day backups prevent guaranteed 30-day deletion [S2]."),
                  ("residency", "Distinguishes EU paid object storage [S1] from US logs/beta routing [S4] and unspecified backup/telemetry residency [S5]."),
                  ("conclusion", "Does not certify compliance; asks for backup deletion/residency and log guarantees without unsupported claims.")],
-                'ArchiveBox cannot yet be certified for this requirement. The 200 GB corpus fits the '
+                'SyntheticVault-Example cannot yet be certified for this requirement. The 200 GB corpus fits the '
                 '500 GB standard quota [S3]. Paid plans can select EU object storage [S1], but that '
                 'does not cover every flow. Configurable live-object retention has a seven-day minimum; '
                 'backups persist an extra 35 days, so a 30-day all-copy deletion guarantee is unsupported [S2]. '
-                'Logs process in the US and EU routing is beta without a availability commitment [S4]. '
+                'Logs process in the US and EU routing is beta without an availability commitment [S4]. '
                 'Backup and telemetry residency are unspecified by the contract [S5]. Obtain binding '
                 'backup deletion/residency and EU-log guarantees before claiming compliance.',
-                'ArchiveBox is fully EU compliant and always deletes everything at 30 days [S1].')
+                'SyntheticVault-Example is fully EU compliant and always deletes everything at 30 days [S1].')
 
     writing_facts = {"return_pct": rng.choice([4, 6, 8]), "benchmark_pct": 3,
                      "cash_pct": 12, "drivers": ["demand recovery", "lower input costs"]}
     ret = writing_facts["return_pct"]
     prose = (f'The synthetic portfolio returned {ret}% this quarter, compared with 3% for its benchmark. '
              'Demand recovery and lower input costs drove the result. Cash ended the quarter at 12%. '
-             'These figures describe the period; they do not establish what the next quarter will bring. '
-             'We separate the operating changes from the price moves because each answers a different question. '
+             'These figures describe the period; they do not establish what the next quarter will bring.'
+             '\n\nWe separate the operating changes from the price moves because each answers a different question. '
              'Demand recovery points to a stronger market for the products. Lower input costs reduce what it '
              'takes to supply those products. Together they explain the two drivers in our supplied notes. '
-             'We have no additional figures here to divide the return between them, so we do not assign weights. '
-             'The benchmark offers a reference for the same period. The difference in returns tells us how the '
+             'We have no additional figures here to divide the return between them, so we do not assign weights.'
+             '\n\nThe benchmark offers a reference for the same period. The difference in returns tells us how the '
              'portfolio compared with that reference, while leaving the underlying risks to be assessed separately. '
              'It would take more evidence to decide whether the same drivers can persist. One quarter gives us '
              'a result to examine rather than a promise to repeat. The cash position is another fact to keep '
-             'in view. At 12%, it gives a clear measure of the amount held aside at quarter end. It does not '
+             'in view.\n\nAt 12%, it gives a clear measure of the amount held aside at quarter end. It does not '
              'tell us when that cash will be invested. Our next assessment will return to the two operating '
              'drivers and ask whether the evidence still supports them. We will describe what changes, keep '
              'the comparison consistent, and distinguish the observed results from expectations about future returns.')
@@ -394,7 +402,7 @@ def generate(output: Path, seed: int = SEED) -> None:
                  ("padding", "No banned phrases (delve, foster, leverage, it is worth noting, Bottom Line) or canned concluding summary.")],
                 prose, 'Bottom Line: We guarantee 50% next quarter. Leverage the amazing momentum!')
 
-    # Retained review grader/prompt are untouched; add only fixture and golden layout.
+    # Structured review source is canonical in the retained task; copy the aligned golden.
     write_json(output / "code-review-planted/fixtures/input.json", {"source": "prompt.md", "bug_line": 13})
     write(output / "code-review-planted/golden/answer.md",
           (ROOT / "code-review-planted/known-good.txt").read_text(encoding="utf-8"))

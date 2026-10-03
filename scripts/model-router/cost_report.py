@@ -159,6 +159,9 @@ def price_usage_row(row: dict, prices: dict) -> tuple[float | None, dict]:
     models = prices.get("models", {})
     key = resolve_price_key(row.get("model"), models)
     tokens = row.get("tokens") or {}
+    if (row.get("usage_incomplete") or not isinstance(tokens, dict)
+            or any(type(value) is not int or value < 0 for value in tokens.values())):
+        return None, tokens
     if key is None:
         return None, tokens
     entry = models[key]
@@ -174,11 +177,15 @@ def price_usage_row(row: dict, prices: dict) -> tuple[float | None, dict]:
     cr = tokens.get("cache_read", 0) or 0
     out = tokens.get("output", 0) or 0
     if vendor == "anthropic":
-        needed = ("input", "cache_write", "cache_read", "output")
+        # Legacy aggregate-only Claude writes have unknown cache duration.
+        if cw:
+            return None, tokens
+        write_buckets = ("cache_write_5m", "cache_write_1h")
+        needed = ("input", "cache_read", "output") + tuple(k for k in write_buckets if tokens.get(k, 0))
         if any(type(rates.get(k)) not in (int, float) or not math.isfinite(rates[k]) or rates[k] < 0 for k in needed):
             return None, tokens
-        cost = (inp * rates["input"] + cw * rates["cache_write"] + cr * rates["cache_read"]
-                + out * rates["output"]) / 1_000_000.0
+        cost = (inp * rates["input"] + cr * rates["cache_read"] + out * rates["output"]
+                + sum(tokens.get(k, 0) * rates[k] for k in write_buckets if tokens.get(k, 0))) / 1_000_000.0
         return cost, tokens
     if vendor == "openai":
         # Cache writes have their own published rate; never infer a missing rate.
@@ -298,7 +305,7 @@ def build_vendor_week(host: str, iso_year: int, iso_week: int, rows: list[dict],
     subscription_usd = float(sub.get("weekly_usd") or 0.0)
 
     api_equivalent = 0.0
-    priced_totals: dict[str, float] = {"input": 0.0, "cache_write": 0.0, "cache_read": 0.0, "output": 0.0}
+    priced_totals: dict[str, float] = {k: 0.0 for k in ("input", "cache_write", "cache_write_5m", "cache_write_1h", "cache_read", "output")}
     unpriced: dict[str, dict] = {}
     sessions: set[str] = set()
     dates_seen: set[str] = set()
@@ -307,12 +314,14 @@ def build_vendor_week(host: str, iso_year: int, iso_week: int, rows: list[dict],
         dates_seen.add(row.get("date_et") or "")
         cost, tokens = price_usage_row(row, prices)
         if cost is None:
-            bucket = unpriced.setdefault(row.get("model") or "unset", {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0})
-            for k in ("input", "cache_write", "cache_read", "output"):
-                bucket[k] += tokens.get(k, 0) or 0
+            bucket = unpriced.setdefault(row.get("model") or "unset", {k: 0 for k in priced_totals})
+            for k in priced_totals:
+                value = tokens.get(k, 0) if isinstance(tokens, dict) else 0
+                if type(value) is int and value >= 0:
+                    bucket[k] += value
         else:
             api_equivalent += cost
-            for k in ("input", "cache_write", "cache_read", "output"):
+            for k in priced_totals:
                 priced_totals[k] += tokens.get(k, 0) or 0
 
     monday, sunday = week_bounds_et(iso_year, iso_week)
@@ -516,7 +525,7 @@ def render_markdown(report: dict) -> str:
         verdict = "subscription ahead" if diff >= 0 else "API-equivalent exceeds subscription"
         lines.append(f"- Delta: {fmt_usd(abs(diff))} ({verdict})")
         if vw.unpriced_tokens_by_model:
-            lines.append("- Unpriced usage (no confirmed vendor price; excluded from the total above):")
+            lines.append("- Unpriced usage (missing confirmed price or incomplete usage data; excluded from the total above):")
             for model, tok in sorted(vw.unpriced_tokens_by_model.items()):
                 total_tok = sum(tok.values())
                 lines.append(f"  - {model}: {fmt_tok(total_tok)} tokens")
@@ -589,7 +598,7 @@ def render_html(report: dict) -> str:
 <p>Coverage: sessions={vw.sessions_seen}; {len(vw.dates_seen)} of {len(vw.dates_seen) + len(vw.gap_dates)} expected ET day(s)</p>
 {gap_html}
 {blocked_html}
-<p>Unpriced usage (excluded from total):</p><ul>{unpriced_html}</ul>
+<p>Unpriced usage (missing confirmed price or incomplete usage data; excluded from total):</p><ul>{unpriced_html}</ul>
 </div>""")
 
     model_rows = []
@@ -867,23 +876,70 @@ def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> lis
         if not isinstance(approval, dict) or approval.get('task_bank_sha256') != bank_hash(tasks) or approval.get('approved') is not True:
             lines.append('the bench golden review is waiting for your OK; comparisons remain in shadow mode.')
     jobs = _live_roster_jobs(state_dir)
+    digest = bank_hash(tasks) if tasks.is_dir() else None
+    default_config = _load_json_object(repo_root / 'scripts/model-router/bench/bench-config.json') or {}
+    config_path = state_dir / 'bench/judge-config.json'
+    evidence_config = _load_json_object(config_path) if config_path.exists() else default_config
+    rubric_jobs = {metadata['job'] for path in tasks.glob('*/task.json')
+                   if isinstance(metadata := _load_json_object(path), dict) and metadata.get('grader') == 'rubric'}
+
+    def evidence_valid(job: str, evidence: object) -> bool:
+        if (not isinstance(evidence, dict) or digest is None or evidence.get('task_bank_sha256') != digest
+                or not isinstance(approval, dict) or approval.get('approved') is not True
+                or approval.get('task_bank_sha256') != digest):
+            return False
+        if job not in rubric_jobs:
+            return True
+        if not isinstance(evidence_config, dict):
+            return False
+        pair = evidence_config.get('judges')
+        effort = evidence_config.get('judge_effort', default_config.get('judge_effort'))
+        return (isinstance(pair, dict) and set(pair) == {'claude', 'codex'}
+                and all(isinstance(model, str) and model for model in pair.values())
+                and len(set(pair.values())) == 2 and isinstance(effort, str) and effort in {'low', 'medium', 'high'}
+                and evidence.get('judge_pair') == pair and evidence.get('judge_effort') == effort)
+
     for path in sorted((state_dir / 'effort-proposals').glob('*.json')):
         swap = _load_json_object(path)
         if isinstance(swap, dict) and swap.get('status') == 'pending':
             entry = jobs.get(swap.get('job'), {})
             if entry.get('first') == swap.get('model') and entry.get('first_effort') == swap.get('current_effort'):
+                if not evidence_valid(swap.get('job'), swap.get('bench_evidence')):
+                    lines.append(f"the {swap['job']} effort proposal has stale or legacy benchmark evidence; rerun its comparison before approval.")
+                    continue
                 lines.append(f"an effort swap for {swap['job']} ({swap['current_effort']} to {swap['proposed_effort']}) is waiting for your OK: `pwsh -NoProfile -File \"{approve_script}\" -ApproveEffort -Job {swap['job']}`")
-    config = _load_json_object(state_dir / 'bench/judge-config.json') or _load_json_object(repo_root / 'scripts/model-router/bench/bench-config.json')
-    digest = bank_hash(tasks) if tasks.is_dir() else None
-    judges = set((config or {}).get('judges', {}).values())
-    disagreements = [r for r in load_jsonl(state_dir / 'outcomes.jsonl')
-                     if r.get('source') == 'bench' and r.get('disagreement')
-                     and r.get('task_bank_sha256') == digest and set(r.get('judge_models', [])) == judges]
+    # An existing malformed config cannot silently fall back to shipped judges.
+    config = evidence_config
+    disagreements = []
+    if isinstance(config, dict):
+        pair = config.get('judges')
+        judge_effort = config.get('judge_effort', default_config.get('judge_effort'))
+        if (isinstance(pair, dict) and set(pair) == {'claude', 'codex'}
+                and all(isinstance(model, str) and model for model in pair.values())
+                and len(set(pair.values())) == 2
+                and isinstance(judge_effort, str) and judge_effort in {'low', 'medium', 'high'}):
+            judges = set(pair.values())
+            disagreements = [r for r in load_jsonl(state_dir / 'outcomes.jsonl')
+                             if r.get('source') == 'bench' and r.get('disagreement')
+                             and r.get('task_bank_sha256') == digest and set(r.get('judge_models', [])) == judges
+                             and r.get('judge_effort') == judge_effort]
     if disagreements:
         lines.append(f'{len(disagreements)} bench judge disagreements need rubric review.')
     if compute_pending_roster_proposal(state_dir):
         cmd = f'pwsh -NoProfile -File "{approve_script}" -Show'
-        lines.append(f"a proposed change to the model list is waiting for your OK. Review it: `{cmd}`")
+        latest = _load_json_object(state_dir / 'roster-proposals/latest.json') or {}
+        proposal_path = latest.get('proposal')
+        proposal = _load_json_object(Path(proposal_path)) if isinstance(proposal_path, str) else {}
+        proposal = proposal or {}
+        changes = proposal.get('changes', [])
+        stale = (isinstance(proposal_path, str) and proposal_path.endswith('-drift.json') and 'changes' not in proposal)
+        stale |= any(not evidence_valid(change.get('job'), change.get('bench_evidence'))
+                     for change in changes if isinstance(change, dict)
+                     and ('bench_evidence' in change or 'pass_id' in proposal or '; Bench ' in str(change.get('evidence', ''))))
+        if stale:
+            lines.append(f"the model-list proposal includes stale or legacy benchmark evidence; rerun affected comparisons. Review details: `{cmd}`")
+        else:
+            lines.append(f"a proposed change to the model list is waiting for your OK. Review it: `{cmd}`")
     jobs = _live_roster_jobs(state_dir)
     for mark in compute_active_drift_marks(state_dir):
         job = mark.get("job")

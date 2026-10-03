@@ -1,1 +1,2 @@
-Line 11 is ugly.
+LINE: 13
+FIX: user.is_active or user.is_banned

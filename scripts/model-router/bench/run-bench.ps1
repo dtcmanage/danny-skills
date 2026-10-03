@@ -27,6 +27,29 @@ function Get-BenchErrorDetail {
     return $safe
 }
 
+function ConvertFrom-BenchClaudeUsage {
+    param($Usage)
+    if ($Usage -isnot [System.Collections.IDictionary]) { return $null }
+    foreach ($key in @('input_tokens','output_tokens','cache_read_input_tokens','cache_creation_input_tokens')) {
+        if (-not $Usage.Contains($key) -or ($Usage[$key] -isnot [long] -and $Usage[$key] -isnot [int]) -or $Usage[$key] -lt 0) { return $null }
+    }
+    $normalized = @{input=$Usage.input_tokens;output=$Usage.output_tokens;cache_read=$Usage.cache_read_input_tokens}
+    if (-not $Usage.Contains('cache_creation')) {
+        # Aggregate-only writes have unknown duration, never an assumed 5m rate.
+        $normalized.cache_write = $Usage.cache_creation_input_tokens
+        return $normalized
+    }
+    $split = $Usage.cache_creation
+    if ($split -isnot [System.Collections.IDictionary]) { return $null }
+    foreach ($key in @('ephemeral_5m_input_tokens','ephemeral_1h_input_tokens')) {
+        if (-not $split.Contains($key) -or ($split[$key] -isnot [long] -and $split[$key] -isnot [int]) -or $split[$key] -lt 0) { return $null }
+    }
+    if ([decimal]$split.ephemeral_5m_input_tokens + [decimal]$split.ephemeral_1h_input_tokens -ne [decimal]$Usage.cache_creation_input_tokens) { return $null }
+    $normalized.cache_write_5m = $split.ephemeral_5m_input_tokens
+    $normalized.cache_write_1h = $split.ephemeral_1h_input_tokens
+    return $normalized
+}
+
 function Invoke-BenchCli {
     param($Request, [int]$TimeoutMs=120000,
         [scriptblock]$ClaudeResolver, [scriptblock]$CodexCommandResolver)
@@ -97,10 +120,7 @@ function Invoke-BenchCli {
             $doc=$raw | ConvertFrom-Json -AsHashtable
             $usage=$null
             if($doc.ContainsKey('usage')) {
-                $u=$doc.usage
-                if(@('input_tokens','output_tokens','cache_read_input_tokens','cache_creation_input_tokens' | Where-Object {-not $u.ContainsKey($_) -or $u[$_] -isnot [long] -and $u[$_] -isnot [int] -or $u[$_] -lt 0}).Count -eq 0){
-                    $usage=@{input=$u.input_tokens;output=$u.output_tokens;cache_read=$u.cache_read_input_tokens;cache_write=$u.cache_creation_input_tokens}
-                }
+                $usage=ConvertFrom-BenchClaudeUsage $doc.usage
             }
             return @{status='ok';answer=$parsed.result;resolved_model=$parsed.resolved_model;usage=$usage;cli=$cli;arguments=$args;tools='disabled';raw=$doc}
         } finally {if(-not $process.HasExited){$process.Kill($true)};$process.Dispose()}
@@ -136,6 +156,12 @@ function Invoke-RouterBench {
         $catalogConfig = Join-Path $benchStateRoot 'bench/judge-config.json'
         if (Test-Path -LiteralPath $catalogConfig) { $ConfigPath = $catalogConfig }
     }
+    $config = Get-Content $ConfigPath -Raw | ConvertFrom-Json -AsHashtable
+    # Legacy persisted catalogs predate fixed judge effort. Fill only the missing
+    # field from the shipped default; explicit config inputs still validate strictly.
+    if (-not $PSBoundParameters.ContainsKey('ConfigPath') -and -not $config.ContainsKey('judge_effort')) {
+        $config.judge_effort = (Get-Content (Join-Path $script:BenchRoot 'bench-config.json') -Raw | ConvertFrom-Json).judge_effort
+    }
     if(-not $CliInvoker){$CliInvoker={param($r) Invoke-BenchCli -Request $r -TimeoutMs $TimeoutMs}}
     if(-not $Limits){$Limits={param($v) $u=if($v -eq 'claude'){Get-RouterClaudeUsage}else{Get-RouterCodexUsage}; @{blocked=(Get-RouterVendorBlocked -Vendor $v);usage=$u}}}
     if(-not $Diagnosis){$Diagnosis={param($v,$e) Resolve-RouterDispatchFailure -Vendor $v -ErrorText $e}}
@@ -143,7 +169,7 @@ function Invoke-RouterBench {
     if(-not $Outcome){$Outcome={param($r) Add-RouterOutcome -Row $r -StateDir $benchStateRoot}}
     $arguments=@{job=$Job;candidate=$Candidate;incumbent=$Incumbent;trigger=$Trigger;effort=$effort;
         state_dir=$benchStateRoot;tasks=[IO.Path]::GetFullPath($Tasks);grader_timeout=$GraderTimeout;
-        config=(Get-Content $ConfigPath -Raw | ConvertFrom-Json -AsHashtable);
+        config=$config;
         prices=(Get-Content (Join-Path $script:BenchRoot '../../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json -AsHashtable)}
     $psi=[Diagnostics.ProcessStartInfo]::new()
     $psi.FileName=(Get-Command python -ErrorAction Stop).Source

@@ -52,6 +52,10 @@ function Update-RouterBenchJudges {
     param([object[]]$Listing)
     $path = Join-Path (Get-RouterStateDir) 'bench/judge-config.json'
     $config = if (Test-Path -LiteralPath $path) { Read-RouterJsonObject $path } else { Get-Content (Join-Path $PSScriptRoot 'bench/bench-config.json') -Raw | ConvertFrom-Json }
+    if (-not $config.PSObject.Properties['judge_effort']) {
+        $defaultEffort = (Get-Content (Join-Path $PSScriptRoot 'bench/bench-config.json') -Raw | ConvertFrom-Json).judge_effort
+        $config | Add-Member -NotePropertyName judge_effort -NotePropertyValue $defaultEffort
+    }
     # Only known frontier families qualify; generic catalog additions never become judges.
     foreach ($lane in @('claude','codex')) {
         $pattern = if ($lane -eq 'claude') { '^claude-fable-(\d+)(?:-(\d+))?(?:-\d{8})?$' } else { '^gpt-(\d+)(?:\.(\d+))?-astra$' }

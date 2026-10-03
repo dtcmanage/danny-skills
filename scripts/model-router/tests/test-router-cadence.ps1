@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../run-router-cadence.ps1')
 . (Join-Path $PSScriptRoot '../resolve-model.ps1')
 . (Join-Path $PSScriptRoot '../register-router-schedules.ps1')
+. (Join-Path $PSScriptRoot 'fixtures/bench-proposal-evidence.ps1')
 
 $script:passed = 0
 function Assert-True([bool]$Condition, [string]$Name) {
@@ -24,7 +25,8 @@ $now = [datetime]'2026-09-29T05:00:00Z'
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
-    $script:cadenceFakeBench = { param($r) [pscustomobject]@{raw_gate='pass';gate='pass';price_recommendation=$null;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown='synthetic'}} }
+    Initialize-TestBenchEvidence
+    $script:cadenceFakeBench = { param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate='pass';gate='pass';price_recommendation=$null;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown='synthetic'}}) }
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6.1-sol' } else { 'claude-opus-5-5' } }
     [void](Invoke-RouterModelCheck -Force -Now $now -BenchInvoker $script:cadenceFakeBench)
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6.1-sol'; 'gpt-6-new' } else { 'claude-opus-5-5' } }
@@ -131,6 +133,7 @@ try {
     Assert-True (@($tasks | Where-Object { $_.name -eq 'ModelRouterCadenceCheck' -and $_.schedule -eq 'daily 13:00 ET' -and $_.action -match 'run-hidden\.vbs' -and $_.action -match '-CheckOnly' }).Count -eq 1) 'check schedule uses hidden shim'
     $twoPassState = Join-Path $temp 'two-pass'; [IO.Directory]::CreateDirectory($twoPassState) | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $twoPassState
+    Initialize-TestBenchEvidence
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Seed | Out-Null
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Approve | Out-Null
     $twoPassReadings = Join-Path $twoPassState 'readings'; [IO.Directory]::CreateDirectory($twoPassReadings) | Out-Null
