@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash Read Write Edit"
 compatibility: "Windows with Codex CLI authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Node required for helpers/gallery. Requires the danny-skills repo present."
 metadata:
-  version: 0.3.1
+  version: 0.3.2
   changelog: "Release history: CHANGELOG.md (newest first)."
 ---
 

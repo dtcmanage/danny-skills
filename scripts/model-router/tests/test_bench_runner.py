@@ -505,7 +505,7 @@ def test_codex_cache_write_cost(write: int | None) -> None:
     result = engine.summarize_calls([{'model': 'gpt-6.1-sol', 'vendor': 'codex',
                                     'quota': {}, 'usage': normalized}], prices)['codex']
     assert result['measured_calls'] == 1 and result['unpriced_calls'] == 0
-    assert result['priced_subtotal_usd'] == pytest.approx(0.000204)
+    assert result['priced_subtotal_usd'] == pytest.approx(0.000204 + (write or 0) * 0.5 / 1_000_000)
     assert result['tokens']['cache_write'] == (write or 0)
 
 
@@ -532,9 +532,16 @@ def test_retained_usage(tmp_path,monkeypatch,case,total):
         assert str(error)=='ERROR: Usage limit reached; resets at 2099-10-02T20:00:00+00:00'
     assert 'SECRET_SENTINEL' not in str(error)
 def test_partial_summary():
-    result=engine.summarize_calls([{'vendor':'codex','model':'gpt-6.1-sol','quota':{},'status':'unknown','usage_partial':True,'usage':{'input':55,'cached_input':40,'cache_write':5,'output':8}}], {'models':{'gpt-6.1-sol':{'prices_usd_per_mtok':{'input':1,'cached_input':1,'output':1}}}})['codex']
+    result=engine.summarize_calls([{'vendor':'codex','model':'gpt-6.1-sol','quota':{},'status':'unknown','usage_partial':True,'usage':{'input':55,'cached_input':40,'cache_write':5,'output':8}}], {'models':{'gpt-6.1-sol':{'prices_usd_per_mtok':{'input':1,'cached_input':1,'cache_write':1,'output':1}}}})['codex']
     assert result['measured_calls']==0 and result['partial_calls']==1
     assert result['priced_subtotal_usd']==pytest.approx(0.000108)
+
+def test_missing_cache_write_price_is_unpriced():
+    result = engine.summarize_calls([{'vendor':'codex','model':'synthetic','quota':{},
+        'status':'ok','usage':{'input':55,'cached_input':40,'cache_write':5,'output':8}}],
+        {'models':{'synthetic':{'prices_usd_per_mtok':{'input':1,'cached_input':1,'output':1}}}})['codex']
+    assert result['unpriced_calls'] == 1 and result['priced_subtotal_usd'] == 0
+    assert result['tokens']['cache_write'] == 5
 @pytest.mark.parametrize('case', ['ok','usage-duplicate'])
 def test_complete_accounting(tmp_path,case):
     result=t.run([sys.executable,str(BENCH.parent/'tests/fake-appserver.py'),case],{'model':'gpt-6.1-sol','effort':'high','prompt':'Synthetic fixture\nexact bytes'},tmp_path,5000)

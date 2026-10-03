@@ -37,15 +37,11 @@ function Invoke-BenchCli {
         if ($Request.vendor -eq 'codex') {
             if($CodexCommandResolver){$command=@(& $CodexCommandResolver)}
             else {
-                $native=Get-Command codex.exe -ErrorAction SilentlyContinue
-                if($native){$command=@($native.Source)}
-                else {
-                    $shim=(Get-Command codex -ErrorAction Stop).Source
-                    $base=Split-Path $shim
-                    $bins=@(Get-ChildItem -LiteralPath (Join-Path $base 'node_modules/@openai') -Filter codex.exe -Recurse -ErrorAction SilentlyContinue)
-                    if($bins.Count -ne 1){throw 'Codex native executable resolution failed'}
-                    $command=@($bins[0].FullName)
-                }
+                # Follow the active PATH CLI; npm's entrypoint owns platform selection.
+                # Stale package siblings must never participate in discovery.
+                $cli=Get-Command codex -CommandType Application,ExternalScript -ErrorAction Stop | Select-Object -First 1
+                $spec=Get-CodexProcessSpec -CodexPath $cli.Source
+                $command=@($spec.file)+@($spec.prefix_args)
             }
             $psi=[Diagnostics.ProcessStartInfo]::new()
             $psi.FileName=(Get-Command python -ErrorAction Stop).Source

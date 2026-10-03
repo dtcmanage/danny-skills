@@ -15,7 +15,8 @@ from typing import Any
 
 SOURCES = ('apps', 'plugins', 'browser_use', 'browser_use_external',
            'computer_use', 'multi_agent', 'multi_agent_v2', 'image_generation',
-           'hooks', 'memories', 'skill_search', 'code_mode_host', 'sleep_tool')
+           'hooks', 'memories', 'skill_search', 'code_mode_host', 'sleep_tool',
+           'current_time_reminder')
 DISABLED_HOST_WARNING = ('Code Mode is unavailable because code-mode host is disabled. '
     'Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.')
 BENIGN = {'thread/started', 'thread/status/changed', 'turn/started',

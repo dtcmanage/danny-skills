@@ -57,7 +57,7 @@ SYNTH_PRICES = {
         },
         "gpt-test-model": {
             "vendor": "openai",
-            "prices_usd_per_mtok": {"input": 10, "cached_input": 1, "output": 50},
+            "prices_usd_per_mtok": {"input": 10, "cache_write": 12.5, "cached_input": 1, "output": 50},
         },
         "claude-unpriced-field": {
             "vendor": "anthropic",
@@ -79,12 +79,38 @@ def test_anthropic_pricing_math_per_token_type():
     assert tokens == row["tokens"]
 
 
-def test_openai_pricing_math_folds_cache_write_into_input():
+def test_openai_pricing_math_prices_cache_write_separately():
     row = {"host": "codex", "model": "gpt-test-model",
            "tokens": {"input": 500_000, "cache_write": 500_000, "cache_read": 1_000_000, "output": 1_000_000}}
     cost, _ = cr.price_usage_row(row, SYNTH_PRICES)
-    # (input + cache_write) at input rate, cache_read at cached_input rate, output at output rate
-    assert cost == pytest.approx((1_000_000 * 10 + 1_000_000 * 1 + 1_000_000 * 50) / 1_000_000)
+    assert cost == pytest.approx(5 + 6.25 + 1 + 50)
+
+
+def test_openai_missing_cache_write_rate_is_unpriced():
+    prices = json.loads(json.dumps(SYNTH_PRICES))
+    del prices['models']['gpt-test-model']['prices_usd_per_mtok']['cache_write']
+    row = {'host':'codex','model':'gpt-test-model','tokens':{'input':5,'cache_write':5,'cache_read':0,'output':1}}
+    assert cr.price_usage_row(row, prices)[0] is None
+    row['tokens']['cache_write'] = 0
+    assert cr.price_usage_row(row, prices)[0] == pytest.approx(0.0001)
+
+
+@pytest.mark.parametrize('model,host', [('gpt-test-model','codex'), ('claude-test-model','claude')])
+@pytest.mark.parametrize('bad', [None, True, False, -1, float('nan'), float('inf'), '1'])
+def test_invalid_cache_write_rates_are_unpriced(model, host, bad):
+    prices = json.loads(json.dumps(SYNTH_PRICES))
+    prices['models'][model]['prices_usd_per_mtok']['cache_write'] = bad
+    row = {'host':host,'model':model,'tokens':{'input':5,'cache_write':5,'cache_read':0,'output':1}}
+    cost, tokens = cr.price_usage_row(row, prices)
+    assert cost is None and tokens == row['tokens']
+
+
+@pytest.mark.parametrize('bad', [None, True, False, -1, float('nan'), float('inf'), '1'])
+def test_zero_cache_writes_ignore_unused_invalid_rate(bad):
+    prices = json.loads(json.dumps(SYNTH_PRICES))
+    prices['models']['gpt-test-model']['prices_usd_per_mtok']['cache_write'] = bad
+    row = {'host':'codex','model':'gpt-test-model','tokens':{'input':5,'cache_write':0,'cache_read':0,'output':1}}
+    assert cr.price_usage_row(row, prices)[0] == pytest.approx(0.0001)
 
 
 def test_unpriced_model_reported_not_zeroed():

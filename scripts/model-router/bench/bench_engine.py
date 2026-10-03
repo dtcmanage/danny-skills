@@ -333,8 +333,7 @@ def summarize_calls(calls: list[dict[str, Any]], prices: dict[str, Any]) -> dict
             cost, priced = 0.0, True
             for key, value in usage.items():
                 data['tokens'][key] = data['tokens'].get(key, 0) + value
-                # Codex's normalized write bucket is ordinary API input.
-                rate = rates.get('input' if vendor == 'codex' and key == 'cache_write' else key)
+                rate = rates.get(key)
                 if value and (type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0):
                     priced = False
                 elif type(rate) in (int, float) and math.isfinite(rate) and rate >= 0:

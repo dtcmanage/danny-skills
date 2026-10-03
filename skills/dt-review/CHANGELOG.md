@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.2 (2026-10-02): Use active CLI discovery for benchmarks, disable inherited time reminders, and price cache writes explicitly.
+
 - 1.16.1 (2026-10-02): Refresh a rejected automatic Codex catalog from the current CLI; preserve quota and fallback behavior.
 
 - 1.16.0 (2026-10-02): Expand shared model routing with triggered internal benchmarking, Mac-local observation and concurrent outcome safety.

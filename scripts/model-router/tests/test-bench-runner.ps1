@@ -96,7 +96,7 @@ try {
     $cases+=@('provider-shape:null','provider-shape:list','provider-shape:nested','provider-shape:scalar','reasoning-index:missing','reasoning-index:bool','reasoning-index:string')
     $cases+=@('warning:changed','warning:stale','warning:config','warning:duplicate','raw-missing','raw-tool','raw-stale','raw-null','raw-duplicate','usage-cumulative','quota-invalid','usage-retry','usage-multistep','usage-missing','usage-total-missing','compaction','async-input')
     foreach($source in @('agents','input')) { foreach($mode in @('missing','enabled','unsupported')) {$cases+=('new-control:'+$source+':'+$mode)} }
-    foreach($source in @('apps','plugins','browser_use','browser_use_external','computer_use','multi_agent','multi_agent_v2','image_generation','hooks','memories','skill_search','code_mode_host','sleep_tool')) {
+    foreach($source in @('apps','plugins','browser_use','browser_use_external','computer_use','multi_agent','multi_agent_v2','image_generation','hooks','memories','skill_search','code_mode_host','sleep_tool','current_time_reminder')) {
         foreach($mode in @('missing','enabled','unsupported')) {$cases+=('feature:'+$source+':'+$mode)}
     }
     foreach($source in @('web_search','forced_login_method','project_doc_max_bytes')) {
@@ -121,28 +121,53 @@ try {
         Assert (-not (($rejected|ConvertTo-Json -Depth 12).Contains('SECRET_SENTINEL'))) 'Secret diagnostic leak'
     }
     Write-Output ('PASS: appserver rejection scenarios '+$cases.Count+'; positive final/cache; partial/nonfinite/cache-invalid usage; descendant tree')
-    # Exercise the production native resolver with actual architecture layouts.
-    $nativeRoot=Join-Path $root 'native-fixture'
-    $shim=Join-Path $nativeRoot 'codex.ps1'
-    $x64=Join-Path $nativeRoot 'node_modules/@openai/codex-win32-x64/vendor/x86_64/bin/codex.exe'
-    $arm=Join-Path $nativeRoot 'node_modules/@openai/codex-win32-arm64/vendor/aarch64/bin/codex.exe'
-    [void][IO.Directory]::CreateDirectory((Split-Path $x64))
-    [IO.File]::WriteAllText($x64,'synthetic never executed')
-    $script:nativeFixtureShim=$shim
-    function Get-Command {
-        param($Name)
-        if($Name -eq 'codex.exe'){return $null}
-        if($Name -eq 'codex'){return [pscustomobject]@{Source=$script:nativeFixtureShim}}
-        Microsoft.PowerShell.Core\Get-Command $Name
+    # Default discovery uses actual PATH fixtures, never CodexCommandResolver.
+    $cliRoot=Join-Path $root 'active cli'
+    [void][IO.Directory]::CreateDirectory($cliRoot)
+    $python=(& python -c 'import sys; print(sys.executable)').Trim()
+    $node=(Get-Command node).Source
+    $oldPath=$env:PATH
+    $env:PATH=$cliRoot+[IO.Path]::PathSeparator+$oldPath
+    $entry=Join-Path $cliRoot 'node_modules/@openai/codex/bin/codex.js'
+    [void][IO.Directory]::CreateDirectory((Split-Path $entry))
+    # A fake active npm entrypoint forwards stdio to the synthetic protocol peer.
+    $js='const cp=require("node:child_process");const p=cp.spawn('+($python|ConvertTo-Json)+',['+($fakeServer|ConvertTo-Json)+',process.env.BENCH_DISCOVERY_SCENARIO,...process.argv.slice(2)],{stdio:["pipe","pipe","inherit"],windowsHide:true});process.stdin.pipe(p.stdin);p.stdout.pipe(process.stdout);p.on("exit",c=>process.exit(c??1));'
+    [IO.File]::WriteAllText($entry,$js)
+    $cmd=Join-Path $cliRoot 'codex.cmd'
+    [IO.File]::WriteAllText($cmd,'@echo off')
+    foreach($package in @('codex',' .codex-KuOUUsQs'.Trim())) {
+        $stale=Join-Path $cliRoot ("node_modules/@openai/$package/vendor/bin/codex.exe")
+        [void][IO.Directory]::CreateDirectory((Split-Path $stale))
+        [IO.File]::WriteAllText($stale,'never executed')
     }
+    $env:BENCH_DISCOVERY_SCENARIO='ok'
     try {
-        $nativeResult=Invoke-BenchCli -Request $request
-        Assert ($nativeResult.status -eq 'unknown' -and $nativeResult.detail -eq 'transport or cleanup failure') 'Unique native architecture resolves; invalid fixture executable fails closed'
-        [void][IO.Directory]::CreateDirectory((Split-Path $arm))
-        [IO.File]::WriteAllText($arm,'synthetic never executed')
-        try {Invoke-BenchCli -Request $request;throw 'accepted ambiguous architectures'} catch {Assert ($_.Exception.Message.Contains('native executable resolution failed')) 'Multiple native architectures must fail without guessing'}
-    } finally {Remove-Item Function:Get-Command}
-    Write-Output 'PASS: unique native architecture resolves and invalid executable rejected; ambiguous multiple architecture rejected'
+        $discovered=Invoke-BenchCli -Request $request
+        Assert ($discovered.status -eq 'ok' -and $discovered.answer -ceq 'synthetic answer') 'Default PATH npm discovery with stale sibling'
+        $env:BENCH_DISCOVERY_SCENARIO='descendant'
+        $discovered=Invoke-BenchCli -Request $request -TimeoutMs 1500
+        Assert ($discovered.status -ne 'ok') 'Default npm descendant timeout accepted'
+        $tree=Get-Content $env:BENCH_DESCENDANT_EVIDENCE -Raw|ConvertFrom-Json
+        Assert (-not (Get-Process -Id $tree.pid -ErrorAction SilentlyContinue) -and -not (Get-Process -Id $tree.parent -ErrorAction SilentlyContinue) -and -not (Test-Path $tree.cwd)) 'Default npm descendant/temp leaked'
+        $env:BENCH_DISCOVERY_SCENARIO='ok'
+        Remove-Item -LiteralPath $cmd
+        $shim=Join-Path $cliRoot 'codex.ps1'
+        [IO.File]::WriteAllText($shim,('& '+"'"+$python.Replace("'","''")+"' '"+$fakeServer.Replace("'","''")+"' ok @args"))
+        $discovered=Invoke-BenchCli -Request $request
+        Assert ($discovered.status -eq 'ok' -and $discovered.answer -ceq 'synthetic answer') 'Default PATH PowerShell discovery'
+        Remove-Item -LiteralPath $shim
+        $native=Join-Path $cliRoot 'codex.exe'
+        Copy-Item -LiteralPath $node -Destination $native
+        $spec=Get-CodexProcessSpec -CodexPath (Get-Command codex).Source
+        Assert ($spec.file -eq $native -and $spec.prefix_args.Count -eq 0) 'Native executable vector changed'
+        $discovered=Invoke-BenchCli -Request $request -TimeoutMs 1500
+        Assert ($discovered.status -ne 'ok') 'Invalid native protocol must fail closed'
+        Remove-Item -LiteralPath $native
+        # PATH contains only fixture tools, so no installed user CLI can escape the fixture.
+        $env:PATH=$cliRoot
+        try {Invoke-BenchCli -Request $request;throw 'accepted missing CLI'} catch {Assert ($_.Exception.Message -match 'codex.*not recognized') 'Missing PATH CLI did not fail discovery'}
+    } finally {$env:PATH=$oldPath;Remove-Item Env:BENCH_DISCOVERY_SCENARIO -ErrorAction SilentlyContinue}
+    Write-Output 'PASS: default PATH npm/stale sibling, npm descendant cleanup, PowerShell, native and missing CLI: 7 checks'
     $fakeClaude=Join-Path $root 'claude.ps1'
     $env:BENCH_FAKE_EVIDENCE=Join-Path $root 'claude-evidence.json'
     $env:BENCH_FAKE_DOC=(@{result='synthetic Claude answer';modelUsage=@{'claude-opus-5-5'=@{inputTokens=7;outputTokens=2}};usage=@{input_tokens=7;output_tokens=2;cache_read_input_tokens=20;cache_creation_input_tokens=3}} | ConvertTo-Json -Depth 10 -Compress)

@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.2 (2026-10-02): Use active CLI discovery for benchmarks, disable inherited time reminders, and price cache writes explicitly.
+
 - 0.3.1 (2026-10-02): Refresh a rejected automatic Codex catalog from the current CLI; preserve quota and fallback behavior.
 
 - 0.3.0 (2026-10-02): Expand shared model routing with triggered internal benchmarking, Mac-local observation and concurrent outcome safety.

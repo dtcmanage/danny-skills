@@ -17,6 +17,7 @@ import argparse
 from fnmatch import fnmatchcase
 import html
 import json
+import math
 import os
 import re
 import subprocess
@@ -174,19 +175,18 @@ def price_usage_row(row: dict, prices: dict) -> tuple[float | None, dict]:
     out = tokens.get("output", 0) or 0
     if vendor == "anthropic":
         needed = ("input", "cache_write", "cache_read", "output")
-        if any(rates.get(k) is None for k in needed):
+        if any(type(rates.get(k)) not in (int, float) or not math.isfinite(rates[k]) or rates[k] < 0 for k in needed):
             return None, tokens
         cost = (inp * rates["input"] + cw * rates["cache_write"] + cr * rates["cache_read"]
                 + out * rates["output"]) / 1_000_000.0
         return cost, tokens
     if vendor == "openai":
-        # OpenAI publishes input / cached_input / output only; a cache-write token is a
-        # regular (uncached) input token from a billing standpoint, so it prices at the
-        # standard input rate, not a separate cache-write rate.
-        needed = ("input", "cached_input", "output")
-        if any(rates.get(k) is None for k in needed):
+        # Cache writes have their own published rate; never infer a missing rate.
+        needed = ("input", "cached_input", "output") + (("cache_write",) if cw else ())
+        if any(type(rates.get(k)) not in (int, float) or not math.isfinite(rates[k]) or rates[k] < 0 for k in needed):
             return None, tokens
-        cost = ((inp + cw) * rates["input"] + cr * rates["cached_input"] + out * rates["output"]) / 1_000_000.0
+        cost = (inp * rates["input"] + (cw * rates["cache_write"] if cw else 0)
+                + cr * rates["cached_input"] + out * rates["output"]) / 1_000_000.0
         return cost, tokens
     return None, tokens
 

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.19.2
+
+- Use active CLI discovery for benchmarks, disable inherited time reminders, and price cache writes explicitly.
+
 ## 2.19.1
 
 - Refresh a rejected automatic Codex catalog from the current CLI; preserve quota and fallback behavior.
