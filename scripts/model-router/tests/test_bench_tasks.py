@@ -66,6 +66,26 @@ def test_deterministic_positive_negative(task_id: str):
         assert result.returncode == expected, (task_id, path.name, result.stdout[-1000:], result.stderr[-1000:])
 
 
+@pytest.mark.parametrize("variant, expected", [
+    ("controlled", True), ("reset", False), ("remount", False)])
+def test_ui_typed_notes_fidelity(tmp_path: Path, variant: str, expected: bool):
+    task = TASKS / "ui-frontend-card"
+    source = (task / "golden/answer.jsx").read_text(encoding="utf-8")
+    # Start from the retained uncontrolled golden; isolate each actual defect.
+    if variant in {"controlled", "reset"}:
+        source = source.replace("const item =", "const [notes, setNotes] = useState('');\n  const item =")
+        source = source.replace('<input aria-label="Notes" />',
+                                '<input aria-label="Notes" value={notes} onChange={e => setNotes(e.target.value)} />')
+    if variant == "reset":
+        source = source.replace("setSelected(i.id)", "(setSelected(i.id), setNotes(''))")
+    elif variant == "remount":
+        source = source.replace('<section data-testid="workspace">',
+                                '<section key={selected} data-testid="workspace">')
+    answer = tmp_path / f"{variant}.jsx"
+    answer.write_text(source, encoding="utf-8")
+    assert grading.grade_ui(task, answer) is expected
+
+
 @pytest.mark.parametrize("task_id", [k for k, v in generator.TASKS.items() if v[2] == "rubric"])
 def test_rubric_schema_and_binary_grading(task_id: str):
     task = TASKS / task_id

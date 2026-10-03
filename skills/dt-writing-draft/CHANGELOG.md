@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.4 (2026-10-02): Correct model router grading for typed React notes and malformed ledger entities.
+
 - 0.2.3 (2026-10-02): Make benchmark answers tool-free, reject shadow effort proposals, and ignore unrelated duplicate vendor status names.
 
 - 0.2.2 (2026-10-02): Use active CLI discovery for benchmarks, disable inherited time reminders, and price cache writes explicitly.

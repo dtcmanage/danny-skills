@@ -30,7 +30,8 @@ def test_properties():
     [row("Alpha","cash",3,0)], [row("Delta","cash",1,0)],
     [row("Alpha","",1,0)], [row("Alpha","cash",True,0)],
     [row("Alpha","cash",1.5,0)], [row("Alpha","cash",-1,0)],
-    [row("Alpha","cash",1,1)], [row("Alpha","cash",0,0)], [{}]])
+    [row("Alpha","cash",1,1)], [row("Alpha","cash",0,0)],
+    [row([],"cash",1,0)], [row({},"cash",1,0)], [{}]])
 def test_reject(rows):
     before = copy.deepcopy(rows)
     with pytest.raises(ValueError): post(rows)

@@ -54,10 +54,17 @@ async function main() {
   assert.equal(buttons.length, items.length);
   assert.deepEqual(buttons.map(b => b.textContent.trim()), items.map(i => i.name));
   const input = workspace.querySelector('input[aria-label="Notes"]');
-  assert.ok(input); input.value = 'retain my working notes';
+  assert.ok(input);
+  // Bypass React's per-node value tracker, then deliver the browser input event
+  // so controlled and uncontrolled inputs both receive actual typed notes.
+  const setValue = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+  await act(async () => {
+    setValue.call(input, 'retain my working notes');
+    input.dispatchEvent(new window.Event('input', {bubbles:true}));
+  });
   function check(index) {
-    assert.strictEqual(document.querySelector('[data-testid="workspace"]'), workspace);
-    assert.strictEqual(workspace.querySelector('input[aria-label="Notes"]'), input);
+    assert.ok(document.querySelector('[data-testid="workspace"]') === workspace, 'Workspace DOM node was remounted');
+    assert.ok(workspace.querySelector('input[aria-label="Notes"]') === input, 'Notes input DOM node was remounted');
     assert.equal(input.value, 'retain my working notes');
     assert.ok(workspace.textContent.includes(items[index].name));
     assert.ok(workspace.textContent.includes(items[index].detail));

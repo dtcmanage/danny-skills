@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.19.4
+
+- Correct model router grading for typed React notes and malformed ledger entities.
+
 ## 2.19.3
 
 - Make benchmark answers tool-free, reject shadow effort proposals, and ignore unrelated duplicate vendor status names.
