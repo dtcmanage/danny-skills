@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.19.0
+
+- Expand shared model routing with triggered internal benchmarking, Mac-local observation and concurrent outcome safety.
+
 ## 2.18.1
 
 - Update the shared vendor-failure diagnosis consumer version for degraded-component handling when the incident feed is unavailable.

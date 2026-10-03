@@ -358,6 +358,7 @@ try {
 
     $packageRoot = Join-Path $tempRoot 'package-inventory-repo'
     Write-Manifests $packageRoot '1.0.0' 'initial' '1.0.0'
+    Write-Utf8 (Join-Path $packageRoot '.gitignore') "__pycache__/`n.pytest_cache/`n*.pyc`n*.pyo`n"
     Write-Skill $packageRoot 'alpha' '1.0.0'
     Write-Utf8 (Join-Path $packageRoot 'references\shared-component-owners.json') '{}'
     New-Item -ItemType Directory -Path (Join-Path $packageRoot 'scripts') -Force | Out-Null
@@ -375,6 +376,9 @@ try {
     & git -C $packageRoot commit -q -m 'valid package release'
     Write-Utf8 (Join-Path $packageRoot 'private-root-evidence.txt') 'must never ship'
     Write-Utf8 (Join-Path $packageRoot 'skills\alpha\_log.md') 'must never ship'
+    Write-Utf8 (Join-Path $packageRoot 'scripts\__pycache__\fixture.cpython-314.pyc') 'must never ship'
+    Write-Utf8 (Join-Path $packageRoot 'scripts\.pytest_cache\README.md') 'must never ship'
+    Write-Utf8 (Join-Path $packageRoot 'scripts\loose.pyc') 'must never ship'
     $packageArtifact = Join-Path $tempRoot 'fixture.plugin'
     & pwsh -NoProfile -File (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\build-plugin.ps1') `
         -RepoRoot $packageRoot -OutputPath $packageArtifact *> $null
@@ -387,6 +391,7 @@ try {
     Assert-True ($packageEntries -contains 'skills/alpha/SKILL.md') 'package omitted allowlisted skill'
     Assert-True ($packageEntries -notcontains 'private-root-evidence.txt') 'package included arbitrary root evidence'
     Assert-True (@($packageEntries | Where-Object { $_ -match '(?:^|/)_log(?:-archive)?\.md$' }).Count -eq 0) 'package included exempt friction logs'
+    Assert-True (@($packageEntries | Where-Object { $_ -match '(?:^|/)(?:__pycache__|\.pytest_cache)/|\.py[co]$' }).Count -eq 0) 'package included generated Python caches'
 
     # Mutation helpers prepend records and reject non-forward -Set values.
     $helperRoot = Join-Path $tempRoot 'helper-fixtures'

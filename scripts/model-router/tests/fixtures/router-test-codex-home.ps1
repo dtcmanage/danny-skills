@@ -15,6 +15,14 @@ function Enter-RouterTestCodexHome {
     $catalog = [pscustomobject]@{ fetched_at = 'fixture'; models = @($models) }
     [IO.File]::WriteAllText((Join-Path $root 'models_cache.json'), (ConvertTo-Json -InputObject $catalog -Depth 5), [Text.UTF8Encoding]::new($false))
     $saved = [pscustomobject]@{ root = $root; codex_home = $env:CODEX_HOME; sessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS; set_sessions = $false; claude_credentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS; set_claude_credentials = $false }
+    $saved | Add-Member -NotePropertyName claude_config -NotePropertyValue $env:CLAUDE_CONFIG_DIR
+    $saved | Add-Member -NotePropertyName auth -NotePropertyValue @{}
+    foreach ($key in @('OPENAI_API_KEY','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','OPENAI_ACCESS_TOKEN')) {
+        $saved.auth[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
+        [Environment]::SetEnvironmentVariable($key, $null, 'Process')
+    }
+    $env:CLAUDE_CONFIG_DIR = Join-Path $root 'claude'
+    [void][IO.Directory]::CreateDirectory($env:CLAUDE_CONFIG_DIR)
     $env:CODEX_HOME = $root
     if (-not $env:DT_MODEL_ROUTER_CODEX_SESSIONS) {
         $sessions = Join-Path $root 'sessions'
@@ -32,6 +40,8 @@ function Enter-RouterTestCodexHome {
 function Exit-RouterTestCodexHome {
     param([object]$Saved)
     if ($null -eq $Saved) { return }
+    $env:CLAUDE_CONFIG_DIR = $Saved.claude_config
+    foreach ($key in $Saved.auth.Keys) { [Environment]::SetEnvironmentVariable($key, $Saved.auth[$key], 'Process') }
     $env:CODEX_HOME = $Saved.codex_home
     if ($Saved.set_sessions) { $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $Saved.sessions }
     if ($Saved.set_claude_credentials) { $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $Saved.claude_credentials }

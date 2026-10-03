@@ -17,13 +17,9 @@ Only the roster snapshot belongs in sync, never runtime caches or credentials.
 
 Mac runtime defaults to `~/Library/Application Support/DannyModelRouter`, shared by
 all local worktrees. Windows retains its existing sibling runtime path and ignored
-state. Windows alone runs daily research at 01:00 ET, release checks at 13:00 ET,
-monthly canary on day 1 at 04:00 ET and weekly cost reporting Monday at 07:00 ET.
-The new `scripts/model-router/bench` module is Windows-owned; its successor test
-names are `test_bench_tasks.py`, `test_bench_review.py`, `test_bench_runner.py`,
-`test-bench-runner.ps1`, `test_bench_integration.py`, and `test-bench-integration.ps1`.
-Their public runner parameters remain UNCERTIFIED. This branch tests its current
-canary; the aggregate owner reconciles successors after certified integration.
+state. Windows alone owns research, triggered internal benchmarking, approvals and
+reporting. Mac remains an observer. The retired monthly canary is replaced by the
+Windows-owned `scripts/model-router/bench` successor suites listed below. Reconcile the live monthly schedule during authorized deployment; changing the test harness alone does not change installed schedules.
 
 ## Configuration
 
@@ -50,22 +46,24 @@ model calls, research, publication, external alert sends or Git sync.
 
 ## Portable verification boundary
 
-From the Windows worktree:
+From the permanent Windows primary checkout:
 
 ```powershell
-cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills-router-mac-integration"
+cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"
 pwsh -NoProfile -File scripts/model-router/tests/test-mac-regressions.ps1
 ```
 
-This actual-OS Windows-only integration gate declares 15 suites: M01/M02, resolver,
-approval, cadence, limits, diagnosis, consumer wiring, roster building, release checks,
-research, current canary, PowerShell/Python cost reports and dt-build regressions.
+This actual-OS Windows-only gate declares 20 suites: the 14 retained suites plus
+`test_bench_tasks.py`, `test_bench_review.py`, `test_bench_runner.py`,
+`test-bench-runner.ps1`, `test_bench_integration.py`, and `test-bench-integration.ps1`.
+The obsolete `test-canary.ps1` entry is removed. Use the generated per-suite evidence and final summary for the actual result; the declared list alone is not a passing gate.
+
 M01 contains Windows authority, named-mutex and `Start-Process -WindowStyle Hidden`
 fixtures. Do not run or describe the full gate as native Mac testing.
 `test-mac-observer.ps1` stands alone safely on Mac; actual Apply refusal
 assertions are conditional on non-Mac, while installation fixtures use fake commands.
-Windows currently executes 81 observer checks; Mac executes 79 because the two real
-non-Mac CLI inventory and Apply refusal assertions are skipped. M01 currently has 54 and quota has 69.
+Accepted Windows evidence executes 84 observer checks (prior 81 + 3); Mac expects 82 (prior 79 + 3) because the two real
+non-Mac CLI inventory and Apply refusal assertions are skipped. The Windows-emulated Mac foundation has 58 checks: the prior 55 plus direct benchmark refusal, no state creation, and fresh-child CLI refusal. Quota has 72 checks after the credential-expiry correction.
 These counts are fixture evidence, never native acceptance.
 
 Each suite uses a bounded fresh child, isolated runtime/shared/session/config/temp

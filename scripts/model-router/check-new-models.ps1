@@ -47,8 +47,24 @@ function Get-RouterVendorModels {
     }
 }
 
+
+function Update-RouterBenchJudges {
+    param([object[]]$Listing)
+    $path = Join-Path (Get-RouterStateDir) 'bench/judge-config.json'
+    $config = if (Test-Path -LiteralPath $path) { Read-RouterJsonObject $path } else { Get-Content (Join-Path $PSScriptRoot 'bench/bench-config.json') -Raw | ConvertFrom-Json }
+    # Only known frontier families qualify; generic catalog additions never become judges.
+    foreach ($lane in @('claude','codex')) {
+        $pattern = if ($lane -eq 'claude') { '^claude-fable-(\d+)(?:-(\d+))?(?:-\d{8})?$' } else { '^gpt-(\d+)(?:\.(\d+))?-astra$' }
+        $effective = @($Listing) + @([pscustomobject]@{lane=$lane;id=$config.judges.$lane})
+        $best = @($effective | Where-Object { $_.lane -eq $lane -and $_.id -match $pattern } | Sort-Object @{Expression={ [void]($_.id -match $pattern); [int]$Matches[1] };Descending=$true},@{Expression={ [void]($_.id -match $pattern); if($Matches[2]){[int]$Matches[2]}else{0} };Descending=$true} | Select-Object -First 1)
+        if ($best.Count) { $config.judges.$lane = $best[0].id }
+    }
+    [void][IO.Directory]::CreateDirectory((Split-Path $path -Parent))
+    Write-RouterJsonAtomic -Path $path -Value $config
+}
+
 function Invoke-RouterModelCheck {
-    param([switch]$Force, [int]$TimeoutSeconds = 30, [datetime]$Now = (Get-Date))
+    param([switch]$Force, [int]$TimeoutSeconds = 30, [datetime]$Now = (Get-Date), [scriptblock]$BenchInvoker)
     Assert-RouterWindowsOwner -Action 'Vendor release polling'
     $state = Get-RouterStateDir
     $stamp = Join-Path $state 'last-check.json'
@@ -142,11 +158,26 @@ function Invoke-RouterModelCheck {
             Write-RouterJsonAtomic -Path $registryPath -Value @($registry)
         }
         Write-RouterJsonAtomic -Path $stamp -Value @{ checked_at = $result.checked_at }
+        Update-RouterBenchJudges -Listing @($listing.ToArray())
         if (@($result.new_models).Count) {
             try {
-                if (-not (Get-Command Start-RouterCanaryDetached -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'canary/run-canary.ps1') }
-                [void](Start-RouterCanaryDetached -Models @($result.new_models))
-            } catch { $result.alerts += 'canary-launch-error' }
+                . (Join-Path $PSScriptRoot 'build-roster.ps1')
+                $snapshot = (Read-RouterRoster).roster
+                foreach ($model in $result.new_models) {
+                    if (Test-RouterFrontierModel -Model $model) { continue }
+                    $categories = @(Get-RouterCadenceCategories -Model $model)
+                    foreach ($job in @($categories | ForEach-Object { Get-RouterCategoryJob $_ } | Sort-Object -Unique)) {
+                        $entry = $snapshot.jobs.$job
+                        $request = [pscustomobject]@{job=$job;candidate=$model;incumbent=$entry.first;effort=$entry.first_effort}
+                        $bench = Invoke-RouterTriggeredComparison -Request $request -Trigger new-model -BenchInvoker $BenchInvoker
+                        Use-RouterOutcomeMutex -StateDir $state -Action {
+                            if ((ConvertTo-Json (Read-RouterRoster).roster.jobs -Compress -Depth 30) -cne (ConvertTo-Json $snapshot.jobs -Compress -Depth 30)) { throw 'BENCH_STALE_ROSTER' }
+                            Save-RouterEffortProposal $request $bench
+                        } | Out-Null
+                        Send-RouterEffortAlerts
+                    }
+                }
+            } catch { $result.alerts += 'bench-trigger-error' }
         }
         return [pscustomobject]$result
     } finally {

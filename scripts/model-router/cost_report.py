@@ -744,7 +744,7 @@ def compute_pending_roster_proposal(state_dir: Path) -> bool:
         for job in ROUTER_JOBS:
             p = proposal_jobs.get(job) or {}
             entry = live_jobs.get(job) or {}
-            if p.get("first") != entry.get("first") or p.get("backup") != entry.get("backup"):
+            if any(p.get(field) != entry.get(field) for field in ("first", "backup", "first_effort", "backup_effort")):
                 return True
         return False
     except Exception:
@@ -859,6 +859,28 @@ def vendor_error_needs(state_dir: Path, repo_root: Path = REPO_ROOT) -> list[str
 def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> list[str]:
     lines: list[str] = []
     approve_script = repo_root / "scripts" / "model-router" / "approve-roster.ps1"
+    tasks = repo_root / 'scripts/model-router/bench/tasks'
+    approval = _load_json_object(state_dir / 'bench/golden-approval.json')
+    if tasks.is_dir():
+        sys.path.insert(0, str(tasks.parent))
+        from review import bank_hash
+        if not isinstance(approval, dict) or approval.get('task_bank_sha256') != bank_hash(tasks) or approval.get('approved') is not True:
+            lines.append('the bench golden review is waiting for your OK; comparisons remain in shadow mode.')
+    jobs = _live_roster_jobs(state_dir)
+    for path in sorted((state_dir / 'effort-proposals').glob('*.json')):
+        swap = _load_json_object(path)
+        if isinstance(swap, dict) and swap.get('status') == 'pending':
+            entry = jobs.get(swap.get('job'), {})
+            if entry.get('first') == swap.get('model') and entry.get('first_effort') == swap.get('current_effort'):
+                lines.append(f"an effort swap for {swap['job']} ({swap['current_effort']} to {swap['proposed_effort']}) is waiting for your OK: `pwsh -NoProfile -File \"{approve_script}\" -ApproveEffort -Job {swap['job']}`")
+    config = _load_json_object(state_dir / 'bench/judge-config.json') or _load_json_object(repo_root / 'scripts/model-router/bench/bench-config.json')
+    digest = bank_hash(tasks) if tasks.is_dir() else None
+    judges = set((config or {}).get('judges', {}).values())
+    disagreements = [r for r in load_jsonl(state_dir / 'outcomes.jsonl')
+                     if r.get('source') == 'bench' and r.get('disagreement')
+                     and r.get('task_bank_sha256') == digest and set(r.get('judge_models', [])) == judges]
+    if disagreements:
+        lines.append(f'{len(disagreements)} bench judge disagreements need rubric review.')
     if compute_pending_roster_proposal(state_dir):
         cmd = f'pwsh -NoProfile -File "{approve_script}" -Show'
         lines.append(f"a proposed change to the model list is waiting for your OK. Review it: `{cmd}`")

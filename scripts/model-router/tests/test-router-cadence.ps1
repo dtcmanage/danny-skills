@@ -24,11 +24,11 @@ $now = [datetime]'2026-09-29T05:00:00Z'
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
-    function Start-RouterCanaryDetached { param($Models) return [pscustomobject]@{launched=$true} }
+    $script:cadenceFakeBench = { param($r) [pscustomobject]@{raw_gate='pass';gate='pass';price_recommendation=$null;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown='synthetic'}} }
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6.1-sol' } else { 'claude-opus-5-5' } }
-    [void](Invoke-RouterModelCheck -Force -Now $now)
+    [void](Invoke-RouterModelCheck -Force -Now $now -BenchInvoker $script:cadenceFakeBench)
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6.1-sol'; 'gpt-6-new' } else { 'claude-opus-5-5' } }
-    [void](Invoke-RouterModelCheck -Force -Now $now.AddHours(1))
+    [void](Invoke-RouterModelCheck -Force -Now $now.AddHours(1) -BenchInvoker $script:cadenceFakeBench)
     $queuePath = Join-Path $temp 'research-queue.json'
     $queue = @(Read-RouterJsonArray -Path $queuePath)
     Assert-True ($queue.Count -eq 2 -and @($queue | Where-Object trigger -eq 'release').Count -eq 1 -and @($queue | Where-Object trigger -eq 'confirmation').Count -eq 1) 'release queues release and confirmation'
@@ -137,6 +137,8 @@ try {
     $rows = @(@('bench-one','bench-two') | ForEach-Object { [pscustomobject]@{benchmark=$_;version='1';harness='h';effort_class='medium';independent=$true;results=@([pscustomobject]@{model='claude-opus-5-5';score=80;margin=1},[pscustomobject]@{model='gpt-6.1-sol';score=50;margin=1})} })
     [pscustomobject]@{category='complex-coding';readings=$rows} | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $twoPassReadings 'complex-coding.json')
     . (Join-Path $PSScriptRoot '../build-roster.ps1')
+    $script:cadenceRealBuilder = (Get-Command Build-RouterRosterProposal).ScriptBlock
+    function Build-RouterRosterProposal { param($Now) & $script:cadenceRealBuilder -Now $Now -BenchInvoker $script:cadenceFakeBench }
     function Invoke-RouterModelCheck { param([switch]$Force,$Now) return [pscustomobject]@{new_models=@()} }
     function Add-RouterCadenceRefreshes { param($Now) return 0 }
     function Invoke-RouterCategoryResearch {

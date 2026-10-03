@@ -15,6 +15,9 @@ param(
     [switch]$Revoke,
     [switch]$Seed,
     [switch]$DeclineDrift,
+    [switch]$ApproveEffort,
+    [switch]$DeclineEffort,
+    [switch]$RevokeEffort,
     [string]$Job,
     [string[]]$Jobs
 )
@@ -22,7 +25,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'resolve-model.ps1')
 . (Join-Path $PSScriptRoot 'publish-roster.ps1')
-if ($Seed -or $Approve -or $Revoke -or $DeclineDrift) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
+if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
 if ($Jobs) { $Jobs = @($Jobs | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 
 function Write-RouterApprovalJson {
@@ -32,9 +35,10 @@ function Write-RouterApprovalJson {
     finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
 
-if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift) -ne 1) { throw 'Choose exactly one roster action.' }
-if ($DeclineDrift -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
-if ($Job -and -not $DeclineDrift) { throw '-Job requires -DeclineDrift.' }
+if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort) -ne 1) { throw 'Choose exactly one roster action.' }
+$effortAction = $ApproveEffort -or $DeclineEffort -or $RevokeEffort
+if (($DeclineDrift -or $effortAction) -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
+if ($Job -and -not ($DeclineDrift -or $effortAction)) { throw '-Job requires a job-specific action.' }
 if ($Jobs -and -not $Approve) { throw '-Jobs requires -Approve.' }
 $approvalAction = {
 $state = if ($Show) { Get-RouterStatePath } else { Get-RouterStateDir }
@@ -50,6 +54,13 @@ if ($Show) {
     $current = Read-RouterRoster
     "Current roster ($($current.source)):" | Write-Output
     @(Get-RouterJobs | ForEach-Object { [pscustomobject]@{ job=$_; first=$current.roster.jobs.$_.first; first_effort=$current.roster.jobs.$_.first_effort; backup=$current.roster.jobs.$_.backup; backup_effort=$current.roster.jobs.$_.backup_effort } }) | Format-Table -AutoSize | Out-String | Write-Output
+    $effortDir = Join-Path $state 'effort-proposals'
+    if (Test-Path -LiteralPath $effortDir) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $effortDir -Filter '*.json')) {
+            $swap = Read-RouterJsonObject $file.FullName
+            "Effort proposal $($swap.job): $($swap.model), $($swap.current_effort) -> $($swap.proposed_effort), $($swap.status); report $($swap.report)" | Write-Output
+        }
+    }
 } elseif ($Seed) {
     $proposal = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
     foreach ($name in @(Get-RouterJobs)) {
@@ -66,6 +77,28 @@ if ($Show) {
     [IO.File]::WriteAllText($report,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
     Write-RouterApprovalJson (Join-Path $dir 'latest.json') ([pscustomobject]@{proposal=$path;report=$report})
     "Seed proposal: $path" | Write-Output
+} elseif ($effortAction) {
+    $path = Join-Path $state ('effort-proposals/' + $Job + '.json')
+    $swap = Read-RouterJsonObject $path
+    if (-not $swap -or $swap.type -ne 'effort-swap' -or $swap.job -cne $Job) { throw 'No effort proposal for this job.' }
+    $current = (Read-RouterRoster).roster
+    $entry = $current.jobs.$Job
+    $expected = if ($RevokeEffort) { $swap.proposed_effort } else { $swap.current_effort }
+    if ($entry.first -cne $swap.model -or $entry.first_effort -cne $expected) { throw 'EFFORT_STALE_ROSTER: model or current effort changed.' }
+    if ($RevokeEffort -and $swap.status -ne 'approved') { throw 'No approved effort swap to revoke.' }
+    if (-not $RevokeEffort -and $swap.status -ne 'pending') { throw 'Effort proposal is not pending.' }
+    if (@{medium='low';high='medium'}[[string]$swap.current_effort] -cne $swap.proposed_effort) { throw 'Invalid effort step.' }
+    if ($DeclineEffort) { $swap.status = 'declined' }
+    else {
+        $entry.first_effort = if ($RevokeEffort) { $swap.current_effort } else { $swap.proposed_effort }
+        $errors = @(Test-RouterRoster $current)
+        if ($errors.Count) { throw "Invalid effort roster: $($errors -join '; ')" }
+        Write-RouterApprovalJson $rosterPath $current
+        Publish-RouterRoster
+        $swap.status = if ($RevokeEffort) { 'revoked' } else { 'approved' }
+    }
+    Write-RouterApprovalJson $path $swap
+    "Effort proposal $($swap.status) for $Job." | Write-Output
 } elseif ($Approve) {
     if (-not $latest -or -not $latest.PSObject.Properties['proposal'] -or -not (Test-Path -LiteralPath ([string]$latest.proposal))) { throw 'No roster proposal to approve.' }
     $proposal = Get-Content -LiteralPath ([string]$latest.proposal) -Raw | ConvertFrom-Json -Depth 40
@@ -78,11 +111,6 @@ if ($Show) {
             $selected.jobs.$name = $proposal.jobs.$name | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         }
         $proposal = $selected
-    }
-    foreach ($name in @(Get-RouterJobs)) {
-        foreach ($slot in @('first','backup')) {
-            $proposal.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
-        }
     }
     $proposal.approved = $true; $proposal.approved_at = (Get-Date).ToUniversalTime().ToString('o')
     $errors = @(Test-RouterRoster -Roster $proposal)
@@ -98,11 +126,6 @@ if ($Show) {
 } elseif ($Revoke) {
     if (-not (Test-Path -LiteralPath $rosterPath)) { throw 'No roster to revoke.' }
     $current = Get-Content -LiteralPath $rosterPath -Raw | ConvertFrom-Json -Depth 40
-    foreach ($name in @(Get-RouterJobs)) {
-        foreach ($slot in @('first','backup')) {
-            $current.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
-        }
-    }
     $current.approved = $false
     Write-RouterApprovalJson $rosterPath $current
     Publish-RouterRoster

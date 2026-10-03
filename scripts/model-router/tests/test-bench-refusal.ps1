@@ -1,6 +1,9 @@
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../bench/run-bench.ps1')
-function Assert($Condition,$Message){if(-not $Condition){throw $Message}}
+. (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+$fixtureCodexHome = Enter-RouterTestCodexHome
+$script:benchChecks=0
+function Assert($Condition,$Message){if(-not $Condition){throw $Message};$script:benchChecks++}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('bench-refusal-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
 try {
@@ -58,5 +61,8 @@ try {
     }
     Write-Output 'PASS: 5 real-host Claude adapter cases; 2 vendor refusal/persistence/scoping cases; no vendor calls'
 } finally {
+    Exit-RouterTestCodexHome $fixtureCodexHome
     Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'bench-refusal-'
 }
+
+Write-Output "SUMMARY: $script:benchChecks passed; 0 failed"

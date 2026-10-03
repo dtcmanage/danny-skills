@@ -254,7 +254,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     raw_gate = compare(candidate_table, incumbent_table)
     if job == 'illustrator' and raw_gate != 'unknown':
         raw_gate = 'advisory'
-    result = {'gate': 'advisory' if shadow or job in {'writer', 'illustrator'} else raw_gate,
+    result = {'gate': 'unknown' if raw_gate == 'unknown' else ('advisory' if shadow or job in {'writer', 'illustrator'} else raw_gate),
               'raw_gate': raw_gate, 'shadow': shadow, 'job': job, 'trigger': trigger,
               'task_bank_sha256': digest, 'judge_pair': judges,
               'dimension_framework': config.get('dimension_framework', 'provisional'),

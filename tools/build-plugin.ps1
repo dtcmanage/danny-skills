@@ -129,7 +129,7 @@ try {
         if (-not (Test-Path -LiteralPath $source -PathType Container)) { continue }
         $destination = Join-Path $staging $relativeRoot
         New-Item -ItemType Directory -Path $destination -Force | Out-Null
-        & robocopy $source $destination /E /XD "node_modules" /XF "_log.md" "_log-archive.md" ".DS_Store" "Thumbs.db" | Out-Null
+        & robocopy $source $destination /E /XD "node_modules" "__pycache__" ".pytest_cache" /XF "*.pyc" "*.pyo" "_log.md" "_log-archive.md" ".DS_Store" "Thumbs.db" | Out-Null
         $copyExit = $LASTEXITCODE
         if ($copyExit -ge 8) {
             throw "robocopy failed for $relativeRoot with exit code $copyExit; refusing to archive a partial staging tree."
@@ -154,6 +154,8 @@ try {
     Move-Item -LiteralPath $pluginTmp -Destination $pluginOut -Force
 }
 finally {
+    $tempPrefix = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    if (-not [IO.Path]::GetFullPath($staging).StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Package staging cleanup escaped temp root.' }
     Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $zipOut, $pluginTmp -Force -ErrorAction SilentlyContinue
 }

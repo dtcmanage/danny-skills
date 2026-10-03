@@ -23,7 +23,7 @@ function Get-RouterProposalPrice {
 
 function Test-RouterProposalFrontier {
     param([string]$Model, [object]$Frontier)
-    return ($Frontier.codex_models -contains $Model -or @($Frontier.claude_patterns | Where-Object { $Model -like $_ }).Count -gt 0)
+    return (Test-RouterFrontierModel -Model $Model -Frontier $Frontier)
 }
 
 function Get-RouterProposalComparison {
@@ -102,9 +102,13 @@ function Get-RouterProposalJobVerdict {
 }
 
 function Build-RouterRosterProposalLocked {
-    param([datetime]$Now = (Get-Date), [object]$Notification)
+    param([datetime]$Now = (Get-Date), [object]$Notification, [switch]$StageOnly,
+        [hashtable]$BenchResults, [string]$RosterIdentity)
     $state = Get-RouterStateDir
     $current = (Read-RouterRoster).roster
+    $identity = ConvertTo-Json -InputObject $current.jobs -Compress -Depth 30
+    if ($RosterIdentity -and $RosterIdentity -cne $identity) { throw 'BENCH_STALE_ROSTER: model or effort changed during comparison' }
+    $requests = @()
     $readDir = Join-Path $state 'readings'
     $passesPath = Join-Path $readDir 'passes.jsonl'
     $passes = @(if (Test-Path -LiteralPath $passesPath) { Get-Content -LiteralPath $passesPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
@@ -123,7 +127,7 @@ function Build-RouterRosterProposalLocked {
     $proposed = $current | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
     foreach ($name in @(Get-RouterJobs)) {
         foreach ($slot in @('first','backup')) {
-            $proposed.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
+            $proposed.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue $current.jobs.$name."${slot}_effort" -Force
         }
     }
     $proposed.generated_at = $Now.ToString('o'); $proposed.approved = $false; $proposed.approved_at = $null
@@ -152,16 +156,34 @@ function Build-RouterRosterProposalLocked {
             $target = if ($eligible.Count -eq 2 -and $eligible[0].result -eq $eligible[1].result -and $eligible[1].result -notin @('keep',$currentEntry.$slot)) { [string]$eligible[1].result } else { $null }
             if ($flipped) { $target = if ($verdict.result -notin @('keep','not-enough-evidence')) { [string]$verdict.result } else { [string]$incumbent } }
             if ($target -and $target -ne $currentEntry.$slot -and -not (Test-RouterProposalFrontier $target $frontier)) {
+                $key = "$job/$slot/$target/$($currentEntry.$slot)"
+                $requests += [pscustomobject]@{key=$key;job=$job;candidate=$target;incumbent=$currentEntry.$slot;effort=$currentEntry."${slot}_effort"}
+                if (-not $StageOnly) {
+                    if (-not $BenchResults -or -not $BenchResults.ContainsKey($key)) { continue }
+                    $bench = $BenchResults[$key]
+                    if ($bench.raw_gate -eq 'unknown' -or $bench.gate -in @('unknown','fail') -or ($job -in @('fast','coder','deep-thinker') -and $bench.raw_gate -eq 'fail')) { continue }
+                    if ($bench.price_recommendation -eq $currentEntry.$slot) { continue }
+                    $verdict.evidence += "; Bench $($bench.gate); shortfall $($bench.shortfall_tasks) task(s); report $($bench.report_paths.markdown)"
+                }
                 $entry.$slot = $target; $entry."${slot}_vendor" = Get-RouterProposalVendor $target
                 $changes += [pscustomobject]@{job=$job;slot=$slot;from=$currentEntry.$slot;to=$target;evidence=$verdict.evidence}
             } elseif ($verdict.result -eq 'keep') { $tradeoffs += "$job/$slot`: $($verdict.evidence)" }
         }
     }
+    if ($StageOnly) {
+        foreach ($job in $coveredJobs) {
+            $entry = $current.jobs.$job
+            if ($entry.first_effort -ne 'low' -and -not @($requests | Where-Object { $_.job -eq $job -and $_.incumbent -eq $entry.first }).Count) {
+                $requests += [pscustomobject]@{key="$job/effort";job=$job;candidate=$entry.first;incumbent=$entry.first;effort=$entry.first_effort}
+            }
+        }
+    }
+    if ($StageOnly) { return [pscustomobject]@{requests=@($requests);identity=$identity} }
     if (-not $changes.Count) { return [pscustomobject]@{changed=$false;pass_id=$passId;changes=@();proposal=$null;report=$null} }
     $latest = Read-RouterJsonObject -Path (Join-Path $dir 'latest.json')
     if ($latest -and $latest.PSObject.Properties['proposal']) {
         $previous = Read-RouterJsonObject -Path ([string]$latest.proposal)
-        if ($previous -and $previous.PSObject.Properties['pass_id'] -and $previous.pass_id -eq $passId -and (ConvertTo-Json -InputObject @($previous.changes) -Compress -Depth 20) -ceq (ConvertTo-Json -InputObject @($changes) -Compress -Depth 20)) {
+        if ($previous -and $previous.PSObject.Properties['pass_id'] -and $previous.pass_id -eq $passId -and (ConvertTo-Json $previous.jobs -Compress -Depth 30) -ceq (ConvertTo-Json $proposed.jobs -Compress -Depth 30) -and (ConvertTo-Json -InputObject @($previous.changes) -Compress -Depth 20) -ceq (ConvertTo-Json -InputObject @($changes) -Compress -Depth 20)) {
             return [pscustomobject]@{changed=$false;pass_id=$passId;changes=@();proposal=$null;report=$null}
         }
     }
@@ -201,11 +223,81 @@ function Build-RouterRosterProposalLocked {
     return [pscustomobject]@{changed=$true;pass_id=$passId;changes=@($changes);proposal=$jsonPath;report=$reportPath;over_cap=$overCap;conflicts=$conflicts;validation_errors=$errors}
 }
 
+function Save-RouterEffortProposal {
+    param([object]$Request, [object]$Bench)
+    # Caller holds the outcome lock and has revalidated the roster snapshot.
+    if (-not $Bench.PSObject.Properties['effort_down_qualified'] -or -not $Bench.effort_down_qualified -or $Bench.raw_gate -eq 'unknown') { return }
+    $current = (Read-RouterRoster).roster.jobs.($Request.job)
+    if ($current.first -cne $Request.incumbent -or $current.first_effort -cne $Request.effort) { return }
+    $down = @{medium='low';high='medium'}[[string]$Request.effort]
+    if (-not $down -or $Bench.effort_down.model -cne $current.first -or $Bench.effort_down.effort -cne $down) { return }
+    $dir = Join-Path (Get-RouterStateDir) 'effort-proposals'
+    [IO.Directory]::CreateDirectory($dir) | Out-Null
+    $path = Join-Path $dir ($Request.job + '.json')
+    $old = Read-RouterJsonObject $path
+    if ($old -and $old.model -ceq $current.first -and $old.current_effort -ceq $Request.effort -and $old.proposed_effort -ceq $down) { return }
+    Write-RouterJsonAtomic -Path $path -Value ([pscustomobject]@{type='effort-swap';job=$Request.job;model=$current.first;current_effort=$Request.effort;proposed_effort=$down;status='pending';incumbent=$Bench.incumbent;effort_down=$Bench.effort_down;report=$Bench.report_paths.markdown;dimension_framework='provisional'})
+}
+
+
+function Send-RouterEffortAlerts {
+    $dir = Join-Path (Get-RouterStateDir) 'effort-proposals'
+    if (-not (Test-Path -LiteralPath $dir)) { return }
+    foreach ($file in @(Get-ChildItem -LiteralPath $dir -Filter '*.json')) {
+        $swap = Read-RouterJsonObject $file.FullName
+        if ($swap.status -eq 'pending') {
+            Send-RouterAlerts -Alerts @([pscustomobject]@{key="effort-swap:$($swap.job)/$($swap.model)/$($swap.current_effort)/$($swap.proposed_effort)";message="Effort swap for $($swap.job): $($swap.model), $($swap.current_effort) -> $($swap.proposed_effort). Review $($swap.report)."}) | Out-Null
+        }
+    }
+}
+
+function Invoke-RouterTriggeredComparison {
+    param($Request, [ValidateSet('research','drift','new-model')][string]$Trigger, [scriptblock]$BenchInvoker, [bool]$SendAlerts = $true)
+    if (-not $BenchInvoker) {
+        . (Join-Path $PSScriptRoot 'bench/run-bench.ps1')
+        $BenchInvoker = { param($r) Invoke-RouterBench -Job $r.job -Candidate $r.candidate -Incumbent $r.incumbent -EffortOverride $r.effort -Trigger $Trigger }
+    }
+    # Resolve evidence before dispatch so exceptions retain the effective identity.
+    $state = Get-RouterStateDir
+    $configPath = Join-Path $state 'bench/judge-config.json'
+    if (-not (Test-Path -LiteralPath $configPath)) { $configPath = Join-Path $PSScriptRoot 'bench/bench-config.json' }
+    $judges = (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json).judges
+    $digest = & python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review import bank_hash; print(bank_hash(Path(sys.argv[1])/"tasks"))' (Join-Path $PSScriptRoot 'bench')
+    if ($LASTEXITCODE -ne 0) { throw 'BENCH_IDENTITY_FAILED' }
+    try { $bench = & $BenchInvoker $Request }
+    catch { $bench = [pscustomobject]@{raw_gate='unknown';gate='unknown';effort_down_qualified=$false;error=$_.Exception.Message} }
+    if ($bench.PSObject.Properties['task_bank_sha256']) { $digest = $bench.task_bank_sha256 }
+    if ($bench.PSObject.Properties['judge_pair']) { $judges = $bench.judge_pair }
+    $identity = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$digest/$($judges.claude)/$($judges.codex)"))).ToLowerInvariant()
+    Use-RouterOutcomeMutex -StateDir $state -Action {
+        $dir = Join-Path $state 'bench'; [void][IO.Directory]::CreateDirectory($dir)
+        $row = [pscustomobject]@{trigger=$Trigger;job=$Request.job;candidate=$Request.candidate;incumbent=$Request.incumbent;effort=$Request.effort;gate=$bench.gate;at=(Get-Date).ToUniversalTime().ToString('o')}
+        [IO.File]::AppendAllText((Join-Path $dir 'trigger-log.jsonl'), (($row | ConvertTo-Json -Compress)+"`n"), [Text.UTF8Encoding]::new($false))
+    } | Out-Null
+    if ($SendAlerts -and $bench.gate -eq 'unknown') {
+        Send-RouterAlerts -Alerts @([pscustomobject]@{key="bench-unknown:$Trigger/$($Request.job)/$($Request.candidate)/$($Request.incumbent)/$($Request.effort)/$identity";message="Bench comparison could not run for $($Request.job). No model change proposed; see bench/trigger-log.jsonl."}) | Out-Null
+    }
+    return $bench
+}
+
 function Build-RouterRosterProposal {
-    param([datetime]$Now = (Get-Date))
+    param([datetime]$Now = (Get-Date), [scriptblock]$BenchInvoker)
     Assert-RouterWindowsOwner -Action 'Roster proposal construction'
     $notification = [pscustomobject]@{ alert=$null }
-    $result = Use-RouterOutcomeMutex -StateDir (Get-RouterStateDir) -Action { Build-RouterRosterProposalLocked -Now $Now -Notification $notification }
+    $staged = Use-RouterOutcomeMutex -StateDir (Get-RouterStateDir) -Action { Build-RouterRosterProposalLocked -Now $Now -Notification $notification -StageOnly }
+    if (-not $staged.PSObject.Properties['requests']) { return $staged }
+    if (-not $BenchInvoker) {
+        . (Join-Path $PSScriptRoot 'bench/run-bench.ps1')
+        $BenchInvoker = { param($r) Invoke-RouterBench -Job $r.job -Candidate $r.candidate -Incumbent $r.incumbent -EffortOverride $r.effort -Trigger research }
+    }
+    $benchResults = @{}
+    foreach ($request in $staged.requests) { $benchResults[$request.key] = Invoke-RouterTriggeredComparison -Request $request -Trigger research -BenchInvoker $BenchInvoker }
+    $result = Use-RouterOutcomeMutex -StateDir (Get-RouterStateDir) -Action {
+        $built = Build-RouterRosterProposalLocked -Now $Now -Notification $notification -BenchResults $benchResults -RosterIdentity $staged.identity
+        foreach ($request in $staged.requests) { Save-RouterEffortProposal -Request $request -Bench $benchResults[$request.key] }
+        $built
+    }
+    Send-RouterEffortAlerts
     if ($notification.alert) { Send-RouterAlerts -Alerts @($notification.alert) | Out-Null }
     return $result
 }

@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.0 (2026-10-02): Expand shared model routing with triggered internal benchmarking, Mac-local observation and concurrent outcome safety.
+
 - 0.2.13 (2026-10-02): Update the shared vendor-failure diagnosis consumer version for degraded-component handling when the incident feed is unavailable.
 
 - 0.2.12 (2026-10-01): Consume shared model router diagnosis verdicts, vendor-incident failover, research and canary reliability, acknowledge support, and routing compliance reporting.

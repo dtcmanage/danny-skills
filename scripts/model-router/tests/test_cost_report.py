@@ -698,11 +698,12 @@ def test_needs_you_pending_proposal_when_never_approved(tmp_path):
     _write_json(proposal_path, {"jobs": {"fast": {"first": "gpt-6-luna", "backup": "claude-haiku-4-5-20251001"}}})
     _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(proposal_path)})
     lines = cr.compute_needs_you_lines(state)
-    assert len(lines) == 1
-    assert "a proposed change to the model list is waiting for your OK" in lines[0]
-    assert "approve-roster.ps1" in lines[0]
-    assert "-Show" in lines[0]
-    assert "-Roster" not in lines[0]
+    assert len(lines) == 2
+    assert lines[0] == "the bench golden review is waiting for your OK; comparisons remain in shadow mode."
+    assert "a proposed change to the model list is waiting for your OK" in lines[1]
+    assert "approve-roster.ps1" in lines[1]
+    assert "-Show" in lines[1]
+    assert "-Roster" not in lines[1]
 
 
 def test_needs_you_nothing_when_proposal_fully_approved(tmp_path):
@@ -718,7 +719,7 @@ def test_needs_you_nothing_when_proposal_fully_approved(tmp_path):
     _write_json(proposal_path, {"jobs": jobs, "approved": False})
     _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(proposal_path)})
     _write_json(state / "roster.json", {"approved": True, "jobs": jobs})
-    assert cr.compute_needs_you_lines(state) == []
+    assert cr.compute_needs_you_lines(state) == ["the bench golden review is waiting for your OK; comparisons remain in shadow mode."]
 
 
 def test_needs_you_pending_when_partial_jobs_approval_leaves_a_mismatch(tmp_path):
@@ -736,8 +737,9 @@ def test_needs_you_pending_when_partial_jobs_approval_leaves_a_mismatch(tmp_path
     _write_json(state / "roster-proposals" / "latest.json", {"proposal": str(proposal_path)})
     _write_json(state / "roster.json", {"approved": True, "jobs": approved_jobs})
     lines = cr.compute_needs_you_lines(state)
-    assert len(lines) == 1
-    assert "model list is waiting" in lines[0]
+    assert len(lines) == 2
+    assert lines[0] == "the bench golden review is waiting for your OK; comparisons remain in shadow mode."
+    assert "model list is waiting" in lines[1]
 
 
 def test_needs_you_active_drift_mark_names_job_and_backup(tmp_path):
@@ -747,9 +749,10 @@ def test_needs_you_active_drift_mark_names_job_and_backup(tmp_path):
         "coder": {"first": "gpt-6-sol", "backup": "claude-opus-5-5"},
     }})
     lines = cr.compute_needs_you_lines(state)
-    assert len(lines) == 1
-    assert "the coder job is on its backup (Opus 5.5) because GPT-6 Sol has been underperforming" in lines[0]
-    assert "-DeclineDrift -Job coder" in lines[0]
+    assert len(lines) == 2
+    assert lines[0] == "the bench golden review is waiting for your OK; comparisons remain in shadow mode."
+    assert "the coder job is on its backup (Opus 5.5) because GPT-6 Sol has been underperforming" in lines[1]
+    assert "-DeclineDrift -Job coder" in lines[1]
 
 
 def test_needs_you_declined_drift_mark_is_excluded(tmp_path):
@@ -759,7 +762,7 @@ def test_needs_you_declined_drift_mark_is_excluded(tmp_path):
     _write_json(state / "roster.json", {"approved": True, "jobs": {
         "coder": {"first": "gpt-6-sol", "backup": "claude-opus-5-5"},
     }})
-    assert cr.compute_needs_you_lines(state) == []
+    assert cr.compute_needs_you_lines(state) == ["the bench golden review is waiting for your OK; comparisons remain in shadow mode."]
 
 
 def test_needs_you_tolerates_corrupt_state_files(tmp_path):
@@ -769,7 +772,7 @@ def test_needs_you_tolerates_corrupt_state_files(tmp_path):
     (state / "roster-proposals" / "latest.json").write_text("{not json", encoding="utf-8")
     (state / "drift-marks.json").write_text("[{broken", encoding="utf-8")
     (state / "roster.json").write_text("not even json", encoding="utf-8")
-    assert cr.compute_needs_you_lines(state) == []
+    assert cr.compute_needs_you_lines(state) == ["the bench golden review is waiting for your OK; comparisons remain in shadow mode."]
 
 
 def test_needs_you_multiple_findings_produce_a_bullet_each(tmp_path):
@@ -784,7 +787,7 @@ def test_needs_you_multiple_findings_produce_a_bullet_each(tmp_path):
     }})
     text = cr.render_needs_you(cr.compute_needs_you_lines(state))
     assert text.startswith("Needs you:\n- ")
-    assert text.count("\n- ") == 2
+    assert text.count("\n- ") == 3
 
 
 # --- End-to-end render_discord_summary: no-data week, complete actions, JSON file ---

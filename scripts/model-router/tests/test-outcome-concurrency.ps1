@@ -11,6 +11,8 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ('router-outcome-concurrency-' + [g
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $env:DT_MODEL_ROUTER_STATE = Join-Path $temp 'state'
 $state = Get-RouterStateDir
+. (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+$fixtureCodexHome = Enter-RouterTestCodexHome
 $processes = [Collections.Generic.List[Diagnostics.Process]]::new()
 function Start-Worker([string]$Mode, [string]$Argument = '') {
     $info = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
@@ -68,7 +70,7 @@ if ($Mode -eq 'append') {
             Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters
         }
     }
-    Update-RouterOutcomes -Now ([datetime]'2026-10-02T12:00:00Z') -SourcesPath (Join-Path $temp $Argument) | ConvertTo-Json -Compress
+    Update-RouterOutcomes -Now ([datetime]'2026-10-02T12:00:00Z') -SourcesPath (Join-Path $temp $Argument) -BenchInvoker { param($r) [pscustomobject]@{gate='pass';raw_gate='pass';price_recommendation=$r.candidate;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false} } | ConvertTo-Json -Compress
 }
 '@
     $worker = $worker.Replace('__ROUTER__', $routerDir.Replace("'", "''"))
@@ -101,7 +103,7 @@ if ($Mode -eq 'append') {
     $rows = @(Get-Content -LiteralPath (Join-Path $state 'outcomes.jsonl') | ConvertFrom-Json)
     Assert-True ($rows.Count -eq 102 -and @($rows.key | Sort-Object -Unique).Count -eq 102) 'two overlapping imports and 80 concurrent appends preserve all 102 unique rows'
     Assert-True (@($rows | Where-Object key -Like 'append:*').Count -eq 80 -and @($rows | Where-Object key -Like 'run-*:piece:1').Count -eq 2) 'all independent process rows and both imported records retained'
-    $again = Update-RouterOutcomes -Now ([datetime]'2026-10-02T12:00:00Z') -SourcesPath (Join-Path $temp 'sources-a.json')
+    $again = Update-RouterOutcomes -Now ([datetime]'2026-10-02T12:00:00Z') -SourcesPath (Join-Path $temp 'sources-a.json') -BenchInvoker { param($r) [pscustomobject]@{gate='pass';raw_gate='pass';price_recommendation=$r.candidate;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false} }
     Assert-True ($again.new_records -eq 0 -and $again.total_records -eq 102) 'fresh reread makes repeated import idempotent'
     $marks = @(Read-RouterJsonArray -Path (Join-Path $state 'drift-marks.json'))
     $declines = @(Read-RouterJsonArray -Path (Join-Path $state 'drift-declines.json'))
@@ -126,5 +128,6 @@ if ($Mode -eq 'append') {
         $process.Dispose()
     }
     $env:DT_MODEL_ROUTER_STATE = $priorState
+    Exit-RouterTestCodexHome $fixtureCodexHome
     if ([IO.Path]::GetFullPath($temp).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

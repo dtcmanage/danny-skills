@@ -8,9 +8,9 @@ Keep code in `scripts/model-router/` and committed configuration in `references/
 
 Rebuild a roster from scratch with `pwsh -NoProfile -File scripts/model-router/approve-roster.ps1 -Seed`, then run the same script with `-Show` to review the proposal and `-Approve` to approve it. Seeding alone leaves routing on the default roster.
 
-The catalog check runs twice daily with a 30-second deadline. A failed check preserves the last good registry. New models are queued for research and trigger a canary. Alerts show a chat line, try a private Discord DM, and fall back to email; delivered keys fire once. `update-outcomes.ps1` records performance and flags drift. The monthly canary tests selected and flagged models. The weekly cost report compares subscription use with API-equivalent spend and DMs model use, frontier use, vendor quota use, Claude session use, and pending approvals.
+The catalog check runs twice daily with a 30-second deadline. A failed check preserves the last good registry. New models are queued for research and trigger job-scoped bench comparisons. Alerts show a chat line, try a private Discord DM, and fall back to email; delivered keys fire once. `update-outcomes.ps1` records performance and flags drift. Bench runs on new-model, research, drift and manual triggers; no monthly bench schedule. The weekly cost report compares subscription use with API-equivalent spend and DMs model use, frontier use, vendor quota use, Claude session use, and pending approvals.
 
-Outcome writers share `Use-RouterOutcomeMutex` in `router-common.ps1`. Imports hold it before reading outcomes, the roster, drift marks and declines, through replacement and proposal updates; canary, research and build wrappers append through `Add-RouterOutcome`. Roster approval and proposal creation use the same lock so a concurrent import cannot overwrite an approval or decline. Alerts are delivered after releasing the lock. The persistent `outcomes.mutex` file is intentionally retained; its exclusive handle is released in `finally` or by the OS on process exit. Do not delete it while writers may be running. Contention waits up to 30 seconds, then raises `ROUTER_OUTCOME_MUTEX_TIMEOUT`; it never writes without the lock. This coordinates processes sharing one local state directory, not separate machines or non-cooperating manual writers.
+Outcome writers share `Use-RouterOutcomeMutex` in `router-common.ps1`. Imports hold it before reading outcomes, the roster, drift marks and declines, through replacement and proposal updates; bench, research and build wrappers append through `Add-RouterOutcome`. Roster approval and proposal creation use the same lock so a concurrent import cannot overwrite an approval or decline. Alerts are delivered after releasing the lock. The persistent `outcomes.mutex` file is intentionally retained; its exclusive handle is released in `finally` or by the OS on process exit. Do not delete it while writers may be running. Contention waits up to 30 seconds, then raises `ROUTER_OUTCOME_MUTEX_TIMEOUT`; it never writes without the lock. This coordinates processes sharing one local state directory, not separate machines or non-cooperating manual writers.
 
 ## Main-session delegation
 
@@ -27,7 +27,7 @@ Research runs per category (`run-router-research.ps1 -Categories`), reading the 
 Manage the roster with `approve-roster.ps1`: `-Show`, `-Approve` (uses the approved roster), `-Revoke` (clears approval and uses the default roster with an alert), and `-DeclineDrift -Job <job>` (keep the first choice after a drift alert). Drift on a first choice sends that job to its approved backup until Danny approves the swap proposal or declines it.
 Use `-Approve -Jobs fast,coder` to approve only named jobs when a full proposal exceeds the five-model cap.
 
-At ship, register the Windows Scheduled Tasks from the **main checkout** with `pwsh -NoProfile -File scripts/model-router/register-router-schedules.ps1 -Apply`. They run the monthly canary on day 1 at 04:00 ET, the weekly cost report on Monday at 07:00 ET, the full research cadence daily at 01:00 ET, and the model-release check daily at 13:00 ET. Do not register them from a build worktree.
+At ship, register the Windows Scheduled Tasks from the **main checkout** with `pwsh -NoProfile -File scripts/model-router/register-router-schedules.ps1 -Apply`. They run the weekly cost report on Monday at 07:00 ET, the full research cadence daily at 01:00 ET, and the model-release check daily at 13:00 ET. Do not register them from a build worktree.
 
 From the repo root, run:
 
@@ -36,3 +36,20 @@ Get-ChildItem scripts/model-router/tests/*.ps1 | ForEach-Object { pwsh -NoProfil
 pwsh -NoProfile -File scripts/verify-versioning-policy.ps1 -BaseRef main -Json
 pwsh -NoProfile -File scripts/verify-skill-junctions.ps1 -RepoRoot (Get-Location).Path -Json
 ```
+# Internal bench research gate
+
+Research proposals stage candidate comparisons outside the outcome writer mutex.
+After comparisons, publication reacquires the mutex and checks the complete roster
+job identity, including model picks and efforts. A changed identity rejects the
+staged result with `BENCH_STALE_ROSTER`.
+
+UNKNOWN blocks publication even in shadow mode and for writer. Approved-bank
+fast, coder and deep-thinker failures block publication; writer and shadow results
+are advisory. Equal task counts recommend the cheaper model by recorded list price;
+a one-task candidate deficit remains visible in the proposal evidence with the
+bench report path. Bench and historical canary outcomes do not enter real drift
+rate calculations. Pending roster detection includes both slot efforts.
+
+Triggered comparisons stage outside outcome locks and revalidate roster model and effort before publication. Research offers incumbent effort-down even when it keeps the model. New-model checks retain release and day-seven research queues and refresh known frontier judges in bench/judge-config.json. Failed/unknown results are in bench/trigger-log.jsonl; unknown alerts use stable identities. Weekly rubric reminders apply to the current bank and judge pair; rubric correction changes the bank hash and returns golden approval to shadow mode.
+
+Use approve-roster.ps1 -ApproveEffort, -DeclineEffort or -RevokeEffort with -Job for separate effort proposals; actions revalidate exact model and effort.

@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.0 (2026-10-02): Expand shared model routing with triggered internal benchmarking, Mac-local observation and concurrent outcome safety.
+
 - 1.15.2 (2026-10-02): Isolate regression-suite Claude credentials and Codex sessions so live account quota cannot alter routing fixtures.
 
 - 1.15.1 (2026-10-01): Consume shared model router diagnosis verdicts, vendor-incident failover, research and canary reliability, acknowledge support, and routing compliance reporting.

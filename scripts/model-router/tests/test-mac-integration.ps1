@@ -135,7 +135,17 @@ try {
     Assert-Owner { Invoke-RouterModelCheck -Force } 'Mac refuses direct release polling'
     Assert-Owner { Register-RouterSchedules } 'Mac refuses schedule registration'
     Assert-Owner { Invoke-RouterCanary -DryRun } 'Mac refuses canary'
-    Assert-Owner { Start-RouterCanaryDetached -Models gpt-6.1-sol } 'Mac refuses detached benchmark launcher'
+    Assert-Owner { Invoke-RouterModelCheck -Force } 'Mac refuses new-model benchmark trigger'
+    . (Join-Path $PSScriptRoot '../bench/run-bench.ps1')
+    $guardState = Join-Path $temp 'bench-guard-no-create'
+    Assert-Owner { Invoke-RouterBench -Job coder -Candidate gpt-6.1-sol -Incumbent gpt-6.1-sol -StateDir $guardState } 'Mac refuses direct benchmark'
+    Assert-True (-not (Test-Path $guardState)) 'direct benchmark guard precedes state creation'
+    $guardScript = Join-Path $temp 'mac-bench-cli-guard.ps1'
+    $guardRunner = (Join-Path $PSScriptRoot '../bench/run-bench.ps1').Replace("'", "''")
+    $guardStateQuoted = $guardState.Replace("'", "''")
+    [IO.File]::WriteAllText($guardScript, "function Get-RouterPlatform { 'MacOS' }`n& '$guardRunner' -Jobs coder -StateDir '$guardStateQuoted'", [Text.UTF8Encoding]::new($false))
+    $guardOutput = & pwsh -NoProfile -File $guardScript 2>&1
+    Assert-True ($LASTEXITCODE -ne 0 -and ($guardOutput | Out-String) -match 'ROUTER_WINDOWS_OWNER:' -and -not (Test-Path $guardState)) 'CLI benchmark guard precedes state creation'
     Assert-Owner { & (Join-Path $PSScriptRoot '../cost-report.ps1') } 'Mac refuses weekly report'
     $collector = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../skills/dt-build/scripts/collect-usage.ps1'))
     $collectorOutput = & $collector -OutDir $guardState -Quiet | Out-String

@@ -1,6 +1,9 @@
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../bench/run-bench.ps1')
-function Assert($Condition,$Message){if(-not $Condition){throw $Message}}
+. (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+$fixtureCodexHome = Enter-RouterTestCodexHome
+$script:benchChecks=0
+function Assert($Condition,$Message){if(-not $Condition){throw $Message};$script:benchChecks++}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('router-bench-tests-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
 try {
@@ -42,7 +45,7 @@ try {
     $writer=Invoke-RouterBench -Job writer -Candidate gpt-6.1-sol -Incumbent claude-opus-5-5 -StateDir (Join-Path $root 'writer') -CliInvoker $judge -Limits $limits -NoAlerts
     Assert ($script:envelopes -eq 18 -and $writer.effort_down_qualified) 'Independent judge/effort-down failure'
     $image=Invoke-RouterBench -Job illustrator -Candidate gpt-image-2 -Incumbent gpt-image-2 -StateDir (Join-Path $root 'image') -CliInvoker {throw 'image must not dispatch'} -Limits $limits -NoAlerts
-    Assert ($image.raw_gate -eq 'unknown' -and $image.gate -eq 'advisory') 'Image support classification failure'
+    Assert ($image.raw_gate -eq 'unknown' -and $image.gate -eq 'unknown') 'Image support classification failure'
     $request=@{vendor='codex';model='gpt-6.1-sol';effort='high';prompt="Synthetic fixture`nexact bytes"}
     $fakeServer=Join-Path $PSScriptRoot 'fake-appserver.py'
     $script:scenario='ok'
@@ -191,10 +194,23 @@ if($env:BENCH_FAKE_SLEEP -eq 'yes'){Start-Sleep -Seconds 30}
     $manual=Invoke-RouterBench -Job fast -Candidate gpt-6-astra -Incumbent gpt-6-luna -Trigger manual -StateDir $root -Limits {param($v) @{blocked=$true}} -NoAlerts
     Assert ($manual.candidate.model -eq 'gpt-6-astra') 'Manual frontier rejected'
     Write-Output 'PASS: existing checks plus Claude process/model/cache/timeout/cleanup/resolver; roster fallback/override; actual CLI scopes/monthly/frontier'
-} finally {Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'router-bench-tests-'}
+} finally {Exit-RouterTestCodexHome $fixtureCodexHome; Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'router-bench-tests-'}
 
 # Fresh child processes keep each refusal suite's state/config seams isolated.
+$ownChecks=$script:benchChecks
+$childChecks=0
 foreach($suite in @('test-bench-refusal.ps1','test-bench-codex-refusal.ps1')) {
-    & pwsh -NoProfile -File (Join-Path $PSScriptRoot $suite)
-    if($LASTEXITCODE -ne 0){throw "Refusal regression failed: $suite"}
+    $childOutput=@(& pwsh -NoProfile -File (Join-Path $PSScriptRoot $suite) 2>&1)
+    $childExit=$LASTEXITCODE
+    $childText=($childOutput | ForEach-Object { [string]$_ }) -join "`n"
+    $summaries=[regex]::Matches($childText,'(?m)^SUMMARY: (\d+) passed; (\d+) failed\r?$')
+    $childOutput | ForEach-Object { Write-Output "CHILD ${suite}: $_" }
+    if($childExit -ne 0){throw "Refusal regression failed: $suite (exit $childExit)"}
+    if($summaries.Count -ne 1){throw "Refusal regression missing or ambiguous numeric summary: $suite"}
+    $passed=[int]$summaries[0].Groups[1].Value
+    $failed=[int]$summaries[0].Groups[2].Value
+    if($passed -le 0 -or $failed -ne 0){throw "Refusal regression invalid counts: $suite"}
+    $childChecks += $passed
 }
+Write-Output "COUNT: own=$ownChecks; children=$childChecks"
+Write-Output "SUMMARY: $($ownChecks + $childChecks) passed; 0 failed"

@@ -13,7 +13,6 @@ function Register-RouterSchedules {
     if (-not $common) { throw 'Cannot locate main checkout for scheduled scripts' }
     $main = Split-Path -Parent $common
     $tasks = @(
-        [pscustomobject]@{ name='ModelRouterMonthlyCanary'; script=(Join-Path $main 'scripts/model-router/canary/run-canary.ps1'); arguments=@('-Reason','monthly'); schedule='monthly day 1 04:00 ET' },
         [pscustomobject]@{ name='ModelRouterWeeklyCostReport'; script=(Join-Path $main 'scripts/model-router/cost-report.ps1'); arguments=@(); schedule='weekly Monday 07:00 ET' },
         [pscustomobject]@{ name='ModelRouterCadence'; script=(Join-Path $main 'scripts/model-router/run-router-cadence.ps1'); arguments=@(); schedule='daily 01:00 ET' },
         [pscustomobject]@{ name='ModelRouterCadenceCheck'; script=(Join-Path $main 'scripts/model-router/run-router-cadence.ps1'); arguments=@('-CheckOnly'); schedule='daily 13:00 ET' }
@@ -25,7 +24,6 @@ function Register-RouterSchedules {
         $arguments = '"' + $shim + '" "' + $pwsh + '" "' + $item.script + '" ' + ($item.arguments -join ' ')
         $taskRun = '"' + $wscript + '" ' + $arguments
         $scheduleArgs = switch ($item.name) {
-            'ModelRouterMonthlyCanary' { @('/sc','monthly','/d','1','/st','04:00') }
             'ModelRouterWeeklyCostReport' { @('/sc','weekly','/d','MON','/st','07:00') }
             'ModelRouterCadence' { @('/sc','daily','/st','01:00') }
             'ModelRouterCadenceCheck' { @('/sc','daily','/st','13:00') }

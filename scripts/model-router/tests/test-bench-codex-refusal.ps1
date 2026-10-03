@@ -1,7 +1,10 @@
 $ErrorActionPreference='Stop'
 
 . (Join-Path $PSScriptRoot '../bench/run-bench.ps1')
-function Assert($Condition,$Message){if(-not $Condition){throw $Message}}
+. (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+$fixtureCodexHome = Enter-RouterTestCodexHome
+$script:benchChecks=0
+function Assert($Condition,$Message){if(-not $Condition){throw $Message};$script:benchChecks++}
 $peer=Join-Path $PSScriptRoot 'fake-appserver-accounting.py'
 $root=Join-Path ([IO.Path]::GetTempPath()) ('m02-host-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($root)
@@ -40,4 +43,6 @@ try {
         Assert ($again.raw_gate -eq 'unknown') 'Persisted block not respected across runs'
     }
     Write-Output 'PASS: 2 production adapter + host quota cases; one exhausted call; stale limits; scoped block/reset; other vendor continues; partial usage; secrets absent'
-} finally {Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'm02-host-'}
+} finally {Exit-RouterTestCodexHome $fixtureCodexHome; Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'm02-host-'}
+
+Write-Output "SUMMARY: $script:benchChecks passed; 0 failed"

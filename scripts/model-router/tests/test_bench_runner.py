@@ -166,7 +166,7 @@ def test_environment_retry_and_quota(tmp_path: Path) -> None:
     calls = []
     result = run(tmp_path, limits=lambda vendor: {'blocked': True},
                  dispatch=lambda request: calls.append(request))
-    assert not calls and result['raw_gate'] == 'unknown' and result['gate'] == 'advisory'
+    assert not calls and result['raw_gate'] == 'unknown' and result['gate'] == 'unknown'
     assert len(result['outcomes']) == 24
     assert not json.loads((tmp_path / 'bench/baseline.json').read_text())
     counts = {}

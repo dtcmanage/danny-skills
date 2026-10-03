@@ -2,6 +2,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-platform.ps1')
 
+function Test-RouterFrontierModel {
+    param([string]$Model, [object]$Frontier)
+    if (-not $Frontier) { $Frontier = Get-Content (Join-Path $PSScriptRoot '../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json }
+    return ($Model -match '^gpt-\d+(?:\.\d+)?-astra$' -or $Frontier.codex_models -contains $Model -or @($Frontier.claude_patterns | Where-Object { $Model -like $_ }).Count -gt 0)
+}
+
 function Get-RouterCategories {
     return @('complex-coding','routine-coding','code-review','ui-frontend','planning','deep-research','long-form-writing','mechanical','image-generation')
 }

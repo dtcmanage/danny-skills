@@ -123,15 +123,23 @@ function Invoke-RouterBench {
         [scriptblock]$Envelope,[scriptblock]$Outcome,[switch]$NoAlerts,
         [int]$TimeoutMs=120000,[double]$GraderTimeout=30)
     # Bind all shared state readers/diagnosis to the explicit router root.
+    Assert-RouterWindowsOwner -Action 'Benchmark execution'
+    # Load proposal dependencies before binding explicit state readers locally.
+    if ($Trigger -eq 'manual') { . (Join-Path $script:BenchRoot '../build-roster.ps1') }
     $benchStateRoot=[IO.Path]::GetFullPath($StateDir)
     function Get-RouterStateDir { return $benchStateRoot }
+    function Get-RouterStatePath { param([string]$Platform) return $benchStateRoot }
     [void][IO.Directory]::CreateDirectory($benchStateRoot)
     $frontier=Get-Content (Join-Path $script:BenchRoot '../../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json
     foreach($model in @($Candidate,$Incumbent)) {
-        if($Trigger -ne 'manual' -and ($model -in $frontier.codex_models -or @($frontier.claude_patterns | Where-Object {$model -like $_}).Count)){throw 'Frontier candidates require manual named invocation'}
+        if($Trigger -ne 'manual' -and (Test-RouterFrontierModel -Model $model -Frontier $frontier)){throw 'Frontier candidates require manual named invocation'}
     }
     $read=Read-RouterRoster
     $effort=if($Job -eq 'illustrator'){$null}elseif($EffortOverride){$EffortOverride}else{$read.roster.jobs.$Job.first_effort}
+    if (-not $PSBoundParameters.ContainsKey('ConfigPath')) {
+        $catalogConfig = Join-Path $benchStateRoot 'bench/judge-config.json'
+        if (Test-Path -LiteralPath $catalogConfig) { $ConfigPath = $catalogConfig }
+    }
     if(-not $CliInvoker){$CliInvoker={param($r) Invoke-BenchCli -Request $r -TimeoutMs $TimeoutMs}}
     if(-not $Limits){$Limits={param($v) $u=if($v -eq 'claude'){Get-RouterClaudeUsage}else{Get-RouterCodexUsage}; @{blocked=(Get-RouterVendorBlocked -Vendor $v);usage=$u}}}
     if(-not $Diagnosis){$Diagnosis={param($v,$e) Resolve-RouterDispatchFailure -Vendor $v -ErrorText $e}}
@@ -157,7 +165,15 @@ function Invoke-RouterBench {
             $line=$pending.GetAwaiter().GetResult()
             if($null -eq $line){throw "Bench engine ended: $($errors.GetAwaiter().GetResult())"}
             $message=$line | ConvertFrom-Json -AsHashtable
-            if($message.operation -eq 'result'){return [pscustomobject]$message.payload}
+            if($message.operation -eq 'result'){
+                $result = [pscustomobject]$message.payload
+                if ($Trigger -eq 'manual') {
+                    $request = [pscustomobject]@{job=$Job;candidate=$Candidate;incumbent=$Incumbent;effort=$effort}
+                    Use-RouterOutcomeMutex -StateDir $benchStateRoot -Action { Save-RouterEffortProposal $request $result } | Out-Null
+                    if (-not $NoAlerts) { Send-RouterEffortAlerts }
+                }
+                return $result
+            }
             try {
                 $value=switch($message.operation){
                     'limits' {
@@ -195,9 +211,11 @@ function Invoke-RouterBench {
 }
 
 if($MyInvocation.InvocationName -ne '.') {
+    Assert-RouterWindowsOwner -Action 'Benchmark execution'
     if(-not $StateDir){$StateDir=Get-RouterStateDir}
     $script:cliBenchStateRoot=[IO.Path]::GetFullPath($StateDir)
     function Get-RouterStateDir {return $script:cliBenchStateRoot}
+    function Get-RouterStatePath {param([string]$Platform) return $script:cliBenchStateRoot}
     $read=Read-RouterRoster
     if(-not $Jobs){$Jobs=Get-RouterJobs}
     $results=foreach($job in $Jobs){

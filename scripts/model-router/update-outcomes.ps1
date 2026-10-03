@@ -58,7 +58,7 @@ function ConvertTo-RouterOutcomeAttempt {
 }
 
 function Update-RouterOutcomesLocked {
-    param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts)
+    param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts, [scriptblock]$BenchInvoker)
     $state = Get-RouterStateDir
     [IO.Directory]::CreateDirectory($state) | Out-Null
     if (-not $SourcesPath) { $SourcesPath = Join-Path $PSScriptRoot '../../references/model-router/outcome-sources.json' }
@@ -168,7 +168,7 @@ function Update-RouterOutcomesLocked {
         } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
     }
     $nowUtc = $Now.ToUniversalTime()
-    $eligible = @($values | Where-Object { $_.attempt -eq 1 -and $_.failure_category -notin @('environment','tooling') })
+    $eligible = @($values | Where-Object { (Get-RouterOutcomeValue $_ 'source') -notin @('canary','bench') -and $_.attempt -eq 1 -and $_.failure_category -notin @('environment','tooling') })
     if ($rosterRead.source -ne 'state') { return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; alerts=@(); proposal=$null } }
     $roster = $rosterRead.roster
     $marksPath = Join-Path $state 'drift-marks.json'
@@ -214,21 +214,48 @@ function Update-RouterOutcomesLocked {
     }
     Write-RouterOutcomeJson $marksPath @($marks.ToArray())
     if ($priorDeclines.Count -or $declines.Count) { Write-RouterOutcomeJson $declinesPath @($declines.ToArray()) }
+    if (-not $marks.Count) {
+        $latestPath = Join-Path $state 'roster-proposals/latest.json'
+        $latest = Read-RouterJsonObject $latestPath
+        if ($latest -and [string]$latest.proposal -like '*-drift.json') { Remove-Item -LiteralPath $latestPath -Force }
+    }
+    $requests = @($marks | Where-Object { $newMarks -gt 0 -and $roster.jobs.($_.job).backup } | ForEach-Object {
+        $entry = $roster.jobs.($_.job)
+        [pscustomobject]@{job=$_.job;candidate=$entry.backup;incumbent=$entry.first;effort=$entry.first_effort}
+    })
+    return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; alerts=@($alerts.ToArray()); proposal=$null; requests=$requests; identity=(ConvertTo-Json $roster.jobs -Compress -Depth 30) }
+
+}
+
+
+function Complete-RouterDriftBench {
+    param($Staged, $BenchResults, [datetime]$Now)
+    $state = Get-RouterStateDir
+    $roster = (Read-RouterRoster).roster
+    if ((ConvertTo-Json $roster.jobs -Compress -Depth 30) -cne $Staged.identity) { throw 'BENCH_STALE_ROSTER: drift model or effort changed' }
+    $nowUtc = $Now.ToUniversalTime()
+    $declines = @(Read-RouterJsonArray (Join-Path $state 'drift-declines.json'))
+    $marks = @(Read-RouterJsonArray (Join-Path $state 'drift-marks.json') | Where-Object {
+        $mark = $_
+        -not @($declines | Where-Object { $_.job -eq $mark.job -and $_.model -eq $mark.model }).Count -and
+        $BenchResults.ContainsKey($_.job) -and $BenchResults[$_.job].raw_gate -ne 'unknown' -and $BenchResults[$_.job].gate -notin @('fail','unknown') -and -not ($_.job -in @('fast','coder','deep-thinker') -and $BenchResults[$_.job].raw_gate -eq 'fail') -and $BenchResults[$_.job].price_recommendation -ne $_.model
+    })
     $proposalPath = $null
-    if ($newMarks -gt 0 -and @($marks | Where-Object { $roster.jobs.($_.job).backup }).Count) {
+    if ($marks.Count -gt 0 -and @($marks | Where-Object { $roster.jobs.($_.job).backup }).Count) {
         $proposal = $roster | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
         foreach ($name in @(Get-RouterJobs)) {
             foreach ($slot in @('first','backup')) {
-                $proposal.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
+                $proposal.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue $roster.jobs.$name."${slot}_effort" -Force
             }
         }
         $proposal.generated_at = $nowUtc.ToString('o'); $proposal.approved = $false; $proposal.approved_at = $null
         foreach ($mark in $marks) {
             $target = $proposal.jobs.($mark.job)
             if (-not $target.backup) { continue }
-            $first = $target.first; $vendor = $target.first_vendor
+            $first = $target.first; $vendor = $target.first_vendor; $effort = $target.first_effort
             $target.first = $target.backup; $target.first_vendor = $target.backup_vendor
-            $target.backup = $first; $target.backup_vendor = $vendor
+            $target.first_effort = $effort
+            $target.backup = $first; $target.backup_vendor = $vendor; $target.backup_effort = $effort
         }
         $dir = Join-Path $state 'roster-proposals'; [IO.Directory]::CreateDirectory($dir) | Out-Null
         $stem = $nowUtc.ToString('yyyy-MM-ddTHHmmss') + '-drift'
@@ -237,7 +264,7 @@ function Update-RouterOutcomesLocked {
         $lines = @('# Model list proposal','','| Job | Current | Proposed | Evidence summary | Backup |','| --- | --- | --- | --- | --- |')
         foreach ($job in @(Get-RouterJobs)) {
             $mark = @($marks | Where-Object job -eq $job)
-            $evidence = if ($mark.Count) { "Pass rate $($mark[0].prior_rate) to $($mark[0].recent_rate); drift threshold met" } else { 'No change' }
+            $evidence = if ($mark.Count) { "Pass rate $($mark[0].prior_rate) to $($mark[0].recent_rate); drift threshold met; Bench $($BenchResults[$job].gate); shortfall $($BenchResults[$job].shortfall_tasks); report $($BenchResults[$job].report_paths.markdown)" } else { 'No change' }
             $lines += "| $job | $($roster.jobs.$job.first) | $($proposal.jobs.$job.first) (effort $($proposal.jobs.$job.first_effort)) | $evidence | $($proposal.jobs.$job.backup) (effort $($proposal.jobs.$job.backup_effort)) |"
         }
         [IO.File]::WriteAllText($reportPath,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
@@ -248,16 +275,25 @@ function Update-RouterOutcomesLocked {
         $latest = Read-RouterJsonObject -Path $latestPath
         if ($latest -and $latest.PSObject.Properties['proposal'] -and [string]$latest.proposal -like '*-drift.json') { Remove-Item -LiteralPath $latestPath -Force }
     }
-    return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; alerts=@($alerts.ToArray()); proposal=$proposalPath }
-
+    return $proposalPath
 }
 
 function Update-RouterOutcomes {
-    param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts)
+    param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts, [scriptblock]$BenchInvoker)
     Assert-RouterWindowsOwner -Action 'Outcome import and drift proposal construction'
+    . (Join-Path $PSScriptRoot 'build-roster.ps1')
     # Reread outcomes, roster, marks and declines only after obtaining the shared writer lock.
     $state = Get-RouterStateDir
     $result = Use-RouterOutcomeMutex -StateDir $state -Action { Update-RouterOutcomesLocked -Now $Now -SourcesPath $SourcesPath }
+    if ($result.PSObject.Properties['requests'] -and $result.requests.Count) {
+        $benchResults = @{}
+        foreach ($request in $result.requests) { $benchResults[$request.job] = Invoke-RouterTriggeredComparison -Request $request -Trigger drift -BenchInvoker $BenchInvoker -SendAlerts:$SendAlerts }
+        $result.proposal = Use-RouterOutcomeMutex -StateDir $state -Action {
+            foreach ($request in $result.requests) { Save-RouterEffortProposal $request $benchResults[$request.job] }
+            Complete-RouterDriftBench -Staged $result -BenchResults $benchResults -Now $Now
+        }
+    }
+    if ($SendAlerts) { Send-RouterEffortAlerts }
     if ($SendAlerts -and $result.alerts.Count) { Send-RouterAlerts -Alerts @($result.alerts) -ChatToStderr:$RouterOutcomesCliJson | Out-Null }
     return $result
 }

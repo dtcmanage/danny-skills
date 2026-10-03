@@ -27,7 +27,12 @@ $suites = @(
     'scripts/model-router/tests/test-build-roster.ps1',
     'scripts/model-router/tests/test-check-new-models.ps1',
     'scripts/model-router/tests/test-router-research.ps1',
-    'scripts/model-router/tests/test-canary.ps1',
+    'scripts/model-router/tests/test_bench_tasks.py',
+    'scripts/model-router/tests/test_bench_review.py',
+    'scripts/model-router/tests/test_bench_runner.py',
+    'scripts/model-router/tests/test-bench-runner.ps1',
+    'scripts/model-router/tests/test_bench_integration.py',
+    'scripts/model-router/tests/test-bench-integration.ps1',
     'scripts/model-router/tests/test-cost-report.ps1',
     'scripts/model-router/tests/test_cost_report.py',
     'skills/dt-build/scripts/test-dt-build-regressions.ps1'
@@ -79,7 +84,7 @@ try {
             $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
             # Only the child environment changes. Discard inherited opt-ins and seams.
             foreach ($key in @($info.Environment.Keys)) {
-                if ($key -like 'DT_MODEL_ROUTER_*' -or $key -like 'DT_BUILD_*' -or $key -like 'DT_FAKE_*') { $null = $info.Environment.Remove($key) }
+                if ($key -like 'DT_MODEL_ROUTER_*' -or $key -like 'DT_BUILD_*' -or $key -like 'DT_FAKE_*' -or $key -in @('OPENAI_API_KEY','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','OPENAI_ACCESS_TOKEN')) { $null = $info.Environment.Remove($key) }
             }
             $info.Environment['DT_MODEL_ROUTER_STATE'] = Join-Path $sandbox 'state'
             $info.Environment['DT_MODEL_ROUTER_SHARED'] = Join-Path $sandbox 'shared'
@@ -102,7 +107,8 @@ try {
             }
             foreach ($argument in $arguments) { $info.ArgumentList.Add($argument) }
             $process.StartInfo = $info
-            $outFile = [IO.File]::Create($stdout); $errFile = [IO.File]::Create($stderr)
+            $outFile = [IO.FileStream]::new($stdout, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+            $errFile = [IO.FileStream]::new($stderr, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
             $null = $process.Start()
             $started = $true
             $outCopy = $process.StandardOutput.BaseStream.CopyToAsync($outFile)

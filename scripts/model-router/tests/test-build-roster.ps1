@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../build-roster.ps1')
+$script:fakeBench = { param($r) [pscustomobject]@{raw_gate="pass";gate="pass";price_recommendation=$null;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown="synthetic"}} }
 $script:passed = 0
 function Assert-True { param([bool]$Condition,[string]$Name) if (-not $Condition) { throw "FAIL: $Name" }; $script:passed++; Write-Output "PASS: $Name" }
 function Send-RouterAlerts { param([array]$Alerts) $script:alerts += @($Alerts) }
@@ -101,17 +102,17 @@ try {
     $multi[2].results += [pscustomobject]@{model='claude-sonnet-5';score=70;margin=$null}
     Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-sonnet-5') 'equal leads use lower price'
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'p1'; $one=Build-RouterRosterProposal -Now ([datetime]'2026-09-28T10:00:00')
+    Add-Pass 'p1'; $one=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:00')
     Assert-True (-not $one.changed -and $script:alerts.Count -eq 0) 'one pass no proposal or alert'
     $created=@(Get-ChildItem -LiteralPath (Join-Path $temp 'roster-proposals') -File | Select-Object -ExpandProperty Name)
     Assert-True ($created.Count -eq 1 -and $created[0] -ceq 'verdicts.jsonl') 'no-change run writes verdicts only'
-    $same=Build-RouterRosterProposal -Now ([datetime]'2026-09-28T10:00:01')
+    $same=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:01')
     $records=@(Get-Content (Join-Path $temp 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True (-not $same.changed -and @($records | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' }).Count -eq 1) 'same pass adds no verdict'
-    Add-Pass 'p2'; $two=Build-RouterRosterProposal -Now ([datetime]'2026-09-28T10:00:02')
+    Add-Pass 'p2'; $two=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True ($two.changed -and $script:alerts.Count -eq 1 -and (Test-Path $two.report)) 'two passes propose and alert once'
     Assert-True (@($two.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'backup' -and $_.to -eq 'gpt-6.1-sol' }).Count -eq 1) 'vendor flip re-chooses backup from opposite vendor'
-    $repeat=Build-RouterRosterProposal -Now ([datetime]'2026-09-28T10:00:02')
+    $repeat=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True (-not $repeat.changed -and $script:alerts.Count -eq 1) 'repeat sends no alert'
     $proposal=Get-Content -LiteralPath $two.proposal -Raw | ConvertFrom-Json -Depth 30
     foreach ($job in @(Get-RouterJobs)) { Assert-True ($proposal.jobs.$job.first_effort -ceq (Get-RouterJobEffort $job) -and $proposal.jobs.$job.backup_effort -ceq (Get-RouterJobEffort $job)) "proposal effort $job" }
@@ -122,50 +123,50 @@ try {
     $scenario=Join-Path $temp 'scenario-ne'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'ne-p1'; $null=Build-RouterRosterProposal
+    Add-Pass 'ne-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Save-Category -Category complex-coding -Rows @()
-    Add-Pass 'ne-p2'; $null=Build-RouterRosterProposal
+    Add-Pass 'ne-p2'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'ne-p3'; $afterGap=Build-RouterRosterProposal
+    Add-Pass 'ne-p3'; $afterGap=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True ($afterGap.changed) 'winner then not-enough-evidence then winner changes'
     $scenario=Join-Path $temp 'scenario-switch'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'switch-p1'; $null=Build-RouterRosterProposal
+    Add-Pass 'switch-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'switch-p2'; $switched=Build-RouterRosterProposal
+    Add-Pass 'switch-p2'; $switched=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True (-not $switched.changed) 'winner A then winner B does not change'
     $scenario=Join-Path $temp 'scenario-coverage'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'u1'; $null=Build-RouterRosterProposal
-    Add-Pass 'u2' @('mechanical'); $uncov=Build-RouterRosterProposal
+    Add-Pass 'u1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    Add-Pass 'u2' @('mechanical'); $uncov=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     $records=@(Get-Content (Join-Path $scenario 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True (-not $uncov.changed -and @($records | Where-Object { $_.pass_id -eq 'u2' -and $_.job -eq 'coder' }).Count -eq 0) 'uncovered pass records no coder verdict or proposal'
-    Add-Pass 'u3'; $covered=Build-RouterRosterProposal
+    Add-Pass 'u3'; $covered=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True ($covered.changed -and @($covered.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' -and $_.to -eq 'claude-opus-5-5' }).Count -eq 1) 'two coder-covered passes confirm change despite intervening mechanical pass'
     $coverageAlertKey=$script:alerts[-1].key; $coverageEvidence=$covered.changes[0].evidence
     $scenario=Join-Path $temp 'scenario-analysis'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     Save-Category -Category analysis -Rows @((New-Reading 'a1' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50),(New-Reading 'a2' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50))
-    Add-Pass 'an1' @('analysis'); $null=Build-RouterRosterProposal
-    Add-Pass 'an2' @('analysis'); $analysisOnly=Build-RouterRosterProposal
+    Add-Pass 'an1' @('analysis'); $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    Add-Pass 'an2' @('analysis'); $analysisOnly=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True ($analysisOnly.changed -and @($analysisOnly.changes | Where-Object { $_.job -eq 'deep-thinker' -and $_.slot -eq 'first' -and $_.to -eq 'gpt-6.1-sol' }).Count -eq 1) 'analysis-only passes count for the deep-thinker job'
     [IO.File]::AppendAllText((Join-Path $script:readDir 'passes.jsonl'),((ConvertTo-Json -InputObject ([pscustomobject]@{pass_id='legacy'}) -Compress) + "`n"))
-    $legacy=Build-RouterRosterProposal
+    $legacy=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True (-not $legacy.changed) 'pass record without categories covers no job and does not throw'
     $scenario=Join-Path $temp 'scenario-flip'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'flip-p1'; $null=Build-RouterRosterProposal
+    Add-Pass 'flip-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     $p2Row=New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50
     $p2Row.results += [pscustomobject]@{model='claude-sonnet-5';score=60;margin=$null}
     Save-Category -Category complex-coding -Rows @($p2Row)
-    Add-Pass 'flip-p2'; $null=Build-RouterRosterProposal
+    Add-Pass 'flip-p2'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     $p2Records=@(Get-Content (Join-Path $scenario 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True (@($p2Records | Where-Object { $_.pass_id -eq 'flip-p2' -and $_.job -eq 'coder' -and $_.slot -eq 'backup' -and $_.result -eq 'keep' }).Count -eq 1) 'intervening pass records backup keep'
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50),(New-Reading 'c3' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50))
-    Add-Pass 'flip-p3'; $flipped=Build-RouterRosterProposal
+    Add-Pass 'flip-p3'; $flipped=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     $flipProposal=Get-Content -LiteralPath $flipped.proposal -Raw | ConvertFrom-Json -Depth 30
     Assert-True ($flipped.changed -and $flipProposal.jobs.coder.first -eq 'claude-opus-5-5' -and $flipProposal.jobs.coder.backup -eq 'gpt-6.1-sol' -and @($flipProposal.validation_errors).Count -eq 0) 'confirmed vendor flip immediately recomputes valid other-vendor backup'
     Assert-True ($script:alerts[-1].key -eq $coverageAlertKey -and $flipped.changes[0].evidence -ne $coverageEvidence) 'alert key depends on job slot and models rather than evidence'
@@ -176,16 +177,16 @@ try {
     $roster.jobs.fast.first='claude-haiku-4-5-20251001'; $roster.jobs.fast.first_vendor='claude'; $roster.jobs.fast.backup='gpt-6-luna'; $roster.jobs.fast.backup_vendor='codex'; $roster.approved=$true; $roster.approved_at='2026-09-28T09:00:00Z'
     [IO.File]::WriteAllText((Join-Path $scenario 'roster.json'),($roster | ConvertTo-Json -Depth 30))
     Save-Category -Category mechanical -Rows @((New-Reading 'm1' 'claude-opus-5-5' 55 'claude-haiku-4-5-20251001' 55),(New-Reading 'm2' 'claude-opus-5-5' 55 'claude-haiku-4-5-20251001' 55))
-    Add-Pass 'fast-p1' @('mechanical'); $null=Build-RouterRosterProposal
-    Add-Pass 'fast-p2' @('mechanical'); $fastTwo=Build-RouterRosterProposal
+    Add-Pass 'fast-p1' @('mechanical'); $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    Add-Pass 'fast-p2' @('mechanical'); $fastTwo=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True (-not $fastTwo.changed) 'priced opus ties dated haiku across two mechanical passes without a proposal'
     $scenario=Join-Path $temp 'scenario-seed'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Seed | Out-Null
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Approve | Out-Null
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'seed-p1'; $null=Build-RouterRosterProposal
-    Add-Pass 'seed-p2'; $seedTwo=Build-RouterRosterProposal
+    Add-Pass 'seed-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    Add-Pass 'seed-p2'; $seedTwo=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True ($seedTwo.changed -and (Test-Path -LiteralPath $seedTwo.proposal)) 'approved seed accepts two covered passes without optional pass_id'
     Write-Output "TOTAL PASS: $script:passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
