@@ -1,4 +1,6 @@
 {
+  "scripts/model-router/tests/fixtures/bench-ddq-response.json": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test-bench-json-transport.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/bench-proposal-evidence.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-bench-cache-duration.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-bench-judge-effort.ps1": {"consumers": [], "summary_token": "model router"},
@@ -254,7 +256,7 @@
     "summary_token": "git machinery"
   },
   "scripts/invoke-codex-process.ps1": {
-    "consumers": ["dt-review"],
+    "consumers": ["dt-build", "dt-review", "dt-image-gen", "dt-writing-draft", "dt-writing-edit"],
     "summary_token": "process wrapper"
   },
   "scripts/test-file-link-format.py": {

@@ -225,20 +225,20 @@ if($env:BENCH_FAKE_SLEEP -eq 'yes'){Start-Sleep -Seconds 30}
     Write-Output 'PASS: existing checks plus Claude process/model/cache/timeout/cleanup/resolver; roster fallback/override; actual CLI scopes/monthly/frontier'
 } finally {$env:DT_MODEL_ROUTER_STATE=$priorState; Exit-RouterTestCodexHome $fixtureCodexHome; Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'router-bench-tests-'}
 
-# Fresh child processes keep each refusal suite's state/config seams isolated.
+# Fresh child processes keep each regression's state/config seams isolated.
 $ownChecks=$script:benchChecks
 $childChecks=0
-foreach($suite in @('test-bench-refusal.ps1','test-bench-codex-refusal.ps1')) {
+foreach($suite in @('test-bench-refusal.ps1','test-bench-codex-refusal.ps1','test-bench-json-transport.ps1')) {
     $childOutput=@(& pwsh -NoProfile -File (Join-Path $PSScriptRoot $suite) 2>&1)
     $childExit=$LASTEXITCODE
     $childText=($childOutput | ForEach-Object { [string]$_ }) -join "`n"
     $summaries=[regex]::Matches($childText,'(?m)^SUMMARY: (\d+) passed; (\d+) failed\r?$')
     $childOutput | ForEach-Object { Write-Output "CHILD ${suite}: $_" }
-    if($childExit -ne 0){throw "Refusal regression failed: $suite (exit $childExit)"}
-    if($summaries.Count -ne 1){throw "Refusal regression missing or ambiguous numeric summary: $suite"}
+    if($childExit -ne 0){throw "Child regression failed: $suite (exit $childExit)"}
+    if($summaries.Count -ne 1){throw "Child regression missing or ambiguous numeric summary: $suite"}
     $passed=[int]$summaries[0].Groups[1].Value
     $failed=[int]$summaries[0].Groups[2].Value
-    if($passed -le 0 -or $failed -ne 0){throw "Refusal regression invalid counts: $suite"}
+    if($passed -le 0 -or $failed -ne 0){throw "Child regression invalid counts: $suite"}
     $childChecks += $passed
 }
 Write-Output "COUNT: own=$ownChecks; children=$childChecks"

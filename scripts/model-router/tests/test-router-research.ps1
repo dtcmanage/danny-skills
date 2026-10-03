@@ -37,6 +37,38 @@ function Fixture([string]$Category,[string]$Model,[string]$Date='2026-09-01',[do
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
+    # Drive the production Claude research pipe with an actual UTF8 native peer;
+    # isolate command discovery/arguments so no vendor or model is invoked.
+    $unicode="§ snow 雪 emoji 😀 Tibetan བོད་`nline two`ttab and quote `""
+    $nativePeer=Join-Path $temp 'unicode-peer.cjs'
+    $receivedPath=Join-Path $temp 'unicode-received.txt'
+    [IO.File]::WriteAllText($nativePeer,'const fs=require("node:fs");let text="";process.stdin.setEncoding("utf8");process.stdin.on("data",chunk=>text+=chunk);process.stdin.on("end",()=>{fs.writeFileSync(process.argv[2],text);process.stdout.write(JSON.stringify({result:text}));process.stderr.write(text);});')
+    $native=(Get-Command node).Source
+    $priorArguments=(Get-Item Function:Get-RouterCategoryCallArguments).ScriptBlock
+    function Get-RouterCategoryCallArguments {param($Lane,$OutPath) @($nativePeer,$receivedPath)}
+    function Get-Command {if($args[0] -eq 'claude'){return [pscustomobject]@{Source=$native}};Microsoft.PowerShell.Core\Get-Command @args}
+    try {
+        $reply=Invoke-RouterCategoryCall -Category deep-research -Lane claude -Prompt $unicode -TimeoutMs 10000
+        Assert-True ($reply -ceq $unicode -and (Get-Content -Raw $receivedPath) -ceq $unicode) 'native Claude research Unicode prompt/answer exact'
+        $psPeer=Join-Path $temp 'unicode $ literal peer.ps1'
+        [IO.File]::WriteAllText($psPeer,@'
+$text=[Console]::In.ReadToEnd()
+[IO.File]::WriteAllText($args[0],$text)
+[IO.File]::WriteAllText($args[0]+'.args.json',(ConvertTo-Json -InputObject @($args) -Compress))
+if($args -contains '--fail'){[Console]::Error.Write($text);exit 9}
+[Console]::Write((@{result=$text}|ConvertTo-Json -Compress))
+'@)
+        $native=$psPeer
+        $peerArgs=@($receivedPath,'','space value','quote " value',$unicode,'literal $(throw "must not execute"); &')
+        function Get-RouterCategoryCallArguments {param($Lane,$OutPath) $peerArgs}
+        $reply=Invoke-RouterCategoryCall -Category deep-research -Lane claude -Prompt $unicode -TimeoutMs 10000
+        Assert-True ($reply -ceq $unicode -and (Get-Content -Raw $receivedPath) -ceq $unicode) 'PS1 Claude research defaults Unicode prompt/answer exact'
+        Assert-True ((Get-Content -Raw ($receivedPath+'.args.json')) -ceq (ConvertTo-Json -InputObject $peerArgs -Compress)) 'PS1 Claude research preserves empty, spaced, quoted, Unicode and literal shell argv'
+        $peerArgs+=@('--fail')
+        $errorText=''
+        try {Invoke-RouterCategoryCall -Category deep-research -Lane claude -Prompt $unicode -TimeoutMs 10000;throw 'accepted failed peer'} catch {$errorText=$_.Exception.Message}
+        Assert-True ($errorText -ceq ('Category research failed: '+$unicode)) 'PS1 Claude research Unicode stderr retained on nonzero exit'
+    } finally {Remove-Item Function:Get-Command;Set-Item Function:Get-RouterCategoryCallArguments $priorArguments}
     $good = Fixture 'complex-coding' 'gpt-6.1-sol'
     Assert-True (Test-RouterReadings $good 'complex-coding' @('gpt-6.1-sol')) 'good schema'
     Assert-True (-not (Test-RouterReadings $good 'math' @('gpt-6.1-sol'))) 'wrong category rejected'

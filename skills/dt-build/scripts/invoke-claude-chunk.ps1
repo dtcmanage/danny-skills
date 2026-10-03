@@ -141,6 +141,7 @@ if (-not $Preflight) {
 
 $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot "scripts\security\redact-secrets.ps1")
+. (Join-Path $repoRoot "scripts\invoke-codex-process.ps1")
 # Child-process test seam: replace diagnosis network/clock and offline sleep together.
 $script:RouterDispatchSleep = { param([int]$Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
 if ($env:DT_BUILD_DISPATCH_SEAMS) {
@@ -267,7 +268,7 @@ try {
     }
     elseif ($cliExtension -eq '.ps1') {
         $startInfo.FileName = 'pwsh'
-        $prefixArgs = @('-NoProfile', '-File', $claudeCli)
+        $prefixArgs = @(Get-Utf8PowerShellArguments -ScriptPath $claudeCli)
     }
     else {
         $startInfo.FileName = $claudeCli
@@ -276,6 +277,10 @@ try {
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $utf8 = [Text.UTF8Encoding]::new($false)
+    $startInfo.StandardInputEncoding = $utf8
+    $startInfo.StandardOutputEncoding = $utf8
+    $startInfo.StandardErrorEncoding = $utf8
     $startInfo.CreateNoWindow = $true
     $startInfo.WorkingDirectory = $projectRoot
     foreach ($arg in @($prefixArgs) + @($args)) { [void]$startInfo.ArgumentList.Add($arg) }

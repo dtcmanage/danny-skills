@@ -11,6 +11,17 @@ $script:BenchRoot=$PSScriptRoot
 . (Join-Path $PSScriptRoot '../../wrap-prompt-envelope.ps1')
 . (Join-Path $PSScriptRoot '../../security/redact-secrets.ps1')
 
+function Set-BenchProcessEncoding {
+    param([Diagnostics.ProcessStartInfo]$ProcessInfo, [switch]$Python)
+    # Windows console/OEM defaults can encode section signs as control bytes.
+    # Both ends of the redirected text protocol must agree on UTF-8.
+    $utf8=[Text.UTF8Encoding]::new($false)
+    $ProcessInfo.StandardInputEncoding=$utf8
+    $ProcessInfo.StandardOutputEncoding=$utf8
+    $ProcessInfo.StandardErrorEncoding=$utf8
+    if($Python){$ProcessInfo.Environment['PYTHONUTF8']='1'}
+}
+
 function Get-BenchErrorDetail {
     param([string]$Stdout, [string]$Stderr)
     # Select diagnostic fields; never persist the CLI's config/credential objects.
@@ -70,6 +81,7 @@ function Invoke-BenchCli {
             $psi.FileName=(Get-Command python -ErrorAction Stop).Source
             $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
             $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+            Set-BenchProcessEncoding -ProcessInfo $psi -Python
             [void]$psi.ArgumentList.Add((Join-Path $script:BenchRoot 'codex_appserver.py'))
             $process=[Diagnostics.Process]::Start($psi)
             try {
@@ -90,11 +102,12 @@ function Invoke-BenchCli {
         if(-not $cli){throw 'Claude CLI missing'}
         $args=@('-p','--model',$Request.model,'--effort',$Request.effort,'--output-format','json','--no-session-persistence','--strict-mcp-config','--tools','')
         $psi=[Diagnostics.ProcessStartInfo]::new()
-        if([IO.Path]::GetExtension($cli) -eq '.ps1'){$psi.FileName=(Get-Command pwsh).Source;$args=@('-NoProfile','-File',$cli)+$args}
+        if([IO.Path]::GetExtension($cli) -eq '.ps1'){$psi.FileName=(Get-Command pwsh).Source;$args=@(Get-Utf8PowerShellArguments -ScriptPath $cli)+$args}
         elseif([IO.Path]::GetExtension($cli) -eq '.cmd') {throw 'Claude native executable required for bounded dispatch; cmd shim unsupported'}
         else{$psi.FileName=$cli}
         $psi.WorkingDirectory=$work;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
         $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+        Set-BenchProcessEncoding -ProcessInfo $psi
         foreach($arg in $args){[void]$psi.ArgumentList.Add([string]$arg)}
         $process=[Diagnostics.Process]::Start($psi)
         try {
@@ -175,6 +188,7 @@ function Invoke-RouterBench {
     $psi.FileName=(Get-Command python -ErrorAction Stop).Source
     $psi.WorkingDirectory=$benchStateRoot;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
     $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+    Set-BenchProcessEncoding -ProcessInfo $psi -Python
     $psi.Environment['PYTHONDONTWRITEBYTECODE']='1'
     [void]$psi.ArgumentList.Add((Join-Path $script:BenchRoot 'bench_engine.py'))
     $process=[Diagnostics.Process]::Start($psi)

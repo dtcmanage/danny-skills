@@ -415,7 +415,8 @@ $outIndex = [Array]::IndexOf([object[]]$args, '--output-last-message')
 $outPath = if ($outIndex -ge 0) { [string]$args[$outIndex + 1] } else { '' }
 $mode = [string]$env:DT_FAKE_CODEX_MODE
 if ($mode -eq 'hang') { Start-Sleep -Seconds 10; exit 0 }
-[void][Console]::In.ReadToEnd()
+$receivedPrompt=[Console]::In.ReadToEnd()
+if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
 if ($mode -eq 'preflight') { [System.IO.File]::WriteAllText($outPath, 'OK'); exit 0 }
 if ($mode -eq 'malformed') { [System.IO.File]::WriteAllText($outPath, 'I cannot do that.'); exit 0 }
 $report = @"
@@ -434,6 +435,11 @@ NONE
 credential: ghp_abcdefghijklmnopqrstuvwxyz123456
 "@
 [System.IO.File]::WriteAllText($outPath, $report)
+if($env:DT_FAKE_UNICODE_TEXT){
+    [IO.File]::AppendAllText($outPath,"`n"+$env:DT_FAKE_UNICODE_TEXT)
+    [Console]::WriteLine($env:DT_FAKE_UNICODE_TEXT)
+    [Console]::Error.WriteLine($env:DT_FAKE_UNICODE_TEXT)
+}
 [Console]::Error.WriteLine('stream ghp_abcdefghijklmnopqrstuvwxyz123456')
 '@
     $wrapperPrompt = Join-Path $tempRoot 'wrapper-prompt.md'
@@ -507,7 +513,8 @@ credential: ghp_abcdefghijklmnopqrstuvwxyz123456
     Write-Utf8 -Path $fakeClaude -Content @'
 if ($args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
 if ($env:DT_FAKE_CLAUDE_ARGS) { [System.IO.File]::WriteAllText($env:DT_FAKE_CLAUDE_ARGS, ($args -join '|')) }
-[void][Console]::In.ReadToEnd()
+$receivedPrompt=[Console]::In.ReadToEnd()
+if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
 $mode = [string]$env:DT_FAKE_CLAUDE_MODE
 $ranModel = if ($mode -eq 'wrongmodel') { 'claude-haiku-4-5-20251001' } else { 'claude-sonnet-5' }
 function Write-Envelope([string]$Text) {
@@ -534,6 +541,10 @@ DISCOVERED_ENHANCEMENTS:
 NONE
 credential: ghp_abcdefghijklmnopqrstuvwxyz123456
 "@
+if($env:DT_FAKE_UNICODE_TEXT){
+    $report += "`n"+$env:DT_FAKE_UNICODE_TEXT
+    [Console]::Error.WriteLine($env:DT_FAKE_UNICODE_TEXT)
+}
 Write-Envelope $report
 '@
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
@@ -615,6 +626,54 @@ Write-Envelope $report
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $stampedOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'stamped report regression' -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $stampedOutput) -match '\ADT_BUILD_REPORT_VERSION:') 'timestamp-prefixed Claude structured report parses and is retained without stamp'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
+
+    # Peers rely on inherited console defaults, just like installed PS1 shims.
+    # Check the actual prompt received, retained final message and stderr on both lanes.
+    $unicode='§ snow 雪 emoji 😀 Tibetan བོད་ quote " backslash \'
+    $unicodePrompt=Join-Path $tempRoot 'unicode-prompt.md'
+    $unicodePromptText="RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`n"+$unicode+"`nline two`ttab"
+    Write-Utf8 -Path $unicodePrompt -Content $unicodePromptText
+    $priorUnicodeText=$env:DT_FAKE_UNICODE_TEXT;$priorUnicodePrompt=$env:DT_FAKE_UNICODE_PROMPT
+    $unicodeResults=@()
+    try {
+        $env:DT_FAKE_UNICODE_TEXT=$unicode
+        foreach($lane in @('codex','claude')) {
+            $env:DT_FAKE_UNICODE_PROMPT=Join-Path $tempRoot "$lane-unicode-received.txt"
+            $out=Join-Path $tempRoot "$lane-unicode-output.md"
+            $cliArgs=if($lane -eq 'codex'){@('-CodexCliPath',$fakeCodex)}else{@('-ClaudeCliPath',$fakeClaude,'-Model','claude-sonnet-5')}
+            $env:DT_FAKE_CODEX_MODE='success';$env:DT_FAKE_CLAUDE_MODE='success'
+            & pwsh -NoProfile -File (Join-Path $scriptDir "invoke-$lane-chunk.ps1") -ProjectPath $workingTree -PromptPath $unicodePrompt -OutputPath $out -Category routine-coding -Effort medium -SelectionReason 'Unicode transport fixture' -Json @cliArgs *> $null
+            $check=@{lane=$lane;success=($LASTEXITCODE -eq 0);prompt=((Get-Content -Raw $env:DT_FAKE_UNICODE_PROMPT) -ceq $unicodePromptText);answer=((Get-Content -Raw $out).Contains($unicode));stream=((Get-Content -Raw "$out.stream.log").Contains($unicode))}
+            Write-Output "UNICODE: $lane success=$($check.success); prompt=$($check.prompt); answer=$($check.answer); stream=$($check.stream)"
+            $unicodeResults+=$check
+        }
+        foreach($check in $unicodeResults){
+            Assert-True $check.success "$($check.lane) Unicode wrapper invocation"
+            Assert-True $check.prompt "$($check.lane) exact Unicode prompt received by default PS1 peer"
+            Assert-True $check.answer "$($check.lane) exact Unicode final message retained"
+            Assert-True $check.stream "$($check.lane) exact Unicode process stream retained"
+        }
+        # CommandWithArgs must preserve argv boundaries, literal shell syntax and
+        # stdout/stderr and a nonzero CLI exit code.
+        . (Join-Path $repoRoot 'scripts/invoke-codex-process.ps1')
+        $argvPeer=Join-Path $tempRoot 'argv $ literal peer.ps1'
+        Write-Utf8 -Path $argvPeer -Content @'
+$prompt=[Console]::In.ReadToEnd()
+[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$prompt)
+[Console]::WriteLine((ConvertTo-Json -InputObject @($args) -Compress))
+[Console]::Error.WriteLine($env:DT_FAKE_UNICODE_TEXT)
+exit 7
+'@
+        $literalArgs=@('space value','quote " value',"single ' quote",$unicode,'literal $(throw "must not execute"); &','--flag')
+        $argvResult=Invoke-CodexProcess -CodexPath $argvPeer -Arguments $literalArgs -Prompt $unicodePromptText -WorkingDirectory $workingTree -TimeoutMs 10000
+        Assert-True ($argvResult.exit_code -eq 7 -and -not $argvResult.timed_out) 'UTF8 PS1 bootstrap preserves explicit CLI exit code'
+        Assert-True ($argvResult.stdout.Trim() -ceq (ConvertTo-Json -InputObject $literalArgs -Compress)) 'UTF8 PS1 bootstrap preserves spaced, quoted, Unicode and literal shell arguments'
+        Assert-True ((Get-Content -Raw $env:DT_FAKE_UNICODE_PROMPT) -ceq $unicodePromptText) 'shared Codex process PS1 Unicode prompt exact'
+        Assert-True ($argvResult.stderr.Trim() -ceq $unicode) 'shared Codex process PS1 Unicode stderr exact'
+        Write-Utf8 -Path $argvPeer -Content "throw 'fixture terminating error'"
+        $thrown=Invoke-CodexProcess -CodexPath $argvPeer -Arguments @('--flag') -Prompt '' -WorkingDirectory $workingTree -TimeoutMs 10000
+        Assert-True ($thrown.exit_code -eq 1 -and $thrown.stderr.Contains('fixture terminating error')) 'UTF8 PS1 bootstrap preserves terminating script failure'
+    } finally {$env:DT_FAKE_UNICODE_TEXT=$priorUnicodeText;$env:DT_FAKE_UNICODE_PROMPT=$priorUnicodePrompt}
 
     # Pin the wrapper result consumed by the retry rule on both lanes. All
     # diagnosis, clock, sleep, CLI and alert operations use temp-only fixtures.

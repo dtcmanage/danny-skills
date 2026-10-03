@@ -3,6 +3,15 @@
 
 Set-StrictMode -Version Latest
 
+function Get-Utf8PowerShellArguments {
+    param([Parameter(Mandatory)][string]$ScriptPath)
+    # The child PS1 shim must share the parent's UTF-8 pipe contract. Keep paths
+    # and CLI arguments as argv entries; never interpolate them into shell code.
+    # Preserve a failed native command's exit code even when a shim omits exit.
+    $bootstrap = '$__dtUtf8Encoding=[Text.UTF8Encoding]::new($false);[Console]::InputEncoding=$__dtUtf8Encoding;[Console]::OutputEncoding=$__dtUtf8Encoding;$OutputEncoding=$__dtUtf8Encoding;$__dtUtf8Path=$args[0];$__dtUtf8Args=@($args | Select-Object -Skip 1);$LASTEXITCODE=0;try { & $__dtUtf8Path @__dtUtf8Args } catch { throw };exit $LASTEXITCODE'
+    return @('-NoProfile','-CommandWithArgs',$bootstrap,$ScriptPath)
+}
+
 function Get-CodexProcessSpec {
     param(
         [Parameter(Mandatory)]
@@ -29,7 +38,7 @@ function Get-CodexProcessSpec {
 
     if ($extension -eq '.ps1') {
         $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
-        return [pscustomobject]@{ file = $pwsh; prefix_args = @('-NoProfile', '-File', $resolved) }
+        return [pscustomobject]@{ file = $pwsh; prefix_args = @(Get-Utf8PowerShellArguments -ScriptPath $resolved) }
     }
 
     return [pscustomobject]@{ file = $resolved; prefix_args = @() }

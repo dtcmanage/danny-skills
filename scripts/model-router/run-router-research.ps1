@@ -190,9 +190,15 @@ function Invoke-RouterCategoryCall {
         } finally { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
     }
     $psi = [Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = (Get-Command claude -ErrorAction Stop).Source
+    $cli = (Get-Command claude -ErrorAction Stop).Source
+    if ([IO.Path]::GetExtension($cli) -eq '.ps1') {
+        $psi.FileName = (Get-Command pwsh -ErrorAction Stop).Source
+        foreach ($arg in @(Get-Utf8PowerShellArguments -ScriptPath $cli)) { [void]$psi.ArgumentList.Add($arg) }
+    } else { $psi.FileName = $cli }
     foreach ($arg in @(Get-RouterCategoryCallArguments -Lane claude -OutPath '')) { [void]$psi.ArgumentList.Add($arg) }
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $utf8 = [Text.UTF8Encoding]::new($false)
+    $psi.StandardInputEncoding = $utf8; $psi.StandardOutputEncoding = $utf8; $psi.StandardErrorEncoding = $utf8
     $process = [Diagnostics.Process]::Start($psi)
     try {
         $output = $process.StandardOutput.ReadToEndAsync()

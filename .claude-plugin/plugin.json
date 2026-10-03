@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.17.6",
+  "version": "0.17.7",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.17.7 Fix model router UTF-8 benchmark and research transport and process wrapper shim encoding; update version policy shared ownership; dt-build 2.19.6, dt-review 1.16.6, dt-image-gen 0.3.6, dt-writing-draft 0.2.6, dt-writing-edit 0.3.6.",
       "0.17.6 dt-build 2.19.5, dt-review 1.16.5, dt-image-gen 0.3.5, dt-writing-draft 0.2.5, dt-writing-edit 0.3.5: model router starter-bank grading and fixed judge effort; duration-aware Claude cache pricing and historical usage recovery; current-evidence proposal approval; retire obsolete canary runner and expand regression gate; version policy ownership declarations cover the new suites.",
       "0.17.5 dt-build 2.19.4, dt-review 1.16.4, dt-image-gen 0.3.4, dt-writing-draft 0.2.4, dt-writing-edit 0.3.4: model router graders simulate real typed notes and test malformed ledger entities.",
       "0.17.4 dt-build 2.19.3, dt-review 1.16.3, dt-image-gen 0.3.3, dt-writing-draft 0.2.3, dt-writing-edit 0.3.3: model router benchmarks use direct-answer instructions, require approved effort evidence, and scope vendor status lookup to monitored components.",
