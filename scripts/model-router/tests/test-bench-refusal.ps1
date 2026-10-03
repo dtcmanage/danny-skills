@@ -34,6 +34,26 @@ try {
             Assert ($detail -notmatch 'SYNTHETICSECRET123|CONFIG_SECRET_SENTINEL|STDERR_SECRET_SENTINEL|=SECRET_SENTINEL') "Secret leaked: $case"
         }
     }
+    $doc=@{result="The model's tool call could not be parsed (retry also failed).";is_error=$true;modelUsage=@{'claude-opus-5-5'=@{}};usage=@{input_tokens=2;output_tokens=6;cache_read_input_tokens=0;cache_creation_input_tokens=10;cache_creation=@{ephemeral_5m_input_tokens=0;ephemeral_1h_input_tokens=10}}}
+    $payload=($doc|ConvertTo-Json -Depth 8 -Compress).Replace("'","''")
+    [IO.File]::WriteAllText($fake,"[Console]::In.ReadToEnd() | Out-Null`n[Console]::Out.WriteLine('$payload')`nexit 1")
+    try {$null=Invoke-BenchCli -Request $request -ClaudeResolver {$fake};throw 'Parse error accepted'}
+    catch {
+        $retained=$_.Exception.Data['bench_response']
+        Assert ($retained.status -eq 'unknown' -and $retained.failure_category -eq 'protocol' -and $retained.root_cause -eq 'unverified') 'Provider tool parse must not claim environment root cause'
+        Assert ($retained.usage.output -eq 6 -and $retained.usage.cache_write_1h -eq 10 -and $retained.usage_partial) 'Failed Claude call lost measured usage'
+    }
+    $parseState=Join-Path $root 'parse-error-host'
+    $parseRun=Invoke-RouterBench -Job fast -Candidate claude-opus-5-5 -Incumbent claude-opus-5-5 -EffortOverride low -StateDir $parseState -CliInvoker {param($r) Invoke-BenchCli -Request $r -ClaudeResolver {$fake}} -Limits {param($v) @{blocked=$false}} -Diagnosis {param($v,$e) @{verdict='unverified'}} -NoAlerts
+    Assert ($parseRun.raw_gate -eq 'unknown' -and $parseRun.calls.Count -eq 24) 'Conservative parse-error retry bound changed'
+    Assert ($parseRun.telemetry.claude.partial_calls -eq 24 -and $parseRun.telemetry.claude.tokens.output -eq 144) 'Host discarded failed-call usage'
+    Assert ($parseRun.first_attempt_failures.'claude-opus-5-5'.answer_reps -eq 12 -and $parseRun.first_attempt_failures.'claude-opus-5-5'.failure_categories.protocol -eq 12) 'First-attempt parse failures not attributed to model'
+    foreach($case in @(@{result='Claude usage limit reached. Your limit will reset at 2pm.';want='quota'},@{result='Request timed out';want='transport'},@{result='Something else broke';want='identity'})) {
+        $payload=(@{result=$case.result;is_error=$true}|ConvertTo-Json -Compress).Replace("'","''")
+        [IO.File]::WriteAllText($fake,"[Console]::In.ReadToEnd() | Out-Null`n[Console]::Out.WriteLine('$payload')`nexit 1")
+        try {$null=Invoke-BenchCli -Request $request -ClaudeResolver {$fake};throw 'Error response accepted'}
+        catch {Assert ($_.Exception.Data['bench_response'].failure_category -eq $case.want) "Missing model usage must not relabel $($case.want) failure"}
+    }
     foreach($vendor in @('claude','codex')) {
         $state=Join-Path $root $vendor
         $other=Join-Path $root ($vendor+'-unrelated')

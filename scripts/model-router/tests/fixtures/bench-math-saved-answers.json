@@ -1,0 +1,16 @@
+[
+  {
+    "bank_sha256": "154bde92847354319143dcf5052029edd930dc3a3714e2bd7446a35c04330bd7",
+    "prompt_sha256": "b2625c8d2b050d59b3c86721eb77f185901c030b8f3e17aebae95b6636f1878c",
+    "model": "claude-opus-5-5",
+    "source": "call-059",
+    "answer": "[17:10:05] ```json\n{\n  \"wealth\": [0.92, 0.9936, 1.073088, 1.15893504, 1.1125776384, 1.134829191168, 1.15752577499136, 1.1112247439917056],\n  \"peaks\": [1.0, 1.0, 1.073088, 1.15893504, 1.15893504, 1.15893504, 1.15893504, 1.15893504],\n  \"drawdowns\": [-0.08, -0.0064, 0.0, 0.0, -0.04, -0.0208, -0.001216, -0.04116736],\n  \"max_drawdown\": -0.08\n}\n```\n\nThe worst drawdown is in month 1, when wealth fell to 0.92 against the starting peak of 1. Wealth set new highs in months 3 and 4, peaking at 1.15893504. The later dip ends the series 4.12% below that high, which is shallower than the month-1 drop.\n\n| Claim | Check | Evidence |\n| :---- | :---- | :---- |\n| Wealth chain | Computed in Python from `fixtures/input.json`; checked month 8 by hand | 1.15752577499136 × 0.96 = 1.1112247439917056 ✓ |\n| Peaks include the start | Running max is seeded at 1.0 | Months 1–2 peak = 1.0 ✓ |\n| Month 8 drawdown | Factored by hand: 0.96 × 1.02 × 1.02 × 0.96 − 1 | −0.04116736 ✓ |\n| Month 7 drawdown | 0.96 × 1.0404 − 1 | −0.001216 ✓ |\n| max_drawdown | Minimum of the drawdowns array | −0.08 (month 1) ✓ |\n\nThe drawdowns above are rounded to their exact decimal values. The raw floating-point results differ from them by less than 1e-15, well inside the 1e-8 tolerance."
+  },
+  {
+    "bank_sha256": "154bde92847354319143dcf5052029edd930dc3a3714e2bd7446a35c04330bd7",
+    "prompt_sha256": "b2625c8d2b050d59b3c86721eb77f185901c030b8f3e17aebae95b6636f1878c",
+    "model": "claude-opus-5-5",
+    "source": "call-060",
+    "answer": "[17:10:18] ```json\n{\n  \"wealth\": [0.92, 0.9936, 1.073088, 1.15893504, 1.1125776384, 1.134829191168, 1.15752577499136, 1.1112247439917056],\n  \"peaks\": [1, 1, 1.073088, 1.15893504, 1.15893504, 1.15893504, 1.15893504, 1.15893504],\n  \"drawdowns\": [-0.08, -0.0064, 0.0, 0.0, -0.04, -0.0208, -0.001216, -0.04116736],\n  \"max_drawdown\": -0.08\n}\n```\n\nThe worst drawdown is the first month's −8%, because the starting wealth of 1 counts as the first peak. Wealth climbs back above 1 in month 3, and the later dips from the month-4 high (1.15893504) are smaller: −4.00%, then −2.08%, −0.12%, and −4.12%.\n\n| Claim | Check | Evidence |\n| :---- | :---- | :---- |\n| Wealth, peaks and drawdowns are correct | Ran a Python script on `fixtures/input.json` | The output matches the values above to within floating-point noise (well under 1e-8) |\n| Month-8 drawdown is −0.04116736 | Worked out by hand: 1.15752577… ÷ 1.15893504 − 1 = 0.998784 × 0.96 − 1 | Matches the script |\n| Max drawdown is −0.08 | Took the minimum of the eight drawdowns | Month 1 = −0.08; the next lowest is −0.0412 |"
+  }
+]

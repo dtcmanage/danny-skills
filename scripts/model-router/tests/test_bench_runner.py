@@ -18,6 +18,109 @@ import bench_engine as engine
 from codex_appserver import usage
 
 
+@pytest.fixture(autouse=True)
+def synthetic_native_auth(tmp_path, monkeypatch):
+    source = tmp_path / 'native-auth-source'
+    source.mkdir()
+    (source / 'auth.json').write_text('{}', encoding='utf-8')
+    monkeypatch.setenv('CODEX_HOME', str(source))
+
+
+@pytest.mark.parametrize('newline', ['\n', '\r\n'])
+def test_fenced_trailing_prose_line_endings(newline):
+    assert engine.answer_body(newline.join(['```json', '{"value":42}', '```', 'Done.'])) == '{"value":42}'
+
+
+@pytest.mark.parametrize('answer', ['````md\n```py\nx\n```\n````',
+    '```py\n```json\nx\n```\n```', '```\nx\n```\n```'])
+def test_ambiguous_nested_fences(answer):
+    with pytest.raises(ValueError, match='Ambiguous'):
+        engine.answer_body(answer)
+
+
+def test_rubric_preserves_embedded_quote_and_whole_fence():
+    prose = 'Our results improved.\n\n```text\nA quoted observation.\n```\n\nRisks remain.'
+    assert engine.answer_body(prose, structured=False) == prose
+    assert engine.answer_body('```text\nThe complete letter.\n```', structured=False) == 'The complete letter.'
+    for kept in ('```text\nA\n```\nmid\n```text\nB\n```', '````md\nThe letter.\n````'):
+        assert engine.answer_body(kept, structured=False) == kept
+
+
+def test_native_config_does_not_relabel_unrelated_errors(tmp_path):
+    import codex_appserver as transport
+    with pytest.raises(FileNotFoundError):
+        with transport.native_config_home(tmp_path):
+            raise FileNotFoundError('synthetic missing binary')
+    assert not list(tmp_path.glob('router-bench-native-home-*'))
+
+
+def test_rubric_full_prose_reaches_judge(tmp_path):
+    answer = 'Full opening.\n```text\nQuoted evidence.\n```\nFull closing.'
+    seen = []
+    def dispatch(request):
+        if request['purpose'] == 'answer':
+            return {'status': 'ok', 'answer': answer}
+        seen.append(request['prompt'])
+        return writer_judges(request)
+    result = run(tmp_path, job='writer', effort='medium', dispatch=dispatch)
+    assert seen and all(answer in prompt for prompt in seen)
+    assert all(Path(row['answer_path']).read_text() == answer for row in result['outcomes'])
+
+
+def test_native_config_reference_cleanup(tmp_path, monkeypatch):
+    import codex_appserver as transport
+    source = Path(os.environ['CODEX_HOME']) / 'auth.json'
+    before = source.read_bytes()
+    for key in ('OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN', 'CODEX_CONFIG', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN'):
+        monkeypatch.setenv(key, 'HOSTILE_SENTINEL')
+    home = None
+    with pytest.raises(RuntimeError, match='synthetic interruption'):
+        with transport.native_config_home(tmp_path) as env:
+            home = Path(env['CODEX_HOME'])
+            assert home != source.parent and not (home / 'config.toml').exists()
+            assert (home / 'auth.json').is_symlink() and os.path.samefile(home / 'auth.json', source)
+            assert all(key not in env for key in ('OPENAI_API_KEY', 'CODEX_ACCESS_TOKEN', 'CODEX_CONFIG', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN'))
+            raise RuntimeError('synthetic interruption')
+    assert home is not None and not home.exists() and source.read_bytes() == before
+
+
+def test_native_config_no_copy_fallback(tmp_path, monkeypatch):
+    import codex_appserver as transport
+    source = Path(os.environ['CODEX_HOME']) / 'auth.json'
+    before = source.read_bytes()
+    def unavailable(*args, **kwargs):
+        raise OSError('synthetic unsupported symlink')
+    monkeypatch.setattr(Path, 'symlink_to', unavailable)
+    with pytest.raises(transport.BoundaryError, match='native auth reference unavailable'):
+        with transport.native_config_home(tmp_path):
+            pytest.fail('must not fallback to copied credentials')
+    assert source.read_bytes() == before and not list(tmp_path.glob('router-bench-native-home-*'))
+
+
+def test_native_dirty_config_rejected(tmp_path):
+    import codex_appserver as transport
+    with pytest.raises(transport.BoundaryError, match='nonempty native config layer'):
+        transport.run([sys.executable, str(Path(__file__).with_name('fake-appserver.py')), 'dirty-layer'],
+                      {'model':'gpt-6.1-sol','effort':'high','prompt':'Synthetic fixture\nexact bytes'}, tmp_path, 5000)
+    assert not list(tmp_path.glob('router-bench-native-home-*'))
+
+
+@pytest.mark.parametrize('identity', [None, {'comparison_valid':False}])
+def test_failed_unknown_identity_usage_unpriced(identity):
+    call = dict(vendor='codex', model='gpt-6.1-sol', quota={}, status='unknown',
+                resolved_model=None, identity=identity, usage={'input':100,'output':10})
+    prices = {'models': {'gpt-6.1-sol': {'prices_usd_per_mtok': {'input':1,'output':1}}}}
+    result = engine.summarize_calls([call], prices)['codex']
+    assert result['tokens'] == {'input':100,'output':10}
+    assert result['unpriced_calls'] == 1 and result['priced_subtotal_usd'] == 0
+
+
+@pytest.mark.parametrize('message', ['TIMEOUT', 'timed out', 'transport failed', 'transport failure'])
+def test_timeout_classification(message):
+    import codex_appserver as transport
+    assert transport.failure_category(message) == 'transport'
+
+
 # Captured TokenUsageBreakdown schema: only cacheWriteInputTokens is optional,
 # with integer default 0. No generated schema file is needed by these tests.
 _CODEX_USAGE = {'inputTokens': 100, 'cachedInputTokens': 40,
@@ -652,3 +755,51 @@ def test_unknown_claude_duration_stays_unpriced_with_legacy_rate():
     result = engine.summarize_calls([dict(vendor="claude", model="claude-test", quota={},
         usage=dict(input=2, output=3, cache_read=4, cache_write=10))], prices)["claude"]
     assert result["unpriced_calls"] == 1 and result["priced_subtotal_usd"] == 0
+
+
+@pytest.mark.parametrize('answer,expected', [
+    ('Here is the answer:\n```json\n{"value": 1}\n```\nTrailing prose with `inline` ticks.', '{"value": 1}'),
+    ('Prose containing ``` incidental backticks.', 'Prose containing ``` incidental backticks.'),
+    ('```json\n{}\n```', '{}'),
+])
+def test_single_fenced_answer_with_prose(answer, expected):
+    assert engine.answer_body(answer) == expected
+
+
+def test_ambiguous_fenced_answers_rejected():
+    text = '```json\n{}\n```\nthen\n```json\n[]\n```'
+    with pytest.raises(ValueError, match='Ambiguous answer: multiple'):
+        engine.answer_body(text)
+    assert engine.grade_answer(BENCH / 'tasks/math-return-series', text)['status'] == 'fail'
+
+
+def test_saved_correct_math_answers_replay():
+    saved = json.loads(Path(__file__).with_name('fixtures').joinpath('bench-math-saved-answers.json').read_text(encoding='utf-8'))
+    assert len(saved) == 2
+    for record in saved:
+        assert record['bank_sha256'] == '154bde92847354319143dcf5052029edd930dc3a3714e2bd7446a35c04330bd7'
+        assert engine.grade_answer(BENCH / 'tasks/math-return-series', record['answer'])['status'] == 'pass'
+
+
+@pytest.mark.parametrize('key', ['developer_instructions', 'instructions'])
+@pytest.mark.parametrize('mode', ['missing', 'enabled', 'unsupported'])
+def test_codex_hostile_instruction_controls(key, mode, tmp_path):
+    with pytest.raises(t.BoundaryError, match='instruction controls'):
+        t.run([sys.executable, str(BENCH.parent / 'tests/fake-appserver.py'), f'instruction:{key}:{mode}'],
+              {'model':'gpt-6.1-sol', 'effort':'high', 'prompt':'Synthetic fixture\nexact bytes'}, tmp_path, 5000)
+
+
+def test_first_attempt_failures_do_not_blame_answer_model_for_judge():
+    rows = [dict(attempt=1, model='answer-model', status='unknown', response={'status':'ok'},
+                 judge_scores=[dict(model='actual-judge', response={'status':'unknown', 'failure_category':'protocol'}, error='unavailable')]),
+            dict(attempt=2, model='answer-model', status='pass', response={'status':'ok'}),
+            dict(attempt=1, model='answer-model', status='fail', response={'status':'ok'}),
+            dict(attempt=1, model='answer-model', status='unknown', response={'status':'unknown','failure_category':'transport'})]
+    actual = engine.summarize_first_attempts(rows)
+    assert actual['answer-model']['answer_reps'] == 3
+    assert actual['answer-model']['answer_quality_failures'] == 1
+    assert actual['answer-model']['answer_dispatch_failures'] == 1
+    assert actual['answer-model']['judge_dispatch_failures'] == 0
+    assert actual['actual-judge']['answer_reps'] == 0
+    assert actual['actual-judge']['judge_calls'] == actual['actual-judge']['judge_dispatch_failures'] == 1
+    assert actual['actual-judge']['failure_categories'] == {'protocol':1}

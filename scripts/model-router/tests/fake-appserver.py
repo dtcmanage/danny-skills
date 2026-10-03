@@ -21,6 +21,11 @@ for line in sys.stdin:
   emit({'id':rid,'result':{}});event('remoteControl/status/changed',{'status':'connected' if scenario=='remote' else 'disabled','installationId':'synthetic','serverName':'synthetic'});continue
  if m=='config/read':
   c={'features':{k.split('.')[1]:v for k,v in overrides.items() if k.startswith('features.')},'agents':{'enabled':overrides.get('agents.enabled')},'tools':{'experimental_request_user_input':{'enabled':overrides.get('tools.experimental_request_user_input.enabled')}},'forced_login_method':'chatgpt','web_search':'disabled','project_doc_max_bytes':0,'model_provider':'openai','secret':'SYNTHETIC_SECRET_SENTINEL','mcp_servers':{}}
+  for key in ('developer_instructions','instructions'):c[key]=overrides.get(key,'HOSTILE_INSTRUCTION_SENTINEL')
+  if scenario.startswith('instruction:'):
+   _,key,mode=scenario.split(':')
+   if mode=='missing':c.pop(key)
+   else:c[key]='HOSTILE_INSTRUCTION_SENTINEL' if mode=='enabled' else None
   if scenario.startswith('new-control:'):
    _,key,mode=scenario.split(':'); target=c['agents'] if key=='agents' else c['tools']['experimental_request_user_input']
    if mode=='missing':target.pop('enabled')
@@ -46,7 +51,8 @@ for line in sys.stdin:
   if scenario=='control':c['features'].pop('hooks')
   if scenario=='config':c=None
   if scenario=='error-response':emit({'id':rid,'error':{'message':'SYNTHETIC_SECRET_SENTINEL'}});continue
-  emit({'id':rid+1 if scenario=='response' else rid,'result':{'config':c,'layers':[{}]*65 if scenario=='layer-limit' else []}});continue
+  layers=[{}]*65 if scenario=='layer-limit' else [{'name':{'type':'user','file':'synthetic'},'config':{'model_instructions_file':'HOSTILE_ROLE_SENTINEL'}}] if scenario=='dirty-layer' else []
+  emit({'id':rid+1 if scenario=='response' else rid,'result':{'config':c,'layers':layers}});continue
  if m=='thread/start':
   if scenario.startswith('warning:'):
    mode=scenario.split(':')[1]
@@ -55,6 +61,7 @@ for line in sys.stdin:
    if mode=='duplicate':event('warning',{'threadId':'t','message':text})
   p=q['params'];assert p['environments']==[] and p['ephemeral'] is True and p['dynamicTools']==[] and p['selectedCapabilityRoots']==[] and p['allowProviderModelFallback'] is False
   assert p['model']=='gpt-6.1-sol' and p['config']['model_reasoning_effort']=='high'
+  assert p['developerInstructions']==''
   assert p['baseInstructions']==('You are a benchmark response generator. Solve the supplied task from its prompt '
    'and embedded fixtures only. Return only the requested answer text in one final response. '
    'Do not use tools, inspect files, execute commands, ask questions, or describe planned actions.')

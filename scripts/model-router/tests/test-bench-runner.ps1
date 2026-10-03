@@ -184,6 +184,9 @@ if($env:BENCH_FAKE_SLEEP -eq 'yes'){Start-Sleep -Seconds 30}
     $actual=Invoke-BenchCli -Request $claudeRequest -ClaudeResolver {$fakeClaude}
     $evidence=Get-Content $env:BENCH_FAKE_EVIDENCE -Raw | ConvertFrom-Json
     Assert ($evidence.arguments[[array]::IndexOf($evidence.arguments,'--tools')+1] -ceq '') 'Claude tools not empty'
+    Assert ($evidence.arguments -contains '--safe-mode' -and $evidence.arguments -notcontains '--bare') 'Claude isolation must preserve OAuth'
+    $role=[IO.File]::ReadAllText((Join-Path $script:BenchRoot 'direct-answer-system-prompt.txt')).Trim()
+    Assert ($evidence.arguments[[array]::IndexOf($evidence.arguments,'--system-prompt')+1] -ceq $role) 'Shared direct-answer role missing'
     Assert ($evidence.arguments -contains 'high' -and $evidence.arguments -contains 'claude-opus-5-5') 'Claude model/effort missing'
     Assert ($evidence.prompt -ceq $claudeRequest.prompt -and -not (Test-Path $evidence.cwd)) 'Claude prompt/isolation cleanup'
     Assert ($actual.usage.input -eq 7 -and $actual.usage.cache_read -eq 20 -and $actual.usage.cache_write -eq 3) 'Claude cache usage'

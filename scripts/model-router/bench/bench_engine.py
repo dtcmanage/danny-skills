@@ -49,10 +49,21 @@ def candidate_prompt(task: Path) -> str:
     return prompt
 
 
-def answer_body(answer: str) -> str:
+def answer_body(answer: str, *, structured: bool = True) -> str:
     answer = re.sub(r'^\s*\[\d{2}:\d{2}:\d{2}\]\s*', '', answer).strip()
-    match = re.fullmatch(r'```[^\n]*\n(.*?)\n```', answer, re.S)
-    return match.group(1) if match else answer
+    fences = list(re.finditer(r'(?m)^[ \t]{0,3}(`{3,})([^\r\n]*)\r?$', answer))
+    whole = bool(fences and not answer[:fences[0].start()].strip() and not answer[fences[-1].end():].strip())
+    # Rubric answers are prose: a quoted block inside the answer is evidence, not its entirety.
+    if not structured and not (whole and len(fences) == 2 and not fences[1].group(2).strip()
+                               and all(len(f.group(1)) == 3 for f in fences)):
+        return answer
+    if any(len(f.group(1)) != 3 for f in fences) or len(fences) > 2:
+        raise ValueError('Ambiguous answer: multiple, nested or unsupported fenced blocks')
+    if len(fences) == 2:
+        if fences[1].group(2).strip() or fences[0].group(2).strip().startswith('`'):
+            raise ValueError('Ambiguous answer: malformed fenced blocks')
+        return answer[fences[0].end():fences[1].start()].strip('\r\n')
+    return answer
 
 
 def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, Any]:
@@ -64,7 +75,10 @@ def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, A
         work = Path(directory)
         env.update({key: directory for key in ('TMP', 'TEMP', 'TMPDIR')})
         evidence = work / 'answer.txt'
-        evidence.write_text(answer_body(answer), encoding='utf-8', newline='')
+        try:
+            evidence.write_text(answer_body(answer), encoding='utf-8', newline='')
+        except ValueError as error:
+            return {'status': 'fail', 'failure_category': 'answer_format', 'detail': str(error)}
         try:
             process = subprocess.Popen(
                 [sys.executable, str(BENCH / 'grader-runner.py'), str(task.resolve()), str(evidence)],
@@ -168,7 +182,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                 if not isinstance(result, dict) or (result.get('status') == 'ok' and not isinstance(result.get('answer'), str)):
                     raise ValueError('Invalid dispatch payload')
             except Exception as error:
-                result = {'status': 'unknown', 'failure_category': 'environment', 'detail': str(error)}
+                result = {'status': 'unknown', 'failure_category': 'unclassified',
+                          'root_cause': 'unverified', 'detail': str(error)}
             result = {**result, 'quota': quota}
         calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result, 'effort': level})
         return result
@@ -199,11 +214,18 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                     row['response'] = response
                     status = response.get('status', 'unknown')
                     if status == 'ok':
-                        answer = answer_body(response['answer'])
+                        try:
+                            answer = answer_body(response['answer'], structured=metadata['grader'] != 'rubric')
+                        except ValueError as error:
+                            answer = response['answer']
+                            status = 'fail'
+                            row['grading'] = {'status': 'fail', 'failure_category': 'answer_format', 'detail': str(error)}
                         evidence = run / f'{side}-{task.name}-{rep}-{attempt}.txt'
                         evidence.write_text(answer, encoding='utf-8')
                         row['answer_path'] = str(evidence)
-                        if task.name == 'pelican':
+                        if status == 'fail':
+                            pass
+                        elif task.name == 'pelican':
                             artifact = evidence.with_suffix('.svg')
                             artifact.write_text(answer, encoding='utf-8')
                             row['artifact_path'] = str(artifact)
@@ -242,8 +264,11 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                             graded = grade(task, answer)
                             row['grading'] = graded
                             status = graded['status']
+                    unknown_category = response.get('failure_category', 'unclassified')
+                    if response.get('status') == 'ok' and status == 'unknown':
+                        unknown_category = 'judge' if row.get('judge_scores') else row.get('grading', {}).get('failure_category', 'unclassified')
                     row.update(status=status, passed=status == 'pass', unknown=status == 'unknown',
-                               failure_category='environment' if status == 'unknown' else
+                               failure_category=unknown_category if status == 'unknown' else
                                ('implementation' if status == 'fail' else None))
                     rows.append(row)
                     outcome(row)
@@ -302,6 +327,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         if cp is not None and ip is not None:
             result['price_recommendation'] = candidate if cp < ip else incumbent
     result['telemetry'] = summarize_calls(calls, prices or {})
+    result['first_attempt_failures'] = summarize_first_attempts(rows)
     lines = [f"Gate: {result['gate']} (raw: {raw_gate}); shadow: {shadow}",
              f"Shortfall: {result['shortfall_tasks']} task(s)",
              f"Price recommendation: {result['price_recommendation']}",
@@ -315,11 +341,48 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     lines += ['', '| Vendor | Measured calls | Partial calls | Unmeasured calls | Priced subtotal USD | Unpriced calls | Quota before / after |', '| --- | --- | --- | --- | --- | --- | --- |']
     for vendor, data in result['telemetry'].items():
         lines.append(f"| {vendor} | {data['measured_calls']} | {data['partial_calls']} | {data['unmeasured_calls']} | {data['priced_subtotal_usd']} | {data['unpriced_calls']} | {data['quota_before']} / {data['quota_after']} |")
+    lines += ['', 'First attempts only; answer repetitions include blocked calls. Judge denominators count calls made for first-attempt answers.',
+              '| Model | Answer reps | Quality failures | Dispatch failures | Grader unknowns | Judge calls | Judge dispatch failures | Invalid judge scores |',
+              '| --- | --- | --- | --- | --- | --- | --- | --- |']
+    for model, data in result['first_attempt_failures'].items():
+        lines.append(f"| {model} | {data['answer_reps']} | {data['answer_quality_failures']} | {data['answer_dispatch_failures']} | {data['grader_unknowns']} | {data['judge_calls']} | {data['judge_dispatch_failures']} | {data['judge_score_failures']} |")
     lines += ['', 'Disagreements: ' + json.dumps([{'task': r['task_id'], 'rep': r['rep'], 'scores': r['judge_scores']} for r in rows if r.get('disagreement')]),
               'Baseline drops: ' + json.dumps(result['baseline_drops']), 'Artifacts: ' + json.dumps(result['report_paths'])]
     (run / 'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     (run / 'report.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return result
+
+
+def summarize_first_attempts(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep retry recovery from hiding reliability; blame each judge on its own model."""
+    totals: dict[str, Any] = {}
+    def lane(model: str) -> dict[str, Any]:
+        return totals.setdefault(model, {key: 0 for key in (
+            'answer_reps', 'answer_quality_failures', 'answer_dispatch_failures',
+            'grader_unknowns', 'judge_calls', 'judge_dispatch_failures', 'judge_score_failures')} | {'failure_categories': {}})
+    for row in rows:
+        if row['attempt'] != 1:
+            continue
+        data = lane(row['model'])
+        data['answer_reps'] += 1
+        if row['response'].get('status') != 'ok':
+            data['answer_dispatch_failures'] += 1
+            category = row['response'].get('failure_category', 'unclassified')
+            data['failure_categories'][category] = data['failure_categories'].get(category, 0) + 1
+        elif row['status'] == 'fail':
+            data['answer_quality_failures'] += 1
+        elif row.get('grading', {}).get('status') == 'unknown':
+            data['grader_unknowns'] += 1
+        for judge in row.get('judge_scores', []):
+            judged = lane(judge['model'])
+            judged['judge_calls'] += 1
+            if judge['response'].get('status') != 'ok':
+                judged['judge_dispatch_failures'] += 1
+                category = judge['response'].get('failure_category', 'unclassified')
+                judged['failure_categories'][category] = judged['failure_categories'].get(category, 0) + 1
+            elif 'error' in judge:
+                judged['judge_score_failures'] += 1
+    return totals
 
 
 def summarize_calls(calls: list[dict[str, Any]], prices: dict[str, Any]) -> dict[str, Any]:
@@ -339,9 +402,12 @@ def summarize_calls(calls: list[dict[str, Any]], prices: dict[str, Any]) -> dict
             data['partial_calls' if call.get('usage_partial', call.get('status') == 'unknown') else 'measured_calls'] += 1
             model = call.get('resolved_model', call['model'])
             models = prices.get('models', {})
-            entry = models.get(model, models.get(re.sub(r'-\d{8}$', '', model), {}))
+            identity = call.get('identity')
+            if call.get('failure_category') == 'identity' or (isinstance(identity, dict) and identity.get('comparison_valid') is False):
+                model = None
+            entry = models.get(model, models.get(re.sub(r'-\d{8}$', '', model), {})) if isinstance(model, str) else {}
             rates = entry.get('prices_usd_per_mtok', {})
-            cost, priced = 0.0, True
+            cost, priced = 0.0, isinstance(model, str)
             for key, value in usage.items():
                 data['tokens'][key] = data['tokens'].get(key, 0) + value
                 rate = None if vendor == 'claude' and key == 'cache_write' else rates.get(key)

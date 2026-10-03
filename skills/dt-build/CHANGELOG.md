@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.19.7
+
+- Isolate model router benchmark calls from personal configuration, accept a single fenced answer with surrounding prose, and report first-attempt failures per model.
+
 ## 2.19.6
 
 - Preserve UTF-8 model prompts and responses across redirected process and PowerShell shim boundaries.

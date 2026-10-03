@@ -1,4 +1,6 @@
 {
+  "scripts/model-router/bench/direct-answer-system-prompt.txt": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/tests/fixtures/bench-math-saved-answers.json": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/bench-ddq-response.json": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-bench-json-transport.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/bench-proposal-evidence.ps1": {"consumers": [], "summary_token": "model router"},

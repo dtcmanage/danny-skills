@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.7 (2026-10-03): Isolate model router benchmark calls from personal configuration, accept a single fenced answer with surrounding prose, and report first-attempt failures per model.
+
 - 1.16.6 (2026-10-03): Preserve UTF-8 model prompts and responses across redirected process and PowerShell shim boundaries.
 
 - 1.16.5 (2026-10-03): Correct model router starter-bank grading, fix judge effort and duration-aware usage pricing, bind proposal approval to current evidence, and retire the obsolete canary runner.

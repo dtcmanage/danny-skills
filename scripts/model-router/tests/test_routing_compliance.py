@@ -101,7 +101,7 @@ def test_workstation_parent_and_buckets(tmp_path: Path, project: str, expected: 
     assert row["project"] == project
 
 
-@pytest.mark.parametrize("version", [None, 0, 1])
+@pytest.mark.parametrize("version", [None, 0, 1, 2])
 def test_old_cache_rebuilt_once_for_unchanged_claude_and_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: int | None) -> None:
     claude = tmp_path / "projects"
     codex = tmp_path / "sessions"
@@ -116,7 +116,7 @@ def test_old_cache_rebuilt_once_for_unchanged_claude_and_codex(tmp_path: Path, m
     else:
         cache["cache_version"] = version
     rows, rebuilt = cu.sweep_all_sessions(claude, codex, cache)
-    assert rebuilt["cache_version"] == 2
+    assert rebuilt["cache_version"] == cu.ALL_SESSIONS_CACHE_VERSION == 3
     assert not any(r["kind"] == "stale" for r in rows)
     assert any(r["kind"] == "routing" for r in rows)
     assert any(r["host"] == "codex" for r in rows)

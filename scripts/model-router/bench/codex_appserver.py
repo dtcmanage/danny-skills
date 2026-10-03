@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import signal
 import subprocess
 import threading
 import time
+import tempfile
 from typing import Any
 
 SOURCES = ('apps', 'plugins', 'browser_use', 'browser_use_external',
@@ -25,9 +27,7 @@ BENIGN = {'thread/started', 'thread/status/changed', 'turn/started',
           'item/reasoning/textDelta', 'thread/tokenUsage/updated', 'turn/completed'}
 BENIGN |= {'rawResponseItem/completed', 'rawResponse/completed', 'account/rateLimits/updated'}
 BENIGN_ITEMS = {'userMessage', 'agentMessage', 'reasoning'}
-BENCH_INSTRUCTIONS = ('You are a benchmark response generator. Solve the supplied task from its prompt '
-    'and embedded fixtures only. Return only the requested answer text in one final response. '
-    'Do not use tools, inspect files, execute commands, ask questions, or describe planned actions.')
+BENCH_INSTRUCTIONS = Path(__file__).with_name('direct-answer-system-prompt.txt').read_text(encoding='utf-8').strip()
 
 QUOTA_SCHEMA = {'$schema': 'http://json-schema.org/draft-07/schema#', 'definitions': {'CreditsSnapshot': {'properties': {'balance': {'type': ['string', 'null']}, 'hasCredits': {'type': 'boolean'}, 'unlimited': {'type': 'boolean'}}, 'required': ['hasCredits', 'unlimited'], 'type': 'object'}, 'PlanType': {'enum': ['free', 'go', 'plus', 'pro', 'prolite', 'promax', 'team', 'self_serve_business_prolite', 'self_serve_business_usage_based', 'business', 'ent26', 'enterprise_cbp_automation', 'enterprise_cbp_usage_based', 'enterprise', 'edu', 'edu_plus', 'edu_pro', 'unknown'], 'type': 'string'}, 'RateLimitReachedType': {'enum': ['rate_limit_reached', 'workspace_owner_credits_depleted', 'workspace_member_credits_depleted', 'workspace_owner_usage_limit_reached', 'workspace_member_usage_limit_reached'], 'type': 'string'}, 'RateLimitSnapshot': {'properties': {'credits': {'anyOf': [{'$ref': '#/definitions/CreditsSnapshot'}, {'type': 'null'}]}, 'individualLimit': {'anyOf': [{'$ref': '#/definitions/SpendControlLimitSnapshot'}, {'type': 'null'}]}, 'limitId': {'type': ['string', 'null']}, 'limitName': {'type': ['string', 'null']}, 'normalModelSlug': {'description': 'Normal model whose display name and reasoning options describe this quota alias.', 'type': ['string', 'null']}, 'planType': {'anyOf': [{'$ref': '#/definitions/PlanType'}, {'type': 'null'}]}, 'primary': {'anyOf': [{'$ref': '#/definitions/RateLimitWindow'}, {'type': 'null'}]}, 'rateLimitReachedType': {'anyOf': [{'$ref': '#/definitions/RateLimitReachedType'}, {'type': 'null'}]}, 'secondary': {'anyOf': [{'$ref': '#/definitions/RateLimitWindow'}, {'type': 'null'}]}, 'spendControlReached': {'description': 'Backend-reported spend-control state. `None` is unavailable, not a sparse-update recovery.', 'type': ['boolean', 'null']}}, 'type': 'object'}, 'RateLimitWindow': {'properties': {'resetsAt': {'format': 'int64', 'type': ['integer', 'null']}, 'usedPercent': {'format': 'int32', 'type': 'integer'}, 'windowDurationMins': {'format': 'int64', 'type': ['integer', 'null']}}, 'required': ['usedPercent'], 'type': 'object'}, 'SpendControlLimitSnapshot': {'properties': {'limit': {'type': 'string'}, 'remainingPercent': {'format': 'int32', 'type': 'integer'}, 'resetsAt': {'format': 'int64', 'type': 'integer'}, 'used': {'type': 'string'}}, 'required': ['limit', 'remainingPercent', 'resetsAt', 'used'], 'type': 'object'}}, 'description': 'Sparse rolling rate-limit update.\n\nClients should merge available values into the most recent `account/rateLimits/read` response or refetch that snapshot. Nullable account metadata may be unavailable in a rolling update and does not clear a previously observed value.', 'properties': {'rateLimits': {'$ref': '#/definitions/RateLimitSnapshot'}}, 'required': ['rateLimits'], 'title': 'AccountRateLimitsUpdatedNotification', 'type': 'object'}
 
@@ -39,6 +39,61 @@ class BoundaryError(Exception):
         self.identity = identity
         self.usage = None
         self.usage_partial = True
+        self.resolved_model = None
+
+
+def failure_category(message: str) -> str:
+    if re.search(r'timeout|timed out|transport fail(?:ed|ure)', message, re.I):
+        return 'transport'
+    if any(text in message for text in ('model or effort mismatch', 'model rerouted', 'actual settings changed')):
+        return 'identity'
+    if any(text in message for text in ('tool or', 'server request forbidden', 'unsupported event: error', 'single-inference raw evidence')):
+        return 'protocol'
+    if message.startswith('ERROR: Usage limit'):
+        return 'quota'
+    if any(text in message for text in ('effective ', ' config', 'MCP server ID', 'config inventory', 'process cleanup', 'feature controls')):
+        return 'environment'  # Explicit observed local control/config/cleanup violations.
+    return 'unclassified'
+
+
+@contextmanager
+def native_config_home(cwd: Path):
+    """Reference the one native auth file; never copy tokens or implement refresh."""
+    source = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'auth.json'
+    if not source.is_file():
+        raise BoundaryError('native auth file unavailable for clean config')
+    source = source.resolve()
+    environment = {k: v for k, v in os.environ.items()
+                   if not k.upper().startswith(('CODEX_', 'OPENAI_', 'CLAUDE_', 'ANTHROPIC_'))
+                   and k.upper() != 'CLAUDECODE'}
+    with tempfile.TemporaryDirectory(prefix='router-bench-native-home-', dir=cwd) as directory:
+        link = Path(directory) / 'auth.json'
+        try:
+            try:
+                link.symlink_to(source)
+                same = os.path.samefile(link, source)
+            except OSError:
+                raise BoundaryError('native auth reference unavailable for clean config') from None
+            if not same:
+                raise BoundaryError('native auth reference verification failed')
+            environment['CODEX_HOME'] = directory
+            yield environment
+        finally:
+            # Unlink the reference before recursive cleanup; never touch its target.
+            if link.is_symlink():
+                link.unlink()
+
+
+def verify_clean_layers(response: dict[str, Any]) -> None:
+    """No instruction-bearing personal/system/project configuration may survive."""
+    layers = response.get('layers')
+    if not isinstance(layers, list):
+        raise BoundaryError('clean config layers unavailable')
+    for layer in layers:
+        if not isinstance(layer, dict) or not isinstance(layer.get('name'), dict) or not isinstance(layer.get('config'), dict):
+            raise BoundaryError('clean config layer malformed')
+        if layer['name'].get('type') != 'sessionFlags' and layer['config']:
+            raise BoundaryError('nonempty native config layer forbidden')
 
 
 def quota_diagnostic(error: Any) -> str | None:
@@ -68,8 +123,10 @@ def model_identity(value: Any) -> str | None:
 def controls(server_ids: list[str]) -> dict[str, Any]:
     result: dict[str, Any] = {f'features.{s}': False for s in SOURCES}
     result.update({'forced_login_method': 'chatgpt', 'web_search': 'disabled',
+                   'cli_auth_credentials_store': 'file',
                    'project_doc_max_bytes': 0, 'agents.enabled': False,
-                   'tools.experimental_request_user_input.enabled': False})
+                   'tools.experimental_request_user_input.enabled': False,
+                   'developer_instructions': '', 'instructions': ''})
     for name in server_ids:
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', name):
             raise BoundaryError('unsupported MCP server ID component')
@@ -111,6 +168,8 @@ def verify(config: dict[str, Any], expected_ids: list[str]) -> None:
         raise BoundaryError('effective auth or web control failed')
     if type(config.get('project_doc_max_bytes')) is not int or config['project_doc_max_bytes'] != 0:
         raise BoundaryError('effective project document control failed')
+    if any(config.get(key) != '' for key in ('developer_instructions', 'instructions')):
+        raise BoundaryError('effective instruction controls failed')
     servers = config.get('mcp_servers', {})
     if set(servers) != set(expected_ids) or any(v.get('enabled') is not False for v in servers.values()):
         raise BoundaryError('effective MCP controls failed')
@@ -136,7 +195,7 @@ def usage(last: Any) -> dict[str, int] | None:
 
 
 class Server:
-    def __init__(self, command: list[str], overrides: dict[str, Any], cwd: Path, deadline: float):
+    def __init__(self, command: list[str], overrides: dict[str, Any], cwd: Path, deadline: float, environment: dict[str, str] | None = None):
         args = command + ['app-server']
         for key, value in overrides.items():
             args += ['-c', f'{key}={json.dumps(value, ensure_ascii=False)}']
@@ -147,6 +206,7 @@ class Server:
             options['start_new_session'] = True
         self.process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                        env=environment,
                                         **options)
         self.deadline = deadline
         self.messages: queue.Queue[str] = queue.Queue(maxsize=64)
@@ -315,18 +375,27 @@ class Server:
 
 def run(command: list[str], request: dict[str, Any], cwd: Path,
         timeout_ms: int, *, probe_only: bool = False) -> dict[str, Any]:
+    with native_config_home(cwd) as environment:
+        return _run(command, request, cwd, timeout_ms, environment, probe_only=probe_only)
+
+
+def _run(command: list[str], request: dict[str, Any], cwd: Path,
+         timeout_ms: int, environment: dict[str, str], *, probe_only: bool = False) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_ms / 1000
-    server = Server(command, controls([]), cwd, deadline)
+    server = Server(command, controls([]), cwd, deadline, environment)
     try:
         server.initialize()
-        _, ids = inventory(server.request('config/read', {'cwd': str(cwd), 'includeLayers': True}))
+        initial = server.request('config/read', {'cwd': str(cwd), 'includeLayers': True})
+        verify_clean_layers(initial)
+        _, ids = inventory(initial)
     finally:
         server.close()
-    server = Server(command, controls(ids), cwd, deadline)
+    server = Server(command, controls(ids), cwd, deadline, environment)
     measured = None
     cumulative = None
     responses = {}
     pending_error = None
+    verified_model = None
     def retained_usage():
         raw = [x for x in responses.values() if x is not None]
         raw_sum = {k: sum(x[k] for x in raw) for k in ('input','cached_input','cache_write','output')} if raw else None
@@ -336,7 +405,9 @@ def run(command: list[str], request: dict[str, Any], cwd: Path,
         return {k: max(raw_sum[k], cumulative[k]) for k in raw_sum}
     try:
         server.initialize()
-        config, actual_ids = inventory(server.request('config/read', {'cwd': str(cwd), 'includeLayers': True}))
+        effective = server.request('config/read', {'cwd': str(cwd), 'includeLayers': True})
+        verify_clean_layers(effective)
+        config, actual_ids = inventory(effective)
         verify(config, ids)
         server.controls_verified = True
         if probe_only:
@@ -346,11 +417,13 @@ def run(command: list[str], request: dict[str, Any], cwd: Path,
             # Replace coding-agent workflow instructions, not the enforcement boundary.
             # Tools and multi-inference answers still fail closed below.
             'baseInstructions': BENCH_INSTRUCTIONS,
+            'developerInstructions': '',
             'allowProviderModelFallback': False, 'ephemeral': True, 'experimentalRawEvents': True, 'environments': [],
             'dynamicTools': [], 'selectedCapabilityRoots': [],
             'config': {'model_reasoning_effort': effort}, 'approvalPolicy': 'never'})
         if thread.get('model') != model or thread.get('reasoningEffort') != effort or thread.get('modelProvider') != 'openai':
             raise BoundaryError('actual model or effort mismatch', {'actual_model':model_identity(thread.get('model')), 'comparison_valid':False})
+        verified_model = model
         thread_id = required_id(thread.get('thread', {}).get('id'))
         if thread.get('thread', {}).get('turns') not in (None, []): raise BoundaryError('unexpected thread history')
         started = server.request('turn/start', {'threadId': thread_id, 'environments': [],
@@ -460,10 +533,12 @@ def run(command: list[str], request: dict[str, Any], cwd: Path,
     except BoundaryError as error:
         pending_error = error
         error.usage = retained_usage()
+        error.resolved_model = verified_model if not (isinstance(error.identity, dict) and error.identity.get('comparison_valid') is False) else None
         raise
     except Exception:
         pending_error = BoundaryError('transport failure')
         pending_error.usage = retained_usage()
+        pending_error.resolved_model = verified_model
         raise pending_error from None
     finally:
         try:
@@ -552,7 +627,7 @@ if __name__ == '__main__':
         payload = json.loads(line)
         result = run(payload['command'], payload['request'], Path(payload['cwd']), payload['timeout_ms'])
     except BoundaryError as error:
-        result = {'status':'unknown', 'failure_category':'environment', 'detail':str(error), 'identity':error.identity, 'usage':error.usage, 'usage_partial':error.usage_partial}
+        result = {'status':'unknown', 'failure_category':failure_category(str(error)), 'root_cause':'unverified' if failure_category(str(error)) in ('protocol','transport','unclassified') else 'observed boundary failure', 'detail':str(error), 'identity':error.identity, 'resolved_model':error.resolved_model, 'usage':error.usage, 'usage_partial':error.usage_partial}
     except Exception:
-        result = {'status':'unknown', 'failure_category':'environment', 'detail':'transport or cleanup failure'}
+        result = {'status':'unknown', 'failure_category':'unclassified', 'root_cause':'unverified', 'detail':'transport or cleanup failure'}
     print(json.dumps(result, ensure_ascii=False))

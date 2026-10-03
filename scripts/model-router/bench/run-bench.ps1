@@ -22,6 +22,18 @@ function Set-BenchProcessEncoding {
     if($Python){$ProcessInfo.Environment['PYTHONUTF8']='1'}
 }
 
+function Set-BenchClaudeNativeEnvironment {
+    param([Diagnostics.ProcessStartInfo]$ProcessInfo, [string]$ConfigDirectory)
+    # Preserve the exact native Keychain selector, including a defined empty string.
+    $secure=if($ProcessInfo.Environment.ContainsKey('CLAUDE_SECURESTORAGE_CONFIG_DIR')){$ProcessInfo.Environment['CLAUDE_SECURESTORAGE_CONFIG_DIR']}
+        elseif($ProcessInfo.Environment.ContainsKey('CLAUDE_CONFIG_DIR')){$ProcessInfo.Environment['CLAUDE_CONFIG_DIR']}else{''}
+    foreach($key in @($ProcessInfo.Environment.Keys)) {
+        if($key -match '^(?i:CLAUDE_|ANTHROPIC_|CODEX_|OPENAI_)' -or $key -eq 'CLAUDECODE'){[void]$ProcessInfo.Environment.Remove($key)}
+    }
+    $ProcessInfo.Environment['CLAUDE_CONFIG_DIR']=$ConfigDirectory
+    $ProcessInfo.Environment['CLAUDE_SECURESTORAGE_CONFIG_DIR']=$secure
+}
+
 function Get-BenchErrorDetail {
     param([string]$Stdout, [string]$Stderr)
     # Select diagnostic fields; never persist the CLI's config/credential objects.
@@ -100,7 +112,8 @@ function Invoke-BenchCli {
         if($ClaudeResolver){$cli=& $ClaudeResolver}
         else{$cli=(Get-Command claude.exe,claude.ps1,claude.cmd,claude -ErrorAction SilentlyContinue | Select-Object -First 1).Source}
         if(-not $cli){throw 'Claude CLI missing'}
-        $args=@('-p','--model',$Request.model,'--effort',$Request.effort,'--output-format','json','--no-session-persistence','--strict-mcp-config','--tools','')
+        $role=[IO.File]::ReadAllText((Join-Path $script:BenchRoot 'direct-answer-system-prompt.txt')).Trim()
+        $args=@('-p','--model',$Request.model,'--effort',$Request.effort,'--output-format','json','--no-session-persistence','--safe-mode','--system-prompt',$role,'--strict-mcp-config','--tools','')
         $psi=[Diagnostics.ProcessStartInfo]::new()
         if([IO.Path]::GetExtension($cli) -eq '.ps1'){$psi.FileName=(Get-Command pwsh).Source;$args=@(Get-Utf8PowerShellArguments -ScriptPath $cli)+$args}
         elseif([IO.Path]::GetExtension($cli) -eq '.cmd') {throw 'Claude native executable required for bounded dispatch; cmd shim unsupported'}
@@ -108,6 +121,9 @@ function Invoke-BenchCli {
         $psi.WorkingDirectory=$work;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
         $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
         Set-BenchProcessEncoding -ProcessInfo $psi
+        $nativeHome=Join-Path $work 'native-config'
+        [void][IO.Directory]::CreateDirectory($nativeHome)
+        Set-BenchClaudeNativeEnvironment -ProcessInfo $psi -ConfigDirectory $nativeHome
         foreach($arg in $args){[void]$psi.ArgumentList.Add([string]$arg)}
         $process=[Diagnostics.Process]::Start($psi)
         try {
@@ -121,23 +137,41 @@ function Invoke-BenchCli {
             $detail=Get-BenchErrorDetail -Stdout $raw -Stderr $stderr.GetAwaiter().GetResult()
             $doc=$null
             try {$doc=$raw | ConvertFrom-Json -AsHashtable} catch { }
-            if($process.ExitCode -ne 0 -or ($doc -and $doc.ContainsKey('is_error') -and $doc.is_error)) {
-                $identity=''
-                if($doc -and $doc.ContainsKey('modelUsage') -and $doc.modelUsage.Count -gt 0 -and @($doc.modelUsage.Keys | Where-Object {$_ -cne $Request.model}).Count) {
-                    $identity='Claude model changed during comparison. '
+            $usage=$null
+            if($doc -and $doc.ContainsKey('usage')){$usage=ConvertFrom-BenchClaudeUsage $doc.usage}
+            $models=@(if($doc -and $doc.ContainsKey('modelUsage') -and $doc.modelUsage -is [System.Collections.IDictionary]){$doc.modelUsage.Keys})
+            $verifiedIdentity=$models.Count -eq 1 -and $models[0] -ceq $Request.model
+            $identity=if($models.Count -and -not $verifiedIdentity){'Claude model changed during comparison. '}elseif(-not $models.Count){'Claude model identity unavailable. '}else{''}
+            if($process.ExitCode -ne 0 -or ($doc -and $doc.ContainsKey('is_error') -and $doc.is_error) -or -not $verifiedIdentity) {
+                # Same safe usage/cost source fields on success and failure. No CLI config/auth objects.
+                $source=@{}
+                foreach($key in @('usage','modelUsage','total_cost_usd','is_error','subtype','duration_ms','num_turns')) {
+                    if($doc -and $doc.ContainsKey($key)){$source[$key]=$doc[$key]}
                 }
-                throw ($identity+$detail)
+                $failure=[InvalidOperationException]::new($identity+$detail)
+                # Quota, login and transport failures carry no model usage; only an observed different model is an identity failure.
+                $category=Get-BenchFailureCategory $detail
+                if($models.Count -and -not $verifiedIdentity){$category='identity'}
+                elseif($category -eq 'unclassified' -and $identity){$category='identity'}
+                $failure.Data['bench_response']=@{status='unknown';failure_category=$category;root_cause='unverified';detail=($identity+$detail);usage=$usage;usage_partial=$true;resolved_model=$(if($verifiedIdentity){$Request.model}else{$null});identity=@{comparison_valid=$verifiedIdentity};raw=$source;cli=$cli;arguments=$args;tools='disabled'}
+                throw $failure
             }
             $parsed=ConvertFrom-ClaudeCliResult -Stdout $raw -RequestedModel $Request.model
             if($parsed.resolved_model -cne $Request.model){throw 'Claude model changed during comparison'}
             $doc=$raw | ConvertFrom-Json -AsHashtable
-            $usage=$null
-            if($doc.ContainsKey('usage')) {
-                $usage=ConvertFrom-BenchClaudeUsage $doc.usage
-            }
             return @{status='ok';answer=$parsed.result;resolved_model=$parsed.resolved_model;usage=$usage;cli=$cli;arguments=$args;tools='disabled';raw=$doc}
         } finally {if(-not $process.HasExited){$process.Kill($true)};$process.Dispose()}
     } finally {Remove-CodexTempDirectory -Path $work -ExpectedLeafPrefix 'router-bench-call-'}
+}
+
+function Get-BenchFailureCategory {
+    param([string]$Detail)
+    # Observed failure type is distinct from its unproven cause.
+    if($Detail -match '(?i)tool call.*(?:parse|parsed)|tool or unsupported item|server request forbidden'){return 'protocol'}
+    if($Detail -match '(?i)timeout|timed out|transport fail(?:ed|ure)'){return 'transport'}
+    if($Detail -match '(?i)model changed|model mismatch|model rerouted|model identity unavailable'){return 'identity'}
+    if($Detail -match '(?i)usage limit|quota|rate limit'){return 'quota'}
+    return 'unclassified'
 }
 
 function Invoke-RouterBench {
@@ -222,7 +256,10 @@ function Invoke-RouterBench {
                     'dispatch' {
                         $r=$message.payload
                         try { $response=& $CliInvoker $r; if($null -eq $response){throw 'Empty dispatch response'} }
-                        catch { $response=@{status='unknown';failure_category='environment';detail=$_.Exception.Message} }
+                        catch {
+                            if($_.Exception.Data.Contains('bench_response')){$response=$_.Exception.Data['bench_response']}
+                            else{$response=@{status='unknown';failure_category=(Get-BenchFailureCategory $_.Exception.Message);root_cause='unverified';detail=$_.Exception.Message;usage=$null;usage_partial=$true}}
+                        }
                         $response=$response | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json -AsHashtable
                         if($response.status -ne 'ok'){
                             $response.detail=Get-BenchErrorDetail -Stdout ([string]$response.detail) -Stderr ''
