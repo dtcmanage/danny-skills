@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.1 (2026-10-02): Refresh a rejected automatic Codex catalog from the current CLI; preserve quota and fallback behavior.
+
 - 0.3.0 (2026-10-02): Expand shared model routing with triggered internal benchmarking, Mac-local observation and concurrent outcome safety.
 
 - 0.2.10 (2026-10-02): Update the shared vendor-failure diagnosis consumer version for degraded-component handling when the incident feed is unavailable.

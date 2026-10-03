@@ -163,5 +163,62 @@ try {
     Assert-True ($LASTEXITCODE -eq 0 -and $cli.category -eq 'analysis' -and $cli.lane -eq 'claude') 'CLI without Lane returns JSON pick'
     foreach ($category in @('math','analysis')) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category $category -Lane codex -Catalog $catalog).model -eq (Resolve-RouterModel -SkipModelCheck -Category planning -Lane codex -Catalog $catalog).model) "$category uses the same roster model as planning" }
     foreach ($case in @(@('codex','gpt-6.1-sol'),@('claude','claude-opus-5-5'))) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $case[0] -EscalateFrom $case[1] -Catalog $catalog).model -eq $case[1]) "escalation stops at the non-frontier ladder ceiling for $($case[0])" }
+    # Exercise the real bounded catalog interface with a fake process provider.
+    # PATH discovery sees only this fixture CLI; no vendor process is started.
+    $savedPath = $env:PATH
+    $fakeBin = Join-Path $temp 'bin'
+    New-Item -ItemType Directory -Path $fakeBin | Out-Null
+    $fakeCli = Join-Path $fakeBin 'codex.ps1'
+    Set-Content -LiteralPath $fakeCli -Value "throw 'Fixture CLI must never execute'"
+    $env:PATH = $fakeBin + [IO.Path]::PathSeparator + $savedPath
+    $script:refreshCalls = 0
+    $script:refreshMode = 'ok'
+    $script:refreshCatalog = $catalog
+    function Invoke-CodexProcess {
+        param($CodexPath,$Arguments,$Prompt,$WorkingDirectory,$TimeoutMs)
+        $script:refreshCalls++
+        if ($CodexPath -ne $fakeCli -or ($Arguments -join ' ') -ne 'debug models' -or $TimeoutMs -ne 15000) { throw 'Unexpected refresh interface' }
+        # Simulate an older client winning the cache race during the refresh.
+        $hidden | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Get-CodexCachePath)
+        if ($script:refreshMode -eq 'throw') { throw 'fixture refresh failure' }
+        return [pscustomobject]@{ timed_out=($script:refreshMode -eq 'timeout'); exit_code=0; stderr=''; stdout=$(if ($script:refreshMode -eq 'invalid') { '{}' } else { $script:refreshCatalog | ConvertTo-Json -Depth 10 }) }
+    }
+    try {
+        $hidden | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Get-CodexCachePath)
+        $pick = Resolve-RouterModel -Category routine-coding -Lane codex
+        Assert-True ($pick.model -eq 'gpt-6.1-sol' -and $pick.effort -eq 'medium' -and $script:refreshCalls -eq 1 -and $pick.alerts -notcontains 'roster-model-unselectable:gpt-6.1-sol') 'cached false current true uses returned catalog once with effort'
+        Assert-True (-not (Test-RouterCodexSelectable -ParsedCatalog (Get-CodexModelCatalog) -Model 'gpt-6.1-sol')) 'refresh result wins despite stale cache overwrite'
+        $script:refreshCatalog = $hidden
+        $pick = Resolve-RouterModel -Category routine-coding -Lane codex
+        Assert-True ($pick.status -eq 'wait' -and $script:refreshCalls -eq 2 -and $pick.alerts -contains 'roster-model-unselectable:gpt-6.1-sol') 'current still false waits after one refresh'
+        $pick = Resolve-RouterModel -Category routine-coding
+        Assert-True ($pick.model -eq 'claude-opus-5-5' -and $script:refreshCalls -eq 3) 'current still false retains other vendor fallback'
+        foreach ($mode in @('throw','timeout','invalid')) {
+            $script:refreshMode = $mode
+            $beforeCalls = $script:refreshCalls
+            $pick = Resolve-RouterModel -Category routine-coding -Lane codex
+            Assert-True ($pick.status -eq 'wait' -and $script:refreshCalls -eq $beforeCalls + 1) "refresh $mode remains fail closed after one attempt"
+        }
+        $script:refreshMode = 'ok'
+        $script:refreshCatalog = $catalog | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+        $script:refreshCatalog.models | Where-Object slug -eq 'gpt-6.1-sol' | Add-Member -NotePropertyName priority -NotePropertyValue 'bad' -Force
+        $beforeCalls = $script:refreshCalls
+        $pick = Resolve-RouterModel -Category routine-coding -Lane codex
+        Assert-True ($pick.status -eq 'wait' -and $script:refreshCalls -eq $beforeCalls + 1 -and $pick.alerts -contains 'roster-model-unselectable:gpt-6.1-sol') 'malformed refresh row retains constrained wait and alert'
+        $pick = Resolve-RouterModel -Category routine-coding
+        Assert-True ($pick.model -eq 'claude-opus-5-5' -and $script:refreshCalls -eq $beforeCalls + 2 -and $pick.alerts -contains 'roster-model-unselectable:gpt-6.1-sol') 'malformed refresh row retains automatic backup and alert'
+        $beforeCalls = $script:refreshCalls
+        $pick = Resolve-RouterModel -Category routine-coding -Lane codex -Catalog $hidden
+        Assert-True ($pick.status -eq 'wait' -and $script:refreshCalls -eq $beforeCalls) 'explicit unselectable catalog never refreshes'
+        $catalog | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Get-CodexCachePath)
+        $pick = Resolve-RouterModel -Category routine-coding -Lane codex
+        Assert-True ($pick.model -eq 'gpt-6.1-sol' -and $script:refreshCalls -eq $beforeCalls) 'selectable cache never refreshes'
+        $hidden | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Get-CodexCachePath)
+        $script:blocked = @('codex')
+        $pick = Resolve-RouterModel -Category routine-coding -Lane codex
+        Assert-True ($pick.status -eq 'wait' -and $script:refreshCalls -eq $beforeCalls) 'quota blocked constrained pick never refreshes'
+        $pick = Resolve-RouterModel -Category routine-coding
+        Assert-True ($pick.model -eq 'claude-opus-5-5' -and $script:refreshCalls -eq $beforeCalls) 'quota blocked first retains backup without refresh'
+    } finally { $env:PATH = $savedPath; $script:blocked = @(); Remove-Item function:Invoke-CodexProcess }
     Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport; $env:DT_MODEL_ROUTER_STATE = $prior; Remove-Item -LiteralPath $temp -Recurse -Force }

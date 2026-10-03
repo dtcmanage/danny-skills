@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.17.1",
+  "version": "0.17.2",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.17.2 dt-build 2.19.1, dt-review 1.16.1, dt-image-gen 0.3.1, dt-writing-draft 0.2.1, dt-writing-edit 0.3.1: model router refreshes stale model catalogs once through the current CLI and retains safe fallback on malformed responses.",
       "0.17.1 model router: fix hidden-file cleanup and include hidden fixtures in native Mac observer tests.",
       "0.17.0 model router: triggered internal benchmarking and golden-review workflow, Mac observer and roster publication, concurrent shared outcomes; version policy: exclude generated Python caches from packages; dt-build 2.19.0, dt-review 1.16.0, dt-image-gen 0.3.0, dt-writing-draft 0.2.0, dt-writing-edit 0.3.0.",
       "0.16.3 Complete shared vendor-limits consumer release versions: dt-build 2.18.1, dt-image-gen 0.2.10, dt-writing-draft 0.1.15, dt-writing-edit 0.2.13; preserve vendor-incident diagnosis when the incident feed is unavailable.",

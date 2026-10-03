@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.19.1
+
+- Refresh a rejected automatic Codex catalog from the current CLI; preserve quota and fallback behavior.
+
 ## 2.19.0
 
 - Expand shared model routing with triggered internal benchmarking, Mac-local observation and concurrent outcome safety.

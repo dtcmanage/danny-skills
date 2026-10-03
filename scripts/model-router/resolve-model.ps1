@@ -119,11 +119,26 @@ function Resolve-RouterRosterPick {
         }
     }
     if ($chosen -and $chosen.vendor -eq 'codex' -and $Category -ne 'image-generation' -and $null -ne $localCatalog -and -not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
-        $unselectable = $chosen.model
-        $alerts.Add("roster-model-unselectable:$unselectable")
-        if (-not $Lane -and $other -and $other.vendor -ne 'codex' -and -not ((Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue) -and (Get-RouterVendorBlocked -Vendor $other.vendor))) {
-            $chosen = $other; $reason = $(if ($reason -like 'Backup used:*drifting.') { "$reason Backup $unselectable unselectable; first choice used." } else { "Backup used: $unselectable unselectable." })
-        } else { $chosen = $null; $reason = "Wait: $unselectable unselectable on constrained or unavailable lane." }
+        # Older clients can overwrite the shared cache. Only an automatic cache
+        # rejection gets one bounded current-CLI check; caller catalogs stay fixed.
+        if ($null -eq $Catalog) {
+            try {
+                $cli = Get-Command codex -CommandType Application,ExternalScript -ErrorAction Stop | Select-Object -First 1
+                $freshCatalog = Update-CodexModelCatalog -CodexCliPath $cli.Source -TimeoutMs 15000
+                # Evaluate the returned snapshot, never the race-prone cache file.
+                if (Test-RouterCodexSelectable -ParsedCatalog $freshCatalog -Model $chosen.model) {
+                    $localCatalog = $freshCatalog
+                }
+            } catch { # Keep the cached rejection and existing fallback on failure.
+            }
+        }
+        if (-not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
+            $unselectable = $chosen.model
+            $alerts.Add("roster-model-unselectable:$unselectable")
+            if (-not $Lane -and $other -and $other.vendor -ne 'codex' -and -not ((Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue) -and (Get-RouterVendorBlocked -Vendor $other.vendor))) {
+                $chosen = $other; $reason = $(if ($reason -like 'Backup used:*drifting.') { "$reason Backup $unselectable unselectable; first choice used." } else { "Backup used: $unselectable unselectable." })
+            } else { $chosen = $null; $reason = "Wait: $unselectable unselectable on constrained or unavailable lane." }
+        }
     }
     $model = if ($chosen) { $chosen.model } else { $null }
     $result = [pscustomobject]@{ model=$model; agent_alias=$null; effort=$(if ($chosen) { $chosen.effort } else { $null }); category=$Category; lane=$null; protected=$IsProtected; reason=$reason; table_source=$null; table_date=$null; validation_error=$Read.validation_error; alerts=@($alerts.ToArray()); ranked=[object[]]@($model | Where-Object { $_ }) }
