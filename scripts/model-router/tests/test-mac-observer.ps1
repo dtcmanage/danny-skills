@@ -76,7 +76,7 @@ try {
     $result = Get-RouterClaudeCredential -UserHome $userHome -Process $fakeSecurity
     Assert-True ($result.token -eq 'fixture-explicit' -and $script:processCalls -eq $calls) 'explicit credentials outrank custom config and do not consult Keychain'
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $null
-    Remove-Item -LiteralPath $credentialFile
+    Remove-Item -LiteralPath $credentialFile -Force
     $result = Get-RouterClaudeCredential -UserHome $userHome -Process $fakeSecurity
     Assert-True ($result.source -eq 'keychain' -and $result.status -eq 'available') 'exact service supplies missing file'
     $env:CLAUDE_CONFIG_DIR=$null
@@ -128,7 +128,7 @@ try {
     Assert-Throws { New-RouterLaunchAgent -RepoPath 'relative-path' -PwshPath $pwshExecutable -UserHome $userHome } 'ROUTER_LAUNCH_PATH:*' 'relative installation path rejected'
     $headPath = Join-Path $repo '.git/HEAD'
     foreach ($head in @('ref: refs/heads/feature-fixture',('a' * 40),'')) {
-        if ($head) { [IO.File]::WriteAllText($headPath,$head) } elseif (Test-Path -LiteralPath $headPath) { Remove-Item -LiteralPath $headPath }
+        if ($head) { [IO.File]::WriteAllText($headPath,$head) } elseif (Test-Path -LiteralPath $headPath) { Remove-Item -LiteralPath $headPath -Force }
         Assert-Throws { New-RouterLaunchAgent -RepoPath $repo -PwshPath $pwshExecutable -UserHome $userHome } 'ROUTER_LAUNCH_MAIN:*' 'feature detached or missing HEAD rejects agent creation'
     }
     [IO.File]::WriteAllText($headPath,'ref: refs/heads/main')
@@ -146,10 +146,10 @@ try {
     }
     Assert-True ($agent.xml -notmatch 'fixture-private|ROUTER_TEST_SECRET_TOKEN' -and -not (Test-Path -LiteralPath $agent.plist_path)) 'preview neither captures secrets nor writes schedules'
     Assert-True ((Get-RouterClaudeCredential -UserHome $userHome -Process $fakeSecurity).token -eq 'fixture-explicit') 'preview locator still selects exact configured file account'
-    $beforePreview = @(Get-ChildItem -LiteralPath $tempRoot -Recurse -File | ForEach-Object { $_.FullName + ':' + $_.LastWriteTimeUtc.Ticks + ':' + $_.Length }) -join '|'
+    $beforePreview = @(Get-ChildItem -LiteralPath $tempRoot -Recurse -File -Force | ForEach-Object { $_.FullName + ':' + $_.LastWriteTimeUtc.Ticks + ':' + $_.Length }) -join '|'
     $previewOutput = & $pwshExecutable -NoProfile -File (Join-Path $PSScriptRoot '../register-mac-router-schedules.ps1') -RepoPath $repo -PwshPath $pwshExecutable
     Assert-True ($LASTEXITCODE -eq 0 -and $null -ne $previewOutput -and -not (Test-Path -LiteralPath $agent.plist_path)) 'CLI default is nonmutating preview'
-    $afterPreview = @(Get-ChildItem -LiteralPath $tempRoot -Recurse -File | ForEach-Object { $_.FullName + ':' + $_.LastWriteTimeUtc.Ticks + ':' + $_.Length }) -join '|'
+    $afterPreview = @(Get-ChildItem -LiteralPath $tempRoot -Recurse -File -Force | ForEach-Object { $_.FullName + ':' + $_.LastWriteTimeUtc.Ticks + ':' + $_.Length }) -join '|'
     Assert-True ($beforePreview -ceq $afterPreview) 'preview leaves all fixture files unchanged'
     if (-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::OSX)) {
         $inventoryJson = & $pwshExecutable -NoProfile -File (Join-Path $PSScriptRoot '../router-state-inventory.ps1') -Json
