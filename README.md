@@ -102,6 +102,8 @@ Adversarial Claude-vs-Codex dialogue on a plan. Two engineers debating the desig
 
 ## dt-build
 
+Difficulty tiers: coder and deep-thinker dispatches default to standard. Pass `-Difficulty hard -DifficultyReason "<single-line reason, at most 240 characters>"` for hard work. Inside dt-build's two-attempt budget, retry a standard first attempt with `-RetryAtHardFrom <failed model>` and a hard reason, retaining that model at hard effort. If the first attempt already ran at hard, retry with `-EscalateFrom <failed model> -Difficulty hard -DifficultyReason "<reason>"` to move one non-frontier model step up. Legacy calls without the new flags keep their existing escalation behavior; fast, writer and illustrator have no difficulty tier.
+
 **Trigger:** `/dt-build` or `dt-build <plan-path>`
 
 Owns the whole build. Takes a finalized plan and delivers it on a short-lived `build/<RUN_ID>` branch cut from `main` — complete to spec, verified, committed milestone by milestone. One orchestrator decomposes the plan and drives a roster of build / verification / merge subagents across Claude and Codex; it never writes product code itself. Parallelism is one tactic, reached for only when the work genuinely splits — not a precondition.

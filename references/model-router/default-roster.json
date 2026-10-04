@@ -31,15 +31,31 @@
       "backup": "claude-opus-5-5",
       "backup_vendor": "claude",
       "first_effort": "medium",
-      "backup_effort": "medium"
+      "backup_effort": "medium",
+      "first_efforts": {
+        "standard": "medium",
+        "hard": "high"
+      },
+      "backup_efforts": {
+        "standard": "medium",
+        "hard": "high"
+      }
     },
     "deep-thinker": {
       "first": "claude-opus-5-5",
       "first_vendor": "claude",
       "backup": "gpt-6.1-sol",
       "backup_vendor": "codex",
-      "first_effort": "high",
-      "backup_effort": "high"
+      "first_effort": "medium",
+      "backup_effort": "medium",
+      "first_efforts": {
+        "standard": "medium",
+        "hard": "high"
+      },
+      "backup_efforts": {
+        "standard": "medium",
+        "hard": "high"
+      }
     },
     "writer": {
       "first": "claude-opus-5-5",

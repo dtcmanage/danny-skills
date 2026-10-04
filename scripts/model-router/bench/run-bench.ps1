@@ -198,7 +198,7 @@ function Invoke-RouterBench {
         if($Trigger -ne 'manual' -and (Test-RouterFrontierModel -Model $model -Frontier $frontier)){throw 'Frontier candidates require manual named invocation'}
     }
     $read=Read-RouterRoster
-    $effort=if($Job -eq 'illustrator'){$null}elseif($EffortOverride){$EffortOverride}else{$read.roster.jobs.$Job.first_effort}
+    $effort=if($Job -eq 'illustrator'){$null}elseif($EffortOverride){$EffortOverride}else{(Get-RouterTierEffort $read.roster.jobs.$Job first standard)}
     if (-not $PSBoundParameters.ContainsKey('ConfigPath')) {
         $catalogConfig = Join-Path $benchStateRoot 'bench/judge-config.json'
         if (Test-Path -LiteralPath $catalogConfig) { $ConfigPath = $catalogConfig }
@@ -216,7 +216,7 @@ function Invoke-RouterBench {
     if(-not $Outcome){$Outcome={param($r) Add-RouterOutcome -Row $r -StateDir $benchStateRoot}}
     $arguments=@{job=$Job;candidate=$Candidate;incumbent=$Incumbent;trigger=$Trigger;effort=$effort;
         state_dir=$benchStateRoot;tasks=[IO.Path]::GetFullPath($Tasks);grader_timeout=$GraderTimeout;
-        config=$config;
+        config=$config;roster_entry=$read.roster.jobs.$Job;effort_override=[bool]$EffortOverride;
         prices=(Get-Content (Join-Path $script:BenchRoot '../../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json -AsHashtable)}
     $psi=[Diagnostics.ProcessStartInfo]::new()
     $psi.FileName=(Get-Command python -ErrorAction Stop).Source

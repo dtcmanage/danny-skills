@@ -118,11 +118,11 @@ $script:RouterDiagnosisHttp = {
         @('complex-coding','gpt-6.1-sol','claude-opus-5-5','medium'),
         @('ui-frontend','gpt-6.1-sol','claude-opus-5-5','medium'),
         @('mechanical','gpt-6-luna','claude-haiku-4-5-20251001','low'),
-        @('code-review','gpt-6.1-sol','claude-opus-5-5','high'),
-        @('planning','gpt-6.1-sol','claude-opus-5-5','high'),
-        @('deep-research','gpt-6.1-sol','claude-opus-5-5','high'),
-        @('math','gpt-6.1-sol','claude-opus-5-5','high'),
-        @('analysis','gpt-6.1-sol','claude-opus-5-5','high'),
+        @('code-review','gpt-6.1-sol','claude-opus-5-5','medium'),
+        @('planning','gpt-6.1-sol','claude-opus-5-5','medium'),
+        @('deep-research','gpt-6.1-sol','claude-opus-5-5','medium'),
+        @('math','gpt-6.1-sol','claude-opus-5-5','medium'),
+        @('analysis','gpt-6.1-sol','claude-opus-5-5','medium'),
         @('long-form-writing','gpt-6.1-sol','claude-opus-5-5','medium'))
     foreach ($case in $expected) {
         foreach ($lane in @('codex','claude')) {
@@ -176,7 +176,10 @@ $report
         $job = Get-RouterCategoryJob -Category $category
         # Wait-path image dispatches have no model effort; supply an explicit fixture value so the router wait is tested.
         if ($job -eq 'illustrator') { return 'low' }
-        return [string]$roster.jobs.$job.first_effort
+        $difficulty = 'standard'
+        for ($i = 0; $i -lt $Extra.Count - 1; $i++) { if ($Extra[$i] -eq '-Difficulty') { $difficulty = $Extra[$i + 1] } }
+        if ($Extra -contains '-RetryAtHardFrom') { $difficulty = 'hard' }
+        return [string](Get-RouterTierEffort $roster.jobs.$job first $difficulty)
     }
     function Invoke-CodexWrapper([string]$Name, [string[]]$Extra, [switch]$OmitEffort) {
         $out = Join-Path $temp "$Name.md"
@@ -190,6 +193,12 @@ $report
     }
     $missingEffort = Invoke-CodexWrapper 'codex-missing-effort' @('-Category','routine-coding') -OmitEffort
     Assert-True ($missingEffort.exit -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $temp 'codex-missing-effort.md'))) 'Codex substantive wrapper without -Effort fails closed'
+    $hard = Invoke-CodexWrapper 'codex-hard' @('-Category','routine-coding','-Difficulty','hard','-DifficultyReason','Interacting constraints')
+    Assert-True ($hard.exit -eq 0 -and $hard.prov.difficulty -eq 'hard' -and $hard.prov.difficulty_reason -eq 'Interacting constraints' -and $hard.prov.effort -eq 'high') 'Codex hard resolves and persists difficulty and reason'
+    $retry = Invoke-CodexWrapper 'codex-hard-retry' @('-Category','routine-coding','-RetryAtHardFrom','gpt-6-luna','-DifficultyReason','Standard attempt failed')
+    Assert-True ($retry.exit -eq 0 -and $retry.prov.resolved_model -eq 'gpt-6-luna' -and $retry.prov.difficulty -eq 'hard' -and $retry.prov.retry_at_hard_from -eq 'gpt-6-luna') 'Codex hard retry keeps failed model'
+    $bad = Invoke-CodexWrapper 'codex-hard-no-reason' @('-Category','routine-coding','-Difficulty','hard')
+    Assert-True ($bad.exit -ne 0 -and $bad.stderr -match 'DIFFICULTY_REASON_REQUIRED') 'Codex hard without reason refused'
     $r = Invoke-CodexWrapper 'codex-standard' @('-Tier','standard')
     Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6.1-sol') 'codex wrapper -Tier standard resolves through the router'
     Assert-True ($r.prov.category -eq 'routine-coding' -and $r.prov.protected -eq $false -and $null -eq $r.prov.escalated_from) 'codex provenance carries category, protected, escalated_from'
@@ -251,6 +260,10 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     }
     $missingEffort = Invoke-ClaudeWrapper 'claude-missing-effort' @('-Category','routine-coding') -OmitEffort
     Assert-True ($missingEffort.exit -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $temp 'claude-missing-effort.md'))) 'Claude substantive wrapper without -Effort fails closed'
+    $hard = Invoke-ClaudeWrapper 'claude-hard' @('-Category','planning','-Difficulty','hard','-DifficultyReason','Interacting constraints')
+    Assert-True ($hard.exit -eq 0 -and $hard.prov.difficulty -eq 'hard' -and $hard.prov.difficulty_reason -eq 'Interacting constraints' -and $hard.prov.effort -eq 'high') 'Claude hard resolves and persists difficulty and reason'
+    $bad = Invoke-ClaudeWrapper 'claude-hard-no-reason' @('-Category','planning','-Difficulty','hard')
+    Assert-True ($bad.exit -ne 0 -and $bad.stderr -match 'DIFFICULTY_REASON_REQUIRED') 'Claude hard without reason refused'
     $r = Invoke-ClaudeWrapper 'claude-standard' @('-Tier','standard')
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.resolved_model -eq 'claude-opus-5-5') 'claude wrapper -Tier standard resolves through the router Claude lane'
     Assert-True ($r.prov.category -eq 'routine-coding' -and $r.prov.router_reason -and $null -eq $r.prov.router_table_source -and $null -eq $r.prov.router_table_date -and $r.prov.PSObject.Properties['escalated_from']) 'claude provenance carries router fields'
@@ -375,8 +388,8 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
         Assert-True ((Resolve-CodexModel -Category $category -CachePath $cachePath -Strict) -eq $codexMember) "Resolve-CodexModel accepts $category"
         $codexResult = Invoke-CodexWrapper "roster-codex-$category" @('-Category',$category)
         $claudeResult = Invoke-ClaudeWrapper "roster-claude-$category" @('-Category',$category)
-        Assert-True ($codexResult.exit -eq 0 -and $codexResult.prov.resolved_model -eq $codexMember -and $codexResult.prov.job -eq $job -and $codexResult.prov.vendor -eq 'codex' -and $codexResult.prov.effort -eq $roster.jobs.$job.first_effort -and $codexResult.prov.disclosure_line -match ('effort ' + $roster.jobs.$job.first_effort)) "codex wrapper accepts $category and records roster job/vendor"
-        Assert-True ($claudeResult.exit -eq 0 -and $claudeResult.prov.requested_model -eq $claudeMember -and $claudeResult.prov.job -eq $job -and $claudeResult.prov.vendor -eq 'claude' -and $claudeResult.prov.effort -eq $roster.jobs.$job.first_effort -and $claudeResult.prov.disclosure_line -match ('effort ' + $roster.jobs.$job.first_effort)) "claude wrapper accepts $category and records roster job/vendor"
+        Assert-True ($codexResult.exit -eq 0 -and $codexResult.prov.resolved_model -eq $codexMember -and $codexResult.prov.job -eq $job -and $codexResult.prov.vendor -eq 'codex' -and $codexResult.prov.effort -eq (Get-RouterTierEffort $roster.jobs.$job first standard) -and $codexResult.prov.disclosure_line -match ('effort ' + (Get-RouterTierEffort $roster.jobs.$job first standard))) "codex wrapper accepts $category and records roster job/vendor"
+        Assert-True ($claudeResult.exit -eq 0 -and $claudeResult.prov.requested_model -eq $claudeMember -and $claudeResult.prov.job -eq $job -and $claudeResult.prov.vendor -eq 'claude' -and $claudeResult.prov.effort -eq (Get-RouterTierEffort $roster.jobs.$job first standard) -and $claudeResult.prov.disclosure_line -match ('effort ' + (Get-RouterTierEffort $roster.jobs.$job first standard))) "claude wrapper accepts $category and records roster job/vendor"
     }
     $topCodex = Resolve-RouterModel -Category analysis -Lane codex -EscalateFrom gpt-6.1-sol -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)
     $topClaude = Resolve-RouterModel -Category analysis -Lane claude -EscalateFrom claude-opus-5-5

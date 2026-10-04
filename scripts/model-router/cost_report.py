@@ -347,7 +347,8 @@ def build_vendor_week(host: str, iso_year: int, iso_week: int, rows: list[dict],
 def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: dict,
                           today_et: date | None = None,
                           frontier_path: Path = FRONTIER_MODELS_PATH,
-                          routing_rows: list[dict] | None = None) -> list[dict]:
+                          routing_rows: list[dict] | None = None,
+                          dispatch_rows: list[dict] | None = None) -> list[dict]:
     """One report dict per ISO week seen in either the usage rows or the codex rate-limit
     readings, each holding a VendorWeek per vendor that had any signal that week."""
     today_et = today_et or datetime.now(tz=ET_ZONE).date()
@@ -355,6 +356,8 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
     week_keys: set[tuple[int, int]] = set()
     rows_by_week_host: dict[tuple[int, int, str], list[dict]] = {}
     routing_by_week: dict[tuple[int, int], list[dict]] = {}
+    for row in dispatch_rows or []:
+        week_keys.add(iso_week_of(row['date_et']))
     for row in routing_rows or []:
         if row.get("kind") == "routing" and row.get("host") == "claude":
             wk = iso_week_of(row["date_et"])
@@ -387,7 +390,7 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
             if not rows and not rate_rows_for_week:
                 continue
             vendors[host] = build_vendor_week(host, iso_year, iso_week, rows, rate_rows_for_week, prices, today_et)
-        if not vendors and not routing_by_week.get((iso_year, iso_week)):
+        if not vendors and not routing_by_week.get((iso_year, iso_week)) and not any(iso_week_of(row['date_et']) == (iso_year, iso_week) for row in dispatch_rows or []):
             continue
         work: dict[str, dict] = {}
         frontier_sessions: set[tuple[str, str]] = set()
@@ -424,6 +427,7 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
         reports.append({"iso_year": iso_year, "iso_week": iso_week, "label": week_label(iso_year, iso_week),
                         "vendors": vendors, "work_by_model": work_by_model,
                         "routing": summarize_routing(routing_by_week.get((iso_year, iso_week), [])),
+                        'difficulty_dispatches': difficulty_split(dispatch_rows or [], iso_year, iso_week),
                         "frontier": {"api_equivalent_usd": frontier_cost, "sessions": len(frontier_sessions),
                                      "model_ids": sorted(frontier_ids)}})
     return reports
@@ -474,6 +478,41 @@ def render_claude_usage(reading: dict | None) -> str:
 CLAUDE_BLOCKED_NOTE = "Claude blocked-minutes are not computed (only the latest reading is kept, not a history)."
 
 
+def difficulty_dispatches(state_dir: Path) -> list[dict]:
+    """Read wrapper provenance indexed by the existing outcome collector."""
+    dispatches, seen = [], set()
+    for row in load_jsonl(state_dir / 'outcomes.jsonl'):
+        path = row.get('provenance_path')
+        if not isinstance(path, str) or path in seen:
+            continue
+        seen.add(path)
+        provenance = _load_json_object(Path(path))
+        if not isinstance(provenance, dict) or provenance.get('preflight'):
+            continue
+        difficulty = provenance.get('difficulty')
+        if difficulty not in {'standard', 'hard'}:
+            continue
+        at = provenance.get('dispatched_at_utc') or row.get('at')
+        try:
+            date_et = datetime.fromisoformat(at.replace('Z', '+00:00')).astimezone(ET_ZONE).date().isoformat()
+        except (ValueError, TypeError, AttributeError):
+            continue
+        dispatches.append({'date_et': date_et, 'difficulty': difficulty,
+                           'workstation': provenance.get('workstation') or row.get('workstation', 'unknown')})
+    return dispatches
+
+
+def difficulty_split(rows: list[dict], iso_year: int, iso_week: int) -> list[dict]:
+    stations: dict[str, dict] = {}
+    for row in rows:
+        if iso_week_of(row['date_et']) != (iso_year, iso_week):
+            continue
+        station = row['workstation']
+        counts = stations.setdefault(station, {'workstation': station, 'standard': 0, 'hard': 0})
+        counts[row['difficulty']] += 1
+    return [stations[key] for key in sorted(stations)]
+
+
 def routing_tables(report: dict) -> list[tuple[str, list[str], list[list[str]]]]:
     routing = report.get("routing", {})
     stations = []
@@ -485,7 +524,9 @@ def routing_tables(report: dict) -> list[tuple[str, list[str], list[list[str]]]]
                     for item in routing.get("distribution", [])]
     return [("Routing compliance by workstation (Claude sessions)",
              ["Workstation", "Sessions", "Delegations", "Routed", "Unrouted", "Routed share"], stations),
-            ("Delegations by category and job", ["Axis", "Name", "Delegations"], distribution)]
+            ("Delegations by category and job", ["Axis", "Name", "Delegations"], distribution)] + ([
+            ("Difficulty dispatches by workstation (wrappers)", ["Workstation", "Standard", "Hard"],
+             [[item['workstation'], str(item['standard']), str(item['hard'])] for item in report.get('difficulty_dispatches', [])])] if report.get('difficulty_dispatches') else [])
 
 
 def render_routing_line(report: dict) -> str:
@@ -753,7 +794,7 @@ def compute_pending_roster_proposal(state_dir: Path) -> bool:
         for job in ROUTER_JOBS:
             p = proposal_jobs.get(job) or {}
             entry = live_jobs.get(job) or {}
-            if any(p.get(field) != entry.get(field) for field in ("first", "backup", "first_effort", "backup_effort")):
+            if any(p.get(field) != entry.get(field) for field in ("first", "backup", "first_effort", "backup_effort", "first_efforts", "backup_efforts")):
                 return True
         return False
     except Exception:
@@ -903,11 +944,15 @@ def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> lis
         swap = _load_json_object(path)
         if isinstance(swap, dict) and swap.get('status') == 'pending':
             entry = jobs.get(swap.get('job'), {})
-            if entry.get('first') == swap.get('model') and entry.get('first_effort') == swap.get('current_effort'):
+            if entry.get('first') == swap.get('model') and entry.get('first_efforts', {}).get(swap.get('tier', 'standard'), entry.get('first_effort')) == swap.get('current_effort'):
                 if not evidence_valid(swap.get('job'), swap.get('bench_evidence')):
                     lines.append(f"the {swap['job']} effort proposal has stale or legacy benchmark evidence; rerun its comparison before approval.")
                     continue
-                lines.append(f"an effort swap for {swap['job']} ({swap['current_effort']} to {swap['proposed_effort']}) is waiting for your OK: `pwsh -NoProfile -File \"{approve_script}\" -ApproveEffort -Job {swap['job']}`")
+                lines.append(f"an effort swap for {swap['job']} ({swap['current_effort']} to {swap['proposed_effort']}) is waiting for your OK: `pwsh -NoProfile -File \"{approve_script}\" -ApproveEffort -Job {swap['job']} -Difficulty {swap.get('tier', 'standard')}`")
+    ties = [tie for path in sorted((state_dir / 'tie-proposals').glob('*.json'))
+            if isinstance(tie := _load_json_object(path), dict) and tie.get('status') == 'pending']
+    if ties:
+        lines.append(f"{len(ties)} tie proposal(s) pending Danny's OK: `pwsh -NoProfile -File \"{approve_script}\" -Show`")
     # An existing malformed config cannot silently fall back to shipped judges.
     config = evidence_config
     disagreements = []
@@ -1072,6 +1117,8 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
         lines.append(CLAUDE_BLOCKED_NOTE)
     if "claude" in report["vendors"] or report.get("routing", {}).get("workstations"):
         lines.append(render_routing_line(report))
+    for item in report.get('difficulty_dispatches', []):
+        lines.append(f"Difficulty - {item['workstation']}: {item['standard']} standard, {item['hard']} hard dispatches")
     lines.append(needs_you_text)
     html_path = state_dir / "cost-reports" / f"weekly-{label}.html"
     lines.append(f"Full report: `{html_path}`")
@@ -1095,10 +1142,12 @@ def main() -> None:
     prices = load_prices(args.prices)
     usage_rows, rate_rows = load_usage_all_sessions(usage_path)
     routing_rows = [row for row in load_jsonl(usage_path) if row.get("kind") == "routing"]
-    reports = build_weekly_reports(usage_rows, rate_rows, prices, routing_rows=routing_rows)
+    dispatches = difficulty_dispatches(state_dir)
+    reports = build_weekly_reports(usage_rows, rate_rows, prices, routing_rows=routing_rows, dispatch_rows=dispatches)
     claude_usage = load_claude_usage(state_dir)
     for report in reports:
         report["claude_usage"] = claude_usage
+        report['difficulty_dispatches'] = difficulty_split(dispatches, report['iso_year'], report['iso_week'])
 
     if not reports:
         print("DT_MODEL_ROUTER_COST_REPORT: no usage data found; nothing written.")

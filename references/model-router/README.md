@@ -1,6 +1,6 @@
 # Model router operator reference
 
-Route work through `scripts/model-router/resolve-model.ps1`; request `-Json` for structured output. The roster contains five jobs, a first choice and an other-vendor backup per job, and a category-to-job map. The illustrator has no backup while only one image model exists. Each slot carries an effort (fast low, coder medium, deep thinker high, writer medium, illustrator none) that the resolver returns and the wrappers pass to the CLIs.
+Route work through `scripts/model-router/resolve-model.ps1`; request `-Json` for structured output. The roster contains five jobs, a first choice and an other-vendor backup per job, and a category-to-job map. The illustrator has no backup while only one image model exists. Each slot carries an effort (fast low, coder standard medium / hard high, deep thinker standard medium / hard high, writer medium, illustrator none) that the resolver returns and the wrappers pass to the CLIs.
 
 Use the approved state `roster.json` when valid. An absent `roster.json` raises `router-roster-missing`; a `roster.json` that is invalid or not approved raises `router-roster-invalid` with the error text. In both cases, the resolver uses `default-roster.json`. `ladders.json` defines the per-lane escalation ladder. Vendor limits and recorded refusal blocks can move a job to its backup; drift moves a job to its approved backup. When no eligible model is available, the resolver returns `wait`.
 
@@ -11,6 +11,18 @@ Rebuild a roster from scratch with `pwsh -NoProfile -File scripts/model-router/a
 The catalog check runs twice daily with a 30-second deadline. A failed check preserves the last good registry. New models are queued for research and trigger job-scoped bench comparisons. Alerts show a chat line, try a private Discord DM, and fall back to email; delivered keys fire once. `update-outcomes.ps1` records performance and flags drift. Bench runs on new-model, research, drift and manual triggers; no monthly bench schedule. The weekly cost report compares subscription use with API-equivalent spend and DMs model use, frontier use, vendor quota use, Claude session use, and pending approvals.
 
 Outcome writers share `Use-RouterOutcomeMutex` in `router-common.ps1`. Imports hold it before reading outcomes, the roster, drift marks and declines, through replacement and proposal updates; bench, research and build wrappers append through `Add-RouterOutcome`. Roster approval and proposal creation use the same lock so a concurrent import cannot overwrite an approval or decline. Alerts are delivered after releasing the lock. The persistent `outcomes.mutex` file is intentionally retained; its exclusive handle is released in `finally` or by the OS on process exit. Do not delete it while writers may be running. Contention waits up to 30 seconds, then raises `ROUTER_OUTCOME_MUTEX_TIMEOUT`; it never writes without the lock. This coordinates processes sharing one local state directory, not separate machines or non-cooperating manual writers.
+
+## Difficulty tiers
+
+Coder and deep-thinker default to `standard`; request `-Difficulty hard -DifficultyReason "<single-line reason, at most 240 characters>"` for hard work. Difficulty is lowercase in results and wrapper provenance; fast, writer and illustrator return null. A job without tier objects uses its scalar at both difficulties and treats tie evidence as standard.
+
+Each tiered slot still requires its scalar `first_effort` / `backup_effort`, equal to the corresponding `first_efforts.standard` / `backup_efforts.standard`. Validation rejects mismatches and missing scalars; writers update both together. Defaults are medium at standard and high at hard for both tiered jobs. Legacy approved rosters remain unchanged until approval.
+
+Use `approve-roster.ps1 -ApproveTiers -Job <deep-thinker|coder>` to adopt the default tiers for one job. Approval requires both models to match the default roster and records the previous scalars. `-RevokeTiers -Job` removes the tier objects and restores those scalars. Other jobs and model picks stay as approved. `-Show` retains scalar columns beside standard/hard columns and marks unmigrated tiered jobs "tiers not set". Seed reports show both efforts.
+
+Inside dt-build's two-attempt budget, a standard first attempt retries with `-RetryAtHardFrom <failed model> -DifficultyReason "<reason>"`, retaining that model at hard effort. A first attempt already at hard retries with `-EscalateFrom <failed model> -Difficulty hard -DifficultyReason "<reason>"`, moving one non-frontier rung. A category without tiers (unprotected `mechanical`, which routes to the fast job) retries with `-EscalateFrom <failed model>` as before. Legacy callers without difficulty flags keep their escalation behavior. Like `-EscalateFrom`, `-RetryAtHardFrom` does not apply drift marks without `-Lane`; a constrained lane applies drift and may wait.
+
+Bench caller effort overrides (including build-roster slot efforts) take precedence over roster tiers. Without an override, only coder and deep-thinker use roster tiers. The 20-task bank has no beyond tasks; the engine retains beyond support at hard effort, reported and never gating. Bank edits invalidate golden approval. Relabel proposals are skipped when standard and hard efforts are equal.
 
 ## Main-session delegation
 

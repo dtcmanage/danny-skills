@@ -28,7 +28,7 @@ try {
     Assert-True ((Test-Path -LiteralPath $latest.proposal) -and $show -match '\| Job \| Current \| Proposed' -and $show -match 'Current roster') 'seed writes proposal and show prints report'
     $seed = Get-Content -Raw -LiteralPath $latest.proposal | ConvertFrom-Json -Depth 30
     foreach ($job in @(Get-RouterJobs)) {
-        $want = Get-RouterJobEffort -Job $job
+        $want = @{fast='low';coder='medium';'deep-thinker'='medium';writer='medium';illustrator=$null}[$job]
         Assert-True ($seed.jobs.$job.first_effort -ceq $want -and $seed.jobs.$job.backup_effort -ceq $want) "seed fixed effort $job"
         if ($want) { Assert-True ($show -match "$job.*effort $want.*effort $want") "show both efforts $job" }
     }
@@ -119,7 +119,7 @@ try {
             if ($field -in @('first','backup')) {
                 # Change only this slot, reusing an existing same-vendor model to preserve the cap.
                 $proposal.jobs.coder.$field = if ($proposal.jobs.coder.("${field}_vendor") -eq 'claude') { $proposal.jobs.fast.backup } else { $proposal.jobs.fast.first }
-            } else { $proposal.jobs.coder.$field = 'low' }
+            } else { $proposal.jobs.coder.$field = 'low'; $proposal.jobs.coder.(($field -replace '_effort$','_efforts')).standard = 'low' }
             Write-RouterJsonAtomic $latest.proposal $proposal
             $options = if ($mode -eq 'full') { @('-Approve') } else { @('-Approve','-Jobs','coder') }
             $null = Invoke-Approval -Options $options

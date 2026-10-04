@@ -243,6 +243,11 @@ def grade(task: Path, answer: Path) -> bool:
                    for a, b in zip(values, target)):
                 return False
         return True
+    if task.name == "reasoning-hard-allocation":
+        if (not isinstance(result, dict) or not isinstance(result.get("assignment"), list)
+                or any(type(value) is not int for value in result["assignment"])
+                or type(result.get("cost")) is not int):
+            return False
     # JSON comparison includes exact touched-file set and unchanged files.
     return result == expected
 

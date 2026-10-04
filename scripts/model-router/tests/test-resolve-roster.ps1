@@ -3,7 +3,13 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../resolve-model.ps1')
 $script:passed = 0
 function Assert-True { param([object]$Condition,[string]$Name) if (-not [bool]$Condition) { throw "FAIL: $Name" }; $script:passed++; Write-Output "PASS: $Name" }
-function Copy-Roster { return (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 20) }
+function Copy-Roster {
+    $roster = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 20
+    foreach ($job in @('coder','deep-thinker')) {
+        foreach ($slot in @('first','backup')) { $roster.jobs.$job.PSObject.Properties.Remove("${slot}_efforts"); $roster.jobs.$job.("${slot}_effort") = Get-RouterJobEffort $job }
+    }
+    return $roster
+}
 function Save-Roster { param([object]$Roster) $Roster | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') }
 function Get-RosterErrors { param([object]$Roster) return @(Test-RouterRoster -Roster $Roster) }
 function Get-RouterVendorBlocked { param([string]$Vendor) return ($script:blocked -contains $Vendor) }

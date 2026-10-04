@@ -122,6 +122,9 @@ function Update-RouterOutcomesLocked {
                     $diagnosis = Get-RouterOutcomeValue $item @('diagnosis')
                     if ($failureCategory -ne 'environment' -or $diagnosis -cnotin @('offline','vendor_incident','unexplained')) { $diagnosis = $null }
                     $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier $file.Name); attempt=(ConvertTo-RouterOutcomeAttempt $attempt); pass=($pass -eq $true -or [string]$pass -eq 'true'); escalated=($file.Name -match '(?i)(?:-|_)(retry|fix|resume)'); failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
+                    $records[$key] | Add-Member -NotePropertyName provenance_path -NotePropertyValue $file.FullName
+                    $records[$key] | Add-Member -NotePropertyName workstation -NotePropertyValue $(if ([string]$scanRoot.path -match '[/\\]_Claude-Workspace[/\\]([^/\\]+)') { $Matches[1] } else { Split-Path -Leaf (Split-Path -Parent $scanRoot.path) })
+
                     $newCount++
                 }
                 $acceptance = Join-Path $folder 'acceptance-rows.jsonl'
@@ -258,6 +261,7 @@ function Complete-RouterDriftBench {
             $target.first = $target.backup; $target.first_vendor = $target.backup_vendor
             $target.first_effort = $effort
             $target.backup = $first; $target.backup_vendor = $vendor; $target.backup_effort = $effort
+            foreach ($slot in @('first','backup')) { if ($target.PSObject.Properties["${slot}_efforts"]) { $target.("${slot}_efforts").standard = $target.("${slot}_effort") } }
             $changes += [pscustomobject]@{job=$mark.job;slot='first';from=$first;to=$target.first;evidence='Drift; Bench comparison';bench_evidence=(New-RouterBenchProposalEvidence -Job $mark.job -Bench $BenchResults[$mark.job])}
         }
         $proposal | Add-Member -NotePropertyName changes -NotePropertyValue $changes -Force

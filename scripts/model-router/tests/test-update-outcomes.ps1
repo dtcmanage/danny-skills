@@ -73,7 +73,7 @@ try {
     $env:DT_MODEL_ROUTER_STATE = $rosterState; $script:state = $rosterState; $script:repo = $rosterRepo
     @($rosterRepo) | ConvertTo-Json | Set-Content -LiteralPath $script:sources
     $roster = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
-    foreach ($job in @(Get-RouterJobs)) { $roster.jobs.$job.first_effort = Get-RouterJobEffort -Job $job; $roster.jobs.$job.backup_effort = Get-RouterJobEffort -Job $job }
+    foreach ($job in @(Get-RouterJobs)) { $roster.jobs.$job.first_effort = Get-RouterJobEffort -Job $job; $roster.jobs.$job.backup_effort = Get-RouterJobEffort -Job $job; foreach ($slot in @('first','backup')) { if ($roster.jobs.$job.PSObject.Properties["${slot}_efforts"]) { $roster.jobs.$job.("${slot}_efforts").standard = $roster.jobs.$job.("${slot}_effort") } } }
     $roster.approved = $true; $roster.approved_at = '2026-09-27T00:00:00Z'
     $roster | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $rosterState 'roster.json')
     $rosterHash = (Get-FileHash -LiteralPath (Join-Path $rosterState 'roster.json') -Algorithm SHA256).Hash

@@ -34,7 +34,7 @@ try {
     # Both orchestrator retry passages must consume diagnosis before escalation.
     $skillText = Get-Content -Raw -LiteralPath (Join-Path $skillRoot 'SKILL.md')
     $retryPassages = @(
-        [regex]::Match($skillText, '(?m)^- \*\*Retry one step up, once:\*\*[^\r\n]+').Value,
+        [regex]::Match($skillText, '(?m)^- \*\*Retry once:\*\*[^\r\n]+').Value,
         [regex]::Match($skillText, '(?s)- c\. \*\*Run the chunk through the canonical lane\.\*\*.*?(?=- c1\.)').Value
     )
     foreach ($passage in $retryPassages) {
@@ -44,6 +44,7 @@ try {
         Assert-True ($text -match 'On `ROUTER_UNEXPLAINED` do not re-dispatch, escalate, or demote; stop the piece \(the wrapper already retried once and paged\)\.') 'unexplained stops without another retry or quality signal'
         Assert-True ($text -match 'On `ROUTER_OFFLINE` the piece fails as `environment`; the orchestrator''s own resume handles it\.') 'offline returns to orchestrator resume as environment'
         Assert-True ($text.IndexOf('run the dispatch diagnosis', [StringComparison]::OrdinalIgnoreCase) -lt $text.IndexOf('`-EscalateFrom')) 'diagnosis precedes first escalation reference'
+        Assert-True ($text -match 'two-attempt budget' -and $text -match 'standard.*`-RetryAtHardFrom <failed model>' -and $text -match 'hard.*`-EscalateFrom <failed model>' -and $text -match 'without tiers.*`-EscalateFrom <failed model>` as before') 'both retry passages use standard-to-hard or hard-to-escalation within two attempts and keep escalation for untiered categories'
     }
 
     # Extract once: a backticked python -m pytest command must not produce an
@@ -150,7 +151,7 @@ return [pscustomobject]@{ id = 'fake' }
     $fixtureRoster.approved = $true; $fixtureRoster.approved_at = '2026-10-01T00:00:00Z'
     Write-Utf8 -Path (Join-Path $routerState 'roster.json') -Content ($fixtureRoster | ConvertTo-Json -Depth 20)
     $routerCatalog = Get-Content -Raw -LiteralPath $routerCachePath | ConvertFrom-Json -Depth 20
-    foreach ($case in @(@('complex-coding',$true,'medium'),@('routine-coding',$false,'medium'),@('mechanical',$false,'low'),@('code-review',$false,'high'))) {
+    foreach ($case in @(@('complex-coding',$true,'medium'),@('routine-coding',$false,'medium'),@('mechanical',$false,'low'),@('code-review',$false,'medium'))) {
         foreach ($lane in @('codex','claude')) {
             $pick = Resolve-RouterModel -Category $case[0] -Lane $lane -Protected:$case[1] -Catalog $routerCatalog -SkipModelCheck
             $job = $fixtureRoster.jobs.(Get-RouterCategoryJob -Category $case[0])
@@ -459,6 +460,18 @@ if($env:DT_FAKE_UNICODE_TEXT){
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $wrapperOutput `
         -CodexCliPath $fakeCodex -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Codex success path failed"
+
+    $tierOutput = Join-Path $tempRoot 'codex-tier-normalization.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $tierOutput -CodexCliPath $fakeCodex  -Category routine-coding -Effort low -Difficulty HARD -DifficultyReason 'interacting constraints' -SelectionReason 'tier fixture' -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'Codex uppercase difficulty accepted'
+    $tierProv = Get-Content -Raw -LiteralPath "$tierOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ($tierProv.difficulty -ceq 'hard' -and $tierProv.difficulty_reason -eq 'interacting constraints') 'Codex provenance normalizes uppercase difficulty'
+    foreach ($invalid in @(@{Category='routine-coding';Difficulty='hard'}, @{Category='invalid-category';Difficulty='standard'})) {
+        $badInputLog = Join-Path $tempRoot 'codex-bad-router-input.log'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $tierOutput -CodexCliPath $fakeCodex  -Effort low -SelectionReason 'tier fixture' @invalid -Json *> $badInputLog
+        Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw -LiteralPath $badInputLog) -match 'CODEX_INVOKE_FAIL:') 'Codex router validation retains invocation failure prefix'
+    }
+
     $retained = Get-Content -Raw -LiteralPath $wrapperOutput
     Assert-True ($retained -notmatch 'ghp_') "retained chunk output leaked a credential"
     Assert-True ($retained -match '\[REDACTED-SECRET\]') "retained chunk output was not redacted"
@@ -562,6 +575,18 @@ Write-Envelope $report
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeOutput `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Claude success path failed"
+
+    $tierOutput = Join-Path $tempRoot 'claude-tier-normalization.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $tierOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort low -Difficulty HARD -DifficultyReason 'interacting constraints' -SelectionReason 'tier fixture' -Json *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'Claude uppercase difficulty accepted'
+    $tierProv = Get-Content -Raw -LiteralPath "$tierOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ($tierProv.difficulty -ceq 'hard' -and $tierProv.difficulty_reason -eq 'interacting constraints') 'Claude provenance normalizes uppercase difficulty'
+    foreach ($invalid in @(@{Category='routine-coding';Difficulty='hard'}, @{Category='invalid-category';Difficulty='standard'})) {
+        $badInputLog = Join-Path $tempRoot 'claude-bad-router-input.log'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $tierOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Effort low -SelectionReason 'tier fixture' @invalid -Json *> $badInputLog
+        Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw -LiteralPath $badInputLog) -match 'CLAUDE_INVOKE_FAIL:') 'Claude router validation retains invocation failure prefix'
+    }
+
     $claudeRetained = Get-Content -Raw -LiteralPath $claudeOutput
     Assert-True ($claudeRetained -notmatch 'ghp_') "retained Claude chunk output leaked a credential"
     Assert-True ($claudeRetained -match '\[REDACTED-SECRET\]') "retained Claude chunk output was not redacted"

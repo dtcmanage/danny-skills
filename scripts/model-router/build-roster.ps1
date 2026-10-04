@@ -231,12 +231,22 @@ function Build-RouterRosterProposalLocked {
 function Save-RouterEffortProposal {
     param([object]$Request, [object]$Bench)
     # Caller holds the outcome lock and has revalidated the roster snapshot.
+    if ($Bench.PSObject.Properties['tiers']) {
+        foreach ($tierResult in @($Bench.tiers)) {
+            $tierRequest = [pscustomobject]@{job=$Request.job;candidate=$Request.candidate;incumbent=$tierResult.incumbent.model;effort=$tierResult.incumbent.effort}
+            Save-RouterEffortProposal -Request $tierRequest -Bench ([pscustomobject]$tierResult)
+        }
+        return
+    }
+    $tier = if ($Bench.PSObject.Properties['tier']) { $Bench.tier } else { 'standard' }
     if (-not $Bench.PSObject.Properties['shadow'] -or $Bench.shadow -isnot [bool] -or $Bench.shadow) { return }
     $writer = $Request.job -eq 'writer'
     $qualification = if ($writer) { 'effort_up_qualified' } else { 'effort_down_qualified' }
     if (-not $Bench.PSObject.Properties[$qualification] -or -not $Bench.$qualification -or $Bench.raw_gate -eq 'unknown') { return }
     $current = (Read-RouterRoster).roster.jobs.($Request.job)
-    if ($current.first -cne $Request.incumbent -or $current.first_effort -cne $Request.effort) { return }
+    # Without tier objects the scalar drives both tiers, so a hard-tier swap would also lower standard work.
+    if ($tier -eq 'hard' -and -not $current.PSObject.Properties['first_efforts']) { return }
+    if ($current.first -cne $Request.incumbent -or (Get-RouterTierEffort $current first $tier) -cne $Request.effort) { return }
     $next = if ($writer) { @{low='medium';medium='high';high='xhigh'}[[string]$Request.effort] } else { @{medium='low';high='medium'}[[string]$Request.effort] }
     $laneName = if ($writer) { 'effort_up' } else { 'effort_down' }
     $lane = $Bench.$laneName
@@ -245,10 +255,10 @@ function Save-RouterEffortProposal {
     if (Get-RouterBenchProposalEvidenceError -Job $Request.job -Evidence $evidence) { return }
     $dir = Join-Path (Get-RouterStateDir) 'effort-proposals'
     [IO.Directory]::CreateDirectory($dir) | Out-Null
-    $path = Join-Path $dir ($Request.job + '.json')
+    $path = Join-Path $dir ($Request.job + $(if ($Request.job -in @('coder','deep-thinker')) { '-' + $tier } else { '' }) + '.json')
     $old = Read-RouterJsonObject $path
     if ($old -and $old.model -ceq $current.first -and $old.current_effort -ceq $Request.effort -and $old.proposed_effort -ceq $next -and $old.PSObject.Properties['bench_evidence'] -and (ConvertTo-Json $old.bench_evidence -Compress -Depth 10) -ceq (ConvertTo-Json $evidence -Compress -Depth 10)) { return }
-    $proposal = [pscustomobject]@{type='effort-swap';job=$Request.job;model=$current.first;current_effort=$Request.effort;proposed_effort=$next;status='pending';bench_evidence=$evidence;incumbent=$Bench.incumbent;report=$Bench.report_paths.markdown;dimension_framework='provisional'}
+    $proposal = [pscustomobject]@{type='effort-swap';job=$Request.job;tier=$tier;model=$current.first;current_effort=$Request.effort;proposed_effort=$next;status='pending';bench_evidence=$evidence;incumbent=$Bench.incumbent;report=$Bench.report_paths.markdown;dimension_framework='provisional'}
     $proposal | Add-Member -NotePropertyName $laneName -NotePropertyValue $lane
     Write-RouterJsonAtomic -Path $path -Value $proposal
 }

@@ -1,0 +1,10 @@
+{
+  "id": "reasoning-hard-allocation",
+  "category": "math",
+  "job": "deep-thinker",
+  "grader": "exact",
+  "dimension_framework": "provisional",
+  "seed": 20260930,
+  "difficulty": "hard",
+  "calibration": "provisional"
+}

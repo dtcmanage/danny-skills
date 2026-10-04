@@ -1,0 +1,10 @@
+{
+  "id": "coder-hard-schedule",
+  "category": "complex-coding",
+  "job": "coder",
+  "grader": "pytest",
+  "dimension_framework": "provisional",
+  "seed": 20260930,
+  "difficulty": "hard",
+  "calibration": "provisional"
+}

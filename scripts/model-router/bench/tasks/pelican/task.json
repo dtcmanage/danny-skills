@@ -4,5 +4,6 @@
   "job": "illustrator",
   "grader": "artifact",
   "dimension_framework": "provisional",
-  "seed": 20260930
+  "seed": 20260930,
+  "difficulty": "standard"
 }

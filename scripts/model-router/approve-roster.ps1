@@ -21,6 +21,9 @@ param(
     [switch]$ApproveTie,
     [switch]$DeclineTie,
     [switch]$RevokeTie,
+    [switch]$ApproveTiers,
+    [switch]$RevokeTiers,
+    [ValidateSet('standard','hard')][string]$Difficulty = 'standard',
     [string]$Job,
     [string[]]$Jobs
 )
@@ -28,7 +31,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'resolve-model.ps1')
 . (Join-Path $PSScriptRoot 'publish-roster.ps1')
-if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort -or $ApproveTie -or $DeclineTie -or $RevokeTie) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
+if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort -or $ApproveTie -or $DeclineTie -or $RevokeTie -or $ApproveTiers -or $RevokeTiers) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
 if ($Jobs) { $Jobs = @($Jobs | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 
 function Write-RouterApprovalJson {
@@ -55,11 +58,13 @@ function Get-RouterRosterProposalEvidenceErrors {
     }
 }
 
-if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort + [int][bool]$ApproveTie + [int][bool]$DeclineTie + [int][bool]$RevokeTie) -ne 1) { throw 'Choose exactly one roster action.' }
+if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort + [int][bool]$ApproveTie + [int][bool]$DeclineTie + [int][bool]$RevokeTie + [int][bool]$ApproveTiers + [int][bool]$RevokeTiers) -ne 1) { throw 'Choose exactly one roster action.' }
+$tierAction = $ApproveTiers -or $RevokeTiers
+if ($tierAction -and $Job -notin @('deep-thinker','coder')) { throw '-ApproveTiers and -RevokeTiers require -Job deep-thinker or coder.' }
 $tieAction = $ApproveTie -or $DeclineTie -or $RevokeTie
 $effortAction = $ApproveEffort -or $DeclineEffort -or $RevokeEffort
 if (($DeclineDrift -or $effortAction -or $tieAction) -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
-if ($Job -and -not ($DeclineDrift -or $effortAction -or $tieAction)) { throw '-Job requires a job-specific action.' }
+if ($Job -and -not ($DeclineDrift -or $effortAction -or $tieAction -or $tierAction)) { throw '-Job requires a job-specific action.' }
 if ($Jobs -and -not $Approve) { throw '-Jobs requires -Approve.' }
 $approvalAction = {
 $state = if ($Show) { Get-RouterStatePath } else { Get-RouterStateDir }
@@ -81,12 +86,19 @@ if ($Show) {
     }
     $current = Read-RouterRoster
     "Current roster ($($current.source)):" | Write-Output
-    @(Get-RouterJobs | ForEach-Object { [pscustomobject]@{ job=$_; first=$current.roster.jobs.$_.first; first_effort=$current.roster.jobs.$_.first_effort; backup=$current.roster.jobs.$_.backup; backup_effort=$current.roster.jobs.$_.backup_effort } }) | Format-Table -AutoSize | Out-String | Write-Output
+    @(Get-RouterJobs | ForEach-Object { [pscustomobject]@{ job=$_; first_effort=$current.roster.jobs.$_.first_effort; backup_effort=$current.roster.jobs.$_.backup_effort; tiers=$(if ($_ -in @('coder','deep-thinker') -and -not $current.roster.jobs.$_.PSObject.Properties['first_efforts'] -and -not $current.roster.jobs.$_.PSObject.Properties['backup_efforts']) { 'tiers not set' } else { $null }); first=$current.roster.jobs.$_.first; first_standard=(Get-RouterTierEffort $current.roster.jobs.$_ first standard); first_hard=$(if ($_ -in @('coder','deep-thinker')) { Get-RouterTierEffort $current.roster.jobs.$_ first hard } else { $null }); backup=$current.roster.jobs.$_.backup; backup_standard=(Get-RouterTierEffort $current.roster.jobs.$_ backup standard); backup_hard=$(if ($_ -in @('coder','deep-thinker')) { Get-RouterTierEffort $current.roster.jobs.$_ backup hard } else { $null }) } }) | Format-Table -AutoSize | Out-String -Width 400 | Write-Output
+    $tieDir = Join-Path $state 'tie-proposals'
+    if (Test-Path -LiteralPath $tieDir) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $tieDir -Filter '*.json')) {
+            $tie = Read-RouterJsonObject $file.FullName
+            if ($tie -and $tie.status -eq 'pending') { "Tie proposal $($tie.job), tier $($tie.tier): $(ConvertTo-Json $tie.configurations -Compress -Depth 5); run $($tie.run_id); pending" | Write-Output }
+        }
+    }
     $effortDir = Join-Path $state 'effort-proposals'
     if (Test-Path -LiteralPath $effortDir) {
         foreach ($file in @(Get-ChildItem -LiteralPath $effortDir -Filter '*.json')) {
             $swap = Read-RouterJsonObject $file.FullName
-            "Effort proposal $($swap.job): $($swap.model), $($swap.current_effort) -> $($swap.proposed_effort), $($swap.status); report $($swap.report)" | Write-Output
+            "Effort proposal $($swap.job), tier $(if ($swap.PSObject.Properties['tier']) { $swap.tier } else { 'standard' }): $($swap.model), $($swap.current_effort) -> $($swap.proposed_effort), $($swap.status); report $($swap.report)" | Write-Output
             $basis = if ($swap.PSObject.Properties['bench_evidence']) { $swap.bench_evidence } else { $null }
             "Benchmark basis: $(ConvertTo-Json $basis -Compress -Depth 10)" | Write-Output
             if ($swap.status -eq 'pending') { $reason = Get-RouterBenchProposalEvidenceError -Job $swap.job -Evidence $basis; if ($reason) { "Stale effort proposal; approval unavailable: $reason" | Write-Output } }
@@ -96,7 +108,7 @@ if ($Show) {
     $proposal = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
     foreach ($name in @(Get-RouterJobs)) {
         foreach ($slot in @('first','backup')) {
-            $proposal.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterJobEffort -Job $name) -Force
+            $proposal.jobs.$name | Add-Member -NotePropertyName "${slot}_effort" -NotePropertyValue (Get-RouterTierEffort $proposal.jobs.$name $slot standard) -Force
         }
     }
     $proposal.generated_at = (Get-Date).ToUniversalTime().ToString('o')
@@ -104,16 +116,48 @@ if ($Show) {
     $path = Join-Path $dir ($stem + '.json'); $report = Join-Path $dir ($stem + '.md')
     Write-RouterApprovalJson $path $proposal
     $lines = @('# Model list proposal','','| Job | Current | Proposed | Evidence summary | Backup |','| --- | --- | --- | --- | --- |')
-    foreach ($name in @(Get-RouterJobs)) { $lines += "| $name | $($proposal.jobs.$name.first) (effort $($proposal.jobs.$name.first_effort)) | $($proposal.jobs.$name.first) (effort $($proposal.jobs.$name.first_effort)) | Seeded from default roster | $($proposal.jobs.$name.backup) (effort $($proposal.jobs.$name.backup_effort)) |" }
+    foreach ($name in @(Get-RouterJobs)) { $lines += "| $name | $($proposal.jobs.$name.first) (effort $($proposal.jobs.$name.first_effort)$(if ($name -in @('coder','deep-thinker')) { "; standard $(Get-RouterTierEffort $proposal.jobs.$name first standard), hard $(Get-RouterTierEffort $proposal.jobs.$name first hard)" })) | $($proposal.jobs.$name.first) (effort $($proposal.jobs.$name.first_effort)$(if ($name -in @('coder','deep-thinker')) { "; standard $(Get-RouterTierEffort $proposal.jobs.$name first standard), hard $(Get-RouterTierEffort $proposal.jobs.$name first hard)" })) | Seeded from default roster | $($proposal.jobs.$name.backup) (effort $($proposal.jobs.$name.backup_effort)$(if ($name -in @('coder','deep-thinker')) { "; standard $(Get-RouterTierEffort $proposal.jobs.$name backup standard), hard $(Get-RouterTierEffort $proposal.jobs.$name backup hard)" })) |" }
     [IO.File]::WriteAllText($report,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
     Write-RouterApprovalJson (Join-Path $dir 'latest.json') ([pscustomobject]@{proposal=$path;report=$report})
     "Seed proposal: $path" | Write-Output
+} elseif ($tierAction) {
+    $read = Read-RouterRoster
+    if ($read.source -ne 'state') { throw 'Tier migration requires an approved roster.' }
+    $current = $read.roster
+    $entry = $current.jobs.$Job
+    if ($ApproveTiers) {
+        if ($entry.PSObject.Properties['first_efforts'] -or $entry.PSObject.Properties['backup_efforts']) { throw 'Tiers are already set; revoke them before approving again.' }
+        $defaults = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+        if ($entry.first -cne $defaults.jobs.$Job.first -or $entry.backup -cne $defaults.jobs.$Job.backup) { throw 'Tier approval refused: first and backup models must match the default roster.' }
+        $entry | Add-Member -NotePropertyName pre_tier_efforts -NotePropertyValue ([pscustomobject]@{first=$entry.first_effort;backup=$entry.backup_effort})
+        foreach ($slot in @('first','backup')) {
+            $entry | Add-Member -NotePropertyName "${slot}_efforts" -NotePropertyValue ($defaults.jobs.$Job.("${slot}_efforts") | ConvertTo-Json | ConvertFrom-Json)
+            $entry.("${slot}_effort") = $entry.("${slot}_efforts").standard
+        }
+    } else {
+        if (-not $entry.PSObject.Properties['pre_tier_efforts']) { throw 'No recorded tier approval to revoke.' }
+        foreach ($slot in @('first','backup')) {
+            $entry.PSObject.Properties.Remove("${slot}_efforts")
+            $entry.("${slot}_effort") = $entry.pre_tier_efforts.$slot
+        }
+        $entry.PSObject.Properties.Remove('pre_tier_efforts')
+    }
+    # A tie is approved for exact efforts; when they change it must be re-confirmed, as -Approve already requires.
+    $tieDropped = $false
+    if ($entry.PSObject.Properties['tie_evidence'] -and (Get-RouterTieEvidenceError -Entry $entry -Evidence $entry.tie_evidence)) { $entry.PSObject.Properties.Remove('tie_evidence'); $tieDropped = $true }
+    $errors = @(Test-RouterRoster $current)
+    if ($errors.Count) { throw "Invalid tier roster: $($errors -join '; ')" }
+    Write-RouterApprovalJson $rosterPath $current
+    Publish-RouterRoster
+    "Tiers $(if ($ApproveTiers) { 'approved' } else { 'revoked' }) for $Job.$(if ($tieDropped) { ' Tie approval dropped: its efforts no longer match; a new tied run must confirm it.' })" | Write-Output
 } elseif ($tieAction) {
-    $path = Join-Path $state ('tie-proposals/' + $Job + '.json')
+    $path = Join-Path $state ('tie-proposals/' + $Job + $(if ($Difficulty -eq 'hard') { '-hard' } else { '' }) + '.json')
     $current = (Read-RouterRoster).roster
     $entry = $current.jobs.$Job
+    $replacedTier = if ($ApproveTie -and $entry.PSObject.Properties['tie_evidence'] -and $entry.tie_evidence.tier -cne $Difficulty) { [string]$entry.tie_evidence.tier } else { $null }
     if ($RevokeTie) {
         if (-not $entry.PSObject.Properties['tie_evidence']) { throw 'No approved tie to revoke.' }
+        if ($entry.tie_evidence.tier -cne $Difficulty) { throw 'TIE_TIER_MISMATCH' }
         $entry.PSObject.Properties.Remove('tie_evidence')
         Write-RouterApprovalJson $rosterPath $current
         Publish-RouterRoster
@@ -133,15 +177,17 @@ if ($Show) {
         } else { $proposal.status = 'declined' }
         Write-RouterApprovalJson $path $proposal
     }
-    "Tie action recorded for $Job." | Write-Output
+    "Tie action recorded for $Job.$(if ($replacedTier) { " It replaced the approved $replacedTier-tier tie; one tie per job is kept." })" | Write-Output
 } elseif ($effortAction) {
-    $path = Join-Path $state ('effort-proposals/' + $Job + '.json')
+    $path = Join-Path $state ('effort-proposals/' + $Job + $(if ($Job -in @('coder','deep-thinker')) { '-' + $Difficulty } else { '' }) + '.json')
+    if (-not (Test-Path -LiteralPath $path) -and $Difficulty -eq 'standard') { $path = Join-Path $state ('effort-proposals/' + $Job + '.json') }
     $swap = Read-RouterJsonObject $path
     if (-not $swap -or $swap.type -ne 'effort-swap' -or $swap.job -cne $Job) { throw 'No effort proposal for this job.' }
     $current = (Read-RouterRoster).roster
     $entry = $current.jobs.$Job
+    if ($ApproveEffort -and $Difficulty -eq 'hard' -and $Job -in @('coder','deep-thinker') -and -not $entry.PSObject.Properties['first_efforts']) { throw "EFFORT_TIERS_NOT_SET: approve tiers for $Job first (-ApproveTiers -Job $Job); without them this change would also lower standard work." }
     $expected = if ($RevokeEffort) { $swap.proposed_effort } else { $swap.current_effort }
-    if ($entry.first -cne $swap.model -or $entry.first_effort -cne $expected) { throw 'EFFORT_STALE_ROSTER: model or current effort changed.' }
+    if ($entry.first -cne $swap.model -or (Get-RouterTierEffort $entry first $Difficulty) -cne $expected) { throw 'EFFORT_STALE_ROSTER: model or current effort changed.' }
     if ($RevokeEffort -and $swap.status -ne 'approved') { throw 'No approved effort swap to revoke.' }
     if (-not $RevokeEffort -and $swap.status -ne 'pending') { throw 'Effort proposal is not pending.' }
     $next = if ($Job -eq 'writer') { @{low='medium';medium='high';high='xhigh'}[[string]$swap.current_effort] } else { @{medium='low';high='medium'}[[string]$swap.current_effort] }
@@ -154,7 +200,15 @@ if ($Show) {
     }
     if ($DeclineEffort) { $swap.status = 'declined' }
     else {
-        $entry.first_effort = if ($RevokeEffort) { $swap.current_effort } else { $swap.proposed_effort }
+        $value = if ($RevokeEffort) { $swap.current_effort } else { $swap.proposed_effort }
+        if ($Job -in @('coder','deep-thinker') -and $swap.PSObject.Properties['tier'] -and $swap.tier -cne $Difficulty) { throw 'EFFORT_TIER_MISMATCH' }
+        if ($Job -in @('coder','deep-thinker') -and $swap.PSObject.Properties['tier'] -and $entry.PSObject.Properties['first_efforts']) {
+            $entry.first_efforts.$Difficulty = $value
+            $entry.first_effort = $entry.first_efforts.standard
+        } else {
+            $entry.first_effort = $value
+            if ($entry.PSObject.Properties['first_efforts']) { $entry.first_efforts.standard = $value }
+        }
         $errors = @(Test-RouterRoster $current)
         if ($errors.Count) { throw "Invalid effort roster: $($errors -join '; ')" }
         Write-RouterApprovalJson $rosterPath $current
@@ -181,8 +235,12 @@ if ($Show) {
     foreach ($name in @(Get-RouterJobs)) {
         $old = $before.jobs.$name; $next = $proposal.jobs.$name
         $unchanged = $true
-        foreach ($field in @('first','backup','first_effort','backup_effort')) {
-            if ($old.$field -cne $next.$field) { $unchanged = $false }
+        foreach ($field in @('first','backup')) {
+            if ($old.PSObject.Properties[$field] -and $next.PSObject.Properties[$field] -and $old.$field -cne $next.$field) { $unchanged = $false }
+        }
+        foreach ($slot in @('first','backup')) {
+            $tier = if ($old.PSObject.Properties['tie_evidence']) { $old.tie_evidence.tier } else { 'standard' }
+            if ((Get-RouterTierEffort $old $slot $tier) -cne (Get-RouterTierEffort $next $slot $tier)) { $unchanged = $false }
         }
         $next.PSObject.Properties.Remove('tie_evidence')
         if ($unchanged -and $old.PSObject.Properties['tie_evidence']) {

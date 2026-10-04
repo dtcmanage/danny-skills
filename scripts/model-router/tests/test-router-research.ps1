@@ -316,7 +316,7 @@ if($args -contains '--fail'){[Console]::Error.Write($text);exit 9}
     $env:DT_MODEL_ROUTER_STATE = $qualityState
     $roster = Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
     $roster.approved = $true; $roster.approved_at = '2026-10-01T00:00:00Z'
-    foreach ($job in @(Get-RouterJobs)) { $roster.jobs.$job.first_effort = Get-RouterJobEffort -Job $job; $roster.jobs.$job.backup_effort = Get-RouterJobEffort -Job $job }
+    foreach ($job in @(Get-RouterJobs)) { $roster.jobs.$job.first_effort = Get-RouterJobEffort -Job $job; $roster.jobs.$job.backup_effort = Get-RouterJobEffort -Job $job; foreach ($slot in @('first','backup')) { if ($roster.jobs.$job.PSObject.Properties["${slot}_efforts"]) { $roster.jobs.$job.("${slot}_efforts").standard = $roster.jobs.$job.("${slot}_effort") } } }
     $roster | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $qualityState 'roster.json')
     $qualityPath = Join-Path $qualityState 'outcomes.jsonl'
     $stoppedRows | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content $qualityPath

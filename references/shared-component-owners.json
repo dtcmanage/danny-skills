@@ -477,5 +477,22 @@
   "scripts/model-router/tests/fixtures/routing-dispatch-kinds.jsonl": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/routing-no-agent-blocks.jsonl": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/routing-pairing.jsonl": {"consumers": [], "summary_token": "model router"},
-  "scripts/model-router/tests/fixtures/routing-week-boundary.jsonl": {"consumers": [], "summary_token": "model router"}
+  "scripts/model-router/tests/fixtures/routing-week-boundary.jsonl": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/coder-hard-schedule/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/coder-hard-schedule/golden/answer.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/coder-hard-schedule/grader.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/coder-hard-schedule/hidden_tests.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/coder-hard-schedule/known-bad.txt": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/coder-hard-schedule/known-good.txt": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/coder-hard-schedule/prompt.md": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/coder-hard-schedule/task.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/reasoning-hard-allocation/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/reasoning-hard-allocation/golden/answer.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/reasoning-hard-allocation/grader.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/reasoning-hard-allocation/known-bad.txt": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/reasoning-hard-allocation/known-good.txt": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/reasoning-hard-allocation/prompt.md": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/tasks/reasoning-hard-allocation/task.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/tests/test-difficulty-tiers.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test_bench_tiers.py": {"consumers": [], "summary_token": "model router"}
 }

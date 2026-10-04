@@ -9,6 +9,9 @@ param(
     [switch]$Protected,
     # Retry after a failed attempt: the router moves one step up from this model.
     [string]$EscalateFrom = "",
+    [ValidateSet('standard','hard')][string]$Difficulty = 'standard',
+    [string]$DifficultyReason = "",
+    [string]$RetryAtHardFrom = "",
     [string]$Model = "",
     [string]$SelectionReason = "",
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
@@ -153,15 +156,23 @@ if ($env:DT_BUILD_DISPATCH_SEAMS) {
 . (Join-Path $repoRoot "scripts\resolve-codex-model.ps1")
 . (Join-Path $repoRoot "scripts\model-router\resolve-model.ps1")
 
+$workstation = if ($projectRoot -match '[/\\]_Claude-Workspace[/\\]([^/\\]+)') { $Matches[1] } else { Split-Path -Leaf (Split-Path -Parent $projectRoot) }
 $isProtected = [bool]$Protected
 if ([string]::IsNullOrWhiteSpace($Category)) {
     $mappedCategory = ConvertTo-RouterCategoryFromTier -Tier $Tier
     $Category = $mappedCategory.category
     $isProtected = $isProtected -or $mappedCategory.protected
 }
-$escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
 try {
-    $routerPick = Resolve-RouterModel -Category $Category -Lane claude -Protected:$isProtected -EscalateFrom $escalatedFrom -SendAlerts -ChatToStderr:$Json
+    $Difficulty = $Difficulty.ToLowerInvariant()
+    if ($RetryAtHardFrom) { $Difficulty = 'hard' }
+    Test-RouterDifficulty -Difficulty $Difficulty -DifficultyReason $DifficultyReason
+    $routingDifficultyArgs = @{}
+    if ($PSBoundParameters.ContainsKey('Difficulty') -or $PSBoundParameters.ContainsKey('DifficultyReason') -or $RetryAtHardFrom) { $routingDifficultyArgs = @{Difficulty=$Difficulty;DifficultyReason=$DifficultyReason} }
+    $resolvedDifficulty = if ((Get-RouterCategoryJob -Category $Category) -in @('coder','deep-thinker') -or ($isProtected -and $Category -eq 'mechanical')) { $Difficulty } else { $null }
+    $escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
+
+    $routerPick = Resolve-RouterModel -Category $Category -Lane claude -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -SendAlerts -ChatToStderr:$Json
 }
 catch { throw "CLAUDE_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
 if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or (Get-RouterVendorBlocked -Vendor claude))) {
@@ -169,6 +180,7 @@ if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         $waitProvenance = [pscustomobject]@{
             pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier; effort = $Effort
+            workstation = $workstation; dispatched_at_utc = [datetimeoffset]::UtcNow.ToString('o'); difficulty = $resolvedDifficulty; difficulty_reason = $(if ($resolvedDifficulty) { $DifficultyReason } else { $null }); retry_at_hard_from = $RetryAtHardFrom
             category = $Category; protected = [bool]$routerPick.protected; escalated_from = $escalatedFrom
             router_status = 'wait'; router_reason = $routerPick.reason
             router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
@@ -429,7 +441,7 @@ try {
                         & $appendEvent
                         if ($dispatchDiagnosis.verdict -eq 'vendor_incident') {
                             $diagnosis = 'vendor_incident'
-                            $backupPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected -SkipModelCheck -SendAlerts -ChatToStderr:$Json
+                            $backupPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected @routingDifficultyArgs -SkipModelCheck -SendAlerts -ChatToStderr:$Json
                             $failureReason = 'ROUTER_VENDOR_INCIDENT'
                             break
                         }
@@ -438,7 +450,7 @@ try {
                     $failureReason = 'ROUTER_OFFLINE'
                 }
                 'vendor_incident' {
-                    $backupPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected -SkipModelCheck -SendAlerts -ChatToStderr:$Json
+                    $backupPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected @routingDifficultyArgs -SkipModelCheck -SendAlerts -ChatToStderr:$Json
                     $failureReason = 'ROUTER_VENDOR_INCIDENT'
                 }
                 'unexplained' {
@@ -471,6 +483,11 @@ try {
         lane                = 'claude'
         effort              = $Effort
         tier                = $Tier
+        workstation = $workstation
+        dispatched_at_utc = $started.ToUniversalTime().ToString('o')
+        difficulty          = $resolvedDifficulty
+        difficulty_reason   = $(if ($resolvedDifficulty) { $DifficultyReason } else { $null })
+        retry_at_hard_from  = $RetryAtHardFrom
         category            = $Category
         protected           = $isProtected
         escalated_from      = $escalatedFrom
@@ -525,6 +542,7 @@ catch {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
             pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier; effort = $Effort
+            workstation = $workstation; dispatched_at_utc = [datetimeoffset]::UtcNow.ToString('o'); difficulty = $resolvedDifficulty; difficulty_reason = $(if ($resolvedDifficulty) { $DifficultyReason } else { $null }); retry_at_hard_from = $RetryAtHardFrom
             category = $Category; protected = $isProtected; escalated_from = $escalatedFrom
             router_reason = $routerReason; router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
             job = $routerPick.job; vendor = $routerPick.vendor

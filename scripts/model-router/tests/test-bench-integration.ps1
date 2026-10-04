@@ -33,7 +33,7 @@ try {
     $roster = (Read-RouterRoster).roster
     $request = [pscustomobject]@{job='coder';incumbent=$roster.jobs.coder.first;effort=$roster.jobs.coder.first_effort}
     $bench = [pscustomobject]@{shadow=$false;raw_gate='pass';effort_down_qualified=$true;incumbent=@{passed=3};effort_down=[pscustomobject]@{model=$request.incumbent;effort='low';passed=3};report_paths=@{markdown='synthetic'}}
-    $path = Join-Path $temp 'effort-proposals/coder.json'
+    $path = Join-Path $temp 'effort-proposals/coder-standard.json'
     $bench = Add-TestBenchEvidence $bench
     foreach($badShadow in @($true, 'false', $null)) {
         $bench.shadow=$badShadow
@@ -45,7 +45,7 @@ try {
     Check (-not(Test-Path $path)) 'Missing shadow state writes no effort proposal'
     $bench | Add-Member -NotePropertyName shadow -NotePropertyValue $false
     Save-RouterEffortProposal $request $bench
-    $path = Join-Path $temp 'effort-proposals/coder.json'
+    $path = Join-Path $temp 'effort-proposals/coder-standard.json'
     if (-not (Test-Path $path)) { throw 'Qualified effort-only proposal missing' }
     $original = [IO.File]::ReadAllText($path)
     Save-RouterEffortProposal $request $bench

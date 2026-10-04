@@ -3,6 +3,9 @@ param(
     [Alias('Lane')][string]$RouterResolveCliLane,
     [Alias('Protected')][switch]$RouterResolveCliProtected,
     [Alias('EscalateFrom')][string]$RouterResolveCliEscalateFrom,
+    [Alias('Difficulty')][ValidateSet('standard','hard')][string]$RouterResolveCliDifficulty = 'standard',
+    [Alias('DifficultyReason')][string]$RouterResolveCliDifficultyReason,
+    [Alias('RetryAtHardFrom')][string]$RouterResolveCliRetryAtHardFrom,
     [Alias('Catalog')][object]$RouterResolveCliCatalog,
     [Alias('SkipModelCheck')][switch]$RouterResolveCliSkipModelCheck,
     [Alias('SendAlerts')][switch]$RouterResolveCliSendAlerts,
@@ -67,12 +70,13 @@ function Complete-RouterResult {
 }
 
 function Resolve-RouterRosterPick {
-    param([object]$Read, [string]$Category, [string]$Lane, [bool]$IsProtected, [string]$EscalateFrom, [object]$Catalog)
+    param([object]$Read, [string]$Category, [string]$Lane, [bool]$IsProtected, [string]$EscalateFrom, [object]$Catalog, [string]$Difficulty = 'standard', [string]$RetryAtHardFrom)
     $job = Get-RouterCategoryJob -Category $Category
     if ($IsProtected -and $job -eq 'fast') { $job = 'coder' }
     $entry = $Read.roster.jobs.$job
-    $first = [pscustomobject]@{ model=$entry.first; vendor=$entry.first_vendor; effort=$entry.first_effort }
-    $backup = if ($null -ne $entry.backup) { [pscustomobject]@{ model=$entry.backup; vendor=$entry.backup_vendor; effort=$entry.backup_effort } } else { $null }
+    $tieDifficulty = if ($entry.PSObject.Properties['first_efforts'] -or $entry.PSObject.Properties['backup_efforts']) { $Difficulty } else { 'standard' }
+    $first = [pscustomobject]@{ model=$entry.first; vendor=$entry.first_vendor; effort=$(Get-RouterTierEffort -Entry $entry -Slot first -Difficulty $Difficulty) }
+    $backup = if ($null -ne $entry.backup) { [pscustomobject]@{ model=$entry.backup; vendor=$entry.backup_vendor; effort=$(Get-RouterTierEffort -Entry $entry -Slot backup -Difficulty $Difficulty) } } else { $null }
     $quotaWait = $false
     $chosen = $first
     $other = $backup
@@ -85,10 +89,22 @@ function Resolve-RouterRosterPick {
         $target = if ($first.vendor -eq $sourceVendor) { $first } else { $backup }
         if ($sourceVendor -and $chosen -and $target -and $chosen.vendor -ne $sourceVendor) { $other = $chosen; $chosen = $target }
     }
+    if ($RetryAtHardFrom) {
+        $vendor = if ($RetryAtHardFrom -like 'gpt-*') { 'codex' } elseif ($RetryAtHardFrom -like 'claude-*' -or $RetryAtHardFrom -match '^(haiku|sonnet|opus)(\[1m\])?$') { 'claude' } else { throw 'RETRY_MODEL_INVALID' }
+        if ($Lane -and $Lane -ne $vendor) { throw 'RETRY_LANE_CONFLICT' }
+        $target = if ($first.vendor -eq $vendor) { $first } else { $backup }
+        $from = Resolve-RouterEscalationAlias -EscalateFrom $RetryAtHardFrom -Lane $vendor
+        $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json
+        $allowed = @($map.lanes.$vendor.ladder | Where-Object { -not $_.frontier } | ForEach-Object { $_.model }) + @($target.model)
+        if ($from -notin $allowed) { throw 'RETRY_MODEL_INVALID' }
+        $chosen = [pscustomobject]@{model=$from;vendor=$vendor;effort=$target.effort}
+        $other = if ($vendor -eq $first.vendor) { $backup } else { $first }
+        $reason = "Retry: same model $from at hard effort."
+    }
     if ($null -eq $chosen) { $reason = 'No Claude image model is available.' }
     $localCatalog = $Catalog
     if ($null -eq $localCatalog) { try { $localCatalog = Get-CodexModelCatalog } catch { $localCatalog = $null } }
-    if ($chosen -and -not $Lane -and -not $EscalateFrom) {
+    if ($chosen -and -not $Lane -and -not $EscalateFrom -and -not $RetryAtHardFrom) {
         $marks = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-marks.json') | Where-Object { $_.PSObject.Properties['model'] -and $_.PSObject.Properties['job'] -and $_.model -eq $chosen.model -and $_.job -eq $job })
         if ($marks.Count) {
             if ($other) { $old = $chosen; $chosen = $other; $other = $old; $reason = "Backup used: $($old.model) drifting." }
@@ -127,7 +143,7 @@ function Resolve-RouterRosterPick {
         $errorText = Get-RouterTieEvidenceError -Entry $entry -Evidence $entry.tie_evidence
         if (-not $entry.tie_evidence -or -not $entry.tie_evidence.PSObject.Properties['approved_at'] -or -not $entry.tie_evidence.approved_at) { $errorText = 'Tie approval missing.' }
         if ($errorText) { $alerts.Add("roster-tie-invalid:$job") }
-        elseif (-not $Lane -and -not $EscalateFrom) {
+        elseif ($entry.tie_evidence.tier -ceq $tieDifficulty -and -not $Lane -and -not $EscalateFrom -and -not $RetryAtHardFrom) {
             $chosen = $first; $other = $backup
             $readings = @{}
             $labels = @()
@@ -236,6 +252,9 @@ function Resolve-RouterModel {
         [ValidateSet('codex','claude')][string]$Lane,
         [switch]$Protected,
         [string]$EscalateFrom,
+        [ValidateSet('standard','hard')][string]$Difficulty = 'standard',
+        [string]$DifficultyReason,
+        [string]$RetryAtHardFrom,
         [object]$Catalog,
         [switch]$SkipModelCheck,
         [switch]$SendAlerts,
@@ -246,6 +265,15 @@ function Resolve-RouterModel {
         [ValidateSet('codex','claude')][string]$Diagnose,
         [string]$ErrorTextPath
     )
+    if ($RetryAtHardFrom) {
+        if ($EscalateFrom) { throw 'RETRY_ESCALATION_CONFLICT' }
+        $Difficulty = 'hard'
+    }
+    $Difficulty = $Difficulty.ToLowerInvariant()
+    Test-RouterDifficulty -Difficulty $Difficulty -DifficultyReason $DifficultyReason
+    $tieredJob = (Get-RouterCategoryJob -Category $Category) -in @('coder','deep-thinker') -or ($Protected -and $Category -eq 'mechanical')
+    if ($RetryAtHardFrom -and -not $tieredJob) { throw 'RETRY_REQUIRES_TIERED_JOB' }
+    if ($EscalateFrom -and $tieredJob -and $PSBoundParameters.ContainsKey('Difficulty') -and $Difficulty -ne 'hard') { throw 'ESCALATE_REQUIRES_HARD: retry the same model at hard first.' }
     if ($Diagnose) {
         if (-not $ErrorTextPath) { throw 'DIAGNOSE_ERROR_TEXT_PATH_REQUIRED: supply -ErrorTextPath with -Diagnose.' }
         $diagnosis = Resolve-RouterDispatchFailure -Vendor $Diagnose -ErrorText ([IO.File]::ReadAllText((Convert-Path -LiteralPath $ErrorTextPath)))
@@ -253,6 +281,7 @@ function Resolve-RouterModel {
         # Constrain the backup to the other vendor, including when drift would
         # otherwise select the failed vendor again. This is not quality escalation.
         $backupArgs = @{ Category=$Category; Lane=$(if ($Diagnose -eq 'codex') { 'claude' } else { 'codex' }); Protected=$Protected; Catalog=$Catalog; SkipModelCheck=$SkipModelCheck; SendAlerts=$SendAlerts; ChatToStderr=$ChatToStderr }
+        if ($PSBoundParameters.ContainsKey('Difficulty') -or $RetryAtHardFrom) { $backupArgs.Difficulty = $Difficulty; $backupArgs.DifficultyReason = $DifficultyReason }
         $result = Resolve-RouterModel @backupArgs
         foreach ($name in @('verdict','detail','incident_id','checks')) {
             $result | Add-Member -NotePropertyName $name -NotePropertyValue $diagnosis.$name
@@ -279,7 +308,9 @@ function Resolve-RouterModel {
         $recorded = Add-RouterVendorBlock @blockArgs
     }
     $rosterRead = Read-RouterRoster
-    $result = Resolve-RouterRosterPick -Read $rosterRead -Category $Category -Lane $Lane -IsProtected ([bool]$Protected -or $Category -eq 'long-form-writing') -EscalateFrom $EscalateFrom -Catalog $Catalog
+    $result = Resolve-RouterRosterPick -Read $rosterRead -Category $Category -Lane $Lane -IsProtected ([bool]$Protected -or $Category -eq 'long-form-writing') -EscalateFrom $EscalateFrom -Catalog $Catalog -Difficulty $Difficulty -RetryAtHardFrom $RetryAtHardFrom
+    $entry = $rosterRead.roster.jobs.($result.job)
+    $result | Add-Member -NotePropertyName difficulty -NotePropertyValue $(if ($tieredJob) { $Difficulty } else { $null })
     $result | Add-Member -NotePropertyName vendor_block_recorded -NotePropertyValue $recorded
     if ($rosterRead.source -eq 'default') {
         $alert = if (Test-Path -LiteralPath $rosterRead.path) {
@@ -307,6 +338,7 @@ function Get-RouterPicksSnapshot {
 
 if ($MyInvocation.InvocationName -ne '.') {
     $resolveArgs = @{ Category = $RouterResolveCliCategory; Protected = $RouterResolveCliProtected; EscalateFrom = $RouterResolveCliEscalateFrom; Catalog = $RouterResolveCliCatalog; SkipModelCheck = $RouterResolveCliSkipModelCheck; SendAlerts = $RouterResolveCliSendAlerts; ChatToStderr = $RouterResolveCliJson }
+    foreach ($name in @('Difficulty','DifficultyReason','RetryAtHardFrom')) { if ($PSBoundParameters.ContainsKey("RouterResolveCli$name")) { $resolveArgs[$name] = Get-Variable -Name "RouterResolveCli$name" -ValueOnly } }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliLane')) { $resolveArgs.Lane = $RouterResolveCliLane }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliAfterRefusal')) { $resolveArgs.AfterRefusal = $RouterResolveCliAfterRefusal }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliRefusalText')) { $resolveArgs.RefusalText = $RouterResolveCliRefusalText }

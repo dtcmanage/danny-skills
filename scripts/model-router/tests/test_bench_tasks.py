@@ -50,9 +50,11 @@ def test_ids_categories_and_layout():
         "writing-letter-section": "long-form-writing", "pelican": "image-generation",
         "grounding-absent-answer": "analysis", "grounding-false-premise": "analysis",
         "grounding-quote-check": "deep-research", "grounding-missing-field": "mechanical",
-        "writing-status-update": "long-form-writing", "writing-explainer-paragraph": "long-form-writing"}
+        "writing-status-update": "long-form-writing", "writing-explainer-paragraph": "long-form-writing",
+        "reasoning-hard-allocation": "math",
+        "coder-hard-schedule": "complex-coding"}
     metadata = {p.parent.name: json.loads(p.read_text()) for p in TASKS.glob("*/task.json")}
-    assert len(metadata) == 18 == len(generator.TASKS)
+    assert len(metadata) == 20 == len(generator.TASKS)
     assert {key: value["category"] for key, value in metadata.items()} == expected
     for key, value in metadata.items():
         assert value["id"] == key and value["dimension_framework"] == "provisional"
@@ -116,7 +118,7 @@ def test_writer_tasks_load_with_rubric_and_judge_prompt():
         task = TASKS / task_id
         metadata = json.loads((task / "task.json").read_text())
         assert (metadata["category"], metadata["grader"]) == ("long-form-writing", "rubric")
-        assert "difficulty" not in metadata
+        assert metadata["difficulty"] == "standard"
         rubric = json.loads((task / "golden/rubric.json").read_text())
         assert rubric["threshold"] == config["rubric_threshold"] and len(rubric["lines"]) == 5
         assert sum("No invented facts" in line["criterion"] for line in rubric["lines"]) == 1

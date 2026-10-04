@@ -1,0 +1,1 @@
+Assign seven agents (rows 0..6) bijectively to seven slots (0..6). a_i is the slot assigned to agent i. Minimize total cost subject to the supplied constraints; break ties by the lexicographically smallest assignment. Return only JSON {"assignment": [seven slot indices], "cost": integer}. All constraints interact; no partial assignment or intermediate score is accepted.

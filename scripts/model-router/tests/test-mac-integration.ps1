@@ -56,7 +56,7 @@ try {
     Assert-True ((Get-RouterSharedDir) -eq $shared -and -not (Test-Path $shared)) 'explicit shared override wins without mkdir'
     $null = Get-RouterStateDir
     $r = New-TestRoster
-    $r.jobs.coder.first_effort = 'low'
+    $r.jobs.coder.first_effort = 'low'; $r.jobs.coder.first_efforts.standard = 'low'
     $r | Add-Member -NotePropertyName credential -NotePropertyValue 'fixture-secret'
     $r.jobs.coder | Add-Member -NotePropertyName token -NotePropertyValue 'fixture-secret'
     Write-RouterJsonAtomic -Path (Join-Path $win 'roster.json') -Value $r

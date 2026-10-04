@@ -159,7 +159,7 @@ throw 'Unexpected fake transport request'
     }
     $judges=(Read-RouterJsonObject (Join-Path $env:DT_MODEL_ROUTER_STATE 'bench/judge-config.json')).judges
     Check ($judges.codex -eq 'gpt-9-astra' -and $judges.claude -eq 'claude-fable-9-2') 'F4 listing refreshes judges'
-    Check (@(Delivered 'effort-swap:*').Count -eq 1 -and (Read-RouterJsonObject (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder.json')).status -eq 'pending') 'F5 new-model immediate proposal delivery'
+    Check (@(Delivered 'effort-swap:*').Count -eq 1 -and (Read-RouterJsonObject (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')).status -eq 'pending') 'F5 new-model immediate proposal delivery'
     Send-RouterEffortAlerts
     $null=Invoke-RouterModelCheck -Force -Now $now.AddHours(26) -BenchInvoker $qualified
     Check (@(Delivered 'effort-swap:*').Count -eq 1) 'F5 new-model delivered once'
@@ -171,9 +171,9 @@ throw 'Unexpected fake transport request'
     }}
     [IO.File]::WriteAllLines((Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl'),[string[]]$outcomes)
     $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified
-    Check ((Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder.json')) -and @(Delivered 'effort-swap:*').Count -eq 0) 'F5 drift respects alerts disabled'
+    Check ((Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')) -and @(Delivered 'effort-swap:*').Count -eq 0) 'F5 drift respects alerts disabled'
     Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'drift-marks.json')
-    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder.json')
+    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')
     $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified -SendAlerts
     $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified -SendAlerts
     Check (@(Delivered 'effort-swap:*').Count -eq 1) 'F5 drift delivered once'
@@ -206,7 +206,7 @@ throw 'Unexpected fake transport request'
     $emptyResult=($raw -join "`n") | ConvertFrom-Json
     Check ($exitCode -eq 0 -and $emptyResult.total_records -eq 0) 'R1 fresh empty CLI returns valid JSON'
     $basis=New-RouterBenchProposalEvidence coder (Add-TestBenchEvidence ([pscustomobject]@{}))
-    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder.json') @{status='pending';job='coder';model=$roster.jobs.coder.first;current_effort='medium';proposed_effort='low';report='empty-drift-report';bench_evidence=$basis}
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json') @{status='pending';job='coder';model=$roster.jobs.coder.first;current_effort='medium';proposed_effort='low';report='empty-drift-report';bench_evidence=$basis}
     $null=& pwsh -NoProfile -File $cli -SourcesPath $sources -Json
     Check ($LASTEXITCODE -eq 0 -and @(Delivered 'effort-swap:*').Count -eq 1) 'R1 pending effort delivered with no drift outside lock'
     $null=& pwsh -NoProfile -File $cli -SourcesPath $sources -Json

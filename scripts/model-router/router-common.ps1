@@ -109,6 +109,20 @@ function Get-RouterCategoryJob {
     return $map[$Category]
 }
 
+function Get-RouterTierEffort {
+    param([object]$Entry, [string]$Slot, [string]$Difficulty = 'standard')
+    $tiers = $Entry.PSObject.Properties["${Slot}_efforts"]
+    if ($tiers) { return $tiers.Value.$Difficulty }
+    return $Entry.("${Slot}_effort")
+}
+
+function Test-RouterDifficulty {
+    param([string]$Difficulty, [string]$DifficultyReason)
+    if ($Difficulty -eq 'hard') {
+        if ([string]::IsNullOrWhiteSpace($DifficultyReason) -or $DifficultyReason.Length -gt 240 -or $DifficultyReason -match '[\r\n\u0085\u2028\u2029]') { throw 'DIFFICULTY_REASON_REQUIRED: hard requires a single-line reason of at most 240 characters.' }
+    } elseif ($DifficultyReason) { throw 'DIFFICULTY_REASON_REFUSED: a reason is only allowed for hard.' }
+}
+
 function Test-RouterRoster {
     param([Parameter(Mandatory)][object]$Roster)
     $errors = [System.Collections.Generic.List[string]]::new()
@@ -143,7 +157,18 @@ function Test-RouterRoster {
         $entry = $p.Value
         foreach ($slot in @('first','backup')) {
             $effort = $entry.PSObject.Properties["${slot}_effort"]
+            $tiers = $entry.PSObject.Properties["${slot}_efforts"]
+            if ($tiers) {
+                if ($job -notin @('coder','deep-thinker') -or $tiers.Value -isnot [pscustomobject]) { $errors.Add("ROSTER_TIER_EFFORT: $job/$slot") }
+                else {
+                    foreach ($tier in @('standard','hard')) {
+                        if (-not $tiers.Value.PSObject.Properties[$tier] -or $tiers.Value.$tier -cnotin @('low','medium','high')) { $errors.Add("ROSTER_TIER_EFFORT: $job/$slot/$tier") }
+                    }
+                    foreach ($tier in $tiers.Value.PSObject.Properties.Name) { if ($tier -cnotin @('standard','hard')) { $errors.Add("ROSTER_TIER_EFFORT_EXTRA: $job/$slot/$tier") } }
+                }
+            }
             if (-not $effort) { $errors.Add("ROSTER_EFFORT: $job/$slot"); continue }
+            if ($effort.Value -cin @('low','medium','high') -and $tiers -and $tiers.Value -is [pscustomobject] -and $tiers.Value.PSObject.Properties['standard'] -and $effort.Value -cne $tiers.Value.standard) { $errors.Add("ROSTER_EFFORT_MISMATCH: $job/$slot") }
             if ($job -eq 'illustrator') {
                 if ($null -ne $effort.Value) { $errors.Add('ROSTER_EFFORT_ILLUSTRATOR: must be null') }
             } elseif ($effort.Value -cnotin @('low','medium','high')) { $errors.Add("ROSTER_EFFORT: $job/$slot") }
@@ -312,11 +337,11 @@ function Add-RouterOutcome {
 function Get-RouterTieEvidenceError {
     param([object]$Entry, [object]$Evidence, [switch]$CurrentBank)
     try {
-        if (-not $Evidence -or $Evidence.tier -cne 'standard' -or -not $Evidence.run_id -or -not $Evidence.bank_hash) { return 'Missing or unsupported tie evidence.' }
+        if (-not $Evidence -or $Evidence.tier -cnotin @('standard','hard') -or -not $Evidence.run_id -or -not $Evidence.bank_hash) { return 'Missing or unsupported tie evidence.' }
         $pair = @($Evidence.configurations.candidate, $Evidence.configurations.incumbent)
         if ($pair.Count -ne 2 -or $Entry.first -ceq $Entry.backup) { return 'Tie pair is invalid.' }
         foreach ($slot in @('first','backup')) {
-            $matching = @($pair | Where-Object { $_.model -ceq $Entry.$slot -and $_.effort -ceq $Entry.("${slot}_effort") })
+            $matching = @($pair | Where-Object { $_.model -ceq $Entry.$slot -and $_.effort -ceq (Get-RouterTierEffort -Entry $Entry -Slot $slot -Difficulty $Evidence.tier) })
             if ($matching.Count -ne 1) { return 'Roster model or effort changed.' }
         }
         $bank = if ($CurrentBank) { Get-RouterBenchEvidenceContext } else {

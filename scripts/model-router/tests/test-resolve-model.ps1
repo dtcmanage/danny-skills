@@ -26,7 +26,7 @@ try {
     foreach ($category in @('routine-coding','code-review','ui-frontend','deep-research')) {
         $pick = Resolve-RouterModel -Category $category -Lane claude -SkipModelCheck -Catalog $catalog
         Assert-True ($pick.model -eq 'claude-opus-5-5' -and $pick.roster_source -eq 'default' -and $pick.alerts -contains 'router-roster-missing') "missing roster default $category"
-        Assert-True ($pick.effort -ceq (Get-RouterJobEffort -Job (Get-RouterCategoryJob -Category $category))) "default effort $category"
+        Assert-True ($pick.effort -ceq 'medium') "default effort $category"
     }
     Assert-True ((Get-RouterAlertMessage 'router-roster-missing') -eq 'Model router roster is missing; it is using the default roster.') 'missing roster alert message'
     $rosterPath = Join-Path $temp 'roster.json'
@@ -57,7 +57,13 @@ try {
             $want = $expected[$category][$(if ($lane -eq 'codex') { 0 } else { 1 })]
             $pick = Resolve-RouterModel -Category $category -Lane $lane -SkipModelCheck -Catalog $catalog
             Assert-True ($pick.model -eq $want -and $pick.roster_source -eq 'state' -and $pick.status -eq $(if ($want) { 'ok' } else { 'wait' })) "state pick $category/$lane"
-            Assert-True ($pick.PSObject.Properties['effort'] -and $pick.effort -ceq $(if ($want) { Get-RouterJobEffort -Job (Get-RouterCategoryJob -Category $category) } else { $null })) "state effort $category/$lane"
+            Assert-True ($pick.PSObject.Properties['effort'] -and $pick.effort -ceq $(if ($want) { @{fast='low';coder='medium';'deep-thinker'='medium';writer='medium';illustrator=$null}[(Get-RouterCategoryJob $category)] } else { $null })) "state effort $category/$lane"
+        }
+    }
+    foreach ($category in @('routine-coding','complex-coding','ui-frontend','code-review','planning','deep-research','math','analysis')) {
+        foreach ($lane in @('codex','claude')) {
+            $pick = Resolve-RouterModel -Category $category -Lane $lane -Difficulty hard -DifficultyReason 'interacting constraints' -SkipModelCheck -Catalog $catalog
+            Assert-True ($pick.effort -ceq 'high' -and $pick.difficulty -ceq 'hard') "fixed hard effort $category/$lane"
         }
     }
     $snapshot = @(Get-RouterPicksSnapshot)

@@ -1,0 +1,17 @@
+{
+  "example": [
+    {
+      "id": "a",
+      "weight": 2,
+      "deps": []
+    },
+    {
+      "id": "b",
+      "weight": 1,
+      "deps": [
+        "a"
+      ]
+    }
+  ],
+  "capacity": 3
+}

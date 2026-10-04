@@ -28,6 +28,8 @@ TASKS = {
     "deep-research-vendor": ("deep-research", "deep-thinker", "rubric"),
     "writing-letter-section": ("long-form-writing", "writer", "rubric"),
     "pelican": ("image-generation", "illustrator", "artifact"),
+    "reasoning-hard-allocation": ("math", "deep-thinker", "exact"),
+    "coder-hard-schedule": ("complex-coding", "coder", "pytest"),
     "grounding-absent-answer": ("analysis", "deep-thinker", "grounding"),
     "grounding-false-premise": ("analysis", "deep-thinker", "grounding"),
     "grounding-quote-check": ("deep-research", "deep-thinker", "grounding"),
@@ -112,6 +114,8 @@ def generate(output: Path, seed: int = SEED) -> None:
         write_json(output / task_id / "task.json", {
             "id": task_id, "category": category, "job": job, "grader": grader,
             "dimension_framework": "provisional", "seed": seed,
+            "difficulty": "beyond" if "-beyond-" in task_id else "hard" if "-hard-" in task_id else "standard",
+            **({"calibration": "provisional"} if "-hard-" in task_id or "-beyond-" in task_id else {}),
         })
 
     fees = [{"vehicle": f"Vehicle {letter}", "management_pct": rng.choice([0.5, 0.75, 1.0]),
@@ -556,6 +560,80 @@ def generate(output: Path, seed: int = SEED) -> None:
                 'a drawdown describes a decline that has already happened. It does not predict the next one.',
                 '- Drawdown: a measure of volatility.\n- Example: funds fell 35% in 2008, so expect the same soon.')
 
+    # Difficulty labels are hypotheses until live first-choice calibration.
+    from itertools import permutations
+    costs = [[rng.randrange(2, 30) for _ in range(7)] for _ in range(7)]
+    valid = [assignment for assignment in permutations(range(7))
+             if assignment[0] != 2 and assignment[1] < assignment[4]
+             and abs(assignment[2] - assignment[5]) >= 3
+             and (assignment[3] + assignment[6]) % 2 == 1]
+    winner = min(valid, key=lambda a: (sum(costs[i][a[i]] for i in range(7)), a))
+    materialize(output, "reasoning-hard-allocation",
+        'Assign seven agents (rows 0..6) bijectively to seven slots (0..6). '
+        'a_i is the slot assigned to agent i. Minimize total cost subject to the supplied constraints; '
+        'break ties by the lexicographically smallest assignment. '
+        'Return only JSON {"assignment": [seven slot indices], "cost": integer}. '
+        'All constraints interact; no partial assignment or intermediate score is accepted.',
+        {"costs": costs, "constraints": ["a0 != 2", "a1 < a4", "abs(a2-a5) >= 3", "(a3+a6) % 2 == 1"]},
+        {"assignment": list(winner), "cost": sum(costs[i][winner[i]] for i in range(7))},
+        '{"assignment": [0,1,2,3,4,5,6], "cost": 0}')
+    materialize(output, "coder-hard-schedule",
+        'Implement minimum_slots(jobs, capacity) in Python. Each job is a dict with id, weight, '
+        'and deps (ids). All jobs take one slot. Each slot can run any subset whose total weight '
+        'is within capacity, but dependencies must finish in earlier slots. Return the global '
+        'minimum number of slots, 0 for no jobs, or None when impossible (cycle or overweight job). '
+        'Do not mutate inputs. Return only the final module; greedy or partial schedules earn no credit.',
+        {"example": [{"id": "a", "weight": 2, "deps": []}, {"id": "b", "weight": 1, "deps": ["a"]}], "capacity": 3},
+        '''
+        def minimum_slots(jobs, capacity):
+            from collections import deque
+            ids = {job['id']: i for i, job in enumerate(jobs)}
+            deps = [sum(1 << ids[d] for d in job['deps']) for job in jobs]
+            goal = (1 << len(jobs)) - 1
+            queue, seen = deque([(0, 0)]), {0}
+            while queue:
+                done, slots = queue.popleft()
+                if done == goal:
+                    return slots
+                available = sum(1 << i for i, job in enumerate(jobs)
+                                if not done & (1 << i) and deps[i] & done == deps[i])
+                subset = available
+                while subset:
+                    if sum(job['weight'] for i, job in enumerate(jobs) if subset & (1 << i)) <= capacity:
+                        next_done = done | subset
+                        if next_done not in seen:
+                            seen.add(next_done)
+                            queue.append((next_done, slots + 1))
+                    subset = (subset - 1) & available
+            return None
+        ''', 'def minimum_slots(jobs, capacity): return len(jobs)',
+        '''
+        from copy import deepcopy
+        from answer import minimum_slots
+        def test_dependencies_capacity_and_optimum():
+            jobs = [dict(id='a', weight=2, deps=[]), dict(id='b', weight=2, deps=[]),
+                    dict(id='c', weight=1, deps=['a']), dict(id='d', weight=1, deps=['b'])]
+            before = deepcopy(jobs)
+            assert minimum_slots(jobs, 3) == 3
+            assert jobs == before
+            assert minimum_slots(jobs, 4) == 2
+        def test_empty_and_impossible():
+            assert minimum_slots([], 1) == 0
+            assert minimum_slots([dict(id='a', weight=5, deps=[])], 4) is None
+            assert minimum_slots([dict(id='a', weight=1, deps=['b']), dict(id='b', weight=1, deps=['a'])], 3) is None
+        def test_critical_chain_and_parallel_work():
+            jobs = [dict(id='a', weight=2, deps=[]), dict(id='b', weight=2, deps=['a']),
+                    dict(id='c', weight=2, deps=['b'])] + [dict(id=str(i), weight=1, deps=[]) for i in range(3)]
+            assert minimum_slots(jobs, 3) == 3
+        def test_first_fit_counterexample():
+            jobs = [dict(id=i, weight=w, deps=[]) for i, w in enumerate([5, 2, 4, 1, 3, 5])]
+            assert minimum_slots(jobs, 5) == 4
+        def test_capacity_and_dependencies_defeat_both_greedy_orders():
+            # Optimum slots: {2}, {0}, {3}, {1,5}, {4}, {6}.
+            jobs = [dict(id=i, weight=w, deps=d) for i, (w, d) in enumerate([
+                (4, []), (3, [0]), (3, []), (4, [2]), (5, [0,2]), (2, [3]), (4, [4])])]
+            assert minimum_slots(jobs, 5) == 6
+        ''')
     # Structured review source is canonical in the retained task; copy the aligned golden.
     write_json(output / "code-review-planted/fixtures/input.json", {"source": "prompt.md", "bug_line": 13})
     write(output / "code-review-planted/golden/answer.md",
