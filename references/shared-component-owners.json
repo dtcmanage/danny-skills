@@ -461,6 +461,7 @@
   "scripts/model-router/tests/fixtures/codex-sessions/2026/09/28/rollout-usage.jsonl": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-build-roster.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-resolve-roster.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test-quota-tiebreak.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-roster-approval.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-router-cadence.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-router-research.ps1": {"consumers": [], "summary_token": "model router"},

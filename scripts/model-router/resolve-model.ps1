@@ -77,6 +77,7 @@ function Resolve-RouterRosterPick {
     $chosen = $first
     $other = $backup
     $reason = "roster job $job first choice"
+    $tieReason = $null
     $alerts = [System.Collections.Generic.List[string]]::new()
     if ($Lane -and $Lane -ne $first.vendor) { $chosen = $backup; $other = $first; $reason = "roster job $job lane $Lane" }
     if ($EscalateFrom -and -not $Lane) {
@@ -109,19 +110,91 @@ function Resolve-RouterRosterPick {
             else { $chosen = [pscustomobject]@{ model=$from; vendor=$chosen.vendor; effort=$chosen.effort }; $reason = "Escalation: already at the top non-frontier model; same model retained." }
         }
     }
+    $baselineModel = if ($chosen) { $chosen.model } else { $null }
+    $evaluatedBlocks = @{}
+    $resolvedReadings = @{}
+    $baselineBlocked = $false
+    $baselineBackupBlocked = $false
     if ($chosen -and (Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue)) {
-        if (Get-RouterVendorBlocked -Vendor $chosen.vendor) {
+        $baselineBlocked = Get-RouterVendorBlocked -Vendor $chosen.vendor -UsageReadings $resolvedReadings
+        $evaluatedBlocks[$chosen.vendor] = $baselineBlocked
+        if ($baselineBlocked -and -not $Lane -and $other) {
+            $baselineBackupBlocked = Get-RouterVendorBlocked -Vendor $other.vendor -UsageReadings $resolvedReadings
+            $evaluatedBlocks[$other.vendor] = $baselineBackupBlocked
+        }
+    }
+    if ($entry.PSObject.Properties['tie_evidence']) {
+        $errorText = Get-RouterTieEvidenceError -Entry $entry -Evidence $entry.tie_evidence
+        if (-not $entry.tie_evidence -or -not $entry.tie_evidence.PSObject.Properties['approved_at'] -or -not $entry.tie_evidence.approved_at) { $errorText = 'Tie approval missing.' }
+        if ($errorText) { $alerts.Add("roster-tie-invalid:$job") }
+        elseif (-not $Lane -and -not $EscalateFrom) {
+            $chosen = $first; $other = $backup
+            $readings = @{}
+            $labels = @()
+            $fresh = $true
+            foreach ($vendor in @($first.vendor,$backup.vendor)) {
+                $reading = if ($resolvedReadings.ContainsKey($vendor)) { $resolvedReadings[$vendor] } else { Get-RouterCachedWeeklyUsage -Vendor $vendor }
+                $readings[$vendor] = $reading
+                $label = 'missing'
+                if ($reading) {
+                    try {
+                        $age = ([datetimeoffset]::UtcNow - [datetimeoffset]$reading.observed_at_utc).TotalHours
+                        $et = [TimeZoneInfo]::ConvertTime([datetimeoffset]$reading.observed_at_utc, [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time'))
+                        $rounded = [Math]::Round([decimal]$reading.used_percent, 1, [MidpointRounding]::AwayFromZero)
+                        $label = "$rounded% ($($et.ToString('yyyy-MM-dd h:mm:ss tt', [Globalization.CultureInfo]::InvariantCulture)) ET)"
+                        if ($age -gt 6 -or $age -lt 0 -or $null -eq $reading.used_percent -or -not [double]::IsFinite([double]$reading.used_percent)) { $fresh = $false }
+                    } catch { $fresh = $false; $label = 'invalid' }
+                } else { $fresh = $false }
+                $labels += "${vendor}: $label"
+            }
+            $outcome = 'first choice retained: stale or missing reading'
+            if ($fresh) {
+                $difference = [Math]::Round([decimal]$readings[$first.vendor].used_percent, 1, [MidpointRounding]::AwayFromZero) - [Math]::Round([decimal]$readings[$backup.vendor].used_percent, 1, [MidpointRounding]::AwayFromZero)
+                $outcome = 'first choice retained: within 5 points'
+                if ([Math]::Abs($difference) -gt 5) {
+                    $outcome = 'first choice retained: lower weekly use'
+                    if ($difference -gt 0) { $chosen = $backup; $other = $first; $outcome = 'backup selected: lower weekly use' }
+                }
+            }
+            $reason = "Quota tie-break ($($labels -join '; ')): $outcome."
+            $tieReason = $reason
+        }
+    }
+    $selectedBlocked = $baselineBlocked
+    $otherBlocked = $baselineBackupBlocked
+    if ($tieReason) {
+        # Apply drift to the starting choice selected by the tie.
+        $marks = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'drift-marks.json') | Where-Object { $_.PSObject.Properties['model'] -and $_.PSObject.Properties['job'] -and $_.model -eq $chosen.model -and $_.job -eq $job })
+        if ($marks.Count) {
+            $old = $chosen; $chosen = $other; $other = $old
+            $reason = "Selected $($chosen.model): $($old.model) drifting."
+        }
+        # A newly selected vendor gets the ordinary bounded block evaluation.
+        if (-not $evaluatedBlocks.ContainsKey($chosen.vendor)) {
+            $evaluatedBlocks[$chosen.vendor] = Get-RouterVendorBlocked -Vendor $chosen.vendor
+        }
+        $selectedBlocked = $evaluatedBlocks[$chosen.vendor]
+        $otherBlocked = $false
+        if ($selectedBlocked -and $other) {
+            if (-not $evaluatedBlocks.ContainsKey($other.vendor)) {
+                $evaluatedBlocks[$other.vendor] = Get-RouterVendorBlocked -Vendor $other.vendor
+            }
+            $otherBlocked = $evaluatedBlocks[$other.vendor]
+        }
+    }
+    if ($chosen -and (Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue)) {
+        if ($selectedBlocked) {
             $blockedVendor = $chosen.vendor
             $incident = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $blockedVendor -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'vendor_incident' })
             $blockReason = if ($incident.Count) { 'under a vendor incident' } else { 'at its usage limit' }
-            if (-not $Lane -and $other -and -not (Get-RouterVendorBlocked -Vendor $other.vendor)) { $chosen = $other; $reason = "Backup used: $blockedVendor $blockReason." }
+            if (-not $Lane -and $other -and -not $otherBlocked) { $chosen = $other; $reason = $(if ($tieReason) { "Selected $($chosen.model): $blockedVendor $blockReason." } else { "Backup used: $blockedVendor $blockReason." }) }
             else { $chosen = $null; $quotaWait = $true; $reason = "Wait: $blockedVendor $blockReason; no available model for $job." }
         }
     }
     if ($chosen -and $chosen.vendor -eq 'codex' -and $Category -ne 'image-generation' -and $null -ne $localCatalog -and -not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
         # Older clients can overwrite the shared cache. Only an automatic cache
         # rejection gets one bounded current-CLI check; caller catalogs stay fixed.
-        if ($null -eq $Catalog) {
+        if ($null -eq $Catalog -and (-not $tieReason -or $chosen.model -ceq $baselineModel)) {
             try {
                 $cli = Get-Command codex -CommandType Application,ExternalScript -ErrorAction Stop | Select-Object -First 1
                 $freshCatalog = Update-CodexModelCatalog -CodexCliPath $cli.Source -TimeoutMs 15000
@@ -135,11 +208,16 @@ function Resolve-RouterRosterPick {
         if (-not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
             $unselectable = $chosen.model
             $alerts.Add("roster-model-unselectable:$unselectable")
-            if (-not $Lane -and $other -and $other.vendor -ne 'codex' -and -not ((Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue) -and (Get-RouterVendorBlocked -Vendor $other.vendor))) {
-                $chosen = $other; $reason = $(if ($reason -like 'Backup used:*drifting.') { "$reason Backup $unselectable unselectable; first choice used." } else { "Backup used: $unselectable unselectable." })
+            $fallbackBlocked = $false
+            if (-not $Lane -and $other -and $other.vendor -ne 'codex') {
+                $fallbackBlocked = (Get-Command Get-RouterVendorBlocked -ErrorAction SilentlyContinue) -and (Get-RouterVendorBlocked -Vendor $other.vendor)
+            }
+            if (-not $Lane -and $other -and $other.vendor -ne 'codex' -and -not $fallbackBlocked) {
+                $chosen = $other; $reason = $(if ($reason -like 'Backup used:*drifting.') { "$reason Backup $unselectable unselectable; first choice used." } else { $(if ($tieReason) { "Selected $($chosen.model): $unselectable unselectable." } else { "Backup used: $unselectable unselectable." }) })
             } else { $chosen = $null; $reason = "Wait: $unselectable unselectable on constrained or unavailable lane." }
         }
     }
+    if ($tieReason -and $reason -cne $tieReason) { $reason = "Quota tie-break ($($labels -join '; ')). $reason" }
     $model = if ($chosen) { $chosen.model } else { $null }
     $result = [pscustomobject]@{ model=$model; agent_alias=$null; effort=$(if ($chosen) { $chosen.effort } else { $null }); category=$Category; lane=$null; protected=$IsProtected; reason=$reason; table_source=$null; table_date=$null; validation_error=$Read.validation_error; alerts=@($alerts.ToArray()); ranked=[object[]]@($model | Where-Object { $_ }) }
     $resume = if ($quotaWait) {

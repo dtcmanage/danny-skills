@@ -5,7 +5,7 @@ No alerts, browser launches, or implicit approvals. A bank edit resets every cho
 from __future__ import annotations
 
 import argparse
-from datetime import date
+from datetime import date, datetime, timezone
 import hashlib
 from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -54,6 +54,12 @@ class Review:
         temporary = self.approval_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
         temporary.replace(self.approval_path)
+        digest = bank_hash(self.tasks)
+        hash_path = self.state / "bank-hash.json"
+        temporary_hash = hash_path.with_suffix(".tmp")
+        temporary_hash.write_text(json.dumps({"task_bank_sha256": digest,
+                                             "written_at": datetime.now(timezone.utc).isoformat()}) + "\n", encoding="utf-8")
+        temporary_hash.replace(hash_path)
 
     def refresh(self) -> dict[str, Any]:
         self.ids = sorted(p.parent.name for p in self.tasks.glob("*/task.json"))

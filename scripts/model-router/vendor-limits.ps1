@@ -33,6 +33,20 @@ if (-not (Get-Variable -Name RouterClaudeUsageFetcher -Scope Script -ErrorAction
     }
 }
 
+function Get-RouterCachedWeeklyUsage {
+    param([ValidateSet('codex','claude')][string]$Vendor)
+    if ($Vendor -eq 'codex') { return Get-RouterCodexUsage -Weekly }
+    try {
+        $reading = Read-RouterJsonObject -Path (Join-Path (Get-RouterStatePath) 'claude-usage.json')
+        if (-not $reading -or $reading.source -cne 'oauth-usage' -or
+            $reading.credential_locator_identity -cne (Get-RouterClaudeCredentialIdentity) -or
+            $null -eq $reading.used_percent -or -not [double]::IsFinite([double]$reading.used_percent)) { return $null }
+        $null = [datetimeoffset]$reading.observed_at_utc
+        if ([datetimeoffset]$reading.resets_at_utc -le [datetimeoffset]::UtcNow) { $reading.used_percent = 0.0 }
+        return $reading
+    } catch { return $null }
+}
+
 function Get-RouterClaudeUsage {
     $cached = $null
     try {
@@ -99,7 +113,7 @@ function Get-RouterClaudeUsage {
 }
 
 function Get-RouterCodexUsage {
-    param([string]$SessionsRoot)
+    param([string]$SessionsRoot, [switch]$Weekly)
     if (-not $SessionsRoot) {
         $SessionsRoot = if ($env:DT_MODEL_ROUTER_CODEX_SESSIONS) { $env:DT_MODEL_ROUTER_CODEX_SESSIONS }
             elseif ($env:CODEX_HOME) { Join-Path $env:CODEX_HOME 'sessions' }
@@ -131,6 +145,18 @@ function Get-RouterCodexUsage {
                     -not $row.PSObject.Properties['timestamp']) { continue }
                 if (-not $row.payload.PSObject.Properties['rate_limits'] -or $null -eq $row.payload.rate_limits) { continue }
                 $primary = $row.payload.rate_limits.PSObject.Properties['primary']
+                if ($Weekly) {
+                    $primary = $null
+                    foreach ($window in @('primary', 'secondary')) {
+                        $candidate = $row.payload.rate_limits.PSObject.Properties[$window]
+                        if ($candidate -and $null -ne $candidate.Value -and
+                            $candidate.Value.PSObject.Properties['window_minutes'] -and $candidate.Value.window_minutes -eq 10080) {
+                            $primary = $candidate
+                            break
+                        }
+                    }
+                    if (-not $primary) { continue }
+                }
                 if (-not $primary -or $null -eq $primary.Value -or -not $primary.Value.PSObject.Properties['used_percent'] -or -not $primary.Value.PSObject.Properties['resets_at']) { continue }
                 try {
                     $reset = [datetimeoffset]::FromUnixTimeSeconds([long]$primary.Value.resets_at)
@@ -274,7 +300,7 @@ function Get-RouterResumeAfter {
 }
 
 function Get-RouterVendorBlocked {
-    param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor)
+    param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor, [hashtable]$UsageReadings)
     $now = [datetimeoffset](& $script:RouterDiagnosisClock)
     $path = Join-Path (Get-RouterStateDir) 'vendor-blocks.json'
     foreach ($entry in @(Read-RouterJsonArray -Path $path)) {
@@ -283,7 +309,9 @@ function Get-RouterVendorBlocked {
             $entry.vendor -eq $Vendor -and [datetimeoffset]$entry.reset_at_utc -gt $now) { return $true }
     }
     if ($Vendor -eq 'codex') { $usage = Get-RouterCodexUsage; return ($null -ne $usage -and $usage.used_percent -ge 95) }
-    $usage = Get-RouterClaudeUsage; return ($null -ne $usage -and $usage.used_percent -ge 95)
+    $usage = Get-RouterClaudeUsage
+    if ($null -ne $UsageReadings) { $UsageReadings['claude'] = $usage }
+    return ($null -ne $usage -and $usage.used_percent -ge 95)
 }
 
 function Test-RouterConnectivity {

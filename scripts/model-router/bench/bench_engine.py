@@ -138,6 +138,40 @@ def baseline_key(job: str, model: str, effort: str | None, digest: str,
     return json.dumps(identity, sort_keys=True, separators=(',', ':'))
 
 
+def save_tie_proposal(state_dir: Path, result: dict[str, Any], run_id: str) -> None:
+    if result['shadow'] or not result['tied']:
+        return
+    try:
+        roster = json.loads((state_dir / 'roster.json').read_text(encoding='utf-8'))
+        entry = roster['jobs'][result['job']]
+        tested = list(result['configurations'].values())
+        expected = [{'model': entry[slot], 'effort': entry[f'{slot}_effort']}
+                    for slot in ('first', 'backup')]
+        if len(tested) != 2 or any(tested.count(item) != 1 for item in expected):
+            return
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    proposal = {key: result[key] for key in ('job', 'tier', 'configurations')}
+    proposal.update(type='tie', run_id=run_id, bank_hash=result['task_bank_sha256'],
+                    status='pending')
+    directory = state_dir / 'tie-proposals'
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{result['job']}.json"
+    if path.exists():
+        try:
+            old = json.loads(path.read_text(encoding='utf-8'))
+            old_pair = list(old.get('configurations', {}).values())
+        except (ValueError, TypeError, AttributeError):
+            old, old_pair = {}, []
+        if (old.get('status') in {'pending', 'declined', 'approved', 'revoked'}
+                and all(old.get(key) == proposal[key] for key in ('job', 'tier', 'bank_hash'))
+                and len(old_pair) == 2 and all(old_pair.count(item) == 1 for item in tested)):
+            return
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(proposal, indent=2) + '\n', encoding='utf-8')
+    temporary.replace(path)
+
+
 def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
               effort: str | None, state_dir: Path, tasks: Path,
               config: dict[str, Any], dispatch: Callable[[dict[str, Any]], dict[str, Any]],
@@ -354,6 +388,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     known = not candidate_table['unknown'] and not incumbent_table['unknown']
     result['tied'] = known and quality['candidate'] == quality['incumbent']
     result['better'] = (candidate if quality['candidate'] > quality['incumbent'] else incumbent) if known and not result['tied'] else None
+    save_tie_proposal(state_dir, result, run.name)
     verdict = 'tied' if result['tied'] else (result['better'] or 'unknown')
     lines = [f"Gate: {result['gate']} (raw: {raw_gate}); shadow: {shadow}",
              f"Shortfall: {result['shortfall_tasks']} task(s)",

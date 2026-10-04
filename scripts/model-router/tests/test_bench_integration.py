@@ -151,3 +151,108 @@ def test_weekly_malformed_judge_config_skips_disagreements(tmp_path: Path, confi
     assert any('golden review' in line for line in lines)
     assert not any('judge disagreements' in line for line in lines)
     assert json.loads((tmp_path / 'bench/judge-config.json').read_text(encoding='utf-8')) == config
+
+
+def test_tie_proposal_filing(tmp_path: Path) -> None:
+    from bench_engine import save_tie_proposal
+    result = run(tmp_path / 'run')
+    result['shadow'] = False
+    pair = result['configurations']
+    (tmp_path / 'roster.json').write_text(json.dumps({'jobs': {'fast': {
+        'first': pair['incumbent']['model'], 'first_effort': pair['incumbent']['effort'],
+        'backup': pair['candidate']['model'], 'backup_effort': pair['candidate']['effort']}}}))
+    save_tie_proposal(tmp_path, result, 'run-1')
+    path = tmp_path / 'tie-proposals/fast.json'
+    proposal = json.loads(path.read_text())
+    assert proposal == dict(type='tie', job='fast', tier=result['tier'],
+                           configurations=result['configurations'], run_id='run-1',
+                           bank_hash=result['task_bank_sha256'], status='pending')
+    before = path.read_bytes()
+    save_tie_proposal(tmp_path, result, 'run-2')
+    assert path.read_bytes() == before
+    for field in ('shadow', 'tied'):
+        other = result.copy()
+        other[field] = field == 'shadow'
+        save_tie_proposal(tmp_path / field, other, 'run-3')
+        assert not (tmp_path / field / 'tie-proposals/fast.json').exists()
+    proposal['status'] = 'declined'
+    path.write_text(json.dumps(proposal))
+    save_tie_proposal(tmp_path, result, 'run-4')
+    assert json.loads(path.read_text())['status'] == 'declined'
+    proposal['status'] = 'approved'
+    path.write_text(json.dumps(proposal))
+    save_tie_proposal(tmp_path, result, 'run-5')
+    assert json.loads(path.read_text())['status'] == 'approved'
+    reversed_result = result.copy()
+    reversed_result['configurations'] = {'candidate': pair['incumbent'], 'incumbent': pair['candidate']}
+    save_tie_proposal(tmp_path, reversed_result, 'run-reversed')
+    assert json.loads(path.read_text())['status'] == 'approved'
+    proposal['status'] = 'revoked'
+    path.write_text(json.dumps(proposal))
+    before = path.read_bytes()
+    save_tie_proposal(tmp_path, result, 'run-revoked')
+    assert path.read_bytes() == before
+    for malformed in ('{', 'null', '[]', '{"configurations": null}'):
+        path.write_text(malformed)
+        save_tie_proposal(tmp_path, result, 'run-repaired')
+        repaired = json.loads(path.read_text())
+        assert repaired['status'] == 'pending'
+        assert repaired['run_id'] == 'run-repaired'
+        assert repaired['configurations'] == result['configurations']
+    result['task_bank_sha256'] = 'new-bank'
+    save_tie_proposal(tmp_path, result, 'run-new-bank')
+    assert json.loads(path.read_text())['status'] == 'pending'
+
+
+
+def test_tied_run_files_proposal_only_when_approved(tmp_path: Path) -> None:
+    from review import Review
+    config = json.loads((Path(__file__).resolve().parents[1] / 'bench/bench-config.json').read_text())
+    tasks = Path(__file__).resolve().parents[1] / 'bench/tasks'
+    review = Review(tasks, tmp_path / 'bench')
+    approval = review.refresh()
+    approval['tasks'] = {task: 'approved' for task in review.ids}
+    review.save(approval)
+    (tmp_path / 'roster.json').write_text(json.dumps({'jobs': {'fast': {
+        'first': 'incumbent', 'first_effort': 'low',
+        'backup': 'candidate', 'backup_effort': 'low'}}}))
+    result = run(tmp_path, config=config)
+    assert result['tied'] and not result['shadow']
+    proposal = json.loads((tmp_path / 'tie-proposals/fast.json').read_text())
+    assert proposal['run_id'] == Path(result['report_paths']['json']).parent.name
+
+
+@pytest.mark.parametrize('defect', ['first-model', 'backup-model', 'first-effort', 'backup-effort', 'missing-roster'])
+def test_tie_only_files_current_roster_pair(tmp_path: Path, defect: str) -> None:
+    from bench_engine import save_tie_proposal
+    result = run(tmp_path / 'run')
+    result['shadow'] = False
+    pair = result['configurations']
+    entry = {'first': pair['incumbent']['model'], 'first_effort': pair['incumbent']['effort'],
+             'backup': pair['candidate']['model'], 'backup_effort': pair['candidate']['effort']}
+    if defect != 'missing-roster':
+        slot, field = defect.split('-')
+        entry[slot if field == 'model' else f'{slot}_effort'] = 'changed'
+        (tmp_path / 'roster.json').write_text(json.dumps({'jobs': {'fast': entry}}))
+    save_tie_proposal(tmp_path, result, 'run-1')
+    assert not (tmp_path / 'tie-proposals/fast.json').exists()
+
+
+def test_bank_hash_recorded_at_bench_and_golden_save(tmp_path: Path) -> None:
+    from review import Review, bank_hash
+    tasks = Path(__file__).resolve().parents[1] / 'bench/tasks'
+    result = run(tmp_path)
+    recorded = json.loads((tmp_path / 'bench/bank-hash.json').read_text())
+    assert recorded['task_bank_sha256'] == result['task_bank_sha256'] == bank_hash(tasks)
+    assert recorded['written_at']
+    import shutil
+    copied = tmp_path / 'tasks'
+    shutil.copytree(tasks, copied)
+    review = Review(copied, tmp_path / 'bench')
+    approval = review.refresh()
+    # A bank byte change before save must be reflected in the recorded current hash.
+    prompt = next(copied.glob('*/prompt.md'))
+    prompt.write_bytes(prompt.read_bytes() + b'\nSynthetic bank change\n')
+    review.save(approval)
+    assert json.loads((tmp_path / 'bench/bank-hash.json').read_text())['task_bank_sha256'] == bank_hash(copied)
+    assert bank_hash(copied) != recorded['task_bank_sha256']

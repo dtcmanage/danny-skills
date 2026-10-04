@@ -83,6 +83,56 @@ try {
         $output = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') @options 2>&1) -join "`n"
         Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'require') "ignored switch rejected: $($options -join ' ')"
     }
+    $current = Read-RouterJsonObject (Join-Path $temp 'roster.json')
+    $entry = $current.jobs.coder
+    $digest = (Get-RouterBenchEvidenceContext).task_bank_sha256
+    $tieDir = Join-Path $temp 'tie-proposals'
+    [IO.Directory]::CreateDirectory($tieDir) | Out-Null
+    $tiePath = Join-Path $tieDir 'coder.json'
+    $tie = [pscustomobject]@{type='tie';job='coder';tier='standard';run_id='synthetic';bank_hash=$digest;status='pending';configurations=[pscustomobject]@{candidate=[pscustomobject]@{model=$entry.backup;effort=$entry.backup_effort};incumbent=[pscustomobject]@{model=$entry.first;effort=$entry.first_effort}}}
+    foreach ($defect in @('model','effort','bank')) {
+        $bad = $tie | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+        if ($defect -eq 'bank') { $bad.bank_hash = 'old' } else { $bad.configurations.candidate.$defect = 'changed' }
+        Write-RouterJsonAtomic $tiePath $bad
+        $output = @(Invoke-Approval -Options @('-ApproveTie','-Job','coder')) -join "`n"
+        Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'TIE_STALE_EVIDENCE' -and -not (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder.PSObject.Properties['tie_evidence']) "tie approval rejects $defect change"
+    }
+    Write-RouterJsonAtomic $tiePath $tie
+    $null = Invoke-Approval -Options @('-ApproveTie','-Job','coder')
+    $after = (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder
+    Assert-True ($LASTEXITCODE -eq 0 -and $after.tie_evidence.approved_at -and $after.tie_evidence.bank_hash -ceq $digest -and $after.first -ceq $entry.first -and $after.backup -ceq $entry.backup -and $after.first_effort -ceq $entry.first_effort -and $after.backup_effort -ceq $entry.backup_effort -and (Read-RouterJsonObject $tiePath).status -ceq 'approved') 'tie approval persists evidence without changing pair'
+    $shared = Read-RouterJsonObject (Join-Path (Get-RouterSharedDir) 'roster.json')
+    Assert-True ($shared.jobs.coder.tie_evidence.run_id -ceq 'synthetic') 'tie approval publishes routing evidence'
+    foreach ($mode in @('full','subset')) {
+        $proposal = Read-RouterJsonObject (Join-Path $temp 'roster.json')
+        $proposal.jobs.coder.PSObject.Properties.Remove('tie_evidence')
+        Write-RouterJsonAtomic $latest.proposal $proposal
+        $options = if ($mode -eq 'full') { @('-Approve') } else { @('-Approve','-Jobs','coder') }
+        $null = Invoke-Approval -Options $options
+        $retained = (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder
+        Assert-True ($LASTEXITCODE -eq 0 -and $retained.tie_evidence.run_id -ceq 'synthetic') "$mode approval retains unchanged pair tie"
+    }
+    foreach ($field in @('first','backup','first_effort','backup_effort')) {
+        foreach ($mode in @('full','subset')) {
+            $original = Read-RouterJsonObject (Join-Path $temp 'roster.json')
+            $proposal = $original | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+            if ($field -in @('first','backup')) {
+                # Change only this slot, reusing an existing same-vendor model to preserve the cap.
+                $proposal.jobs.coder.$field = if ($proposal.jobs.coder.("${field}_vendor") -eq 'claude') { $proposal.jobs.fast.backup } else { $proposal.jobs.fast.first }
+            } else { $proposal.jobs.coder.$field = 'low' }
+            Write-RouterJsonAtomic $latest.proposal $proposal
+            $options = if ($mode -eq 'full') { @('-Approve') } else { @('-Approve','-Jobs','coder') }
+            $null = Invoke-Approval -Options $options
+            Assert-True ($LASTEXITCODE -eq 0 -and -not (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder.PSObject.Properties['tie_evidence']) "$mode approval drops tie on $field change"
+            Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $original
+        }
+    }
+    $null = Invoke-Approval -Options @('-RevokeTie','-Job','coder')
+    Assert-True ($LASTEXITCODE -eq 0 -and -not (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder.PSObject.Properties['tie_evidence'] -and (Read-RouterJsonObject $tiePath).status -ceq 'revoked') 'revoke removes tie evidence'
+    $tie.bank_hash = 'obsolete'; Write-RouterJsonAtomic $tiePath $tie
+    $before = [IO.File]::ReadAllText((Join-Path $temp 'roster.json'))
+    $null = Invoke-Approval -Options @('-DeclineTie','-Job','coder')
+    Assert-True ($LASTEXITCODE -eq 0 -and (Read-RouterJsonObject $tiePath).status -ceq 'declined' -and [IO.File]::ReadAllText((Join-Path $temp 'roster.json')) -ceq $before) 'decline persists even stale tie without roster change'
     Write-Output "PASS: $script:passed tests"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState

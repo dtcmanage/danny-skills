@@ -18,6 +18,9 @@ param(
     [switch]$ApproveEffort,
     [switch]$DeclineEffort,
     [switch]$RevokeEffort,
+    [switch]$ApproveTie,
+    [switch]$DeclineTie,
+    [switch]$RevokeTie,
     [string]$Job,
     [string[]]$Jobs
 )
@@ -25,7 +28,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'resolve-model.ps1')
 . (Join-Path $PSScriptRoot 'publish-roster.ps1')
-if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
+if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort -or $ApproveTie -or $DeclineTie -or $RevokeTie) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
 if ($Jobs) { $Jobs = @($Jobs | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 
 function Write-RouterApprovalJson {
@@ -52,10 +55,11 @@ function Get-RouterRosterProposalEvidenceErrors {
     }
 }
 
-if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort) -ne 1) { throw 'Choose exactly one roster action.' }
+if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort + [int][bool]$ApproveTie + [int][bool]$DeclineTie + [int][bool]$RevokeTie) -ne 1) { throw 'Choose exactly one roster action.' }
+$tieAction = $ApproveTie -or $DeclineTie -or $RevokeTie
 $effortAction = $ApproveEffort -or $DeclineEffort -or $RevokeEffort
-if (($DeclineDrift -or $effortAction) -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
-if ($Job -and -not ($DeclineDrift -or $effortAction)) { throw '-Job requires a job-specific action.' }
+if (($DeclineDrift -or $effortAction -or $tieAction) -and $Job -notin @(Get-RouterJobs)) { throw "Unknown roster job: $Job" }
+if ($Job -and -not ($DeclineDrift -or $effortAction -or $tieAction)) { throw '-Job requires a job-specific action.' }
 if ($Jobs -and -not $Approve) { throw '-Jobs requires -Approve.' }
 $approvalAction = {
 $state = if ($Show) { Get-RouterStatePath } else { Get-RouterStateDir }
@@ -104,6 +108,32 @@ if ($Show) {
     [IO.File]::WriteAllText($report,(($lines -join "`n") + "`n"),[Text.UTF8Encoding]::new($false))
     Write-RouterApprovalJson (Join-Path $dir 'latest.json') ([pscustomobject]@{proposal=$path;report=$report})
     "Seed proposal: $path" | Write-Output
+} elseif ($tieAction) {
+    $path = Join-Path $state ('tie-proposals/' + $Job + '.json')
+    $current = (Read-RouterRoster).roster
+    $entry = $current.jobs.$Job
+    if ($RevokeTie) {
+        if (-not $entry.PSObject.Properties['tie_evidence']) { throw 'No approved tie to revoke.' }
+        $entry.PSObject.Properties.Remove('tie_evidence')
+        Write-RouterApprovalJson $rosterPath $current
+        Publish-RouterRoster
+        $proposal = Read-RouterJsonObject $path
+        if ($proposal) { $proposal.status = 'revoked'; Write-RouterApprovalJson $path $proposal }
+    } else {
+        $proposal = Read-RouterJsonObject $path
+        if (-not $proposal -or $proposal.type -cne 'tie' -or $proposal.job -cne $Job -or $proposal.status -cne 'pending') { throw 'No pending tie proposal for this job.' }
+        if ($ApproveTie) {
+            $reason = Get-RouterTieEvidenceError -Entry $entry -Evidence $proposal -CurrentBank
+            if ($reason) { throw "TIE_STALE_EVIDENCE: $reason" }
+            $evidence = [pscustomobject]@{tier=$proposal.tier;configurations=$proposal.configurations;run_id=$proposal.run_id;bank_hash=$proposal.bank_hash;approved_at=[datetimeoffset]::UtcNow.ToString('o')}
+            $entry | Add-Member -NotePropertyName tie_evidence -NotePropertyValue $evidence -Force
+            Write-RouterApprovalJson $rosterPath $current
+            Publish-RouterRoster
+            $proposal.status = 'approved'
+        } else { $proposal.status = 'declined' }
+        Write-RouterApprovalJson $path $proposal
+    }
+    "Tie action recorded for $Job." | Write-Output
 } elseif ($effortAction) {
     $path = Join-Path $state ('effort-proposals/' + $Job + '.json')
     $swap = Read-RouterJsonObject $path
@@ -147,6 +177,17 @@ if ($Show) {
             $selected.jobs.$name = $proposal.jobs.$name | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         }
         $proposal = $selected
+    }
+    foreach ($name in @(Get-RouterJobs)) {
+        $old = $before.jobs.$name; $next = $proposal.jobs.$name
+        $unchanged = $true
+        foreach ($field in @('first','backup','first_effort','backup_effort')) {
+            if ($old.$field -cne $next.$field) { $unchanged = $false }
+        }
+        $next.PSObject.Properties.Remove('tie_evidence')
+        if ($unchanged -and $old.PSObject.Properties['tie_evidence']) {
+            $next | Add-Member -NotePropertyName tie_evidence -NotePropertyValue $old.tie_evidence
+        }
     }
     $proposal.approved = $true; $proposal.approved_at = (Get-Date).ToUniversalTime().ToString('o')
     $errors = @(Test-RouterRoster -Roster $proposal)

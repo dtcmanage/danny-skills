@@ -23,6 +23,7 @@ function Publish-RouterRoster {
         foreach ($job in @(Get-RouterJobs)) {
             $entry = [ordered]@{}
             foreach ($field in @('first','first_vendor','backup','backup_vendor','first_effort','backup_effort')) { $entry[$field] = $roster.jobs.$job.$field }
+            if ($roster.jobs.$job.PSObject.Properties['tie_evidence']) { $entry.tie_evidence = $roster.jobs.$job.tie_evidence }
             $snapshot.jobs[$job] = $entry
         }
         Write-RouterJsonAtomic -Path $destination -Value $snapshot

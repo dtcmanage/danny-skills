@@ -308,3 +308,21 @@ function Add-RouterOutcome {
         [IO.File]::AppendAllText((Join-Path $StateDir 'outcomes.jsonl'), ((ConvertTo-Json -InputObject $Row -Compress -Depth 20) + "`n"), [Text.UTF8Encoding]::new($false))
     }
 }
+
+function Get-RouterTieEvidenceError {
+    param([object]$Entry, [object]$Evidence, [switch]$CurrentBank)
+    try {
+        if (-not $Evidence -or $Evidence.tier -cne 'standard' -or -not $Evidence.run_id -or -not $Evidence.bank_hash) { return 'Missing or unsupported tie evidence.' }
+        $pair = @($Evidence.configurations.candidate, $Evidence.configurations.incumbent)
+        if ($pair.Count -ne 2 -or $Entry.first -ceq $Entry.backup) { return 'Tie pair is invalid.' }
+        foreach ($slot in @('first','backup')) {
+            $matching = @($pair | Where-Object { $_.model -ceq $Entry.$slot -and $_.effort -ceq $Entry.("${slot}_effort") })
+            if ($matching.Count -ne 1) { return 'Roster model or effort changed.' }
+        }
+        $bank = if ($CurrentBank) { Get-RouterBenchEvidenceContext } else {
+            Read-RouterJsonObject -Path (Join-Path (Get-RouterStatePath) 'bench/bank-hash.json')
+        }
+        if (-not $bank -or -not $bank.task_bank_sha256 -or $Evidence.bank_hash -cne $bank.task_bank_sha256) { return 'Task bank changed or hash unavailable.' }
+    } catch { return 'Malformed or unverifiable tie evidence.' }
+    return $null
+}
