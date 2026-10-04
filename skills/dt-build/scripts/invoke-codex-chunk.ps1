@@ -456,8 +456,8 @@ try {
     }
 
     $cliVersion = if ([System.IO.Path]::GetExtension($codexCli).ToLowerInvariant() -eq '.ps1') {
-        (& pwsh -NoProfile -File $codexCli --version 2>&1) -join ' '
-    } else { (& $codexCli --version 2>&1) -join ' ' }
+        ($null | & pwsh -NoProfile -File $codexCli --version 2>&1) -join ' '
+    } else { ($null | & $codexCli --version 2>&1) -join ' ' }
     $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
     $cachePath = Join-Path $codexHome 'models_cache.json'
     $cacheFetchedAt = $null

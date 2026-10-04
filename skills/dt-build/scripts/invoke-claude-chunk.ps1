@@ -462,8 +462,8 @@ try {
     }
 
     $cliVersion = if ([System.IO.Path]::GetExtension($claudeCli).ToLowerInvariant() -eq '.ps1') {
-        (& pwsh -NoProfile -File $claudeCli --version 2>&1) -join ' '
-    } else { (& $claudeCli --version 2>&1) -join ' ' }
+        ($null | & pwsh -NoProfile -File $claudeCli --version 2>&1) -join ' '
+    } else { ($null | & $claudeCli --version 2>&1) -join ' ' }
 
     $result = [pscustomobject]@{
         pass                = [string]::IsNullOrWhiteSpace($failureReason)
