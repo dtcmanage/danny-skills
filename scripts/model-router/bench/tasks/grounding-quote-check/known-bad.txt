@@ -1,0 +1,1 @@
+[{"id": "q1", "value": 500, "source": "S1", "quote": "the standard plan includes 500 GB of storage per workspace"}, {"id": "q2", "value": 30, "source": "S2", "quote": "deleted files stay recoverable for 30 days before permanent removal"}, {"id": "q3", "value": 8, "source": "S3", "quote": "priority tickets are answered within 8 hours"}]

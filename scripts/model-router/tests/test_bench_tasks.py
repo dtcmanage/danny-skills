@@ -24,6 +24,8 @@ def load(name: str, path: Path):
 generator = load("fixture_generator", BENCH / "generate-fixtures.py")
 grading = load("bench_grading", TASKS / "_grading.py")
 review = load("review_tasks", BENCH / "review.py")
+sys.path.insert(0, str(BENCH))
+import bench_engine as engine  # noqa: E402
 
 
 def test_seed_byte_parity(tmp_path: Path):
@@ -45,9 +47,12 @@ def test_ids_categories_and_layout():
         "ui-frontend-card": "ui-frontend", "code-review-planted": "code-review",
         "math-return-series": "math", "analysis-ddq-gaps": "analysis",
         "planning-migration": "planning", "deep-research-vendor": "deep-research",
-        "writing-letter-section": "long-form-writing", "pelican": "image-generation"}
+        "writing-letter-section": "long-form-writing", "pelican": "image-generation",
+        "grounding-absent-answer": "analysis", "grounding-false-premise": "analysis",
+        "grounding-quote-check": "deep-research", "grounding-missing-field": "mechanical",
+        "writing-status-update": "long-form-writing", "writing-explainer-paragraph": "long-form-writing"}
     metadata = {p.parent.name: json.loads(p.read_text()) for p in TASKS.glob("*/task.json")}
-    assert len(metadata) == 12
+    assert len(metadata) == 18 == len(generator.TASKS)
     assert {key: value["category"] for key, value in metadata.items()} == expected
     for key, value in metadata.items():
         assert value["id"] == key and value["dimension_framework"] == "provisional"
@@ -100,6 +105,27 @@ def test_rubric_schema_and_binary_grading(task_id: str):
     for scores in ({}, {key: True for key in ids}, {key: 0.5 for key in ids}, {**dict.fromkeys(ids, 1), "extra": 1}):
         with pytest.raises(ValueError):
             grading.rubric_score(rubric, {"scores": scores})
+
+
+def test_writer_tasks_load_with_rubric_and_judge_prompt():
+    config = json.loads((BENCH / "bench-config.json").read_text())
+    writers = sorted(p.parent.name for p in TASKS.glob("*/task.json")
+                     if json.loads(p.read_text())["job"] == "writer")
+    assert writers == ["writing-explainer-paragraph", "writing-letter-section", "writing-status-update"]
+    for task_id in ("writing-status-update", "writing-explainer-paragraph"):
+        task = TASKS / task_id
+        metadata = json.loads((task / "task.json").read_text())
+        assert (metadata["category"], metadata["grader"]) == ("long-form-writing", "rubric")
+        assert "difficulty" not in metadata
+        rubric = json.loads((task / "golden/rubric.json").read_text())
+        assert rubric["threshold"] == config["rubric_threshold"] and len(rubric["lines"]) == 5
+        assert sum("No invented facts" in line["criterion"] for line in rubric["lines"]) == 1
+        for name in ("prompt.md", "judge-prompt.md", "golden/answer.md", "known-bad.txt", "fixtures/input.json"):
+            assert (task / name).read_text(encoding="utf-8").strip(), name
+        assert engine.candidate_prompt(task).startswith((task / "prompt.md").read_text(encoding="utf-8"))
+    assert 120 <= len((TASKS / "writing-status-update/golden/answer.md").read_text().split()) <= 160
+    explainer = (TASKS / "writing-explainer-paragraph/golden/answer.md").read_text()
+    assert 90 <= len(explainer.split()) <= 130 and "\n\n" not in explainer.strip()
 
 
 def test_retained_sources():

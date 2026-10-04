@@ -1,0 +1,29 @@
+{
+  "threshold": 0.8,
+  "score_values": [
+    0,
+    1
+  ],
+  "lines": [
+    {
+      "id": "facts",
+      "criterion": "States tables done and total, the 2 GB export blocker, three blocked tables, the next step, owner and target exactly as supplied."
+    },
+    {
+      "id": "unsupported",
+      "criterion": "No invented facts: no figures, dates, people, causes or promises beyond the supplied facts."
+    },
+    {
+      "id": "order",
+      "criterion": "Leads with where the work stands, then the blocker and its effect, then the next step and owner."
+    },
+    {
+      "id": "length",
+      "criterion": "120-160 words in two or three short paragraphs with no headings or bullet list."
+    },
+    {
+      "id": "voice",
+      "criterion": "Plain active sentences in a restrained internal tone; no hype or filler."
+    }
+  ]
+}

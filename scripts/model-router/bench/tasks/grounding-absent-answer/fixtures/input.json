@@ -1,0 +1,29 @@
+{
+  "extract": "Synthetic operations memo for Fictional Freight-Example Co. (illustration only). The company runs 4 regional hubs and employs 160 staff across them. After this year's expansion, the delivery fleet totals 36 vans. On-time delivery for the year was 97%. The Lakeside hub is managed by Jordan Sample. Revenue grew compared with the prior year; figures will appear in the annual report. The board approved a new hub, with the location still under review.",
+  "questions": [
+    {
+      "id": "q1",
+      "text": "How many regional hubs does the company run?"
+    },
+    {
+      "id": "q2",
+      "text": "What was annual revenue, in dollars?"
+    },
+    {
+      "id": "q3",
+      "text": "How many vans are in the delivery fleet?"
+    },
+    {
+      "id": "q4",
+      "text": "Who manages the Lakeside hub?"
+    },
+    {
+      "id": "q5",
+      "text": "How many vans were added during this year's expansion?"
+    },
+    {
+      "id": "q6",
+      "text": "What was on-time delivery for the year, in percent?"
+    }
+  ]
+}

@@ -256,11 +256,16 @@ def run(tmp_path: Path, **overrides: object) -> dict:
     return engine.run_bench(**arguments)
 
 
+def prompt_rubric(request: dict) -> dict:
+    # Each writer task has its own rubric; the judge prompt carries it on one line.
+    return next(json.loads(line) for line in request['prompt'].splitlines() if line.startswith('{"threshold"'))
+
+
 def test_reps_shadow_baseline(tmp_path: Path) -> None:
     result = run(tmp_path)
     assert result['raw_gate'] == 'pass' and result['gate'] == 'advisory' and result['shadow']
-    assert result['candidate']['passed'] == 2
-    assert len(result['outcomes']) == 12
+    assert result['candidate']['passed'] == 3
+    assert len(result['outcomes']) == 18
     assert result['effort_down'] is None
     assert len(json.loads((tmp_path / 'bench/baseline.json').read_text())) == 2
     assert all(row['attempt'] == 1 and row['source'] == 'bench' for row in result['outcomes'])
@@ -271,36 +276,35 @@ def test_environment_retry_and_quota(tmp_path: Path) -> None:
     result = run(tmp_path, limits=lambda vendor: {'blocked': True},
                  dispatch=lambda request: calls.append(request))
     assert not calls and result['raw_gate'] == 'unknown' and result['gate'] == 'unknown'
-    assert len(result['outcomes']) == 24
+    assert len(result['outcomes']) == 36
     assert not json.loads((tmp_path / 'bench/baseline.json').read_text())
     counts = {}
     def grade(task: Path, answer: str) -> dict:
         counts[task.name] = counts.get(task.name, 0) + 1
         return {'status': 'unknown' if counts[task.name] == 1 else 'pass'}
     result = run(tmp_path / 'retry', grade=grade)
-    assert result['raw_gate'] == 'pass' and len(result['outcomes']) == 14
+    assert result['raw_gate'] == 'pass' and len(result['outcomes']) == 21
 
 
 def test_deterministic_failure_no_retry(tmp_path: Path) -> None:
     result = run(tmp_path, grade=lambda task, answer: {'status': 'fail'})
-    assert len(result['outcomes']) == 12
+    assert len(result['outcomes']) == 18
     assert not any(row['unknown'] for row in result['outcomes'])
 
 
 def test_rubric_self_weight_and_effort_up(tmp_path: Path) -> None:
     config = json.loads((BENCH / 'bench-config.json').read_text())
-    rubric = json.loads((BENCH / 'tasks/writing-letter-section/golden/rubric.json').read_text())
     def dispatch(request: dict) -> dict:
         if request['purpose'] == 'answer':
             return {'status': 'ok', 'answer': 'answer evidence'}
         value = 0 if request['model'] == config['judges']['claude'] else 1
-        return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: value for line in rubric['lines']}})}
+        return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: value for line in prompt_rubric(request)['lines']}})}
     result = run(tmp_path, job='writer', effort='medium', candidate=config['judges']['claude'], dispatch=dispatch)
     first = result['outcomes'][0]
     assert first['judge_average'] == pytest.approx(2 / 3)
     assert first['disagreement'] and first['status'] == 'fail'
     assert result['effort_down'] is None and result['effort_up']['effort'] == 'high'
-    assert len(result['outcomes']) == 9
+    assert len(result['outcomes']) == 27
 
 
 def test_binary_scores_and_strip() -> None:
@@ -352,7 +356,7 @@ def test_approved_gate_baseline_and_bank_reset(tmp_path: Path) -> None:
     assert first['gate'] == 'pass' and not first['shadow']
     failure = run(state, tasks=tasks, grade=lambda t, a: {'status': 'fail'})
     assert len(failure['baseline_drops']) == 2
-    assert all(d['before'] == 2 and d['after'] == 0 for d in failure['baseline_drops'])
+    assert all(d['before'] == 3 and d['after'] == 0 for d in failure['baseline_drops'])
     (tasks / 'mechanical-extract-table/fixtures/extra.txt').write_text('Synthetic additional input')
     changed = run(state, tasks=tasks)
     assert changed['shadow'] and changed['task_bank_sha256'] != digest
@@ -412,7 +416,7 @@ def test_actual_approved_gate_deficit_fail_unknown(tmp_path: Path) -> None:
     assert deficit['gate'] == 'fail' and deficit['shortfall_tasks'] == 1
     failed = run(state, tasks=tasks, dispatch=dispatch,
                  grade=lambda t, a: {'status': 'fail' if a == 'candidate' else 'pass'})
-    assert failed['gate'] == 'fail' and failed['shortfall_tasks'] == 2
+    assert failed['gate'] == 'fail' and failed['shortfall_tasks'] == 3
     unknown = run(state, tasks=tasks, dispatch=dispatch,
                   grade=lambda t, a: {'status': 'unknown' if a == 'candidate' else 'pass'})
     assert unknown['gate'] == 'unknown'
@@ -437,7 +441,7 @@ def test_blocked_judge_and_successful_retry(tmp_path: Path) -> None:
         attempts[t.name] = attempts.get(t.name, 0) + 1
         return {'status': 'unknown' if attempts[t.name] % 2 else 'pass'}
     retried = run(tmp_path / 'retry', grade=grade)
-    assert retried['raw_gate'] == 'pass' and len(retried['outcomes']) == 24
+    assert retried['raw_gate'] == 'pass' and len(retried['outcomes']) == 36
 
 
 def test_old_outer_only_timeout_reproduces_orphan(tmp_path: Path) -> None:
@@ -482,11 +486,10 @@ def test_real_outcome_lock_overlap(tmp_path: Path) -> None:
 
 def test_judge_refresh_and_unavailable_up(tmp_path: Path) -> None:
     config = json.loads((BENCH / 'bench-config.json').read_text())
-    rubric = json.loads((BENCH / 'tasks/writing-letter-section/golden/rubric.json').read_text())
     def dispatch(request: dict) -> dict:
         if request['purpose'] == 'answer':
             return {'status': 'ok', 'answer': 'synthetic evidence'}
-        return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: 1 for line in rubric['lines']}})}
+        return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: 1 for line in prompt_rubric(request)['lines']}})}
     result = run(tmp_path, job='writer', effort='medium', dispatch=dispatch)
     assert not result['effort_down_qualified'] and not result['effort_up_qualified']
     config['judges']['codex'] = 'gpt-6-astra-new'
@@ -496,7 +499,7 @@ def test_judge_refresh_and_unavailable_up(tmp_path: Path) -> None:
     def unknown_up(request: dict) -> dict:
         return {'status': 'unknown'} if request['purpose'] == 'answer' and request['effort'] == 'high' else dispatch(request)
     unknown = run(tmp_path / 'unknown', job='writer', effort='medium', dispatch=unknown_up)
-    assert not unknown['effort_down_qualified'] and unknown['effort_up']['unknown'] == 1
+    assert not unknown['effort_down_qualified'] and unknown['effort_up']['unknown'] == 3
 
 
 def test_price_usage_and_malformed_dispatch(tmp_path: Path) -> None:
@@ -507,8 +510,8 @@ def test_price_usage_and_malformed_dispatch(tmp_path: Path) -> None:
         return {'status': 'ok', 'answer': '{}', 'usage': {'input': 100, 'cached_input': 50, 'output': 10}}
     result = run(tmp_path, dispatch=dispatch, prices=prices)
     assert result['tied'] and result['better'] is None
-    assert result['telemetry']['codex']['measured_calls'] == 12
-    assert result['telemetry']['codex']['priced_subtotal_usd'] == pytest.approx(.00222)
+    assert result['telemetry']['codex']['measured_calls'] == 18
+    assert result['telemetry']['codex']['priced_subtotal_usd'] == pytest.approx(.00333)
     malformed = run(tmp_path / 'malformed', dispatch=lambda r: None)
     assert malformed['raw_gate'] == 'unknown'
     with pytest.raises(ValueError, match='two distinct'):
@@ -558,6 +561,9 @@ _VISIBLE = {
     'analysis-ddq-gaps': ('input.json',), 'planning-migration': ('input.json',),
     'deep-research-vendor': ('input.json',), 'writing-letter-section': ('input.json',),
     'pelican': ('input.json',),
+    'grounding-absent-answer': ('input.json',), 'grounding-false-premise': ('input.json',),
+    'grounding-quote-check': ('input.json',), 'grounding-missing-field': ('input.json', 'document.txt'),
+    'writing-status-update': ('input.json',), 'writing-explainer-paragraph': ('input.json',),
 }
 
 @pytest.mark.parametrize('task_id', _VISIBLE)
@@ -671,8 +677,7 @@ def test_account_update_authentication(variant, tmp_path):
 def writer_judges(request: dict) -> dict:
     if request["purpose"] == "answer":
         return {"status": "ok", "answer": "synthetic evidence"}
-    rubric = json.loads((BENCH / "tasks/writing-letter-section/golden/rubric.json").read_text())
-    return {"status": "ok", "answer": json.dumps({"scores": {line["id"]: 1 for line in rubric["lines"]}})}
+    return {"status": "ok", "answer": json.dumps({"scores": {line["id"]: 1 for line in prompt_rubric(request)["lines"]}})}
 
 
 def test_judge_effort_is_fixed_and_recorded(tmp_path: Path) -> None:
@@ -711,13 +716,12 @@ def test_invalid_judge_effort_is_rejected_before_dispatch(tmp_path: Path, value:
 @pytest.mark.parametrize("self_points,other_points,expected", [(2, 5, "pass"), (1, 5, "fail"), (3, 5, "pass")])
 def test_exact_weighted_rubric_threshold(tmp_path: Path, self_points: int, other_points: int, expected: str) -> None:
     config = json.loads((BENCH / "bench-config.json").read_text())
-    rubric = json.loads((BENCH / "tasks/writing-letter-section/golden/rubric.json").read_text())
     def dispatch(request: dict) -> dict:
         if request["purpose"] == "answer":
             return {"status": "ok", "answer": "synthetic evidence"}
         points = self_points if request["model"] == config["judges"]["claude"] else other_points
         return {"status": "ok", "answer": json.dumps({"scores": {
-            line["id"]: int(i < points) for i, line in enumerate(rubric["lines"])}})}
+            line["id"]: int(i < points) for i, line in enumerate(prompt_rubric(request)["lines"])}})}
     result = run(tmp_path, job="writer", candidate=config["judges"]["claude"],
                  effort="medium", dispatch=dispatch)
     rows = [row for row in result["outcomes"] if row["side"] == "candidate"]
@@ -791,16 +795,18 @@ def test_codex_hostile_instruction_controls(key, mode, tmp_path):
 
 
 def test_first_attempt_failures_do_not_blame_answer_model_for_judge():
-    rows = [dict(attempt=1, model='answer-model', status='unknown', response={'status':'ok'},
+    rows = [dict(attempt=1, side='candidate', model='answer-model', status='unknown', response={'status':'ok'},
                  judge_scores=[dict(model='actual-judge', response={'status':'unknown', 'failure_category':'protocol'}, error='unavailable')]),
-            dict(attempt=2, model='answer-model', status='pass', response={'status':'ok'}),
-            dict(attempt=1, model='answer-model', status='fail', response={'status':'ok'}),
-            dict(attempt=1, model='answer-model', status='unknown', response={'status':'unknown','failure_category':'transport'})]
+            dict(attempt=2, side='candidate', model='answer-model', status='pass', response={'status':'ok'}),
+            dict(attempt=1, side='candidate', model='answer-model', status='fail', response={'status':'ok'}),
+            dict(attempt=1, side='candidate', model='answer-model', status='unknown', response={'status':'unknown','failure_category':'transport'})]
     actual = engine.summarize_first_attempts(rows)
-    assert actual['answer-model']['answer_reps'] == 3
-    assert actual['answer-model']['answer_quality_failures'] == 1
-    assert actual['answer-model']['answer_dispatch_failures'] == 1
-    assert actual['answer-model']['judge_dispatch_failures'] == 0
+    assert actual['candidate']['answer_reps'] == 3
+    assert (actual['candidate']['lane'], actual['candidate']['model']) == ('candidate', 'answer-model')
+    assert actual['actual-judge']['lane'] == 'judge'
+    assert actual['candidate']['answer_quality_failures'] == 1
+    assert actual['candidate']['answer_dispatch_failures'] == 1
+    assert actual['candidate']['judge_dispatch_failures'] == 0
     assert actual['actual-judge']['answer_reps'] == 0
     assert actual['actual-judge']['judge_calls'] == actual['actual-judge']['judge_dispatch_failures'] == 1
     assert actual['actual-judge']['failure_categories'] == {'protocol':1}

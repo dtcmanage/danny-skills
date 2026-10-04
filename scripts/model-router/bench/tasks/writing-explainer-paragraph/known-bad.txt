@@ -1,0 +1,2 @@
+- Drawdown: a measure of volatility.
+- Example: funds fell 35% in 2008, so expect the same soon.

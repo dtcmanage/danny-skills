@@ -1,0 +1,1 @@
+Write ONE internal project status update of 120-160 words from the synthetic facts in fixtures/input.json for a busy reader. Plain active prose in two or three short paragraphs: where the work stands, the blocker and its effect, then the next step with its owner and target. No headings, bullets, hype, or invented figures, dates, people or causes.

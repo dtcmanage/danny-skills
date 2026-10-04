@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from test_bench_runner import BENCH, engine, run, writer_judges
+from test_bench_runner import BENCH, engine, prompt_rubric, run, writer_judges
 
 
 def task_subset(tmp_path: Path, names: list[str], job: str) -> Path:
@@ -105,7 +105,6 @@ def test_recovered_judge_failure_is_not_an_answer_model_failure(tmp_path: Path) 
 
 @pytest.mark.parametrize('base,up,qualified', [(5, 5, False), (5, 4, False), (4, 5, True), (3, 4, True), (3, 3, False)])
 def test_writer_effort_up_requires_strict_improvement(tmp_path: Path, base: int, up: int, qualified: bool) -> None:
-    rubric = json.loads((BENCH / 'tasks/writing-letter-section/golden/rubric.json').read_text())
     active_effort = None
     def dispatch(request: dict) -> dict:
         nonlocal active_effort
@@ -113,7 +112,7 @@ def test_writer_effort_up_requires_strict_improvement(tmp_path: Path, base: int,
             active_effort = request['effort']
             return writer_judges(request)
         count = up if active_effort == 'high' else base
-        return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: int(i < count) for i, line in enumerate(rubric['lines'])}})}
+        return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: int(i < count) for i, line in enumerate(prompt_rubric(request)['lines'])}})}
     result = run(tmp_path, job='writer', effort='medium', dispatch=dispatch)
     assert result['effort_down'] is None and not result['effort_down_qualified']
     assert result['effort_up']['effort'] == 'high'

@@ -1,0 +1,24 @@
+{
+  "facts": [
+    {
+      "id": "F1",
+      "text": "Both sites share one carrier contract."
+    },
+    {
+      "id": "F2",
+      "text": "Average order weight was 3.0 kg."
+    },
+    {
+      "id": "F3",
+      "text": "A third site is planned for next year."
+    },
+    {
+      "id": "F4",
+      "text": "The Harbor site remained open through the full year and processed 4529 orders."
+    },
+    {
+      "id": "F5",
+      "text": "The Ridge site processed 6639 orders in the year."
+    }
+  ]
+}

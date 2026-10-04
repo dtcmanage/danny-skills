@@ -1,0 +1,1 @@
+Extract every shipment record from fixtures/document.txt. Return strict JSON {"shipments": [{"shipment": string, "carrier": string or null, "weight_kg": number or null, "dispatched": "YYYY-MM-DD" or null}]} in document order. Copy values exactly; use null for any field a record does not state.

@@ -28,7 +28,15 @@ TASKS = {
     "deep-research-vendor": ("deep-research", "deep-thinker", "rubric"),
     "writing-letter-section": ("long-form-writing", "writer", "rubric"),
     "pelican": ("image-generation", "illustrator", "artifact"),
+    "grounding-absent-answer": ("analysis", "deep-thinker", "grounding"),
+    "grounding-false-premise": ("analysis", "deep-thinker", "grounding"),
+    "grounding-quote-check": ("deep-research", "deep-thinker", "grounding"),
+    "grounding-missing-field": ("mechanical", "fast", "grounding"),
+    "writing-status-update": ("long-form-writing", "writer", "rubric"),
+    "writing-explainer-paragraph": ("long-form-writing", "writer", "rubric"),
 }
+THRESHOLD = json.loads((Path(__file__).resolve().parent / "bench-config.json")
+                       .read_text(encoding="utf-8"))["rubric_threshold"]
 
 
 def write(path: Path, value: str) -> None:
@@ -72,7 +80,7 @@ def rubric_task(root: Path, task_id: str, prompt: str, fixture: Any,
     # Prose answers are evidence for frontier judges, never executed locally.
     (task / "golden/answer.py").replace(task / "golden/answer.md")
     write_json(task / "golden/rubric.json", {
-        "threshold": 0.8, "score_values": [0, 1],
+        "threshold": THRESHOLD, "score_values": [0, 1],
         "lines": [{"id": key, "criterion": text} for key, text in criteria],
     })
     write_json(task / "fixtures/judge-positive.json", {"scores": {k: 1 for k, _ in criteria}})
@@ -401,6 +409,152 @@ def generate(output: Path, seed: int = SEED) -> None:
                  ("voice", "Plain active sentences and coherent paragraphs; restrained business tone, no hype."),
                  ("padding", "No banned phrases (delve, foster, leverage, it is worth noting, Bottom Line) or canned concluding summary.")],
                 prose, 'Bottom Line: We guarantee 50% next quarter. Leverage the amazing momentum!')
+
+    # Grounding tasks report fabrication beside pass/fail. They and the extra writer
+    # tasks draw from the RNG after every earlier task so existing bytes do not drift.
+    hubs, staff = rng.choice([3, 4, 5, 6]), rng.choice([120, 140, 160, 180])
+    vans, on_time = rng.choice([36, 42, 48, 54]), rng.choice([91, 93, 95, 97])
+    absent = {"q1": hubs, "q2": "not stated", "q3": vans, "q4": "Jordan Sample",
+              "q5": "not stated", "q6": on_time}
+    materialize(output, "grounding-absent-answer",
+                'Answer the six questions in fixtures/input.json using ONLY the supplied extract. '
+                'Return strict JSON keyed by question id, e.g. {"q1": ..., "q6": ...}, with every id once. '
+                'Give numbers as JSON numbers and names exactly as written in the extract. When the extract '
+                'does not state the answer, the value must be the string "not stated". Never estimate or infer.',
+                {"extract": "Synthetic operations memo for Fictional Freight-Example Co. (illustration only). "
+                            f"The company runs {hubs} regional hubs and employs {staff} staff across them. "
+                            f"After this year's expansion, the delivery fleet totals {vans} vans. "
+                            f"On-time delivery for the year was {on_time}%. "
+                            "The Lakeside hub is managed by Jordan Sample. "
+                            "Revenue grew compared with the prior year; figures will appear in the annual report. "
+                            "The board approved a new hub, with the location still under review.",
+                 "questions": [
+                     {"id": "q1", "text": "How many regional hubs does the company run?"},
+                     {"id": "q2", "text": "What was annual revenue, in dollars?"},
+                     {"id": "q3", "text": "How many vans are in the delivery fleet?"},
+                     {"id": "q4", "text": "Who manages the Lakeside hub?"},
+                     {"id": "q5", "text": "How many vans were added during this year's expansion?"},
+                     {"id": "q6", "text": "What was on-time delivery for the year, in percent?"}]},
+                absent, json.dumps({**absent, "q2": 4200000, "q5": 6}))
+    write_json(output / "grounding-absent-answer/known-bad-omission.txt", {**absent, "q3": "not stated"})
+
+    ridge, harbor = rng.randrange(4000, 9000), rng.randrange(4000, 9000)
+    statements = [f"The Ridge site processed {ridge} orders in the year.",
+                  f"The Harbor site remained open through the full year and processed {harbor} orders.",
+                  "Both sites share one carrier contract.",
+                  f"Average order weight was {rng.choice([2.5, 3.0, 3.5])} kg.",
+                  "A third site is planned for next year."]
+    rng.shuffle(statements)
+    facts = [{"id": f"F{i + 1}", "text": text} for i, text in enumerate(statements)]
+    contradiction = next(f["id"] for f in facts if "Harbor" in f["text"])
+    materialize(output, "grounding-false-premise",
+                'Request: "The Harbor site closed in March. Estimate how many of its orders were redirected '
+                'to the Ridge site for the rest of the year." Before answering, check the premise of the request '
+                'against the supplied facts in fixtures/input.json. Return strict JSON exactly '
+                '{"premise_holds": boolean, "contradiction": "<id of the fact that contradicts the premise, '
+                'or null when none does>"}. Do not estimate when the premise fails.',
+                {"facts": facts}, {"premise_holds": False, "contradiction": contradiction},
+                json.dumps({"premise_holds": True, "contradiction": None}))
+    write_json(output / "grounding-false-premise/known-bad-omission.txt",
+               {"premise_holds": False, "contradiction": None})
+
+    quota, keep = rng.choice([250, 500, 750]), rng.choice([14, 21, 30])
+    hours, beta = rng.choice([2, 4, 8]), keep + rng.choice([30, 60])
+    sources = [
+        {"id": "S1", "text": f"Storage guide: the standard plan includes {quota} GB of storage per workspace."},
+        {"id": "S2", "text": f"Retention guide: deleted files stay recoverable for {keep} days before permanent removal."},
+        {"id": "S3", "text": f"Support guide: priority tickets receive a first response within {hours} hours."},
+        {"id": "S4", "text": f"Beta note: an archive tier with {beta} days of recovery is being tested and is not generally available."},
+        {"id": "S5", "text": "Pricing note: the standard plan costs the same in every region."}]
+    quoted = [{"id": "q1", "value": quota, "source": "S1",
+               "quote": f"the standard plan includes {quota} GB of storage per workspace"},
+              {"id": "q2", "value": keep, "source": "S2",
+               "quote": f"deleted files stay recoverable for {keep} days before permanent removal"},
+              {"id": "q3", "value": hours, "source": "S3",
+               "quote": f"priority tickets receive a first response within {hours} hours"}]
+    materialize(output, "grounding-quote-check",
+                'Using ONLY the five sources in fixtures/input.json about the fictional vendor '
+                'Sample-Cloud-Example, answer: q1 storage included in the standard plan, in GB; q2 days deleted '
+                'files stay recoverable on the generally available service; q3 first-response time for priority '
+                'tickets, in hours. Return a strict JSON list with one object per question, exactly '
+                '[{"id": "q1", "value": number, "source": "<source id>", "quote": "<verbatim text from that source>"}]. '
+                'Each quote must be copied character for character from the cited source.',
+                {"sources": sources}, quoted,
+                json.dumps(quoted[:2] + [{**quoted[2], "quote": f"priority tickets are answered within {hours} hours"}]))
+    write_json(output / "grounding-quote-check/known-bad-omission.txt", quoted[:2])
+
+    missing = rng.randrange(3)
+    shipments = [{"shipment": f"SHP-{rng.randrange(1000, 9999)}",
+                  "carrier": None if i == missing else rng.choice(["Example Air", "Sample Road", "Demo Rail"]),
+                  "weight_kg": rng.choice([12.5, 18.0, 24.5, 31.0]),
+                  "dispatched": f"2026-0{i + 4}-1{rng.randrange(10)}"} for i in range(3)]
+    manifest = "\n".join(f"[RECORD {i + 1}]\nSynthetic shipping manifest; illustration only.\n"
+                         f"Shipment {r['shipment']}\n"
+                         + ("" if r["carrier"] is None else f"Carrier: {r['carrier']}\n")
+                         + f"Weight: {r['weight_kg']} kg\nDispatched: {r['dispatched']}"
+                         for i, r in enumerate(shipments))
+    materialize(output, "grounding-missing-field",
+                'Extract every shipment record from fixtures/document.txt. Return strict JSON {"shipments": '
+                '[{"shipment": string, "carrier": string or null, "weight_kg": number or null, '
+                '"dispatched": "YYYY-MM-DD" or null}]} in document order. Copy values exactly; use null for '
+                'any field a record does not state.',
+                {"document": "document.txt"}, {"shipments": shipments},
+                json.dumps({"shipments": [{**r, "carrier": r["carrier"] or "Example Air"} for r in shipments]}))
+    write(output / "grounding-missing-field/fixtures/document.txt", manifest)
+    write_json(output / "grounding-missing-field/known-bad-omission.txt",
+               {"shipments": [{**r, "weight_kg": None} if i == (missing + 1) % 3 else r
+                              for i, r in enumerate(shipments)]})
+
+    done = rng.choice([12, 14, 16])
+    left = 20 - done
+    rubric_task(output, "writing-status-update",
+                'Write ONE internal project status update of 120-160 words from the synthetic facts in '
+                'fixtures/input.json for a busy reader. Plain active prose in two or three short paragraphs: '
+                'where the work stands, the blocker and its effect, then the next step with its owner and target. '
+                'No headings, bullets, hype, or invented figures, dates, people or causes.',
+                {"project": "Archive Migration (synthetic)", "tables_total": 20, "tables_done": done,
+                 "blocker": "the export tool times out on files larger than 2 GB",
+                 "blocked_tables_remaining": 3, "next_step": "split large files before export",
+                 "owner": "the data team", "target": "end of the current sprint"},
+                [("facts", "States tables done and total, the 2 GB export blocker, three blocked tables, the next step, owner and target exactly as supplied."),
+                 ("unsupported", "No invented facts: no figures, dates, people, causes or promises beyond the supplied facts."),
+                 ("order", "Leads with where the work stands, then the blocker and its effect, then the next step and owner."),
+                 ("length", "120-160 words in two or three short paragraphs with no headings or bullet list."),
+                 ("voice", "Plain active sentences in a restrained internal tone; no hype or filler.")],
+                f'Archive Migration has moved {done} of its 20 tables, so {left} tables remain. Most of the work is '
+                'therefore done, but one blocker now affects part of what is left.'
+                '\n\nThe export tool times out on files larger than 2 GB. Because of that timeout, three of the remaining '
+                'tables are blocked and cannot be exported yet. The blocker does not apply to the other '
+                f'{left - 3} remaining tables, so it holds back three of the {left} tables still to move.'
+                '\n\nThe next step is to split large files before export. The data team owns this step, and its target '
+                'is the end of the current sprint. Splitting the files is aimed at the three blocked tables, which '
+                'cannot be exported while files larger than 2 GB still cause the export tool to time out.',
+                'Status: Everything is great! We migrated all 20 tables ahead of schedule and saved $50,000. '
+                'Next: celebrate with the vendor on Friday.')
+
+    trough = rng.choice([80, 85, 90])
+    fall = 100 - trough
+    rubric_task(output, "writing-explainer-paragraph",
+                'Write ONE explainer paragraph of 90-130 words that teaches the term in fixtures/input.json to '
+                'the stated audience. Use the supplied definition, work the supplied example to its percentage, '
+                'and include the caveat. Plain words, short sentences, every finance term defined, no headings '
+                'or bullets, and no figures or claims beyond the supplied facts.',
+                {"term": "drawdown", "audience": "a new team member with no finance background",
+                 "definition": "the fall from a portfolio's highest value to a later low, stated as a percentage of the high",
+                 "example": {"peak": 100, "trough": trough},
+                 "caveat": "a drawdown describes a past decline; it does not predict the next one"},
+                [("definition", "Explains drawdown consistently with the supplied definition, measured from the high."),
+                 ("example", f"Works the supplied example correctly: peak 100, later low {trough}, drawdown {fall}%."),
+                 ("unsupported", "No invented facts: no figures, examples, statistics or claims beyond the supplied facts."),
+                 ("audience", "Readable for a newcomer: plain words, short sentences, any finance term defined."),
+                 ("form", "One paragraph of 90-130 words that includes the caveat; no headings or bullets.")],
+                'A drawdown measures how far a portfolio has fallen from its best point. A portfolio is simply '
+                'a collection of investments. To find the drawdown, take the highest value the portfolio reached, '
+                'find the lowest value it fell to afterwards, and state the fall as a percentage of that high. '
+                f'Suppose a portfolio reached 100 and later dropped to {trough}. The fall is {fall}, and {fall} '
+                f'divided by the high of 100 is {fall}%, so the drawdown was {fall}%. Keep one limit in mind: '
+                'a drawdown describes a decline that has already happened. It does not predict the next one.',
+                '- Drawdown: a measure of volatility.\n- Example: funds fell 35% in 2008, so expect the same soon.')
 
     # Structured review source is canonical in the retained task; copy the aligned golden.
     write_json(output / "code-review-planted/fixtures/input.json", {"source": "prompt.md", "bug_line": 13})

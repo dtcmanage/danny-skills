@@ -1,0 +1,22 @@
+{
+  "shipments": [
+    {
+      "shipment": "SHP-9718",
+      "carrier": null,
+      "weight_kg": 18.0,
+      "dispatched": "2026-04-14"
+    },
+    {
+      "shipment": "SHP-6725",
+      "carrier": "Demo Rail",
+      "weight_kg": null,
+      "dispatched": "2026-05-18"
+    },
+    {
+      "shipment": "SHP-5537",
+      "carrier": "Example Air",
+      "weight_kg": 18.0,
+      "dispatched": "2026-06-10"
+    }
+  ]
+}

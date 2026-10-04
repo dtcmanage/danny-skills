@@ -1,0 +1,17 @@
+[RECORD 1]
+Synthetic shipping manifest; illustration only.
+Shipment SHP-9718
+Weight: 18.0 kg
+Dispatched: 2026-04-14
+[RECORD 2]
+Synthetic shipping manifest; illustration only.
+Shipment SHP-6725
+Carrier: Demo Rail
+Weight: 31.0 kg
+Dispatched: 2026-05-18
+[RECORD 3]
+Synthetic shipping manifest; illustration only.
+Shipment SHP-5537
+Carrier: Example Air
+Weight: 18.0 kg
+Dispatched: 2026-06-10

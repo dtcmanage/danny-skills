@@ -1,0 +1,8 @@
+{
+  "id": "grounding-missing-field",
+  "category": "mechanical",
+  "job": "fast",
+  "grader": "grounding",
+  "dimension_framework": "provisional",
+  "seed": 20260930
+}

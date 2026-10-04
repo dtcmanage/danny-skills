@@ -38,6 +38,12 @@ CANDIDATE_INPUTS = {
     'deep-research-vendor': ('input.json',),
     'writing-letter-section': ('input.json',),
     'pelican': ('input.json',),
+    'grounding-absent-answer': ('input.json',),
+    'grounding-false-premise': ('input.json',),
+    'grounding-quote-check': ('input.json',),
+    'grounding-missing-field': ('input.json', 'document.txt'),
+    'writing-status-update': ('input.json',),
+    'writing-explainer-paragraph': ('input.json',),
 }
 
 
@@ -157,7 +163,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                 if json.loads(p.read_text(encoding='utf-8'))['job'] == job]
     if not selected:
         raise ValueError('No tasks for job')
-    shadow = len(review.ids) != 12 or not approval['approved']
+    shadow = len(review.ids) != 18 or not approval['approved']
     run = state / 'runs' / uuid4().hex
     run.mkdir(parents=True)
     rows: list[dict[str, Any]] = []
@@ -337,12 +343,11 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     result['fabrications'] = {}
     quality = {}
     for side, score_table in [('candidate', candidate_table), ('incumbent', incumbent_table)]:
-        side_rows = [r for r in rows if r['side'] == side]
-        if score_table is candidate_table and side == 'incumbent':
-            side_rows = [r for r in rows if r['side'] == 'candidate']
+        row_side = 'candidate' if score_table is candidate_table else side
+        side_rows = [r for r in rows if r['side'] == row_side]
         fabrications = sum(bool(r.get('grading', {}).get('fabrication', False)) for r in side_rows)
         result['fabrications'][side] = fabrications
-        first_attempts = summarize_first_attempts(side_rows).get(score_table['model'], {})
+        first_attempts = summarize_first_attempts(side_rows).get(row_side, {})
         failures = sum(first_attempts.get(key, 0) for key in
                        ('answer_quality_failures', 'answer_dispatch_failures', 'grader_unknowns'))
         quality[side] = (score_table['passed'], -fabrications, -failures)
@@ -365,10 +370,11 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     for vendor, data in result['telemetry'].items():
         lines.append(f"| {vendor} | {data['measured_calls']} | {data['partial_calls']} | {data['unmeasured_calls']} | {data['priced_subtotal_usd']} | {data['unpriced_calls']} | {data['quota_before']} / {data['quota_after']} |")
     lines += ['', 'First attempts only; answer repetitions include blocked calls. Judge denominators count calls made for first-attempt answers.',
-              '| Model | Answer reps | Quality failures | Dispatch failures | Grader unknowns | Judge calls | Judge dispatch failures | Invalid judge scores |',
-              '| --- | --- | --- | --- | --- | --- | --- | --- |']
-    for model, data in result['first_attempt_failures'].items():
-        lines.append(f"| {model} | {data['answer_reps']} | {data['answer_quality_failures']} | {data['answer_dispatch_failures']} | {data['grader_unknowns']} | {data['judge_calls']} | {data['judge_dispatch_failures']} | {data['judge_score_failures']} |")
+              'Fabrications count every graded answer whose grader flagged invented content.',
+              '| Lane | Model | Effort | Answer reps | Quality failures | Dispatch failures | Grader unknowns | Fabrications | Judge calls | Judge dispatch failures | Invalid judge scores |',
+              '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+    for data in result['first_attempt_failures'].values():
+        lines.append(f"| {data['lane']} | {data['model']} | {data['effort']} | {data['answer_reps']} | {data['answer_quality_failures']} | {data['answer_dispatch_failures']} | {data['grader_unknowns']} | {data['fabrications']} | {data['judge_calls']} | {data['judge_dispatch_failures']} | {data['judge_score_failures']} |")
     lines += ['', 'Disagreements: ' + json.dumps([{'task': r['task_id'], 'rep': r['rep'], 'scores': r['judge_scores']} for r in rows if r.get('disagreement')]),
               'Baseline drops: ' + json.dumps(result['baseline_drops']), 'Artifacts: ' + json.dumps(result['report_paths'])]
     (run / 'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
@@ -377,16 +383,22 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
 
 
 def summarize_first_attempts(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Keep retry recovery from hiding reliability; blame each judge on its own model."""
+    """Keep retry recovery from hiding reliability; blame each judge on its own model.
+
+    Answer rows are keyed by lane, so effort lanes on the incumbent model stay separate.
+    """
     totals: dict[str, Any] = {}
-    def lane(model: str) -> dict[str, Any]:
-        return totals.setdefault(model, {key: 0 for key in (
+    def lane(key: str, name: str, model: str, effort: str | None) -> dict[str, Any]:
+        return totals.setdefault(key, {'lane': name, 'model': model, 'effort': effort} | {key: 0 for key in (
             'answer_reps', 'answer_quality_failures', 'answer_dispatch_failures',
-            'grader_unknowns', 'judge_calls', 'judge_dispatch_failures', 'judge_score_failures')} | {'failure_categories': {}})
+            'grader_unknowns', 'fabrications', 'judge_calls', 'judge_dispatch_failures', 'judge_score_failures')} | {'failure_categories': {}})
     for row in rows:
+        answers = lane(row['side'], row['side'], row['model'], row.get('effort'))
+        # A retried answer is still graded evidence, so fabrications span all attempts.
+        answers['fabrications'] += bool(row.get('grading', {}).get('fabrication', False))
         if row['attempt'] != 1:
             continue
-        data = lane(row['model'])
+        data = answers
         data['answer_reps'] += 1
         if row['response'].get('status') != 'ok':
             data['answer_dispatch_failures'] += 1
@@ -397,7 +409,7 @@ def summarize_first_attempts(rows: list[dict[str, Any]]) -> dict[str, Any]:
         elif row.get('grading', {}).get('status') == 'unknown':
             data['grader_unknowns'] += 1
         for judge in row.get('judge_scores', []):
-            judged = lane(judge['model'])
+            judged = lane(judge['model'], 'judge', judge['model'], judge.get('effort'))
             judged['judge_calls'] += 1
             if judge['response'].get('status') != 'ok':
                 judged['judge_dispatch_failures'] += 1

@@ -1,0 +1,1 @@
+Answer the six questions in fixtures/input.json using ONLY the supplied extract. Return strict JSON keyed by question id, e.g. {"q1": ..., "q6": ...}, with every id once. Give numbers as JSON numbers and names exactly as written in the extract. When the extract does not state the answer, the value must be the string "not stated". Never estimate or infer.

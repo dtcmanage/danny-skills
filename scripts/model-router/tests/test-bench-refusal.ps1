@@ -45,9 +45,9 @@ try {
     }
     $parseState=Join-Path $root 'parse-error-host'
     $parseRun=Invoke-RouterBench -Job fast -Candidate claude-opus-5-5 -Incumbent claude-opus-5-5 -EffortOverride low -StateDir $parseState -CliInvoker {param($r) Invoke-BenchCli -Request $r -ClaudeResolver {$fake}} -Limits {param($v) @{blocked=$false}} -Diagnosis {param($v,$e) @{verdict='unverified'}} -NoAlerts
-    Assert ($parseRun.raw_gate -eq 'unknown' -and $parseRun.calls.Count -eq 24) 'Conservative parse-error retry bound changed'
-    Assert ($parseRun.telemetry.claude.partial_calls -eq 24 -and $parseRun.telemetry.claude.tokens.output -eq 144) 'Host discarded failed-call usage'
-    Assert ($parseRun.first_attempt_failures.'claude-opus-5-5'.answer_reps -eq 12 -and $parseRun.first_attempt_failures.'claude-opus-5-5'.failure_categories.protocol -eq 12) 'First-attempt parse failures not attributed to model'
+    Assert ($parseRun.raw_gate -eq 'unknown' -and $parseRun.calls.Count -eq 36) 'Conservative parse-error retry bound changed'
+    Assert ($parseRun.telemetry.claude.partial_calls -eq 36 -and $parseRun.telemetry.claude.tokens.output -eq 216) 'Host discarded failed-call usage'
+    foreach($side in @('candidate','incumbent')) {Assert ($parseRun.first_attempt_failures.$side.model -eq 'claude-opus-5-5' -and $parseRun.first_attempt_failures.$side.answer_reps -eq 9 -and $parseRun.first_attempt_failures.$side.failure_categories.protocol -eq 9) "First-attempt parse failures not attributed to lane: $side"}
     foreach($case in @(@{result='Claude usage limit reached. Your limit will reset at 2pm.';want='quota'},@{result='Request timed out';want='transport'},@{result='Something else broke';want='identity'})) {
         $payload=(@{result=$case.result;is_error=$true}|ConvertTo-Json -Compress).Replace("'","''")
         [IO.File]::WriteAllText($fake,"[Console]::In.ReadToEnd() | Out-Null`n[Console]::Out.WriteLine('$payload')`nexit 1")
@@ -70,11 +70,11 @@ try {
         $incumbent=if($vendor -eq 'claude'){'gpt-6.1-sol'}else{'claude-opus-5-5'}
         $result=Invoke-RouterBench -Job fast -Candidate $candidate -Incumbent $incumbent -EffortOverride low -StateDir $state -CliInvoker $invoke -Limits {param($v) @{blocked=$false}} -Diagnosis {param($v,$e) @{verdict='synthetic'}} -NoAlerts -TimeoutMs 10000
         Assert ($script:dispatches[$vendor] -eq 1) "Repeated exhausted vendor dispatch: $vendor"
-        Assert ($script:dispatches[$incumbent.StartsWith('claude-') ? 'claude' : 'codex'] -eq 12) 'Other vendor improperly blocked'
+        Assert ($script:dispatches[$incumbent.StartsWith('claude-') ? 'claude' : 'codex'] -eq 18) 'Other vendor improperly blocked'
         $blocks=@(Get-Content (Join-Path $state 'vendor-blocks.json') -Raw|ConvertFrom-Json)
         Assert ($blocks.Count -eq 1 -and $blocks[0].vendor -eq $vendor) 'Wrong block scope'
         Assert ([datetimeoffset]$blocks[0].reset_at_utc -eq [datetimeoffset]$reset -and $blocks[0].resume_after_source -eq 'refusal-reset') 'Wrong persisted reset'
-        Assert ($result.raw_gate -eq 'unknown' -and $result.outcomes.Count -eq 24) 'Unknown/retry requirements changed'
+        Assert ($result.raw_gate -eq 'unknown' -and $result.outcomes.Count -eq 36) 'Unknown/retry requirements changed'
         Assert ((Get-FileHash (Join-Path $other 'vendor-blocks.json')).Hash -eq $before.Hash) 'Unrelated state changed'
         $again=Invoke-RouterBench -Job fast -Candidate $candidate -Incumbent $candidate -EffortOverride low -StateDir $state -CliInvoker {throw 'must not dispatch persisted block'} -Limits {param($v) @{blocked=$false}} -NoAlerts -TimeoutMs 10000
         Assert ($again.raw_gate -eq 'unknown') 'Persisted block not respected across runs'

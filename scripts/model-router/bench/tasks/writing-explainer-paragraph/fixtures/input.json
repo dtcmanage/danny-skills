@@ -1,0 +1,10 @@
+{
+  "term": "drawdown",
+  "audience": "a new team member with no finance background",
+  "definition": "the fall from a portfolio's highest value to a later low, stated as a percentage of the high",
+  "example": {
+    "peak": 100,
+    "trough": 80
+  },
+  "caveat": "a drawdown describes a past decline; it does not predict the next one"
+}

@@ -1,0 +1,29 @@
+{
+  "threshold": 0.8,
+  "score_values": [
+    0,
+    1
+  ],
+  "lines": [
+    {
+      "id": "definition",
+      "criterion": "Explains drawdown consistently with the supplied definition, measured from the high."
+    },
+    {
+      "id": "example",
+      "criterion": "Works the supplied example correctly: peak 100, later low 80, drawdown 20%."
+    },
+    {
+      "id": "unsupported",
+      "criterion": "No invented facts: no figures, examples, statistics or claims beyond the supplied facts."
+    },
+    {
+      "id": "audience",
+      "criterion": "Readable for a newcomer: plain words, short sentences, any finance term defined."
+    },
+    {
+      "id": "form",
+      "criterion": "One paragraph of 90-130 words that includes the caveat; no headings or bullets."
+    }
+  ]
+}

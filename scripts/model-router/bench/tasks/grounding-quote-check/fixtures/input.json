@@ -1,0 +1,24 @@
+{
+  "sources": [
+    {
+      "id": "S1",
+      "text": "Storage guide: the standard plan includes 500 GB of storage per workspace."
+    },
+    {
+      "id": "S2",
+      "text": "Retention guide: deleted files stay recoverable for 30 days before permanent removal."
+    },
+    {
+      "id": "S3",
+      "text": "Support guide: priority tickets receive a first response within 8 hours."
+    },
+    {
+      "id": "S4",
+      "text": "Beta note: an archive tier with 60 days of recovery is being tested and is not generally available."
+    },
+    {
+      "id": "S5",
+      "text": "Pricing note: the standard plan costs the same in every region."
+    }
+  ]
+}

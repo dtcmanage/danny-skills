@@ -56,10 +56,12 @@ def main() -> int:
     socket.socket.sendto = deny
     sys.argv = [str(task / 'grader.py'), str(answer)]
     buffer = io.StringIO()
-    status, detail = 'fail', ''
+    status, detail, kind = 'fail', '', None
     try:
         metadata_path = task / 'task.json'
-        if metadata_path.exists() and json.loads(metadata_path.read_text(encoding='utf-8'))['grader'] == 'pytest':
+        if metadata_path.exists():
+            kind = json.loads(metadata_path.read_text(encoding='utf-8'))['grader']
+        if kind == 'pytest':
             dependencies = ('pytest', 'fastapi', 'pydantic') if task.name == 'routine-coding-endpoint' else ('pytest',)
             for dependency in dependencies:
                 if importlib.util.find_spec(dependency) is None:
@@ -73,9 +75,13 @@ def main() -> int:
         status, detail = 'unknown', str(error)
     except BaseException as error:
         status, detail = 'unknown', repr(error)
+    # Grounding graders mark failures caused by invented content; others never do.
+    fabrication = (kind == 'grounding' and status == 'fail'
+                   and re.search(r'(?m)^FABRICATION: true$', buffer.getvalue()) is not None)
     print(json.dumps({'status': status, 'failure_category':
                       'environment' if status == 'unknown' else
                       ('implementation' if status == 'fail' else None),
+                      'fabrication': fabrication,
                       'detail': detail, 'grader_output': buffer.getvalue()}))
     return 0
 

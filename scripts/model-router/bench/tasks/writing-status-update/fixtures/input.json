@@ -1,0 +1,10 @@
+{
+  "project": "Archive Migration (synthetic)",
+  "tables_total": 20,
+  "tables_done": 14,
+  "blocker": "the export tool times out on files larger than 2 GB",
+  "blocked_tables_remaining": 3,
+  "next_step": "split large files before export",
+  "owner": "the data team",
+  "target": "end of the current sprint"
+}

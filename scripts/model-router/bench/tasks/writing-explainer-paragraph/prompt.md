@@ -1,0 +1,1 @@
+Write ONE explainer paragraph of 90-130 words that teaches the term in fixtures/input.json to the stated audience. Use the supplied definition, work the supplied example to its percentage, and include the caveat. Plain words, short sentences, every finance term defined, no headings or bullets, and no figures or claims beyond the supplied facts.
