@@ -45,7 +45,7 @@ staged result with `BENCH_STALE_ROSTER`.
 
 UNKNOWN blocks publication even in shadow mode and for writer. Approved-bank
 fast, coder and deep-thinker failures block publication; writer and shadow results
-are advisory. Equal task counts recommend the cheaper model by recorded list price;
+are advisory. Equal results are reported as tied; otherwise the better model is decided by pass count, then fewer fabrications, then fewer first-attempt failures;
 a one-task candidate deficit remains visible in the proposal evidence with the
 bench report path. Bench and historical canary outcomes do not enter real drift
 rate calculations. Pending roster detection includes both slot efforts.

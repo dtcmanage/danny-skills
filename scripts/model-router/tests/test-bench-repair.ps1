@@ -46,7 +46,7 @@ try {
         foreach($raw in @('fail','unknown')) {
             $mark=[pscustomobject]@{job=$job;model=$roster.jobs.$job.first;prior_rate=1;recent_rate=0}
             Write-RouterJsonAtomic (Join-Path $a 'drift-marks.json') @($mark)
-            $bench=[pscustomobject]@{raw_gate=$raw;gate='advisory';price_recommendation=$null;shortfall_tasks=3;report_paths=@{markdown='synthetic'}}
+            $bench=[pscustomobject]@{raw_gate=$raw;gate='advisory';better=$roster.jobs.$job.backup;tied=$false;shortfall_tasks=3;report_paths=@{markdown='synthetic'}}
             Initialize-TestBenchEvidence
             $bench=Add-TestBenchEvidence $bench
             $staged=[pscustomobject]@{identity=(ConvertTo-Json $roster.jobs -Compress -Depth 30)}
@@ -126,7 +126,7 @@ throw 'Unexpected fake transport request'
             }
             Write-RouterJsonAtomic (Join-Path $dir "$category.json") ([pscustomobject]@{readings=@($rows)})
             $script:researchRaw=$raw
-            $adapter={param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate=$script:researchRaw;gate='advisory';price_recommendation=$null;shortfall_tasks=3;report_paths=@{markdown='fixture-research-report'}}) }
+            $adapter={param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate=$script:researchRaw;gate='advisory';better=$r.candidate;tied=$false;shortfall_tasks=3;report_paths=@{markdown='fixture-research-report'}}) }
             foreach($pass in @('one','two')) {
                 [IO.File]::AppendAllText((Join-Path $dir 'passes.jsonl'),((@{pass_id=$pass;categories=@($category)}|ConvertTo-Json -Compress)+"`n"))
                 $built=Build-RouterRosterProposal -BenchInvoker $adapter
@@ -144,7 +144,7 @@ throw 'Unexpected fake transport request'
     $qualified={param($r)
         $script:requests.Add($r)
         $down=@{medium='low';high='medium'}[[string]$r.effort]
-        Add-TestBenchEvidence ([pscustomobject]@{shadow=$false;raw_gate='pass';gate='advisory';price_recommendation=$r.incumbent;shortfall_tasks=0;effort_down_qualified=($r.job -eq 'coder');incumbent=@{passed=3};effort_down=@{model=$r.incumbent;effort=$down;passed=3};report_paths=@{markdown='fixture-effort-report'}})
+        Add-TestBenchEvidence ([pscustomobject]@{shadow=$false;raw_gate='pass';gate='advisory';better=$r.incumbent;tied=$false;shortfall_tasks=0;effort_down_qualified=($r.job -eq 'coder');incumbent=@{passed=3};effort_down=@{model=$r.incumbent;effort=$down;passed=3};report_paths=@{markdown='fixture-effort-report'}})
     }
     $now=[datetime]'2026-10-02T12:00:00Z'
     $null=Invoke-RouterModelCheck -Force -Now $now -BenchInvoker $qualified

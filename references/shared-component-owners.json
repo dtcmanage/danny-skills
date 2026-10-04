@@ -138,6 +138,7 @@
   "scripts/model-router/tests/test-bench-repair.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-bench-runner.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test_bench_review.py": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test_bench_verdicts.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test_bench_runner.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test_bench_tasks.py": {"consumers": [], "summary_token": "model router"},
 

@@ -33,7 +33,7 @@ try {
     $legacy = Invoke-RouterBench @benchArgs
     Check ($legacy.judge_effort -eq 'high' -and $legacy.judge_pair.codex -eq 'gpt-6-astra-custom') 'Legacy default or pair changed'
     Check ([Convert]::ToHexString($before) -ceq [Convert]::ToHexString([IO.File]::ReadAllBytes($configPath))) 'Read-time fallback mutated state'
-    Check ('medium' -in $script:answerEfforts -and 'low' -in $script:answerEfforts) 'Candidate effort-down missing'
+    Check ('medium' -in $script:answerEfforts -and 'high' -in $script:answerEfforts -and 'low' -notin $script:answerEfforts) 'Writer effort-up lane missing or effort-down still run'
     Update-RouterBenchJudges @()
     $migrated = Read-RouterJsonObject $configPath
     Check ($migrated.judge_effort -eq 'high' -and $migrated.judges.codex -eq 'gpt-6-astra-custom') 'Catalog update legacy migration changed pair'

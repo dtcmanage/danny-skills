@@ -114,7 +114,9 @@ if ($Show) {
     if ($entry.first -cne $swap.model -or $entry.first_effort -cne $expected) { throw 'EFFORT_STALE_ROSTER: model or current effort changed.' }
     if ($RevokeEffort -and $swap.status -ne 'approved') { throw 'No approved effort swap to revoke.' }
     if (-not $RevokeEffort -and $swap.status -ne 'pending') { throw 'Effort proposal is not pending.' }
-    if (@{medium='low';high='medium'}[[string]$swap.current_effort] -cne $swap.proposed_effort) { throw 'Invalid effort step.' }
+    $next = if ($Job -eq 'writer') { @{low='medium';medium='high';high='xhigh'}[[string]$swap.current_effort] } else { @{medium='low';high='medium'}[[string]$swap.current_effort] }
+    # Declining or revoking must stay possible for a proposal filed under an older direction rule.
+    if ($ApproveEffort -and (-not $next -or $next -cne $swap.proposed_effort)) { throw 'Invalid effort step.' }
     if ($ApproveEffort) {
         $basis = if ($swap.PSObject.Properties['bench_evidence']) { $swap.bench_evidence } else { $null }
         $reason = Get-RouterBenchProposalEvidenceError -Job $Job -Evidence $basis

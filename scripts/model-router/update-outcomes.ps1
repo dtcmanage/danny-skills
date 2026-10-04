@@ -238,7 +238,7 @@ function Complete-RouterDriftBench {
     $marks = @(Read-RouterJsonArray (Join-Path $state 'drift-marks.json') | Where-Object {
         $mark = $_
         -not @($declines | Where-Object { $_.job -eq $mark.job -and $_.model -eq $mark.model }).Count -and
-        $BenchResults.ContainsKey($_.job) -and $BenchResults[$_.job].raw_gate -ne 'unknown' -and $BenchResults[$_.job].gate -notin @('fail','unknown') -and -not ($_.job -in @('fast','coder','deep-thinker') -and $BenchResults[$_.job].raw_gate -eq 'fail') -and $BenchResults[$_.job].price_recommendation -ne $_.model
+        $BenchResults.ContainsKey($_.job) -and $BenchResults[$_.job].raw_gate -ne 'unknown' -and $BenchResults[$_.job].gate -notin @('fail','unknown') -and -not ($_.job -in @('fast','coder','deep-thinker') -and $BenchResults[$_.job].raw_gate -eq 'fail') -and -not $BenchResults[$_.job].tied -and $BenchResults[$_.job].better -eq $roster.jobs.($_.job).backup
     })
     $marks = @($marks | Where-Object { -not (Get-RouterBenchProposalEvidenceError -Job $_.job -Evidence (New-RouterBenchProposalEvidence -Job $_.job -Bench $BenchResults[$_.job])) })
     $proposalPath = $null

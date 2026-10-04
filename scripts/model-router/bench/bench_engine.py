@@ -120,7 +120,8 @@ def judge_score(rubric: dict[str, Any], answer: str) -> tuple[float, dict[str, i
 def compare(candidate: dict[str, Any], incumbent: dict[str, Any]) -> str:
     if candidate['unknown'] or incumbent['unknown']:
         return 'unknown'
-    return 'pass' if candidate['passed'] >= incumbent['passed'] - 1 else 'fail'
+    allowance = 1 if len(incumbent['tasks']) >= 4 else 0
+    return 'pass' if candidate['passed'] >= incumbent['passed'] - allowance else 'fail'
 
 
 def baseline_key(job: str, model: str, effort: str | None, digest: str,
@@ -142,7 +143,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         raise ValueError('Invalid job or trigger; monthly is unsupported')
     if set(config.get('judges', {})) != {'claude', 'codex'} or len(set(config['judges'].values())) != 2:
         raise ValueError('Exactly two distinct configured vendor judges required')
-    if (job != 'illustrator' and effort not in {'low', 'medium', 'high'}) or (
+    if (job != 'illustrator' and effort not in ({'low', 'medium', 'high', 'xhigh'} if job == 'writer' else {'low', 'medium', 'high'})) or (
         job == 'illustrator' and effort is not None):
         raise ValueError('Explicit approved effort required (illustrator uses null)')
     judge_effort = config.get('judge_effort')
@@ -284,8 +285,18 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
 
     candidate_table = table(candidate, effort, 'candidate')
     incumbent_table = candidate_table if job == 'illustrator' and incumbent == candidate else table(incumbent, effort, 'incumbent')
-    down = {'medium': 'low', 'high': 'medium'}.get(effort)
+    down = {'medium': 'low', 'high': 'medium'}.get(effort) if job != 'writer' else None
     down_table = table(incumbent, down, 'effort-down') if down else None
+    up = {'low': 'medium', 'medium': 'high', 'high': 'xhigh'}.get(effort) if job == 'writer' else None
+    up_table = table(incumbent, up, 'effort-up') if up else None
+    def mean_rubric(side: str) -> float | None:
+        scores = [r['judge_average'] for r in rows if r['side'] == side and 'judge_average' in r]
+        return sum(scores) / len(scores) if scores else None
+    incumbent_mean, up_mean = mean_rubric('incumbent'), mean_rubric('effort-up')
+    up_qualified = bool(up_table is not None and not up_table['unknown'] and not incumbent_table['unknown']
+                        and (up_table['passed'] > incumbent_table['passed'] or
+                             (up_table['passed'] == incumbent_table['passed'] and up_mean is not None
+                              and incumbent_mean is not None and up_mean > incumbent_mean)))
     raw_gate = compare(candidate_table, incumbent_table)
     if job == 'illustrator' and raw_gate != 'unknown':
         raw_gate = 'advisory'
@@ -296,6 +307,10 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
               'candidate': candidate_table, 'incumbent': incumbent_table,
               'effort_down': down_table,
               'effort_down_qualified': down_table is not None and compare(down_table, incumbent_table) == 'pass',
+              'effort_up': up_table, 'effort_up_qualified': up_qualified,
+              'tier': 'standard',
+              'configurations': {'candidate': {'model': candidate, 'effort': effort},
+                                 'incumbent': {'model': incumbent, 'effort': effort}},
               'shortfall_tasks': max(0, incumbent_table['passed'] - candidate_table['passed']),
               'outcomes': rows, 'calls': calls, 'baseline_drops': [],
               'report_paths': {'json': str(run / 'report.json'), 'markdown': str(run / 'report.md'),
@@ -303,7 +318,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     baseline_path = state / 'baseline.json'
     baselines = json.loads(baseline_path.read_text(encoding='utf-8')) if baseline_path.exists() else {}
     rubric_present = any((t / 'golden/rubric.json').exists() for t in selected)
-    for score_table in [candidate_table, incumbent_table] + ([down_table] if down_table else []):
+    for score_table in [candidate_table, incumbent_table] + [t for t in (down_table, up_table) if t is not None]:
         if score_table['unknown'] or job == 'illustrator':
             continue
         key = baseline_key(job, score_table['model'], score_table['effort'], digest, judges if rubric_present else None,
@@ -317,23 +332,31 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     temporary = baseline_path.with_suffix('.tmp')
     temporary.write_text(json.dumps(baselines, indent=2), encoding='utf-8')
     temporary.replace(baseline_path)
-    result['price_recommendation'] = None
-    if prices and candidate_table['passed'] == incumbent_table['passed'] and raw_gate == 'pass':
-        def price(model: str) -> float | None:
-            models = prices.get('models', {})
-            rates = models.get(model, models.get(re.sub(r'-\d{8}$', '', model), {})).get('prices_usd_per_mtok', {})
-            return rates['input'] + rates['output'] if all(type(rates.get(k)) in (int, float) and math.isfinite(rates[k]) and rates[k] >= 0 for k in ('input', 'output')) else None
-        cp, ip = price(candidate), price(incumbent)
-        if cp is not None and ip is not None:
-            result['price_recommendation'] = candidate if cp < ip else incumbent
     result['telemetry'] = summarize_calls(calls, prices or {})
     result['first_attempt_failures'] = summarize_first_attempts(rows)
+    result['fabrications'] = {}
+    quality = {}
+    for side, score_table in [('candidate', candidate_table), ('incumbent', incumbent_table)]:
+        side_rows = [r for r in rows if r['side'] == side]
+        if score_table is candidate_table and side == 'incumbent':
+            side_rows = [r for r in rows if r['side'] == 'candidate']
+        fabrications = sum(bool(r.get('grading', {}).get('fabrication', False)) for r in side_rows)
+        result['fabrications'][side] = fabrications
+        first_attempts = summarize_first_attempts(side_rows).get(score_table['model'], {})
+        failures = sum(first_attempts.get(key, 0) for key in
+                       ('answer_quality_failures', 'answer_dispatch_failures', 'grader_unknowns'))
+        quality[side] = (score_table['passed'], -fabrications, -failures)
+    known = not candidate_table['unknown'] and not incumbent_table['unknown']
+    result['tied'] = known and quality['candidate'] == quality['incumbent']
+    result['better'] = (candidate if quality['candidate'] > quality['incumbent'] else incumbent) if known and not result['tied'] else None
+    verdict = 'tied' if result['tied'] else (result['better'] or 'unknown')
     lines = [f"Gate: {result['gate']} (raw: {raw_gate}); shadow: {shadow}",
              f"Shortfall: {result['shortfall_tasks']} task(s)",
-             f"Price recommendation: {result['price_recommendation']}",
+             f"Verdict: {verdict}; tier: {result['tier']}; configurations: {json.dumps(result['configurations'])}; fabrications: {json.dumps(result['fabrications'])}",
              f"Effort-down qualified: {result['effort_down_qualified']}",
+             f"Effort-up qualified: {result['effort_up_qualified']}",
              f"Judge pair: {json.dumps(judges)}; effort: {judge_effort}", f"Bank: {digest}"]
-    for label, score_table in [('Candidate', candidate_table), ('Incumbent', incumbent_table), ('Effort-down', down_table)]:
+    for label, score_table in [('Candidate', candidate_table), ('Incumbent', incumbent_table), ('Effort-down', down_table), ('Effort-up', up_table)]:
         if score_table:
             lines += ['', f"{label}: {score_table['model']} / {score_table['effort']}",
                       '| Task | Status | Reps |', '| --- | --- | --- |']

@@ -162,7 +162,7 @@ function Build-RouterRosterProposalLocked {
                     if (-not $BenchResults -or -not $BenchResults.ContainsKey($key)) { continue }
                     $bench = $BenchResults[$key]
                     if ($bench.raw_gate -eq 'unknown' -or $bench.gate -in @('unknown','fail') -or ($job -in @('fast','coder','deep-thinker') -and $bench.raw_gate -eq 'fail')) { continue }
-                    if ($bench.price_recommendation -eq $currentEntry.$slot) { continue }
+                    if ($bench.tied -or $bench.better -ne $target) { continue }
                     $benchEvidence = New-RouterBenchProposalEvidence -Job $job -Bench $bench
                     if (Get-RouterBenchProposalEvidenceError -Job $job -Evidence $benchEvidence) { continue }
                     $verdict.evidence += "; Bench $($bench.gate); shortfall $($bench.shortfall_tasks) task(s); report $($bench.report_paths.markdown)"
@@ -232,19 +232,25 @@ function Save-RouterEffortProposal {
     param([object]$Request, [object]$Bench)
     # Caller holds the outcome lock and has revalidated the roster snapshot.
     if (-not $Bench.PSObject.Properties['shadow'] -or $Bench.shadow -isnot [bool] -or $Bench.shadow) { return }
-    if (-not $Bench.PSObject.Properties['effort_down_qualified'] -or -not $Bench.effort_down_qualified -or $Bench.raw_gate -eq 'unknown') { return }
+    $writer = $Request.job -eq 'writer'
+    $qualification = if ($writer) { 'effort_up_qualified' } else { 'effort_down_qualified' }
+    if (-not $Bench.PSObject.Properties[$qualification] -or -not $Bench.$qualification -or $Bench.raw_gate -eq 'unknown') { return }
     $current = (Read-RouterRoster).roster.jobs.($Request.job)
     if ($current.first -cne $Request.incumbent -or $current.first_effort -cne $Request.effort) { return }
-    $down = @{medium='low';high='medium'}[[string]$Request.effort]
-    if (-not $down -or $Bench.effort_down.model -cne $current.first -or $Bench.effort_down.effort -cne $down) { return }
+    $next = if ($writer) { @{low='medium';medium='high';high='xhigh'}[[string]$Request.effort] } else { @{medium='low';high='medium'}[[string]$Request.effort] }
+    $laneName = if ($writer) { 'effort_up' } else { 'effort_down' }
+    $lane = $Bench.$laneName
+    if (-not $next -or $lane.model -cne $current.first -or $lane.effort -cne $next) { return }
     $evidence = New-RouterBenchProposalEvidence -Job $Request.job -Bench $Bench
     if (Get-RouterBenchProposalEvidenceError -Job $Request.job -Evidence $evidence) { return }
     $dir = Join-Path (Get-RouterStateDir) 'effort-proposals'
     [IO.Directory]::CreateDirectory($dir) | Out-Null
     $path = Join-Path $dir ($Request.job + '.json')
     $old = Read-RouterJsonObject $path
-    if ($old -and $old.model -ceq $current.first -and $old.current_effort -ceq $Request.effort -and $old.proposed_effort -ceq $down -and $old.PSObject.Properties['bench_evidence'] -and (ConvertTo-Json $old.bench_evidence -Compress -Depth 10) -ceq (ConvertTo-Json $evidence -Compress -Depth 10)) { return }
-    Write-RouterJsonAtomic -Path $path -Value ([pscustomobject]@{type='effort-swap';job=$Request.job;model=$current.first;current_effort=$Request.effort;proposed_effort=$down;status='pending';bench_evidence=$evidence;incumbent=$Bench.incumbent;effort_down=$Bench.effort_down;report=$Bench.report_paths.markdown;dimension_framework='provisional'})
+    if ($old -and $old.model -ceq $current.first -and $old.current_effort -ceq $Request.effort -and $old.proposed_effort -ceq $next -and $old.PSObject.Properties['bench_evidence'] -and (ConvertTo-Json $old.bench_evidence -Compress -Depth 10) -ceq (ConvertTo-Json $evidence -Compress -Depth 10)) { return }
+    $proposal = [pscustomobject]@{type='effort-swap';job=$Request.job;model=$current.first;current_effort=$Request.effort;proposed_effort=$next;status='pending';bench_evidence=$evidence;incumbent=$Bench.incumbent;report=$Bench.report_paths.markdown;dimension_framework='provisional'}
+    $proposal | Add-Member -NotePropertyName $laneName -NotePropertyValue $lane
+    Write-RouterJsonAtomic -Path $path -Value $proposal
 }
 
 

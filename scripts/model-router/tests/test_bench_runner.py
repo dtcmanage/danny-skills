@@ -186,8 +186,9 @@ def test_dated_price_tie_report(tmp_path: Path) -> None:
     prices = {'models': {m: {'prices_usd_per_mtok': {'input': p, 'output': p}}
                          for m, p in [('candidate', 1), ('incumbent', 5)]}}
     result = run(tmp_path, candidate='candidate-20261002', incumbent='incumbent-20261002', prices=prices)
-    assert result['price_recommendation'] == 'candidate-20261002'
-    assert 'Price recommendation: candidate-20261002' in Path(result['report_paths']['markdown']).read_text()
+    assert result['tied'] and result['better'] is None
+    assert 'price_recommendation' not in result
+    assert 'Verdict: tied' in Path(result['report_paths']['markdown']).read_text()
 
 
 def test_candidate_missing_module_is_failure() -> None:
@@ -286,7 +287,7 @@ def test_deterministic_failure_no_retry(tmp_path: Path) -> None:
     assert not any(row['unknown'] for row in result['outcomes'])
 
 
-def test_rubric_self_weight_and_effort_down(tmp_path: Path) -> None:
+def test_rubric_self_weight_and_effort_up(tmp_path: Path) -> None:
     config = json.loads((BENCH / 'bench-config.json').read_text())
     rubric = json.loads((BENCH / 'tasks/writing-letter-section/golden/rubric.json').read_text())
     def dispatch(request: dict) -> dict:
@@ -298,7 +299,7 @@ def test_rubric_self_weight_and_effort_down(tmp_path: Path) -> None:
     first = result['outcomes'][0]
     assert first['judge_average'] == pytest.approx(2 / 3)
     assert first['disagreement'] and first['status'] == 'fail'
-    assert result['effort_down']['effort'] == 'low'
+    assert result['effort_down'] is None and result['effort_up']['effort'] == 'high'
     assert len(result['outcomes']) == 9
 
 
@@ -310,8 +311,8 @@ def test_binary_scores_and_strip() -> None:
             engine.judge_score(rubric, json.dumps({'scores': {'one': value}}))
     with pytest.raises(ValueError):
         engine.judge_score(rubric, '{"scores":{}}')
-    assert engine.compare({'unknown': 0, 'passed': 3}, {'unknown': 0, 'passed': 4}) == 'pass'
-    assert engine.compare({'unknown': 0, 'passed': 2}, {'unknown': 0, 'passed': 4}) == 'fail'
+    assert engine.compare({'unknown': 0, 'passed': 3}, {'unknown': 0, 'passed': 4, 'tasks': [None] * 4}) == 'pass'
+    assert engine.compare({'unknown': 0, 'passed': 2}, {'unknown': 0, 'passed': 4, 'tasks': [None] * 4}) == 'fail'
 
 
 def test_executable_python_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -408,7 +409,7 @@ def test_actual_approved_gate_deficit_fail_unknown(tmp_path: Path) -> None:
         return {'status': 'ok', 'answer': r['model']}
     deficit = run(state, tasks=tasks, dispatch=dispatch,
                   grade=lambda t, a: {'status': 'fail' if a == 'candidate' and t.name == 'mechanical-extract-table' else 'pass'})
-    assert deficit['gate'] == 'pass' and deficit['shortfall_tasks'] == 1
+    assert deficit['gate'] == 'fail' and deficit['shortfall_tasks'] == 1
     failed = run(state, tasks=tasks, dispatch=dispatch,
                  grade=lambda t, a: {'status': 'fail' if a == 'candidate' else 'pass'})
     assert failed['gate'] == 'fail' and failed['shortfall_tasks'] == 2
@@ -479,7 +480,7 @@ def test_real_outcome_lock_overlap(tmp_path: Path) -> None:
     assert len(rows) == 24 and len({(r['lane'], r['rep']) for r in rows}) == 24
 
 
-def test_judge_refresh_and_unavailable_down(tmp_path: Path) -> None:
+def test_judge_refresh_and_unavailable_up(tmp_path: Path) -> None:
     config = json.loads((BENCH / 'bench-config.json').read_text())
     rubric = json.loads((BENCH / 'tasks/writing-letter-section/golden/rubric.json').read_text())
     def dispatch(request: dict) -> dict:
@@ -487,15 +488,15 @@ def test_judge_refresh_and_unavailable_down(tmp_path: Path) -> None:
             return {'status': 'ok', 'answer': 'synthetic evidence'}
         return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: 1 for line in rubric['lines']}})}
     result = run(tmp_path, job='writer', effort='medium', dispatch=dispatch)
-    assert result['effort_down_qualified']
+    assert not result['effort_down_qualified'] and not result['effort_up_qualified']
     config['judges']['codex'] = 'gpt-6-astra-new'
     changed = run(tmp_path, job='writer', effort='medium', config=config, dispatch=dispatch)
     assert not changed['baseline_drops']
     assert len(json.loads((tmp_path / 'bench/baseline.json').read_text())) == 6
-    def unknown_down(request: dict) -> dict:
-        return {'status': 'unknown'} if request['effort'] == 'low' else dispatch(request)
-    unknown = run(tmp_path / 'unknown', job='writer', effort='medium', dispatch=unknown_down)
-    assert not unknown['effort_down_qualified'] and unknown['effort_down']['unknown'] == 1
+    def unknown_up(request: dict) -> dict:
+        return {'status': 'unknown'} if request['purpose'] == 'answer' and request['effort'] == 'high' else dispatch(request)
+    unknown = run(tmp_path / 'unknown', job='writer', effort='medium', dispatch=unknown_up)
+    assert not unknown['effort_down_qualified'] and unknown['effort_up']['unknown'] == 1
 
 
 def test_price_usage_and_malformed_dispatch(tmp_path: Path) -> None:
@@ -505,7 +506,7 @@ def test_price_usage_and_malformed_dispatch(tmp_path: Path) -> None:
         assert 'golden/answer' not in request['prompt']
         return {'status': 'ok', 'answer': '{}', 'usage': {'input': 100, 'cached_input': 50, 'output': 10}}
     result = run(tmp_path, dispatch=dispatch, prices=prices)
-    assert result['price_recommendation'] == 'candidate'
+    assert result['tied'] and result['better'] is None
     assert result['telemetry']['codex']['measured_calls'] == 12
     assert result['telemetry']['codex']['priced_subtotal_usd'] == pytest.approx(.00222)
     malformed = run(tmp_path / 'malformed', dispatch=lambda r: None)
@@ -680,7 +681,7 @@ def test_judge_effort_is_fixed_and_recorded(tmp_path: Path) -> None:
         requests.append(request)
         return writer_judges(request)
     result = run(tmp_path, job="writer", effort="medium", dispatch=dispatch)
-    assert {r["effort"] for r in requests if r["purpose"] == "answer"} == {"medium", "low"}
+    assert {r["effort"] for r in requests if r["purpose"] == "answer"} == {"medium", "high"}
     assert {r["effort"] for r in requests if r["purpose"] == "judge"} == {"high"}
     assert result["judge_effort"] == "high"
     assert all(c["effort"] == "high" for c in result["calls"] if c["purpose"] == "judge")

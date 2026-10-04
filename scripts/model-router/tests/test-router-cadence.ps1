@@ -26,7 +26,7 @@ $now = [datetime]'2026-09-29T05:00:00Z'
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
     Initialize-TestBenchEvidence
-    $script:cadenceFakeBench = { param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate='pass';gate='pass';price_recommendation=$null;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown='synthetic'}}) }
+    $script:cadenceFakeBench = { param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate='pass';gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown='synthetic'}}) }
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6.1-sol' } else { 'claude-opus-5-5' } }
     [void](Invoke-RouterModelCheck -Force -Now $now -BenchInvoker $script:cadenceFakeBench)
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6.1-sol'; 'gpt-6-new' } else { 'claude-opus-5-5' } }

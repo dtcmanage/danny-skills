@@ -16,7 +16,7 @@ function Write-Provenance([string]$Run, [string]$Chunk, [int]$Attempt, [string]$
     $name = if ($Attempt -gt 1) { "output-$Attempt-retry.md.provenance.json" } else { 'output-1.md.provenance.json' }
     @{ pass=$Pass; tier=$Tier; resolved_model=$Model; attempt=$Attempt; at=$At; failure_category=$Failure; diagnosis=$Diagnosis; category=$Category; chunk_id=$Chunk } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir $name)
 }
-function Run-Update { Initialize-TestBenchEvidence; Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';price_recommendation=$r.candidate;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) } }
+function Run-Update { Initialize-TestBenchEvidence; Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) } }
 function Read-Records { @(Get-Content -LiteralPath (Join-Path $script:state 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -DateKind String }) }
 
 $saved = $env:DT_MODEL_ROUTER_STATE
@@ -117,7 +117,7 @@ try {
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json')).Count -eq 1 -and @($aged.alerts).Count -eq 0 -and (Test-Path -LiteralPath (Join-Path $rosterState 'roster-proposals/latest.json'))) '40 days without new outcomes retains drift mark and proposal'
     $script:now = $savedNow
     Remove-Item -LiteralPath (Join-Path $rosterState 'drift-marks.json')
-    Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -SendAlerts -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';price_recommendation=$r.candidate;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) } | Out-Null
+    Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -SendAlerts -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) } | Out-Null
     Assert-True (Test-Path -LiteralPath (Join-Path $rosterState 'deliveries.log')) 'explicit alerts use synthetic transport'
     for ($i=21; $i -le 50; $i++) { Write-Provenance "roster-recent-$i" 'M01' 1 'gpt-6.1-sol' $true '2026-09-25T12:00:00Z' 'complex' '' 'complex-coding' }
     $rosterClear = Run-Update
@@ -164,7 +164,7 @@ try {
     Run-Update | Out-Null
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $sequenceState 'drift-marks.json') | Where-Object job -eq 'coder').Count -eq 1) 'new drift after clearance is marked again'
     Remove-Item -LiteralPath (Join-Path $sequenceState 'drift-marks.json')
-    Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -SendAlerts -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';price_recommendation=$r.candidate;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) } | Out-Null
+    Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -SendAlerts -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) } | Out-Null
     $delivered = @(Get-Content -LiteralPath (Join-Path $sequenceState 'alert-log.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.key -eq 'drift:gpt-6.1-sol:coder:202609' -and $_.event -eq 'delivered' })
     Assert-True ((Test-Path -LiteralPath (Join-Path $sequenceState 'deliveries.log')) -and $delivered.Count -eq 1) 'explicit SendAlerts delivers dot-sourced roster alert'
 
@@ -210,7 +210,7 @@ try {
     }
     $before = @{}
     foreach ($file in $liveFiles) { $before[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
-    $liveResult = Update-RouterOutcomes -Now $script:now -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';price_recommendation=$r.candidate;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) }
+    $liveResult = Update-RouterOutcomes -Now $script:now -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) }
     $unchanged = $true
     foreach ($file in $liveFiles) { if ($before[$file] -ne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash) { $unchanged = $false; break } }
     Assert-True ($liveResult.total_records -gt 0 -and $unchanged) 'LIVE bounded source mining is read-only'

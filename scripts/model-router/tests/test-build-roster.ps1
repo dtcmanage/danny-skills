@@ -2,7 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../build-roster.ps1')
 . (Join-Path $PSScriptRoot 'fixtures/bench-proposal-evidence.ps1')
-$script:fakeBench = { param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate="pass";gate="pass";price_recommendation=$null;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown="synthetic"}}) }
+$script:fakeBench = { param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate="pass";gate="pass";better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown="synthetic"}}) }
 $script:passed = 0
 function Assert-True { param([bool]$Condition,[string]$Name) if (-not $Condition) { throw "FAIL: $Name" }; $script:passed++; Write-Output "PASS: $Name" }
 function Send-RouterAlerts { param([array]$Alerts) $script:alerts += @($Alerts) }

@@ -19,7 +19,7 @@ try {
     $roster=(Read-RouterRoster).roster;$roster.approved=$true;$roster.approved_at='2026-10-02T12:00:00Z'
     $rp=Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json';Write-RouterJsonAtomic $rp $roster
     $request=[pscustomobject]@{job='writer';incumbent=$roster.jobs.writer.first;effort='medium'}
-    $bench=Add-TestBenchEvidence ([pscustomobject]@{shadow=$false;raw_gate='pass';effort_down_qualified=$true;incumbent=@{passed=1};effort_down=@{model=$request.incumbent;effort='low'};report_paths=@{markdown='fixture'}})
+    $bench=Add-TestBenchEvidence ([pscustomobject]@{shadow=$false;raw_gate='pass';effort_up_qualified=$true;incumbent=@{passed=1};effort_up=@{model=$request.incumbent;effort='high'};report_paths=@{markdown='fixture'}})
     Save-RouterEffortProposal $request $bench
     $ep=Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/writer.json'
     $swap=Read-RouterJsonObject $ep
@@ -70,9 +70,12 @@ try {
     $golden.approved=$false;Write-RouterJsonAtomic $approvalPath $golden
     Check ((Action @('-ApproveEffort','-Job','writer')).text -match 'needs golden approval') 'withdrawn golden approval refuses proposal'
     $golden.approved=$true;Write-RouterJsonAtomic $approvalPath $golden
-    Check ((Action @('-ApproveEffort','-Job','writer')).code -eq 0 -and (Read-RouterJsonObject $rp).jobs.writer.first_effort -eq 'low') 'valid effort approval applies'
+    Check ((Action @('-ApproveEffort','-Job','writer')).code -eq 0 -and (Read-RouterJsonObject $rp).jobs.writer.first_effort -eq 'high') 'valid effort approval applies'
     $config.judges.codex='gpt-new-astra';Write-RouterJsonAtomic $configPath $config
     Check ((Action @('-RevokeEffort','-Job','writer')).code -eq 0 -and (Read-RouterJsonObject $rp).jobs.writer.first_effort -eq 'medium') 'stale approved evidence can revoke safely'
+    $legacy=Read-RouterJsonObject $ep;$legacy.current_effort='medium';$legacy.proposed_effort='low';$legacy.status='pending';Write-RouterJsonAtomic $ep $legacy
+    Check ((Action @('-ApproveEffort','-Job','writer')).code -ne 0) 'legacy writer effort-down proposal cannot be approved'
+    Check ((Action @('-DeclineEffort','-Job','writer')).code -eq 0 -and (Read-RouterJsonObject $ep).status -eq 'declined' -and (Read-RouterJsonObject $rp).jobs.writer.first_effort -eq 'medium') 'legacy writer effort-down proposal can be declined'
     $context=Get-RouterBenchEvidenceContext
     $deterministic=[pscustomobject]@{task_bank_sha256=$context.task_bank_sha256;judge_pair=$null;judge_effort=$null}
     Check (-not (Get-RouterBenchProposalEvidenceError coder $deterministic $context)) 'deterministic job unaffected by judges'

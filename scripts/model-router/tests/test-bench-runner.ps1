@@ -46,7 +46,7 @@ try {
         @{status='ok';answer=(@{scores=$scores}|ConvertTo-Json -Compress)}
     }
     $writer=Invoke-RouterBench -Job writer -Candidate gpt-6.1-sol -Incumbent claude-opus-5-5 -StateDir (Join-Path $root 'writer') -CliInvoker $judge -Limits $limits -NoAlerts
-    Assert ($script:envelopes -eq 18 -and $writer.effort_down_qualified) 'Independent judge/effort-down failure'
+    Assert ($script:envelopes -eq 18 -and -not $writer.effort_down_qualified -and -not $writer.effort_up_qualified -and $null -eq $writer.effort_down -and $writer.effort_up.effort -eq 'high') 'Independent judge/effort-down failure'
     Assert ($writer.shadow -and -not(Test-Path (Join-Path $root 'writer/effort-proposals/writer.json'))) 'Shadow writer must not propose effort swap'
     $image=Invoke-RouterBench -Job illustrator -Candidate gpt-image-2 -Incumbent gpt-image-2 -StateDir (Join-Path $root 'image') -CliInvoker {throw 'image must not dispatch'} -Limits $limits -NoAlerts
     Assert ($image.raw_gate -eq 'unknown' -and $image.gate -eq 'unknown') 'Image support classification failure'

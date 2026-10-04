@@ -89,7 +89,19 @@ try {
     $writerBench = Add-TestBenchEvidence $writerBench
     Save-RouterEffortProposal $writerRequest $writerBench
     $writerPath=Join-Path $temp 'effort-proposals/writer.json'
+    Check (-not (Test-Path $writerPath)) 'Writer never proposes effort down'
+    $writerBench | Add-Member -NotePropertyName effort_up_qualified -NotePropertyValue $false
+    $writerBench | Add-Member -NotePropertyName effort_up -NotePropertyValue ([pscustomobject]@{model=$writerRequest.incumbent;effort='high';passed=1})
+    Save-RouterEffortProposal $writerRequest $writerBench
+    Check (-not (Test-Path $writerPath)) 'Equal writer score does not propose effort up'
+    $writerBench.effort_up_qualified=$true
+    Save-RouterEffortProposal $writerRequest $writerBench
     Check (Test-Path $writerPath) 'Approved writer advisory still proposes effort swap'
+    Check ((Read-RouterJsonObject $writerPath).proposed_effort -eq 'high') 'Writer proposal raises effort'
+    $null = & pwsh -NoProfile -File $approval -ApproveEffort -Job writer
+    Check ($LASTEXITCODE -eq 0 -and (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.writer.first_effort -eq 'high') 'Writer effort-up approval'
+    $null = & pwsh -NoProfile -File $approval -RevokeEffort -Job writer
+    Check ($LASTEXITCODE -eq 0 -and (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.writer.first_effort -eq 'medium') 'Writer effort-up revoke'
     $writerBefore=[IO.File]::ReadAllText($writerPath)
     $writerBench.shadow=$true
     Save-RouterEffortProposal $writerRequest $writerBench
