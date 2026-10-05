@@ -18,12 +18,15 @@ param(
     [ValidateRange(1, 2)][int]$Attempt = 1,
     [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
+    [switch]$ReadOnly,
+    [switch]$Scrutiny,
     [string]$CodexCliPath = "",
     [switch]$Json
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if ($Scrutiny -and -not $ReadOnly) { throw 'SCRUTINY_REQUIRES_READ_ONLY' }
 
 function Resolve-SkillRepoRoot {
     $scriptDir = Split-Path -Parent $PSCommandPath
@@ -167,7 +170,7 @@ try {
     $resolvedDifficulty = if ((Get-RouterCategoryJob -Category $Category) -in @('coder','deep-thinker') -or ($isProtected -and $Category -eq 'mechanical')) { $Difficulty } else { $null }
     $escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
 
-    $routerPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -Catalog $modelCatalog -SendAlerts -ChatToStderr:$Json
+    $routerPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -Catalog $modelCatalog -SendAlerts:(-not $Scrutiny) -ChatToStderr:$Json
 }
 catch { throw "CODEX_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
 if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or (Get-RouterVendorBlocked -Vendor codex))) {
@@ -234,7 +237,7 @@ $promptSha256 = if ($Preflight) {
 else {
     (Get-FileHash -LiteralPath $PromptPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-$sandbox = if ($Preflight) { 'read-only' } else { 'workspace-write' }
+$sandbox = if ($Preflight -or $ReadOnly) { 'read-only' } else { 'workspace-write' }
 # Codex removed its Windows sandbox (features experimental_windows_sandbox /
 # elevated_windows_sandbox report "removed"), so under --ignore-user-config a
 # workspace-write request fails closed to read-only and blocks every command
@@ -242,7 +245,7 @@ $sandbox = if ($Preflight) { 'read-only' } else { 'workspace-write' }
 # unsandboxed via explicit default_permissions; containment is the scoped
 # worktree plus the orchestrator's independent verification. Preflight and
 # non-Windows hosts keep the real sandbox. Verified 2026-08-30, codex-cli 0.151.0.
-$windowsUnsandboxed = (-not $Preflight) -and ($env:OS -eq 'Windows_NT')
+$windowsUnsandboxed = (-not $Preflight -and -not $ReadOnly) -and ($env:OS -eq 'Windows_NT')
 if ($windowsUnsandboxed) { $sandbox = 'danger-full-access (windows: codex sandbox removed upstream)' }
 $sandboxArgs = if ($windowsUnsandboxed) {
     @('-c', 'default_permissions=":danger-full-access"')
@@ -376,7 +379,7 @@ try {
         $failureReason = "CODEX_PREFLIGHT_FAIL: expected OK, received '$($lastMessage.Trim())'. Redacted stream: $streamPath"
         $failureCategory = 'model-output'
     }
-    elseif (-not $Preflight) {
+    elseif (-not $Preflight -and -not $Scrutiny) {
         $shapeErrors = @(Get-ReportShapeErrors -Text $lastMessage -RunId $promptRunId -ChunkId $promptChunkId -ExpectedAttempt $Attempt)
         if ($shapeErrors.Count -gt 0) {
             $failureReason = "CODEX_OUTPUT_INVALID: $($shapeErrors -join '; '). Redacted output: $OutputPath"

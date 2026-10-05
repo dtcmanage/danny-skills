@@ -19,6 +19,7 @@ param(
     [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
     [switch]$ReadOnly,
+    [switch]$Scrutiny,
     [string]$ClaudeCliPath = "",
     [switch]$Json
 )
@@ -37,6 +38,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+if ($Scrutiny -and -not $ReadOnly) { throw 'SCRUTINY_REQUIRES_READ_ONLY' }
 
 function Resolve-SkillRepoRoot {
     $scriptDir = Split-Path -Parent $PSCommandPath
@@ -172,7 +174,7 @@ try {
     $resolvedDifficulty = if ((Get-RouterCategoryJob -Category $Category) -in @('coder','deep-thinker') -or ($isProtected -and $Category -eq 'mechanical')) { $Difficulty } else { $null }
     $escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
 
-    $routerPick = Resolve-RouterModel -Category $Category -Lane claude -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -SendAlerts -ChatToStderr:$Json
+    $routerPick = Resolve-RouterModel -Category $Category -Lane claude -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -SendAlerts:(-not $Scrutiny) -ChatToStderr:$Json
 }
 catch { throw "CLAUDE_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
 if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or (Get-RouterVendorBlocked -Vendor claude))) {
@@ -239,12 +241,12 @@ else {
 }
 # Preflight needs no tool access; a build chunk needs file writes and test
 # commands without interactive prompts, mirroring Codex's workspace-write sandbox.
-$permissionMode = if ($Preflight) { 'default' } else { 'bypassPermissions' }
+$permissionMode = if ($Preflight -or $Scrutiny) { 'default' } else { 'bypassPermissions' }
 # Slim session: no MCP servers and only the built-in tools a chunk needs. This
 # cuts the cold-start context (measured 2026-09-19: 42K -> 25K tokens) and removes
 # the Agent tool, so a chunk cannot spawn nested agents outside the tier policy.
 # -ReadOnly (verifier/review chunks) also drops the file-writing tools.
-$toolList = if ($Preflight) { 'Read' } elseif ($ReadOnly) { 'Bash,Read,Glob,Grep' } else { 'Bash,Read,Edit,Write,Glob,Grep' }
+$toolList = if ($Scrutiny) { '' } elseif ($Preflight) { 'Read' } elseif ($ReadOnly) { 'Bash,Read,Glob,Grep' } else { 'Bash,Read,Edit,Write,Glob,Grep' }
 $args = @(
     '-p',
     '--model', $resolvedModel,
@@ -377,7 +379,7 @@ try {
         $failureReason = "CLAUDE_PREFLIGHT_FAIL: expected OK, received '$($lastMessage.Trim())'. Redacted stream: $streamPath"
         $failureCategory = 'model-output'
     }
-    elseif (-not $Preflight) {
+    elseif (-not $Preflight -and -not $Scrutiny) {
         $shapeErrors = @(Get-ReportShapeErrors -Text $lastMessage -RunId $promptRunId -ChunkId $promptChunkId -ExpectedAttempt $Attempt)
         if ($shapeErrors.Count -gt 0) {
             $failureReason = "CLAUDE_OUTPUT_INVALID: $($shapeErrors -join '; '). Redacted output: $OutputPath"

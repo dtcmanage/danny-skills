@@ -6,6 +6,7 @@ param(
     [Alias('Difficulty')][ValidateSet('standard','hard')][string]$RouterResolveCliDifficulty = 'standard',
     [Alias('DifficultyReason')][string]$RouterResolveCliDifficultyReason,
     [Alias('RetryAtHardFrom')][string]$RouterResolveCliRetryAtHardFrom,
+    [Alias('FrontierRequest')][string]$RouterResolveCliFrontierRequest,
     [Alias('Catalog')][object]$RouterResolveCliCatalog,
     [Alias('SkipModelCheck')][switch]$RouterResolveCliSkipModelCheck,
     [Alias('SendAlerts')][switch]$RouterResolveCliSendAlerts,
@@ -246,6 +247,67 @@ function Resolve-RouterRosterPick {
     return (Complete-RouterResult -Result $result -Job $job -RosterSource $Read.source)
 }
 
+function Get-RouterFrontierRequestPath {
+    param([string]$RequestId)
+    if ($RequestId -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$') { throw 'FRONTIER_REQUEST_ID_INVALID' }
+    return Join-Path (Get-RouterStateDir) "frontier-requests/$RequestId.json"
+}
+
+function Read-RouterFrontierRequest {
+    param([string]$RequestId)
+    $path = Get-RouterFrontierRequestPath $RequestId
+    if (-not (Test-Path -LiteralPath $path)) { throw 'FRONTIER_REQUEST_UNKNOWN' }
+    try { $request = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String -ErrorAction Stop } catch { throw 'FRONTIER_REQUEST_MALFORMED' }
+    if ($request -isnot [pscustomobject]) { throw 'FRONTIER_REQUEST_MALFORMED' }
+    foreach ($field in @('id','category','status','proposed_model','proposed_effort')) {
+        if (-not $request.PSObject.Properties[$field]) { throw 'FRONTIER_REQUEST_INVALID' }
+    }
+    $map = Get-Content (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json
+    $job = Get-RouterCategoryJob $request.category
+    if ($job -notin @('coder','deep-thinker')) { throw 'FRONTIER_REQUEST_INVALID' }
+    # The legacy roster reader converts JSON timestamps; keep its validation
+    # culture stable only for this frontier path.
+    $priorCulture = [Globalization.CultureInfo]::CurrentCulture
+    try {
+        [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::InvariantCulture
+        $vendor = (Read-RouterRoster).roster.jobs.$job.first_vendor
+    } finally { [Globalization.CultureInfo]::CurrentCulture = $priorCulture }
+    $frontier = @($map.lanes.$vendor.ladder | Where-Object frontier | ForEach-Object model)
+    if ($request.id -cne $RequestId -or $request.proposed_model -cnotin $frontier -or $request.proposed_effort -cne 'high' -or (Get-RouterCategoryJob $request.category) -notin @('coder','deep-thinker')) { throw 'FRONTIER_REQUEST_INVALID' }
+    return $request
+}
+
+function Resolve-RouterFrontierRequest {
+    param([string]$RequestId, [string]$Category, [string]$Lane, [bool]$IsProtected)
+    $state = Get-RouterStateDir
+    Use-RouterOutcomeMutex -StateDir $state -Action {
+        $request = Read-RouterFrontierRequest $RequestId
+        if ($request.category -cne $Category) { throw 'FRONTIER_REQUEST_CATEGORY_MISMATCH' }
+        if ($request.PSObject.Properties['used_at'] -and $request.used_at) { throw 'FRONTIER_REQUEST_USED' }
+        $model = $null
+        switch -CaseSensitive ($request.status) {
+            'pending' { $status='wait'; $reason="Frontier request $RequestId is pending; the piece waits." }
+            'declined' { $status='declined'; $reason="Frontier request $RequestId was declined; decompose the piece." }
+            'approved' {
+                if (-not $request.PSObject.Properties['decided_at'] -or [string]::IsNullOrWhiteSpace($request.decided_at) -or -not $request.PSObject.Properties['approved_model'] -or $request.approved_model -cne $request.proposed_model) { throw 'FRONTIER_REQUEST_APPROVAL_INVALID' }
+                $decided = [datetimeoffset]::MinValue
+                if (-not [datetimeoffset]::TryParse([string]$request.decided_at,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$decided)) { throw 'FRONTIER_REQUEST_APPROVAL_INVALID' }
+                $model=[string]$request.proposed_model
+                $vendor = if ($model -like 'claude-*') { 'claude' } else { 'codex' }
+                if ($Lane -and $Lane -ne $vendor) { throw 'FRONTIER_REQUEST_LANE_MISMATCH' }
+                $request.status='used'
+                $request | Add-Member -NotePropertyName used_at -NotePropertyValue ([datetimeoffset]::UtcNow.ToString('o')) -Force
+                Write-RouterJsonAtomic (Get-RouterFrontierRequestPath $RequestId) $request
+                $status='ok'; $reason="Approved frontier request $RequestId; one dispatch only."
+            }
+            'used' { throw 'FRONTIER_REQUEST_USED' }
+            default { throw 'FRONTIER_REQUEST_INVALID' }
+        }
+        $vendor = if ($model -like 'claude-*') { 'claude' } elseif ($model) { 'codex' } else { $null }
+        [pscustomobject]@{status=$status;model=$model;effort=$(if ($model) {'high'} else {$null});category=$Category;job=(Get-RouterCategoryJob $Category);lane=$vendor;vendor=$vendor;agent_alias=$(if ($vendor -eq 'claude') {Get-RouterAgentAlias $model} else {$null});protected=$IsProtected;difficulty='hard';reason=$reason;frontier_request=$RequestId;alerts=@()}
+    }
+}
+
 function Resolve-RouterModel {
     param(
         [Parameter(Mandatory)][string]$Category,
@@ -255,6 +317,7 @@ function Resolve-RouterModel {
         [ValidateSet('standard','hard')][string]$Difficulty = 'standard',
         [string]$DifficultyReason,
         [string]$RetryAtHardFrom,
+        [string]$FrontierRequest,
         [object]$Catalog,
         [switch]$SkipModelCheck,
         [switch]$SendAlerts,
@@ -265,6 +328,10 @@ function Resolve-RouterModel {
         [ValidateSet('codex','claude')][string]$Diagnose,
         [string]$ErrorTextPath
     )
+    if ($FrontierRequest) {
+        if ($EscalateFrom -or $RetryAtHardFrom -or $AfterRefusal -or $Diagnose) { throw 'FRONTIER_REQUEST_ACTION_CONFLICT' }
+        return Resolve-RouterFrontierRequest -RequestId $FrontierRequest -Category $Category -Lane $Lane -IsProtected ([bool]$Protected)
+    }
     if ($RetryAtHardFrom) {
         if ($EscalateFrom) { throw 'RETRY_ESCALATION_CONFLICT' }
         $Difficulty = 'hard'
@@ -338,7 +405,7 @@ function Get-RouterPicksSnapshot {
 
 if ($MyInvocation.InvocationName -ne '.') {
     $resolveArgs = @{ Category = $RouterResolveCliCategory; Protected = $RouterResolveCliProtected; EscalateFrom = $RouterResolveCliEscalateFrom; Catalog = $RouterResolveCliCatalog; SkipModelCheck = $RouterResolveCliSkipModelCheck; SendAlerts = $RouterResolveCliSendAlerts; ChatToStderr = $RouterResolveCliJson }
-    foreach ($name in @('Difficulty','DifficultyReason','RetryAtHardFrom')) { if ($PSBoundParameters.ContainsKey("RouterResolveCli$name")) { $resolveArgs[$name] = Get-Variable -Name "RouterResolveCli$name" -ValueOnly } }
+    foreach ($name in @('Difficulty','DifficultyReason','RetryAtHardFrom','FrontierRequest')) { if ($PSBoundParameters.ContainsKey("RouterResolveCli$name")) { $resolveArgs[$name] = Get-Variable -Name "RouterResolveCli$name" -ValueOnly } }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliLane')) { $resolveArgs.Lane = $RouterResolveCliLane }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliAfterRefusal')) { $resolveArgs.AfterRefusal = $RouterResolveCliAfterRefusal }
     if ($PSBoundParameters.ContainsKey('RouterResolveCliRefusalText')) { $resolveArgs.RefusalText = $RouterResolveCliRefusalText }

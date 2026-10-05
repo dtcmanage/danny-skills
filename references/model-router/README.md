@@ -111,3 +111,32 @@ incident recovery and the bounded Codex catalog retry retain their existing
 behavior. A tie-selected vendor and a catalog fallback undergo the ordinary
 block evaluation, including its bounded Claude refresh. The weekly comparison
 itself adds no network or model call.
+# Frontier requests
+
+For a coder or deep-thinker piece that failed at hard effort (or has disagreeing
+hard-tier answers), run `scripts/model-router/request-frontier.ps1 -Category <category>
+-ProblemPath <file> -AttemptPaths <attempt-files> -AttemptVendor <codex|claude>
+-StateDir <state>`. It makes one read-only scrutiny call on the other vendor's
+deep thinker at high effort, using the canonical prompt envelope. Invalid or
+uncited frontier verdicts become `retry_with_guidance`; `decompose` and retries
+create no request or alert.
+
+Only `needs_frontier` records `frontier-requests/<id>.json` and sends one keyed
+alert. The request proposes the job's first-choice vendor's frontier model at
+high effort, with a bounded problem summary, attempt hashes, scrutiny, and quota
+note. The piece waits. Danny approves with `approve-roster.ps1 -ApproveFrontier
+-RequestId <id> -Model <exact-proposed-model>`, or declines with `-DeclineFrontier
+-RequestId <id>`. Both record the decision time.
+
+`resolve-model.ps1 -Category <same-category> -FrontierRequest <id>` implies hard.
+Pending waits without fallback; declined asks for decomposition. Approved requests
+must include the decision time and matching named model, still marked frontier
+in `ladders.json`. Consumption is locked and atomically recorded as used before
+returning the model, permitting one dispatch. Unknown, mismatched, malformed, or
+used requests fail closed. Ordinary difficulty and escalation never select frontier.
+
+Resolve with `-FrontierRequest <id>`, then pass the returned model to the lane
+wrapper through `-Model` and a `-SelectionReason` naming the request id. Approval
+is consumed when the resolver returns the model, so a failed run needs a new
+request. The scrutiny call runs without tools (Claude uses default permissions;
+Codex uses the read-only sandbox).

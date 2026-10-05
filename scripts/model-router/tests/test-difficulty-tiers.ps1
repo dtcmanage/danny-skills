@@ -190,26 +190,13 @@ try {
     Check (@(Test-RouterRoster $roster).Count -eq 0) 'old approved roster validates'
     $old = Resolve-RouterModel -Category analysis -Catalog $catalog
     Check ($old.effort -eq 'medium' -and $old.difficulty -eq 'standard' -and $old.roster_source -eq 'state') 'legacy default output shape and effort retained'
-    # Independently compare serialized results with the pre-milestone resolver.
-    # Load only its functions, retaining the synthetic state and offline seams.
-    $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
-    $headSource = (& git -C $repo show HEAD:scripts/model-router/resolve-model.ps1) -join "`n"
-    Check ($LASTEXITCODE -eq 0) 'read HEAD resolver for compatibility comparison'
-    $parseTokens = $null; $parseErrors = $null
-    $ast = [Management.Automation.Language.Parser]::ParseInput($headSource, [ref]$parseTokens, [ref]$parseErrors)
-    $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $false))
-    $legacy = ($definitions | ForEach-Object { $_.Extent.Text }) -join "`n"
-    foreach ($definition in $definitions) { $legacy = $legacy.Replace($definition.Name, ('HEAD-' + $definition.Name)) }
-    $legacy = $legacy.Replace('$PSScriptRoot', ("'" + (Split-Path -Parent $PSScriptRoot).Replace("'", "''") + "'"))
-    Invoke-Expression $legacy
-    foreach ($category in @(Get-RouterDispatchCategories)) {
-        foreach ($lane in @('codex','claude')) {
-            $currentPick = Resolve-RouterModel -Category $category -Lane $lane -Catalog $catalog
-            $currentPick.PSObject.Properties.Remove('difficulty')
-            $currentJson = $currentPick | ConvertTo-Json -Depth 20 -Compress
-            $headJson = HEAD-Resolve-RouterModel -Category $category -Lane $lane -Catalog $catalog | ConvertTo-Json -Depth 20 -Compress
-            Check ($currentJson -ceq $headJson) "unchanged HEAD JSON without new features: $category/$lane"
-        }
+    # Fixed values captured from resolver 5b2e633, including difficulty.
+    $baseline = Get-Content (Join-Path $PSScriptRoot 'fixtures/difficulty-router-baseline.json') -Raw | ConvertFrom-Json
+    foreach ($row in $baseline) {
+        $currentPick = Resolve-RouterModel -Category $row.category -Lane $row.lane -Catalog $catalog
+        $currentJson = $currentPick | ConvertTo-Json -Depth 20 -Compress
+        $expectedJson = $row.result | ConvertTo-Json -Depth 20 -Compress
+        Check ($currentJson -ceq $expectedJson) "unchanged baseline JSON including difficulty: $($row.category)/$($row.lane)"
     }
     $hard = Resolve-RouterModel -Category analysis -Difficulty hard -DifficultyReason 'constraints' -Catalog $catalog
     Check ($hard.effort -eq $old.effort -and $hard.difficulty -eq 'hard') 'legacy single effort used by both tiers'

@@ -23,6 +23,10 @@ param(
     [switch]$RevokeTie,
     [switch]$ApproveTiers,
     [switch]$RevokeTiers,
+    [switch]$ApproveFrontier,
+    [switch]$DeclineFrontier,
+    [string]$RequestId,
+    [string]$Model,
     [ValidateSet('standard','hard')][string]$Difficulty = 'standard',
     [string]$Job,
     [string[]]$Jobs
@@ -31,7 +35,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'resolve-model.ps1')
 . (Join-Path $PSScriptRoot 'publish-roster.ps1')
-if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort -or $ApproveTie -or $DeclineTie -or $RevokeTie -or $ApproveTiers -or $RevokeTiers) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
+if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort -or $ApproveTie -or $DeclineTie -or $RevokeTie -or $ApproveTiers -or $RevokeTiers -or $ApproveFrontier -or $DeclineFrontier) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
 if ($Jobs) { $Jobs = @($Jobs | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 
 function Write-RouterApprovalJson {
@@ -58,7 +62,24 @@ function Get-RouterRosterProposalEvidenceErrors {
     }
 }
 
-if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort + [int][bool]$ApproveTie + [int][bool]$DeclineTie + [int][bool]$RevokeTie + [int][bool]$ApproveTiers + [int][bool]$RevokeTiers) -ne 1) { throw 'Choose exactly one roster action.' }
+if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort + [int][bool]$ApproveTie + [int][bool]$DeclineTie + [int][bool]$RevokeTie + [int][bool]$ApproveTiers + [int][bool]$RevokeTiers + [int][bool]$ApproveFrontier + [int][bool]$DeclineFrontier) -ne 1) { throw 'Choose exactly one roster action.' }
+if ($ApproveFrontier -or $DeclineFrontier) {
+    if ($DeclineFrontier -and $PSBoundParameters.ContainsKey('Model')) { throw 'FRONTIER_MODEL_NOT_ALLOWED: decline refuses -Model.' }
+    if (-not $RequestId -or $Job -or $Jobs) { throw 'FRONTIER_REQUEST_ID_REQUIRED: frontier decisions require -RequestId and no job selection.' }
+    if ($ApproveFrontier -and [string]::IsNullOrWhiteSpace($Model)) { throw 'FRONTIER_MODEL_REQUIRED: approval must name -Model.' }
+    Use-RouterOutcomeMutex -StateDir (Get-RouterStateDir) -Action {
+        $request = Read-RouterFrontierRequest $RequestId
+        if ($request.status -cne 'pending') { throw 'FRONTIER_REQUEST_NOT_PENDING' }
+        if ($ApproveFrontier -and $Model -cne $request.proposed_model) { throw 'FRONTIER_MODEL_MISMATCH' }
+        $request.status = if ($ApproveFrontier) { 'approved' } else { 'declined' }
+        $request | Add-Member -NotePropertyName decided_at -NotePropertyValue ([datetimeoffset]::UtcNow.ToString('o')) -Force
+        if ($ApproveFrontier) { $request | Add-Member -NotePropertyName approved_model -NotePropertyValue $Model -Force }
+        Write-RouterJsonAtomic (Get-RouterFrontierRequestPath $RequestId) $request
+        "Frontier request $RequestId $($request.status)."
+    }
+    return
+}
+if ($RequestId -or $Model) { throw '-RequestId and -Model require a frontier decision.' }
 $tierAction = $ApproveTiers -or $RevokeTiers
 if ($tierAction -and $Job -notin @('deep-thinker','coder')) { throw '-ApproveTiers and -RevokeTiers require -Job deep-thinker or coder.' }
 $tieAction = $ApproveTie -or $DeclineTie -or $RevokeTie
