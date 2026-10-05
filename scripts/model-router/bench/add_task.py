@@ -26,18 +26,27 @@ def main_checkout() -> Path:
     return REPO
 
 
-def add_task(*, state: Path, problem: Path, answer: Path, job: str,
-             grader: str, difficulty: str, task_id: str | None = None) -> Path:
+def validate_state(state: Path) -> Path:
     state = state.resolve()
     if any(state.is_relative_to(root) for root in (REPO, main_checkout())):
-        raise ValueError('State folder must be outside the repo')
+        raise ValueError("State folder must be outside the repo")
     if not state.is_dir():
         raise ValueError(f'State directory does not exist: {state}')
     if state.name.casefold() == 'bench':
-        # The bank must land beside the router state directory, not inside it.
         raise ValueError(f'Pass the router state directory, not its bench folder: {state}')
-    if job not in {'fast', 'coder', 'deep-thinker', 'writer'} or grader not in {'exact', 'numeric'} or difficulty not in {'standard', 'hard'}:
+    return state
+
+
+def add_task(*, state: Path, problem: Path, answer: Path, job: str,
+             grader: str, difficulty: str, task_id: str | None = None, category: str | None = None,
+             solution_file: str | None = None, hidden_test: Path | None = None,
+             bad_answer: Path | None = None, exact_text: bool = False) -> Path:
+    state = validate_state(state)
+    if job not in {'fast', 'coder', 'deep-thinker', 'writer'} or grader not in {'exact', 'numeric', 'pytest', 'nodetest'} or difficulty not in {'standard', 'hard'}:
         raise ValueError('Invalid job, grader or difficulty')
+    if grader in {'pytest', 'nodetest'} and (hidden_test is None or solution_file is None
+            or Path(solution_file).name != solution_file or not re.fullmatch(r'[a-zA-Z0-9_-]+\.(py|js)', solution_file)):
+        raise ValueError('Code task requires a solution filename and hidden test')
     slug = task_id if task_id is not None else re.sub(r'[^a-z0-9]+', '-', problem.stem.lower()).strip('-')
     if not slug or not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', slug):
         raise ValueError('Task id must be a lowercase slug')
@@ -51,6 +60,8 @@ def add_task(*, state: Path, problem: Path, answer: Path, job: str,
         suffix = 'json'
     except ValueError:
         parsed, suffix = None, 'txt'
+    if exact_text and grader == 'exact':
+        suffix = 'txt'
     if grader == 'numeric':
         if not isinstance(parsed, dict) or not parsed or any(
             type(value) not in (int, float) or not math.isfinite(value)
@@ -68,11 +79,23 @@ def add_task(*, state: Path, problem: Path, answer: Path, job: str,
                 'deep-thinker': 'math' if grader == 'numeric' else 'analysis', 'writer': 'writing'}[job],
                 'job': job, 'grader': grader, 'difficulty': difficulty,
                 'dimension_framework': 'provisional'}
+    if category is not None:
+        metadata['category'] = category
+    if grader in {'pytest', 'nodetest'}:
+        metadata['solution_file'] = solution_file
+        shutil.copyfile(hidden_test, task / ('hidden_tests.py' if grader == 'pytest' else 'hidden_tests.mjs'))
+    if bad_answer is not None:
+        shutil.copyfile(bad_answer, task / 'known-bad.txt')
     (task / 'task.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
     result = grade_answer(task, (task / 'known-good.txt').read_text(encoding='utf-8'))
     if result['status'] != 'pass':
         shutil.rmtree(task)
         raise ValueError(f'Known-good answer did not pass the {grader} grader; task removed: {slug} ({result["status"]})')
+    if bad_answer is not None:
+        result = grade_answer(task, (task / 'known-bad.txt').read_text(encoding='utf-8'))
+        if result['status'] != 'fail':
+            shutil.rmtree(task)
+            raise ValueError(f'Known-bad answer did not fail the {grader} grader; task removed: {slug} ({result["status"]})')
     return task
 
 

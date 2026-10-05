@@ -118,7 +118,9 @@ def test_writer_effort_up_requires_strict_improvement(tmp_path: Path, base: int,
     assert result['effort_up']['effort'] == 'high'
     assert result['effort_up_qualified'] == qualified
     assert all(r['side'] != 'effort-down' for r in result['outcomes'])
-    assert result['tied']  # Higher effort cannot contaminate the main verdict.
+    # Shared all-rep failures provide no evidence for a tie.
+    assert result['insufficient_evidence'] == (base == 3 and up == 3)
+    assert result['tied'] == ((base, up) != (3, 3))
 
 
 @pytest.mark.parametrize('effort,next_effort', [('low', 'medium'), ('high', 'xhigh'), ('xhigh', None)])

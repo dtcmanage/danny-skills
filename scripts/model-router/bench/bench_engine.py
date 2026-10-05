@@ -79,6 +79,9 @@ def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, A
     env = {k: v for k, v in os.environ.items() if k.upper() not in
            {'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CONFIG_DIR'}}
     env['PYTHONDONTWRITEBYTECODE'] = '1'
+    node_nonce = uuid4().hex
+    env['BENCH_NODE_NONCE'] = node_nonce
+    env['BENCH_OUTER_TIMEOUT'] = str(timeout)
     with tempfile.TemporaryDirectory(prefix='router-bench-rep-') as directory:
         work = Path(directory)
         env.update({key: directory for key in ('TMP', 'TEMP', 'TMPDIR')})
@@ -102,7 +105,11 @@ def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, A
                                    capture_output=True, timeout=5, check=True)
                 else:
                     os.killpg(process.pid, signal.SIGKILL)
-                process.communicate(timeout=5)
+                stdout, _ = process.communicate(timeout=5)
+                if task.parent.name == 'bench-private-bank':
+                    kind = json.loads((task / 'task.json').read_text(encoding='utf-8'))['grader']
+                    if kind == 'pytest' or (kind == 'nodetest' and node_nonce + ' loaded' in stdout.splitlines()):
+                        return {'status': 'fail', 'failure_category': 'implementation', 'detail': 'Candidate timed out'}
                 raise
             finally:
                 if process.poll() is None:
@@ -110,7 +117,7 @@ def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, A
                     process.wait(timeout=5)
             if process.returncode:
                 raise RuntimeError(stderr)
-            return json.loads(stdout)
+            return json.loads(stdout.splitlines()[-1])
         except (OSError, subprocess.SubprocessError, ValueError, RuntimeError) as error:
             return {'status': 'unknown', 'failure_category': 'environment', 'detail': str(error)}
 
@@ -128,7 +135,7 @@ def judge_score(rubric: dict[str, Any], answer: str) -> tuple[float, dict[str, i
 def compare(candidate: dict[str, Any], incumbent: dict[str, Any]) -> str:
     if candidate['unknown'] or incumbent['unknown']:
         return 'unknown'
-    allowance = 1 if len(incumbent['tasks']) >= 4 else 0
+    allowance = 1 if sum(not isinstance(t, dict) or not t.get('uninformative', False) for t in incumbent['tasks']) >= 4 else 0
     return 'pass' if candidate['passed'] >= incumbent['passed'] - allowance else 'fail'
 
 
@@ -139,6 +146,61 @@ def effort_down_qualifies(candidate: dict[str, Any], incumbent: dict[str, Any],
     lower = {task['task_id']: task['status'] for task in candidate['tasks']}
     return not any(task['task_id'] in protected_tasks and task['status'] == 'pass'
                    and lower.get(task['task_id']) != 'pass' for task in incumbent['tasks'])
+
+
+def has_informative_evidence(tables: list[dict[str, Any]], excluded: set[str],
+                             quality_verdict: dict[str, Any] | None = None) -> bool:
+    # Ranked grading will supply its measured verdict here in milestone 3.
+    return bool(quality_verdict) or any(task['task_id'] not in excluded
+        for table in tables for task in table['tasks'])
+
+
+def discrimination(tables: list[dict[str, Any]], state: Path, job: str, tier: str,
+                   run_id: str) -> tuple[list[str], list[dict[str, Any]]]:
+    def uniform(task_id: str, status: str, configurations: list[dict[str, Any]]) -> bool:
+        if not configurations:
+            return False
+        for table in configurations:
+            task = next((t for t in table['tasks'] if t['task_id'] == task_id), None)
+            if task is None or not task['reps'] or any(rep != status for rep in task['reps']):
+                return False
+        return True
+    ids = [t['task_id'] for t in tables[0]['tasks']]
+    excluded = [task_id for task_id in ids if uniform(task_id, 'fail', tables)]
+    drops = []
+    history = sorted((state / 'runs').glob('*/report.json'), key=lambda p: p.stat().st_mtime_ns, reverse=True)
+    for task_id in ids:
+        if not all(any(t['task_id'] == task_id and t.get('private', False)
+                       for t in table['tasks']) for table in tables):
+            continue
+        if not uniform(task_id, 'pass', tables):
+            continue
+        for path in history:
+            if path.parent.name == run_id:
+                continue
+            try:
+                previous = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                continue
+            comparisons = previous.get('tiers', [previous])
+            if previous.get('beyond'):
+                comparisons = [*comparisons, previous['beyond']]
+            comparison = next((r for r in comparisons if r.get('job') == job and r.get('tier', 'standard') == tier
+                and any(t['task_id'] == task_id for t in r.get('candidate', {}).get('tasks', []))), None)
+            if comparison is None:
+                continue
+            old_tables = [comparison[key] for key in
+                ('candidate', 'incumbent', 'effort_down', 'effort_up') if comparison.get(key)]
+            if comparison.get('outcomes'):
+                lanes: dict[str, dict[str, dict[int, str]]] = {}
+                for row in comparison['outcomes']:
+                    lanes.setdefault(row['side'], {}).setdefault(row['task_id'], {})[row['rep']] = row['status']
+                old_tables = [{'tasks': [{'task_id': name, 'reps': list(reps.values())}
+                    for name, reps in tasks.items()]} for tasks in lanes.values()]
+            if uniform(task_id, 'pass', old_tables):
+                drops.append({'task_id': task_id, 'run_ids': [path.parent.name, run_id]})
+            break  # Previous completed comparison that included this task, even if it failed.
+    return excluded, drops
 
 
 def tier_effort(entry: dict[str, Any], slot: str, tier: str, fallback: str | None) -> str | None:
@@ -224,6 +286,9 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         combined['beyond'] = next((result for result in results if result['tier'] == 'beyond'), None)
         combined['outcomes'] = [row for result in results for row in result['outcomes']]
         combined['calls'] = [call for result in results for call in result['calls']]
+        combined['uninformative_tasks'] = [dict(task_id=task, tier=r['tier']) for r in results for task in r['uninformative_tasks']]
+        combined['proposed_drops'] = [dict(drop, tier=r['tier']) for r in results for drop in r['proposed_drops']]
+        combined['insufficient_evidence'] = any(r['insufficient_evidence'] for r in results if r['tier'] != 'beyond')
         combined['baseline_drops'] = [dict(drop, tier=result['tier']) for result in results if result['tier'] != 'beyond' for drop in result['baseline_drops']]
         combined['shortfall_tasks'] = sum(result['shortfall_tasks'] for result in results if result['tier'] != 'beyond')
         combined['tied'] = all(result['tied'] for result in results if result['tier'] != 'beyond')
@@ -305,6 +370,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             result = {**result, 'quota': quota}
         calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result, 'effort': level})
         return result
+
+    comparison_tables: list[dict[str, Any]] = []
 
     def table(model: str, level: str | None, side: str) -> dict[str, Any]:
         results = []
@@ -397,9 +464,11 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             task_status = 'unknown' if 'unknown' in reps else ('ungraded' if count == 1 else
                           ('pass' if reps.count('pass') >= 2 else 'fail'))
             results.append({'task_id': task.name, 'private': review.loaded[task.name][1], 'status': task_status, 'reps': reps})
-        return {'model': model, 'effort': level, 'tasks': results,
-                'passed': sum(t['status'] == 'pass' for t in results),
-                'unknown': sum(t['status'] == 'unknown' for t in results)}
+        score = {'model': model, 'effort': level, 'tasks': results,
+                 'passed': sum(t['status'] == 'pass' for t in results),
+                 'unknown': sum(t['status'] == 'unknown' for t in results)}
+        comparison_tables.append(score)
+        return score
 
     candidate_table = table(candidate, candidate_effort, 'candidate')
     incumbent_table = candidate_table if job == 'illustrator' and incumbent == candidate else table(incumbent, incumbent_effort, 'incumbent')
@@ -424,28 +493,38 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                     'standard_passes': low_passes, 'hard_passes': high_passes})
     up = {'low': 'medium', 'medium': 'high', 'high': 'xhigh'}.get(incumbent_effort) if job == 'writer' else None
     up_table = table(incumbent, up, 'effort-up') if up else None
+    uninformative, proposed_drops = discrimination(comparison_tables, state, job, tier, run.name)
+    excluded = set(uninformative)
+    insufficient = not has_informative_evidence(comparison_tables, excluded)
+    for score in comparison_tables:
+        for task_result in score['tasks']:
+            if task_result['task_id'] in excluded:
+                task_result['uninformative'] = True
+        score['passed'] = sum(t['status'] == 'pass' and t['task_id'] not in excluded for t in score['tasks'])
     def mean_rubric(side: str) -> float | None:
-        scores = [r['judge_average'] for r in rows if r['side'] == side and 'judge_average' in r]
+        scores = [r['judge_average'] for r in rows if r['side'] == side and r['task_id'] not in excluded and 'judge_average' in r]
         return sum(scores) / len(scores) if scores else None
     incumbent_mean, up_mean = mean_rubric('incumbent'), mean_rubric('effort-up')
-    up_qualified = bool(up_table is not None and not up_table['unknown'] and not incumbent_table['unknown']
+    up_qualified = bool(not insufficient and up_table is not None and not up_table['unknown'] and not incumbent_table['unknown']
                         and (up_table['passed'] > incumbent_table['passed'] or
                              (up_table['passed'] == incumbent_table['passed'] and up_mean is not None
                               and incumbent_mean is not None and up_mean > incumbent_mean)))
-    raw_gate = compare(candidate_table, incumbent_table)
+    raw_gate = 'unknown' if insufficient else compare(candidate_table, incumbent_table)
     if job == 'illustrator' and raw_gate != 'unknown':
         raw_gate = 'advisory'
-    result = {'gate': 'unknown' if raw_gate == 'unknown' else ('advisory' if shadow or tier == 'beyond' or job in {'writer', 'illustrator'} else raw_gate),
+    result = {'gate': 'advisory' if tier == 'beyond' and insufficient else 'unknown' if raw_gate == 'unknown' else ('advisory' if shadow or tier == 'beyond' or job in {'writer', 'illustrator'} else raw_gate),
               'raw_gate': raw_gate, 'shadow': shadow, 'job': job, 'trigger': trigger,
               'private_bank_warning': approval.get('private_bank_warning'),
               'task_bank_sha256': digest, 'judge_pair': judges, 'judge_effort': judge_effort,
               'dimension_framework': config.get('dimension_framework', 'provisional'),
               'candidate': candidate_table, 'incumbent': incumbent_table,
               'effort_down': down_table,
-              'effort_down_qualified': down_table is not None and effort_down_qualifies(down_table, incumbent_table,
+              'effort_down_qualified': not insufficient and down_table is not None and effort_down_qualifies(down_table, incumbent_table,
                   {t.name for t in selected if tier == 'hard' or json.loads((t / 'task.json').read_text(encoding='utf-8'))['grader'] == 'grounding'}),
               'effort_up': up_table, 'effort_up_qualified': up_qualified,
               'tier': tier, 'proposed_relabels': proposed_relabels,
+              'uninformative_tasks': uninformative, 'proposed_drops': proposed_drops,
+              'insufficient_evidence': insufficient,
               'configurations': {'candidate': {'model': candidate, 'effort': candidate_effort},
                                  'incumbent': {'model': incumbent, 'effort': incumbent_effort}},
               'shortfall_tasks': max(0, incumbent_table['passed'] - candidate_table['passed']),
@@ -475,14 +554,14 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     quality = {}
     for side, score_table in [('candidate', candidate_table), ('incumbent', incumbent_table)]:
         row_side = 'candidate' if score_table is candidate_table else side
-        side_rows = [r for r in rows if r['side'] == row_side]
+        side_rows = [r for r in rows if r['side'] == row_side and r['task_id'] not in excluded]
         fabrications = sum(bool(r.get('grading', {}).get('fabrication', False)) for r in side_rows)
         result['fabrications'][side] = fabrications
         first_attempts = summarize_first_attempts(side_rows).get(row_side, {})
         failures = sum(first_attempts.get(key, 0) for key in
                        ('answer_quality_failures', 'answer_dispatch_failures', 'grader_unknowns'))
         quality[side] = (score_table['passed'], -fabrications, -failures)
-    known = not candidate_table['unknown'] and not incumbent_table['unknown']
+    known = not insufficient and not candidate_table['unknown'] and not incumbent_table['unknown']
     result['tied'] = tier != 'beyond' and known and quality['candidate'] == quality['incumbent']
     result['better'] = (candidate if quality['candidate'] > quality['incumbent'] else incumbent) if known and not result['tied'] else None
     save_tie_proposal(state_dir, result, run.name)
@@ -511,6 +590,12 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         lines.append(f"| {data['lane']} | {data['model']} | {data['effort']} | {data['answer_reps']} | {data['answer_quality_failures']} | {data['answer_dispatch_failures']} | {data['grader_unknowns']} | {data['fabrications']} | {data['judge_calls']} | {data['judge_dispatch_failures']} | {data['judge_score_failures']} |")
     lines += ['', 'Disagreements: ' + json.dumps([{'task': r['task_id'], 'rep': r['rep'], 'scores': r['judge_scores']} for r in rows if r.get('disagreement')]),
               'Baseline drops: ' + json.dumps(result['baseline_drops']), 'Artifacts: ' + json.dumps(result['report_paths'])]
+    if uninformative:
+        lines.append('Uninformative tasks excluded from comparison: ' + json.dumps(uninformative))
+    if proposed_drops:
+        lines.append('Proposed drops (confirmation required): ' + json.dumps(proposed_drops))
+    if insufficient:
+        lines.append(f'Tier {tier} has insufficient evidence; no effort proposal or tie proposal is supported.')
     (run / 'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     (run / 'report.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return result
