@@ -142,7 +142,8 @@ try {
     . (Join-Path $SkillRoot 'scripts\round-effort.ps1')
     foreach ($tier in @('complex', 'light')) {
         foreach ($lane in @('claude', 'codex')) {
-            $pick = Resolve-RouterModel -Category planning -Lane $lane -Protected:($tier -eq 'complex') -Catalog ($cache | ConvertFrom-Json)
+            $pick = Resolve-RouterModel -Category planning -Lane $lane -Protected:($tier -eq 'complex') -Catalog ($cache | ConvertFrom-Json) -Difficulty hard -DifficultyReason 'Adversarial design review fixture'
+            Assert-True ($pick.difficulty -eq 'hard') "$tier $lane review did not resolve at the hard tier"
             Assert-True ((Get-DtReviewDefaultEffort -RouterEffort $pick.effort -Round 1) -eq 'high') "$tier $lane round 1 did not use resolver effort"
             Assert-True ((Get-DtReviewDefaultEffort -RouterEffort $pick.effort -Round 3) -eq 'medium') "$tier $lane round 3 did not step down resolver effort"
         }

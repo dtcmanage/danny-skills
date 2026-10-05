@@ -78,7 +78,7 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 
 ## Model routing
 
-Pass `-Difficulty standard|hard` to the resolver and wrappers; hard requires a single-line `-DifficultyReason`. Within the two-attempt budget, retry a failed standard first attempt with `-RetryAtHardFrom <model>`; retry a failed hard first attempt with `-EscalateFrom <model> -Difficulty hard -DifficultyReason <reason>`. A category without tiers (unprotected `mechanical`, which routes to the fast job) retries with `-EscalateFrom <failed model>` as before.
+Pass `-Difficulty standard|hard` to the resolver and wrappers; hard requires a single-line `-DifficultyReason`. The verifier of a load-bearing milestone and the final integrated review declare hard, because their verdict is acted on without line-by-line checking. Within the two-attempt budget, retry a failed standard first attempt with `-RetryAtHardFrom <model>`; retry a failed hard first attempt with `-EscalateFrom <model> -Difficulty hard -DifficultyReason <reason>`. A category without tiers (unprotected `mechanical`, which routes to the fast job) retries with `-EscalateFrom <failed model>` as before.
 
 Routing lives in the shared model router: `scripts/model-router/resolve-model.ps1`, operator reference `references/model-router/README.md`, session rules `00_Resources\model-routing.md`. dt-build adds only these rules.
 

@@ -49,7 +49,7 @@ review through the opposite lane. The lane is fixed for the life of the review, 
 lane when authorship is mixed or unclear: `codex` (the Claude orchestrator authored or reconciled it).
 
 Use explicit router resolution; never inherit `~/.codex/config.toml`. Explicit selection is
-about provenance, not economy. Effort comes from the resolver output and the invokers record it.
+about provenance, not economy. Effort comes from the resolver output and the invokers record it. The invokers resolve at the hard difficulty tier, because a design review's verdict is acted on without line-by-line checking.
 
 | Role | Codex lane | Claude lane | Effort | Limit |
 | --- | --- | --- | --- | --- |

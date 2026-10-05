@@ -184,7 +184,8 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 
 . (Join-Path $RepoRoot 'scripts\model-router\resolve-model.ps1')
 . (Join-Path $ScriptDir 'round-effort.ps1')
-$routerPick = Resolve-RouterModel -Category planning -Lane claude -Protected:($Tier -eq 'complex')
+# A design review is hard-tier work: keep the deep thinker at its hard effort once tiers are approved.
+$routerPick = Resolve-RouterModel -Category planning -Lane claude -Protected:($Tier -eq 'complex') -Difficulty hard -DifficultyReason 'Adversarial design review: the verdict is acted on without line-by-line checking'
 $tierDefaultModel = if ($null -ne $routerPick.agent_alias) { $routerPick.agent_alias } else { $routerPick.model }
 $RequestedModel = if ([string]::IsNullOrWhiteSpace($Model)) { $tierDefaultModel } else { $Model }
 if ($RequestedModel -cne $tierDefaultModel -and [string]::IsNullOrWhiteSpace($ModelReason)) {

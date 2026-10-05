@@ -108,7 +108,8 @@ if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) {
 $RequestedModel = $Model
 # Review rounds route through the model router's planning category; complex reviews are protected.
 $Model = Resolve-CodexModel -Category planning -Protected:($Tier -eq 'complex') -PreferredModel $Model -Strict
-$routerPick = Resolve-RouterModel -Category planning -Lane codex -Protected:($Tier -eq 'complex')
+# A design review is hard-tier work: keep the deep thinker at its hard effort once tiers are approved.
+$routerPick = Resolve-RouterModel -Category planning -Lane codex -Protected:($Tier -eq 'complex') -Difficulty hard -DifficultyReason 'Adversarial design review: the verdict is acted on without line-by-line checking'
 $tierDefaultEffort = Get-DtReviewDefaultEffort -RouterEffort $routerPick.effort -Round $Round
 if (-not $PSBoundParameters.ContainsKey('ReasoningEffort')) { $ReasoningEffort = $tierDefaultEffort }
 [void](Assert-CodexReasoningEffort -Model $Model -Effort $ReasoningEffort -Strict)
