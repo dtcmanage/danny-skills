@@ -220,7 +220,7 @@ function Update-RouterOutcomesLocked {
     if (-not $marks.Count) {
         $latestPath = Join-Path $state 'roster-proposals/latest.json'
         $latest = Read-RouterJsonObject $latestPath
-        if ($latest -and [string]$latest.proposal -like '*-drift.json') { Remove-Item -LiteralPath $latestPath -Force }
+        if ($latest -and $latest.PSObject.Properties['proposal'] -and [string]$latest.proposal -like '*-drift.json') { Remove-Item -LiteralPath $latestPath -Force }
     }
     $requests = @($marks | Where-Object { $newMarks -gt 0 -and $roster.jobs.($_.job).backup } | ForEach-Object {
         $entry = $roster.jobs.($_.job)

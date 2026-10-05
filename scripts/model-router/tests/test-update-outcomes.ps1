@@ -123,6 +123,12 @@ try {
     $rosterClear = Run-Update
     Assert-True (@(Read-RouterJsonArray -Path (Join-Path $rosterState 'drift-marks.json')).Count -eq 0 -and @($rosterClear.alerts | Where-Object { $_.key -like 'drift-cleared:*' }).Count -eq 1) 'cleared roster drift removes mark and alerts once'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $rosterState 'roster-proposals/latest.json'))) 'cleared drift withdraws the pending drift swap proposal'
+    $plainLatest = Join-Path $rosterState 'roster-proposals/latest.json'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $plainLatest) | Out-Null
+    Set-Content -LiteralPath $plainLatest -Value '{"schema_version":1,"approved":true}' -Encoding utf8
+    Run-Update | Out-Null
+    Assert-True (Test-Path -LiteralPath $plainLatest) 'a latest pointer without a proposal field is left alone when no drift marks remain'
+    Remove-Item -LiteralPath $plainLatest -Force
 
     $sequenceState = Join-Path $temp 'sequence-state'; $sequenceRepo = Join-Path $temp 'sequence-repo'
     [IO.Directory]::CreateDirectory($sequenceState) | Out-Null
