@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.8 (2026-10-04): Pick up the shared model router update: difficulty tiers for coder and deep-thinker work, quota tie-break, and the frontier request path. This skill's own routing is unchanged.
+
 - 0.3.7 (2026-10-03): Isolate model router benchmark calls from personal configuration, accept a single fenced answer with surrounding prose, and report first-attempt failures per model.
 
 - 0.3.6 (2026-10-03): Preserve UTF-8 model prompts and responses across redirected process and PowerShell shim boundaries.

@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.8 (2026-10-04): Resolve design review rounds at the hard difficulty tier so reviews keep high effort once difficulty tiers are approved.
+
 - 1.16.7 (2026-10-03): Isolate model router benchmark calls from personal configuration, accept a single fenced answer with surrounding prose, and report first-attempt failures per model.
 
 - 1.16.6 (2026-10-03): Preserve UTF-8 model prompts and responses across redirected process and PowerShell shim boundaries.

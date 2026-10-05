@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.20.0
+
+- Add difficulty tiers to model routing: chunks run at standard (medium effort) or hard (high effort) through -Difficulty and -DifficultyReason, a failed standard attempt retries at hard with -RetryAtHardFrom before moving a model up, approved ties go to the vendor with more weekly quota left, and work harder than high effort waits on a frontier request Danny approves by name. The benchmark gains grounding tasks that catch made-up answers.
+
 ## 2.19.7
 
 - Isolate model router benchmark calls from personal configuration, accept a single fenced answer with surrounding prose, and report first-attempt failures per model.

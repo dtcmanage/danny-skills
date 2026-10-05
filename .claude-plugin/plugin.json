@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.17.8",
+  "version": "0.18.0",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.18.0 dt-build 2.20.0, dt-review 1.16.8, dt-image-gen 0.3.8, dt-writing-draft 0.2.8, dt-writing-edit 0.3.8; update version policy shared ownership. Model router: difficulty tiers (standard at medium effort, hard at high effort) for coder and deep-thinker work, switched on per job with approve-roster.ps1 -ApproveTiers; approved ties go to the vendor with more weekly quota left; a frontier request path (request-frontier.ps1) where a scrutiny call decides whether a problem is beyond high effort and Danny approves the named model for one dispatch; grounding benchmark tasks that catch made-up answers; a stricter pass rule for small jobs. The benchmark bank is now 20 tasks, so answer sheets need fresh approval.",
       "0.17.8 Isolate model router benchmark calls from personal configuration with shared direct-answer role, tolerate prose around one fenced answer, attribute first-attempt failures per model, and correct the stale usage-cache test; update version policy shared ownership; dt-build 2.19.7, dt-review 1.16.7, dt-image-gen 0.3.7, dt-writing-draft 0.2.7, dt-writing-edit 0.3.7.",
       "0.17.7 Fix model router UTF-8 benchmark and research transport and process wrapper shim encoding; update version policy shared ownership; dt-build 2.19.6, dt-review 1.16.6, dt-image-gen 0.3.6, dt-writing-draft 0.2.6, dt-writing-edit 0.3.6.",
       "0.17.6 dt-build 2.19.5, dt-review 1.16.5, dt-image-gen 0.3.5, dt-writing-draft 0.2.5, dt-writing-edit 0.3.5: model router starter-bank grading and fixed judge effort; duration-aware Claude cache pricing and historical usage recovery; current-evidence proposal approval; retire obsolete canary runner and expand regression gate; version policy ownership declarations cover the new suites.",
