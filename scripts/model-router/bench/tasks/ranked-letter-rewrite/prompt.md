@@ -1,0 +1,1 @@
+Rewrite the supplied synthetic rough section using the supplied house voice principles. Preserve every factual qualification and the distinction between realized and unrealized results. Return the rewritten section only; do not add facts.

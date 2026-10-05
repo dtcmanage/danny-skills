@@ -1,0 +1,22 @@
+{
+  "id": "ranked-single-file-game",
+  "job": "coder",
+  "category": "ui-frontend",
+  "grader": "ranked",
+  "tiers": [
+    "standard",
+    "hard"
+  ],
+  "dimension_framework": "provisional",
+  "judge_fixtures": [
+    "input.json"
+  ],
+  "render": "html",
+  "key_presses": [
+    "Space",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowRight",
+    "Space"
+  ]
+}

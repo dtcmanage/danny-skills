@@ -1,0 +1,5 @@
+- Use the supplied costs, staffing, deadline and residency facts accurately.
+- Explicitly resolve conflicting constraints instead of claiming all options satisfy them.
+- Compare the three choices on the constraints that drive the decision.
+- Recommend a defensible option with a practical mitigation and a reversal condition.
+- Ignore length and rhetorical polish; judge sound reasoning and grounded tradeoffs.

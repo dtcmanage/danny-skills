@@ -113,7 +113,18 @@ function Invoke-BenchCli {
         else{$cli=(Get-Command claude.exe,claude.ps1,claude.cmd,claude -ErrorAction SilentlyContinue | Select-Object -First 1).Source}
         if(-not $cli){throw 'Claude CLI missing'}
         $role=[IO.File]::ReadAllText((Join-Path $script:BenchRoot 'direct-answer-system-prompt.txt')).Trim()
-        $args=@('-p','--model',$Request.model,'--effort',$Request.effort,'--output-format','json','--no-session-persistence','--safe-mode','--system-prompt',$role,'--strict-mcp-config','--tools','')
+        $hasImages=$Request.ContainsKey('images') -and @($Request.images).Count
+        $outputFormat=if($hasImages){'stream-json'}else{'json'}
+        $args=@('-p','--model',$Request.model,'--effort',$Request.effort,'--output-format',$outputFormat,'--no-session-persistence','--safe-mode','--system-prompt',$role,'--strict-mcp-config','--tools','')
+        $inputText=[string]$Request.prompt
+        if ($hasImages) {
+            $args+=@('--input-format','stream-json','--verbose')
+            $content=@(foreach($png in $Request.images) {
+                @{type='image';source=@{type='base64';media_type='image/png';data=[Convert]::ToBase64String([IO.File]::ReadAllBytes($png))}}
+            })
+            $content+=@{type='text';text=[string]$Request.prompt}
+            $inputText=(@{type='user';message=@{role='user';content=$content}} | ConvertTo-Json -Depth 10 -Compress)+"`n"
+        }
         $psi=[Diagnostics.ProcessStartInfo]::new()
         if([IO.Path]::GetExtension($cli) -eq '.ps1'){$psi.FileName=(Get-Command pwsh).Source;$args=@(Get-Utf8PowerShellArguments -ScriptPath $cli)+$args}
         elseif([IO.Path]::GetExtension($cli) -eq '.cmd') {throw 'Claude native executable required for bounded dispatch; cmd shim unsupported'}
@@ -128,15 +139,31 @@ function Invoke-BenchCli {
         $process=[Diagnostics.Process]::Start($psi)
         try {
             $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
-            $write=$process.StandardInput.WriteAsync([string]$Request.prompt)
+            $write=$process.StandardInput.WriteAsync($inputText)
             if(-not $write.Wait(5000)){throw 'Claude stdin timeout'}
             $process.StandardInput.Close()
             if(-not $process.WaitForExit($TimeoutMs)){throw 'Claude timeout'}
             if(-not $stdout.Wait(1000) -or -not $stderr.Wait(1000)){throw 'Claude output timeout'}
             $raw=$stdout.GetAwaiter().GetResult()
-            $detail=Get-BenchErrorDetail -Stdout $raw -Stderr $stderr.GetAwaiter().GetResult()
+            $errorText=$stderr.GetAwaiter().GetResult()
+            $detail=if($hasImages){''}else{Get-BenchErrorDetail -Stdout $raw -Stderr $errorText}
             $doc=$null
-            try {$doc=$raw | ConvertFrom-Json -AsHashtable} catch { }
+            if($hasImages) {
+                $reader=[IO.StringReader]::new($raw)
+                try {
+                    while($null -ne ($line=$reader.ReadLine())) {
+                        try {
+                            $streamEvent=$line | ConvertFrom-Json -AsHashtable
+                            if($streamEvent -is [System.Collections.IDictionary] -and $streamEvent['type'] -ceq 'result'){$doc=$streamEvent}
+                        } catch { }
+                    }
+                } finally {$reader.Dispose()}
+                # Detail comes from the result line only; the stream's init event lists local tools and paths.
+                $detail=Get-BenchErrorDetail -Stdout $(if($doc){$doc | ConvertTo-Json -Depth 20 -Compress}else{''}) -Stderr $errorText
+                if(-not $doc){$detail='Claude stream contained no result line. '+$detail}
+            } else {
+                try {$doc=$raw | ConvertFrom-Json -AsHashtable} catch { }
+            }
             $usage=$null
             if($doc -and $doc.ContainsKey('usage')){$usage=ConvertFrom-BenchClaudeUsage $doc.usage}
             $models=@(if($doc -and $doc.ContainsKey('modelUsage') -and $doc.modelUsage -is [System.Collections.IDictionary]){$doc.modelUsage.Keys})
@@ -156,9 +183,10 @@ function Invoke-BenchCli {
                 $failure.Data['bench_response']=@{status='unknown';failure_category=$category;root_cause='unverified';detail=($identity+$detail);usage=$usage;usage_partial=$true;resolved_model=$(if($verifiedIdentity){$Request.model}else{$null});identity=@{comparison_valid=$verifiedIdentity};raw=$source;cli=$cli;arguments=$args;tools='disabled'}
                 throw $failure
             }
-            $parsed=ConvertFrom-ClaudeCliResult -Stdout $raw -RequestedModel $Request.model
+            $resultJson=if($hasImages){$doc | ConvertTo-Json -Depth 20 -Compress}else{$raw}
+            $parsed=ConvertFrom-ClaudeCliResult -Stdout $resultJson -RequestedModel $Request.model
             if($parsed.resolved_model -cne $Request.model){throw 'Claude model changed during comparison'}
-            $doc=$raw | ConvertFrom-Json -AsHashtable
+            $doc=$resultJson | ConvertFrom-Json -AsHashtable
             return @{status='ok';answer=$parsed.result;resolved_model=$parsed.resolved_model;usage=$usage;cli=$cli;arguments=$args;tools='disabled';raw=$doc}
         } finally {if(-not $process.HasExited){$process.Kill($true)};$process.Dispose()}
     } finally {Remove-CodexTempDirectory -Path $work -ExpectedLeafPrefix 'router-bench-call-'}

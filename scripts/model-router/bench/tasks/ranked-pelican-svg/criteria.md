@@ -1,0 +1,5 @@
+- Recognizable pelican anatomy: long bill, throat pouch, wings and webbed feet.
+- Recognizable bicycle with two wheels, frame, handlebars and pedals.
+- Convincing riding pose: bird sits on the saddle, reaches the controls and pedals.
+- Clear composition and legible silhouette without relying on labels.
+- Ignore output length and decorative polish; judge subject fidelity and spatial relationships.

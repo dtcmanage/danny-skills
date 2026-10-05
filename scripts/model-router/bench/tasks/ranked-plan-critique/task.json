@@ -1,0 +1,15 @@
+{
+  "id": "ranked-plan-critique",
+  "job": "deep-thinker",
+  "category": "planning",
+  "grader": "ranked",
+  "tiers": [
+    "standard",
+    "hard"
+  ],
+  "dimension_framework": "provisional",
+  "judge_fixtures": [
+    "plan.md",
+    "planted-flaws.md"
+  ]
+}

@@ -110,7 +110,8 @@ def test_review_marks_private_real_count_and_resets(tmp_path: Path):
     assert value['approved'] and value['private_task_ids'] == [task.name]
     assert not run(tmp_path, BENCH / 'tasks')['shadow']
     html = service.render(value)
-    assert f'{task.name} (private)' in html and 'All 21 approved' in html
+    count = len(list((BENCH / 'tasks').glob('*/task.json'))) + 1
+    assert f'{task.name} (private)' in html and f'All {count} approved' in html
     before = value['task_bank_sha256']
     (task / 'prompt.md').write_text('Changed synthetic request')
     assert not service.choose(task.name, 'approved', before)

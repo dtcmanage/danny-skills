@@ -1,0 +1,1 @@
+Write a self-contained SVG illustration of a pelican riding a bicycle. Make the bird and the bicycle immediately recognizable, with the pelican visibly seated and pedaling. Return only SVG code; use no external assets.

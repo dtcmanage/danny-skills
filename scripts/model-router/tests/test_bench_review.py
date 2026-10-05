@@ -121,9 +121,10 @@ def test_render_includes_accessible_review_flow(service):
     assert '<svg class="flow"' in html and 'role="img"' in html
     assert 'aria-labelledby="flow-title flow-desc"' in html
     assert '<path class="edge" d="M224 82 H264 V126 H304"/>' in html
+    count = len(list(Path(tasks).glob("*/task.json")))
     for transition in (
         "Per-task: pending", "approved", "needs-change",
-        "All 20 approved → bank approved",
+        f"All {count} approved → bank approved",
         "Any bank byte or path edit", "all tasks pending; bank returns to shadow mode",
     ):
         assert transition in html

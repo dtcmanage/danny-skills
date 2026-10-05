@@ -1,0 +1,5 @@
+- Arrow keys visibly move the player and Space starts and restarts a usable game.
+- Apples and stones are distinguishable; collisions implement the stated score and life rules.
+- Score, remaining lives, controls and game-over state are readable.
+- The game has a coherent pace and gives the player a fair chance to react.
+- Ignore code length and cosmetic polish; judge playable behavior and clear feedback.

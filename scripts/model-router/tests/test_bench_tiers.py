@@ -163,8 +163,11 @@ def test_new_bank_tasks_metadata_and_outer_graders():
         assert metadata['difficulty'] == ('hard' if '-hard-' in task_id else 'beyond')
         for name, status in [('known-good.txt', 'pass'), ('known-bad.txt', 'fail')]:
             assert engine.grade_answer(task, (task / name).read_text())['status'] == status
-    assert all(json.loads(path.read_text())['difficulty'] == 'standard'
-               for path in (BENCH / 'tasks').glob('*/task.json') if '-hard-' not in path.parent.name and '-beyond-' not in path.parent.name)
+    # Ranked tasks carry a tiers list in place of a difficulty.
+    others = [json.loads(path.read_text()) for path in (BENCH / 'tasks').glob('*/task.json')
+              if '-hard-' not in path.parent.name and '-beyond-' not in path.parent.name]
+    assert all(metadata['difficulty'] == 'standard' for metadata in others if metadata['grader'] != 'ranked')
+    assert all('difficulty' not in metadata and metadata['tiers'] for metadata in others if metadata['grader'] == 'ranked')
 
 
 def test_cost_report_provenance_split_and_pending_ties(tmp_path: Path):

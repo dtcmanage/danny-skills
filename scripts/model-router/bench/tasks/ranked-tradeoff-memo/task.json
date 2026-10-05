@@ -1,0 +1,14 @@
+{
+  "id": "ranked-tradeoff-memo",
+  "job": "deep-thinker",
+  "category": "analysis",
+  "grader": "ranked",
+  "tiers": [
+    "standard",
+    "hard"
+  ],
+  "dimension_framework": "provisional",
+  "judge_fixtures": [
+    "facts.md"
+  ]
+}

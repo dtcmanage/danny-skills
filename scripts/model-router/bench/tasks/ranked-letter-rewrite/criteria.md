@@ -1,0 +1,5 @@
+- Preserve the numbers, periods, realized versus unrealized distinction and uncertainty.
+- Explain the cause of the result in clear connected sentences.
+- Follow the supplied voice: direct, restrained and specific.
+- Remove repetition and inflated claims without deleting material qualifications.
+- Ignore length and surface polish; judge fidelity, clarity and the voice principles.

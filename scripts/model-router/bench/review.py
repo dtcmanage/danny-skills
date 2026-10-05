@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import time
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -111,6 +112,13 @@ def task_folders(tasks: Path, private: Path | None = None) -> dict[str, tuple[Pa
                 raise ValueError(f"Duplicate task id in in-repo and private banks: {task_id}")
             seen.add(task_id.casefold())
             loaded[task_id] = (path.parent, True)
+    for task_id, (folder, _) in loaded.items():
+        metadata = json.loads((folder / "task.json").read_text(encoding="utf-8"))
+        if metadata.get("grader") == "ranked":
+            tiers = metadata.get("tiers")
+            if (not isinstance(tiers, list) or not tiers
+                    or any(tier not in ("standard", "hard") for tier in tiers)):
+                raise ValueError(f"Ranked task {task_id} must have a non-empty tiers list containing only standard or hard.")
     return dict(sorted(loaded.items()))
 
 
@@ -146,7 +154,15 @@ class Review:
         self.state.mkdir(parents=True, exist_ok=True)
         temporary = self.approval_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(self.approval_path)
+        for attempt in range(5):
+            try:
+                temporary.replace(self.approval_path)
+                break
+            except PermissionError:
+                # Windows briefly denies the rename while a scanner holds the file.
+                if attempt == 4:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
         digest = bank_hash(self.tasks, self.private)
         hash_path = self.state / "bank-hash.json"
         temporary_hash = hash_path.with_suffix(".tmp")
@@ -212,6 +228,8 @@ class Review:
                      f'<p>Category: {escape(str(metadata["category"]))} · Choice: '
                      f'<strong>{escape(value["tasks"][task_id])}</strong></p>']
             paths = [task / "prompt.md"]
+            if metadata['grader'] == 'ranked':
+                paths.append(task / 'criteria.md')
             paths += sorted(p for p in bank_files(task) if p.relative_to(task).parts[0] in {"fixtures", "golden"})
             for path in paths:
                 parts.append(f'<details open><summary>{escape(path.relative_to(task).as_posix())}</summary>'

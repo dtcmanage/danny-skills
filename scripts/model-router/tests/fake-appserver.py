@@ -67,7 +67,13 @@ for line in sys.stdin:
    'Do not use tools, inspect files, execute commands, ask questions, or describe planned actions.')
   emit({'id':rid,'result':{'model':'gpt-6-luna' if scenario=='model' else p['model'],'reasoningEffort':'high','modelProvider':'openai','thread':{'id':'' if scenario=='id' else 't','turns':[]}}});continue
  if m=='turn/start':
-  p=q['params'];assert p['environments']==[] and p['model']=='gpt-6.1-sol' and p['effort']=='high' and p['input']==[{'type':'text','text':'Synthetic fixture\nexact bytes'}]
+  p=q['params'];assert p['environments']==[] and p['model']=='gpt-6.1-sol' and p['effort']=='high'
+  if scenario=='images':
+   assert p['input'][0]=={'type':'text','text':'Synthetic fixture\nexact bytes'}
+   assert len(p['input'])==3 and all(i['type']=='localImage' for i in p['input'][1:])
+   Path(os.environ['BENCH_IMAGE_EVIDENCE']).write_text(json.dumps(p['input']))
+   event('item/started',{'threadId':'t','turnId':'u','item':{'type':'userMessage','id':'user','content':p['input']}})
+  else:assert p['input']==[{'type':'text','text':'Synthetic fixture\nexact bytes'}]
   if scenario in ('timeout','descendant'):
    if scenario=='descendant':
     child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])

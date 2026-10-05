@@ -213,6 +213,7 @@ class Server:
         self.writers: list[threading.Thread] = []
         self.next_id = 0
         self.controls_verified = False
+        self.image_paths: frozenset[str] = frozenset()
         self.events: list[dict[str, Any]] = []
         self.stopping = threading.Event()
         self.reader = threading.Thread(target=self._read, daemon=True)
@@ -311,7 +312,7 @@ class Server:
                     raise BoundaryError('unsupported event: ' + method)
                 raise BoundaryError('unsupported event: ' + (method if method in json.loads(Path(__file__).with_name('appserver-methods.json').read_text()) else 'UNKNOWN_SCHEMA_METHOD'))
             if method in ('item/started', 'item/completed'):
-                if not valid_item(message.get('params', {}).get('item')):
+                if not valid_item(message.get('params', {}).get('item'), self.image_paths):
                     raise BoundaryError('tool or unsupported item forbidden')
         return message
 
@@ -391,6 +392,7 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
     finally:
         server.close()
     server = Server(command, controls(ids), cwd, deadline, environment)
+    server.image_paths = frozenset(str(Path(p).resolve()) for p in request.get('images', []))
     measured = None
     cumulative = None
     responses = {}
@@ -426,10 +428,13 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
         verified_model = model
         thread_id = required_id(thread.get('thread', {}).get('id'))
         if thread.get('thread', {}).get('turns') not in (None, []): raise BoundaryError('unexpected thread history')
+        inputs = [{'type': 'text', 'text': request['prompt']}]
+        for image in request.get('images', []):
+            inputs.append({'type': 'localImage', 'path': str(Path(image).resolve())})
         started = server.request('turn/start', {'threadId': thread_id, 'environments': [],
-            'model': model, 'effort': effort, 'input': [{'type': 'text', 'text': request['prompt']}]})
+            'model': model, 'effort': effort, 'input': inputs})
         turn_id = required_id(started.get('turn', {}).get('id'))
-        validate_turn(started['turn'])
+        validate_turn(started['turn'], server.image_paths)
         final = None
         measured = None
         responses = {}
@@ -472,7 +477,7 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
                 status = params.get('status')
                 if not isinstance(status, dict) or status.get('type') not in ('notLoaded', 'idle', 'active') or (status.get('type') == 'active' and status.get('activeFlags') != []):
                     raise BoundaryError('unsupported thread status')
-            if method == 'turn/started': validate_turn(params.get('turn'))
+            if method == 'turn/started': validate_turn(params.get('turn'), server.image_paths)
             if method == 'thread/settings/updated':
                 settings = params.get('threadSettings', {})
                 if settings.get('model') != model or settings.get('effort') != effort or settings.get('modelProvider') != 'openai':
@@ -517,7 +522,7 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
                     final = item['text']
             if method == 'turn/completed':
                 turn = params.get('turn', {})
-                validate_turn(turn)
+                validate_turn(turn, server.image_paths)
                 if turn.get('id') != turn_id or turn.get('status') != 'completed' or turn.get('error') is not None or final is None:
                     raise BoundaryError(quota_diagnostic(turn.get('error')) or 'turn failed or final answer missing')
                 if raw_invalid or len(responses) != 1 or raw_answer != final:
@@ -599,7 +604,7 @@ def required_id(value: Any) -> str:
     return value
 
 
-def valid_item(item: Any) -> bool:
+def valid_item(item: Any, image_paths: frozenset[str] = frozenset()) -> bool:
     if not isinstance(item, dict) or not isinstance(item.get('id'), str) or not item['id']:
         return False
     kind = item.get('type')
@@ -608,12 +613,15 @@ def valid_item(item: Any) -> bool:
     if kind == 'reasoning':
         return all(isinstance(item.get(k, []), list) and all(isinstance(x, str) for x in item.get(k, [])) for k in ('summary','content'))
     if kind == 'userMessage':
-        return isinstance(item.get('content'), list) and all(isinstance(x, dict) and x.get('type') == 'text' and isinstance(x.get('text'), str) for x in item['content'])
+        return isinstance(item.get('content'), list) and all(isinstance(x, dict) and (
+            (x.get('type') == 'text' and isinstance(x.get('text'), str)) or
+            (x.get('type') == 'localImage' and isinstance(x.get('path'), str) and x['path'] in image_paths)
+        ) for x in item['content'])
     return False
 
 
-def validate_turn(turn: Any) -> None:
-    if not isinstance(turn, dict) or not isinstance(turn.get('items'), list) or any(not valid_item(i) for i in turn['items']):
+def validate_turn(turn: Any, image_paths: frozenset[str] = frozenset()) -> None:
+    if not isinstance(turn, dict) or not isinstance(turn.get('items'), list) or any(not valid_item(i, image_paths) for i in turn['items']):
         raise BoundaryError('tool or malformed turn payload forbidden')
     required_id(turn.get('id'))
 

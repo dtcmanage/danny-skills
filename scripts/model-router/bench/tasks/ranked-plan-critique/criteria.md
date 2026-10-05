@@ -1,0 +1,5 @@
+- Detect the planted flaws and explain their consequences rather than merely restating them.
+- Prioritize data integrity and service continuity with actionable repairs.
+- Connect contradictions and dependencies across the migration steps.
+- Stay grounded in the supplied plan; identify uncertainty without invented constraints.
+- Ignore length and prose polish; reward accurate coverage, causal reasoning and usable fixes.

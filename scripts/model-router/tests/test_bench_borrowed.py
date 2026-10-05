@@ -147,7 +147,10 @@ def test_discrimination_history_per_task_job_tier_and_reps(tmp_path: Path):
     tables[2]['tasks'][1]['reps'][0] = 'unknown'
     assert engine.discrimination(tables, tmp_path, 'coder', 'hard', 'new')[0] == []
     assert not engine.has_informative_evidence([table(bad)], {'bad'})
-    assert engine.has_informative_evidence([table(bad)], {'bad'}, {'verdict':'no_difference'})
+    assert engine.has_informative_evidence([table(bad)], {'bad'},
+        {'verdict':'no_difference', 'tasks':[{'candidate_wins':1, 'incumbent_wins':1}]})
+    assert not engine.has_informative_evidence([table(bad)], {'bad'},
+        {'verdict':'no_difference', 'tasks':[{'candidate_wins':0, 'incumbent_wins':0}]})
 
 
 def run_engine(tmp_path: Path, grades: dict[str,str], *, effort: str = 'medium') -> dict:
@@ -473,6 +476,12 @@ def test_two_public_runs_match_head(tmp_path: Path, monkeypatch):
     shutil.rmtree(state / 'bench')
     for i,(old,old_report) in enumerate(expected, 1):
         result, report = run(engine, i)
+        assert result.pop('quality_verdict') is None
+        assert old.pop('quality_verdict', None) is None
+        # HEAD already includes M02 on the M03 build surface. Compare its
+        # additive fields too while keeping this replay usable on the M02 base.
+        for field, expected_value in [('uninformative_tasks', []), ('proposed_drops', []), ('insufficient_evidence', False)]:
+            assert old.pop(field, expected_value) == expected_value
         assert result.pop('uninformative_tasks') == []
         assert result.pop('proposed_drops') == []
         assert result.pop('insufficient_evidence') is False

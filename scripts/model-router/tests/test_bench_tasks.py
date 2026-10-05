@@ -52,19 +52,25 @@ def test_ids_categories_and_layout():
         "grounding-quote-check": "deep-research", "grounding-missing-field": "mechanical",
         "writing-status-update": "long-form-writing", "writing-explainer-paragraph": "long-form-writing",
         "reasoning-hard-allocation": "math",
-        "coder-hard-schedule": "complex-coding"}
+        "coder-hard-schedule": "complex-coding",
+        "ranked-pelican-svg": "ui-frontend", "ranked-single-file-game": "ui-frontend",
+        "ranked-plan-critique": "planning", "ranked-tradeoff-memo": "analysis",
+        "ranked-letter-rewrite": "long-form-writing"}
     metadata = {p.parent.name: json.loads(p.read_text()) for p in TASKS.glob("*/task.json")}
-    assert len(metadata) == 20 == len(generator.TASKS)
+    assert len(metadata) == 25 == len(generator.TASKS)
     assert {key: value["category"] for key, value in metadata.items()} == expected
     for key, value in metadata.items():
         assert value["id"] == key and value["dimension_framework"] == "provisional"
         task = TASKS / key
+        if value["grader"] == "ranked":
+            assert (task / "prompt.md").is_file() and (task / "criteria.md").is_file()
+            continue
         for name in ("prompt.md", "grader.py", "fixtures/input.json"):
             assert (task / name).is_file()
         assert list((task / "golden").iterdir())
 
 
-@pytest.mark.parametrize("task_id", [k for k, v in generator.TASKS.items() if v[2] not in {"rubric", "artifact"}])
+@pytest.mark.parametrize("task_id", [k for k, v in generator.TASKS.items() if v[2] not in {"rubric", "artifact", "ranked"}])
 def test_deterministic_positive_negative(task_id: str):
     task = TASKS / task_id
     for path, expected in [(task / "known-good.txt", 0)] + [(p, 1) for p in sorted(task.glob("known-bad*.txt"))]:
@@ -113,7 +119,7 @@ def test_writer_tasks_load_with_rubric_and_judge_prompt():
     config = json.loads((BENCH / "bench-config.json").read_text())
     writers = sorted(p.parent.name for p in TASKS.glob("*/task.json")
                      if json.loads(p.read_text())["job"] == "writer")
-    assert writers == ["writing-explainer-paragraph", "writing-letter-section", "writing-status-update"]
+    assert writers == ["ranked-letter-rewrite", "writing-explainer-paragraph", "writing-letter-section", "writing-status-update"]
     for task_id in ("writing-status-update", "writing-explainer-paragraph"):
         task = TASKS / task_id
         metadata = json.loads((task / "task.json").read_text())

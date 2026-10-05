@@ -14,7 +14,6 @@ import subprocess
 import sys
 import shutil
 import tempfile
-import xml.etree.ElementTree as ET
 
 
 class GraderEnvironment(BaseException):
@@ -35,28 +34,6 @@ def main() -> int:
                 shutil.copyfile(work / 'answer.py', work / metadata['solution_file'])
             with conftest.open('a', encoding='utf-8') as guard:
                 guard.write('\nsocket.socket.sendto = deny\n')
-        private_pytest = kind == 'pytest' and task.parent.name == 'bench-private-bank'
-        if private_pytest and 'pytest' in str(args[0]):
-            # The candidate's cwd contains no result path. Require evidence from
-            # pytest, rather than accepting os._exit(0) during collection.
-            with tempfile.TemporaryDirectory(prefix='router-pytest-result-') as directory:
-                report = Path(directory) / 'results.xml'
-                # pytest gets the result path through its API; the imported
-                # answer's sys.argv and environment do not reveal it.
-                pytest_args = [*args[0][3:], '--junitxml=' + str(report)]
-                command = [args[0][0], '-c', 'import pytest; raise SystemExit(pytest.main('
-                           + repr(pytest_args) + '))']
-                kwargs['timeout'] = max(60, float(os.environ.get('BENCH_OUTER_TIMEOUT', '30')) * 2 + 30)
-                result = original_run(command, **kwargs)
-                try:
-                    root = ET.parse(report).getroot()
-                    cases = list(root.iter('testcase'))
-                    passed = (result.returncode == 0 and bool(cases)
-                              and not any(list(case.iter(tag)) for case in cases
-                                          for tag in ('failure', 'error')))
-                except (OSError, ET.ParseError):
-                    passed = False
-                return subprocess.CompletedProcess(result.args, 0 if passed else 1, result.stdout, result.stderr)
         try:
             result = original_run(*args, **kwargs)
         except (OSError, subprocess.SubprocessError) as error:

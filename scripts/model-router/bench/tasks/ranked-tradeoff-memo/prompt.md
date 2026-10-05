@@ -1,0 +1,1 @@
+Recommend one of the three hosting options in the supplied synthetic fact sheet. Explain which constraints your choice satisfies, which it sacrifices, and the smallest practical mitigation. Identify a condition that would change your recommendation. Do not invent prices or capabilities.

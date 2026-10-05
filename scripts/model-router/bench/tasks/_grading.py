@@ -16,6 +16,7 @@ import string
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from typing import Any
 
 
@@ -61,9 +62,22 @@ def grade_python(task: Path, answer: Path) -> bool:
         env = {k: v for k, v in os.environ.items() if k.upper() not in
                {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"}}
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
-        proc = subprocess.run([sys.executable, "-m", "pytest", "-q", "test_hidden.py"],
-                              cwd=work, env=env, capture_output=True, timeout=30)
-        return proc.returncode == 0
+        # A successful process exit is insufficient: collection can execute
+        # os._exit(0). Require a nonempty result produced by pytest itself.
+        # Keep its result path out of candidate argv, env and working directory.
+        with tempfile.TemporaryDirectory(prefix="router-pytest-result-") as directory:
+            report = Path(directory) / "results.xml"
+            pytest_args = ["-q", "test_hidden.py", "--junitxml=" + str(report)]
+            proc = subprocess.run([sys.executable, "-c", "import pytest; raise SystemExit(pytest.main("
+                                   + repr(pytest_args) + "))"],
+                                  cwd=work, env=env, capture_output=True, timeout=30)
+            try:
+                cases = list(ET.parse(report).getroot().iter("testcase"))
+                return (proc.returncode == 0 and bool(cases)
+                        and not any(list(case.iter(tag)) for case in cases
+                                    for tag in ("failure", "error")))
+            except (OSError, ET.ParseError):
+                return False
 
 
 def grade_ui(task: Path, answer: Path) -> bool:

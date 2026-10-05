@@ -1,0 +1,11 @@
+{
+  "game": "Orchard Dash",
+  "controls": [
+    "ArrowLeft",
+    "ArrowRight",
+    "Space"
+  ],
+  "initial_lives": 3,
+  "goal": "Catch apples and avoid stones",
+  "assets": "One HTML file without external assets or libraries"
+}

@@ -1,0 +1,14 @@
+{
+  "id": "ranked-letter-rewrite",
+  "job": "writer",
+  "category": "long-form-writing",
+  "grader": "ranked",
+  "tiers": [
+    "standard"
+  ],
+  "dimension_framework": "provisional",
+  "judge_fixtures": [
+    "rough.md",
+    "voice.md"
+  ]
+}

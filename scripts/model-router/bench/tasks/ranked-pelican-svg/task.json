@@ -1,0 +1,15 @@
+{
+  "id": "ranked-pelican-svg",
+  "job": "coder",
+  "category": "ui-frontend",
+  "grader": "ranked",
+  "tiers": [
+    "standard",
+    "hard"
+  ],
+  "dimension_framework": "provisional",
+  "judge_fixtures": [
+    "input.json"
+  ],
+  "render": "svg"
+}

@@ -1,0 +1,1 @@
+Critique the supplied migration plan for the synthetic Cedar archive service. Identify the substantive problems, explain their consequences, and propose concrete repairs in priority order. Do not invent facts outside the plan. Distinguish blockers from reversible details.

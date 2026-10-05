@@ -37,6 +37,13 @@ TASKS = {
     "writing-status-update": ("long-form-writing", "writer", "rubric"),
     "writing-explainer-paragraph": ("long-form-writing", "writer", "rubric"),
 }
+TASKS.update({
+    "ranked-pelican-svg": ("ui-frontend", "coder", "ranked"),
+    "ranked-single-file-game": ("ui-frontend", "coder", "ranked"),
+    "ranked-plan-critique": ("planning", "deep-thinker", "ranked"),
+    "ranked-tradeoff-memo": ("analysis", "deep-thinker", "ranked"),
+    "ranked-letter-rewrite": ("long-form-writing", "writer", "ranked"),
+})
 THRESHOLD = json.loads((Path(__file__).resolve().parent / "bench-config.json")
                        .read_text(encoding="utf-8"))["rubric_threshold"]
 
@@ -111,6 +118,10 @@ def generate(output: Path, seed: int = SEED) -> None:
         shutil.copytree(ROOT / "ui-frontend-card/harness", output / "ui-frontend-card/harness",
                         dirs_exist_ok=True, ignore=shutil.ignore_patterns("node_modules", "__pycache__"))
     for task_id, (category, job, grader) in TASKS.items():
+        if grader == "ranked":
+            if output.resolve() != ROOT.resolve():
+                shutil.copytree(ROOT / task_id, output / task_id, dirs_exist_ok=True)
+            continue
         write_json(output / task_id / "task.json", {
             "id": task_id, "category": category, "job": job, "grader": grader,
             "dimension_framework": "provisional", "seed": seed,

@@ -1,0 +1,1 @@
+Lead with the result, then explain its cause. Use plain words and connected sentences. State uncertainty directly; avoid hype and boilerplate conclusions. Keep numbers and qualifications intact. Distinguish observed results from forecasts.
