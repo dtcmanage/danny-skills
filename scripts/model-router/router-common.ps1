@@ -337,6 +337,7 @@ function Add-RouterOutcome {
 function Get-RouterTieEvidenceError {
     param([object]$Entry, [object]$Evidence, [switch]$CurrentBank)
     try {
+        if (-not $CurrentBank -and -not (Test-Path -LiteralPath (Join-Path (Get-RouterStatePath) 'bench/bank-hash.json'))) { return 'TIE_BANK_UNAVAILABLE' }
         if (-not $Evidence -or $Evidence.tier -cnotin @('standard','hard') -or -not $Evidence.run_id -or -not $Evidence.bank_hash) { return 'Missing or unsupported tie evidence.' }
         $pair = @($Evidence.configurations.candidate, $Evidence.configurations.incumbent)
         if ($pair.Count -ne 2 -or $Entry.first -ceq $Entry.backup) { return 'Tie pair is invalid.' }

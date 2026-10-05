@@ -50,6 +50,12 @@ try {
     $entry | Add-Member -NotePropertyName tie_evidence -NotePropertyValue $evidence; Save-Roster
     $pick = Resolve-RouterModel -Category routine-coding -Catalog $catalog
     Check ($pick.model -eq $entry.backup -and $pick.reason -match 'codex: 70%' -and $pick.reason -match 'claude: 20%') 'lower-use vendor and both readings'
+    Remove-Item -LiteralPath (Join-Path $temp 'bench/bank-hash.json')
+    $missingBank = Resolve-RouterModel -Category routine-coding -Catalog $catalog
+    Check ($missingBank.model -eq $entry.first -and $missingBank.alerts -notcontains 'roster-tie-invalid:coder') 'absent bank skips tie quietly'
+    Write-RouterJsonAtomic (Join-Path $temp 'bench/bank-hash.json') @{task_bank_sha256='changed'}
+    Check ((Resolve-RouterModel -Category routine-coding -Catalog $catalog).alerts -contains 'roster-tie-invalid:coder') 'present mismatched bank still alerts'
+    Write-RouterJsonAtomic (Join-Path $temp 'bench/bank-hash.json') @{task_bank_sha256=$evidence.bank_hash}
     $usagePath = Join-Path $env:DT_MODEL_ROUTER_CODEX_SESSIONS '2026/10/04/usage.jsonl'
     $row = Get-Content $usagePath -Raw | ConvertFrom-Json -Depth 10
     $row.payload.rate_limits.secondary = $row.payload.rate_limits.primary
@@ -118,7 +124,8 @@ try {
     foreach ($shape in @('absent','unreadable')) {
         if ($shape -eq 'absent') { Remove-Item $bankPath } else { Set-Content $bankPath '{' }
         $pick = Resolve-RouterModel -Category routine-coding -Catalog $catalog
-        Check ($pick.model -eq $entry.first -and $pick.alerts -contains 'roster-tie-invalid:coder') "void on $shape bank hash"
+        $invalidAlert = $pick.alerts -contains 'roster-tie-invalid:coder'
+        Check ($pick.model -eq $entry.first -and $invalidAlert -eq ($shape -eq 'unreadable')) "skip on $shape bank hash; alert only when present"
     }
     [IO.File]::WriteAllText($bankPath,$bankBytes)
     # A Python launch during resolve must fail this guard, even if swallowed.

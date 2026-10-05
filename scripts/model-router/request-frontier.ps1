@@ -28,6 +28,7 @@ function Request-RouterFrontier {
         [Parameter(Mandatory)][string]$StateDir,
         [scriptblock]$ScrutinyInvoker
     )
+    Assert-RouterWindowsOwner -Action 'Frontier request'
     $AttemptPaths = @($AttemptPaths | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if (-not $AttemptPaths -or $AttemptPaths.Count -eq 0) { throw 'FRONTIER_ATTEMPTS_REQUIRED' }
     $job = Get-RouterCategoryJob $Category

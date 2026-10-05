@@ -100,7 +100,7 @@ function Resolve-RouterRosterPick {
         if ($from -notin $allowed) { throw 'RETRY_MODEL_INVALID' }
         $chosen = [pscustomobject]@{model=$from;vendor=$vendor;effort=$target.effort}
         $other = if ($vendor -eq $first.vendor) { $backup } else { $first }
-        $reason = "Retry: same model $from at hard effort."
+        $reason = if (-not $entry.PSObject.Properties['first_efforts'] -and -not $entry.PSObject.Properties['backup_efforts']) { "Retry: same model $from; tiers are not set, effort unchanged." } else { "Retry: same model $from at hard effort." }
     }
     if ($null -eq $chosen) { $reason = 'No Claude image model is available.' }
     $localCatalog = $Catalog
@@ -142,9 +142,9 @@ function Resolve-RouterRosterPick {
     }
     if ($entry.PSObject.Properties['tie_evidence']) {
         $errorText = Get-RouterTieEvidenceError -Entry $entry -Evidence $entry.tie_evidence
-        if (-not $entry.tie_evidence -or -not $entry.tie_evidence.PSObject.Properties['approved_at'] -or -not $entry.tie_evidence.approved_at) { $errorText = 'Tie approval missing.' }
-        if ($errorText) { $alerts.Add("roster-tie-invalid:$job") }
-        elseif ($entry.tie_evidence.tier -ceq $tieDifficulty -and -not $Lane -and -not $EscalateFrom -and -not $RetryAtHardFrom) {
+        if ($errorText -cne 'TIE_BANK_UNAVAILABLE' -and (-not $entry.tie_evidence -or -not $entry.tie_evidence.PSObject.Properties['approved_at'] -or -not $entry.tie_evidence.approved_at)) { $errorText = 'Tie approval missing.' }
+        if ($errorText -and $errorText -cne 'TIE_BANK_UNAVAILABLE') { $alerts.Add("roster-tie-invalid:$job") }
+        elseif (-not $errorText -and $entry.tie_evidence.tier -ceq $tieDifficulty -and -not $Lane -and -not $EscalateFrom -and -not $RetryAtHardFrom) {
             $chosen = $first; $other = $backup
             $readings = @{}
             $labels = @()

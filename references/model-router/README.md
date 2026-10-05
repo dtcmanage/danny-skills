@@ -64,12 +64,13 @@ rate calculations. Pending roster detection includes both slot efforts.
 
 Triggered comparisons stage outside outcome locks and revalidate roster model and effort before publication. Research offers incumbent effort-down even when it keeps the model. New-model checks retain release and day-seven research queues and refresh known frontier judges in bench/judge-config.json. Failed/unknown results are in bench/trigger-log.jsonl; unknown alerts use stable identities. Weekly rubric reminders apply to the current bank and judge pair; rubric correction changes the bank hash and returns golden approval to shadow mode.
 
-Use approve-roster.ps1 -ApproveEffort, -DeclineEffort or -RevokeEffort with -Job for separate effort proposals; actions revalidate exact model and effort.
+Use approve-roster.ps1 -ApproveEffort, -DeclineEffort or -RevokeEffort with -Job for separate effort proposals; approval and revocation revalidate exact model and effort; decline can close stale proposals. Coder and deep-thinker jobs without tier objects file no effort proposals and refuse effort approval or revocation until `-ApproveTiers -Job <job>`. Tier approval supersedes pending legacy proposals. The default roster routes deep-thinker standard work at medium effort.
 
 
 ## Approved quota ties
 
-A non-shadow tied bench run files `<state>/tie-proposals/<job>.json` only when
+A non-shadow tied bench run files `<state>/tie-proposals/<job>.json` for standard ties
+and `<state>/tie-proposals/<job>-hard.json` for hard ties, only when
 its two tested model-and-effort configurations equal the roster job's first and
 backup configurations. It records `type: tie`, `status: pending`, `job`, `tier`,
 `configurations` (candidate and incumbent, each with model and effort), `run_id`
@@ -77,22 +78,21 @@ and `bank_hash`. Identical pending, declined, approved or revoked evidence keeps
 original proposal, status and run ID; a later tied run does not ask again.
 Use `approve-roster.ps1 -ApproveTie -Job <job>` to approve it,
 `-DeclineTie -Job <job>` to decline it, or `-RevokeTie -Job <job>` to remove
-approved tie evidence. Approval revalidates both models, both efforts and the
+approved tie evidence. Hard ties require `-Difficulty hard` on all three actions. Approval revalidates both models, both efforts and the
 current task bank; it leaves first and backup unchanged.
 
 The optional roster job field `tie_evidence` carries `tier`, `configurations`,
 `run_id`, `bank_hash`, and `approved_at`. It is published with the roster.
-The supported tier is `standard`. Full and `-Jobs` roster approval preserve
+The supported tiers are `standard` and `hard`. Full and `-Jobs` roster approval preserve
 existing tie evidence when both models and efforts are unchanged, and drop it
 when either slot changes. Evidence becomes void if either model, either effort,
 or the bank hash changes. The bench records `bench/bank-hash.json` with
 `task_bank_sha256` and `written_at` at run time and whenever golden approval is
 written. Tie evidence is checked against the bank hash recorded at the last
 bench or golden-review run; edits to the bank take effect at the next such run.
-Resolve reads that file without starting Python. An absent or unreadable
-hash voids the evidence, with the existing `roster-tie-invalid:<job>` alert.
+Resolve reads that file without starting Python. An absent hash file skips the tie without an alert; the Mac never runs the bench and never applies ties. A present unreadable or mismatched hash voids the evidence with the existing `roster-tie-invalid:<job>` alert.
 
-With valid approved evidence and neither `-Lane` nor `-EscalateFrom`, the tie-break
+With valid approved evidence and none of `-Lane`, `-EscalateFrom` or `-RetryAtHardFrom`, the tie-break
 reuses local weekly readings after the resolver's ordinary block evaluation.
 Claude's normal 5-minute refresh and credential-identity check remain in place;
 when that path is not evaluated, only an identity-validated local weekly cache
@@ -112,6 +112,8 @@ behavior. A tie-selected vendor and a catalog fallback undergo the ordinary
 block evaluation, including its bounded Claude refresh. The weekly comparison
 itself adds no network or model call.
 # Frontier requests
+
+Frontier requests are Windows-only; the Mac never raises them.
 
 For a coder or deep-thinker piece that failed at hard effort (or has disagreeing
 hard-tier answers), run `scripts/model-router/request-frontier.ps1 -Category <category>

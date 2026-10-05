@@ -244,8 +244,8 @@ function Save-RouterEffortProposal {
     $qualification = if ($writer) { 'effort_up_qualified' } else { 'effort_down_qualified' }
     if (-not $Bench.PSObject.Properties[$qualification] -or -not $Bench.$qualification -or $Bench.raw_gate -eq 'unknown') { return }
     $current = (Read-RouterRoster).roster.jobs.($Request.job)
-    # Without tier objects the scalar drives both tiers, so a hard-tier swap would also lower standard work.
-    if ($tier -eq 'hard' -and -not $current.PSObject.Properties['first_efforts']) { return }
+    # Without tier objects the scalar drives both tiers; neither tier may change it independently.
+    if ($Request.job -in @('coder','deep-thinker') -and -not $current.PSObject.Properties['first_efforts']) { return }
     if ($current.first -cne $Request.incumbent -or (Get-RouterTierEffort $current first $tier) -cne $Request.effort) { return }
     $next = if ($writer) { @{low='medium';medium='high';high='xhigh'}[[string]$Request.effort] } else { @{medium='low';high='medium'}[[string]$Request.effort] }
     $laneName = if ($writer) { 'effort_up' } else { 'effort_down' }

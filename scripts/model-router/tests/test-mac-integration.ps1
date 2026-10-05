@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../run-router-cadence.ps1')
 . (Join-Path $PSScriptRoot '../register-router-schedules.ps1')
 . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
+. (Join-Path $PSScriptRoot '../request-frontier.ps1')
 $script:passed = 0
 function Assert-True([bool]$Condition, [string]$Name) {
     if (-not $Condition) { throw "FAIL: $Name" }
@@ -80,6 +81,12 @@ try {
     $catalog = [pscustomobject]@{models=@([pscustomobject]@{slug='gpt-6.1-sol';visibility='list'})}
     $approvedPick = Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog
     Assert-True ($approvedPick.roster_source -eq 'shared' -and $approvedPick.model -eq $r.jobs.coder.first -and $approvedPick.effort -eq 'low') 'Mac resolver uses synced approved slot and effort'
+    $r.jobs.coder | Add-Member tie_evidence ([pscustomobject]@{tier='standard';run_id='mac-tie';bank_hash='synthetic';approved_at=$r.approved_at;configurations=@{candidate=@{model=$r.jobs.coder.first;effort=$r.jobs.coder.first_effort};incumbent=@{model=$r.jobs.coder.backup;effort=$r.jobs.coder.backup_effort}}})
+    Write-RouterJsonAtomic $snapshot $r
+    $macTiePick = Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog
+    Assert-True ($macTiePick.model -eq $r.jobs.coder.first -and $macTiePick.alerts -notcontains 'roster-tie-invalid:coder' -and -not (Test-Path (Join-Path $mac 'bench/bank-hash.json'))) 'Mac skips published tie without bench hash or invalid alert'
+    Assert-Owner { Request-RouterFrontier -Category analysis -ProblemPath 'missing' -AttemptPaths @('missing') -AttemptVendor codex -StateDir $mac -ScrutinyInvoker { throw 'unexpected scrutiny' } } 'Mac frontier request refused before input reads or scrutiny'
+    Assert-True (-not (Test-Path (Join-Path $mac 'frontier-requests'))) 'Mac frontier guard creates no request state'
     $null = Get-RouterStateDir
     Write-RouterJsonAtomic -Path (Join-Path $mac 'roster.json') -Value (New-TestRoster)
     $r.approved = $false

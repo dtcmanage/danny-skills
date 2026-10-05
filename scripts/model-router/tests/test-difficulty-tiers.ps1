@@ -100,7 +100,7 @@ try {
         Check ($proposal.tier -eq $tier -and $proposal.status -eq 'pending') "$tier effort proposal filed separately"
     }
     Check ((Resolve-RouterModel -Category routine-coding -Difficulty hard -DifficultyReason 'constraints' -Catalog $catalog).effort -eq 'high') 'pending proposals do not change routing'
-    $approvalOutput = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -ApproveEffort -Job coder -Difficulty hard 2>&1 | Out-String
+    $approvalOutput = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -ApproveEffort -Job coder -Difficulty Hard 2>&1 | Out-String
     Check ($LASTEXITCODE -eq 0) "hard effort approval: $approvalOutput"
     $approved = (Read-RouterRoster).roster.jobs.coder
     Check ($approved.first_efforts.standard -eq 'medium' -and $approved.first_efforts.hard -eq 'medium') 'approval changes only the named tier'
@@ -165,12 +165,54 @@ try {
     Check ($tierOutput -match 'Tie approval dropped' -and -not (Read-RouterRoster).roster.jobs.'deep-thinker'.PSObject.Properties['tie_evidence']) 'tier approval drops tie evidence recorded at other efforts'
     & (Join-Path $PSScriptRoot '../approve-roster.ps1') -RevokeTiers -Job deep-thinker | Out-Null
     $roster = (Read-RouterRoster).roster
-    $legacySwapPath = Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json'
-    $legacySwap = Read-RouterJsonObject $legacySwapPath
-    $legacySwap.status = 'pending'; Write-RouterJsonAtomic $legacySwapPath $legacySwap
-    & (Join-Path $PSScriptRoot '../approve-roster.ps1') -ApproveEffort -Job coder | Out-Null
-    $legacyEffort = (Read-RouterRoster).roster.jobs.coder
-    Check ($legacyEffort.first_effort -eq 'low' -and -not $legacyEffort.PSObject.Properties['first_efforts']) 'legacy effort approval preserves scalar-only roster'
+    # Release-day reproducer: only standard qualifies, but the scalar also drives hard.
+    foreach ($job in @('coder','deep-thinker')) {
+        $entry = $roster.jobs.$job
+        $entry.first_effort = 'high'; Save-Roster
+        $standardBench = Add-TestBenchEvidence ([pscustomobject]@{tier='standard';shadow=$false;raw_gate='pass';effort_down_qualified=$true;incumbent=@{model=$entry.first;effort='high';passed=1};effort_down=@{model=$entry.first;effort='medium'};report_paths=@{markdown='fixture'}})
+        $hardBench = $standardBench | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+        $hardBench.tier = 'hard'; $hardBench.effort_down_qualified = $false
+        foreach ($tier in @('standard','hard')) {
+            $path = Join-Path $env:DT_MODEL_ROUTER_STATE "effort-proposals/$job-$tier.json"
+            if (Test-Path $path) { Remove-Item -LiteralPath $path }
+        }
+        Save-RouterEffortProposal ([pscustomobject]@{job=$job;candidate=$entry.backup;incumbent=$entry.first;effort='high'}) ([pscustomobject]@{tiers=@($standardBench,$hardBench)})
+        foreach ($label in @('standard','hard','legacy')) {
+            $path = Join-Path $env:DT_MODEL_ROUTER_STATE ("effort-proposals/$job" + $(if ($label -eq 'legacy') { '' } else { "-$label" }) + '.json')
+            Check (-not (Test-Path $path)) "$job/$label no proposal without tiers"
+            $swap = [pscustomobject]@{type='effort-swap';job=$job;model=$entry.first;current_effort='high';proposed_effort='medium';status='pending';report='fixture'}
+            if ($label -ne 'legacy') { $swap | Add-Member tier $label }
+            Write-RouterJsonAtomic $path $swap
+            $difficulty = if ($label -eq 'legacy') { 'standard' } else { $label }
+            Refused { & (Join-Path $PSScriptRoot '../approve-roster.ps1') -ApproveEffort -Job $job -Difficulty $difficulty } "EFFORT_TIERS_NOT_SET:.*-ApproveTiers -Job $job"
+            $swap.status = 'approved'; Write-RouterJsonAtomic $path $swap
+            Refused { & (Join-Path $PSScriptRoot '../approve-roster.ps1') -RevokeEffort -Job $job -Difficulty $difficulty } 'EFFORT_TIERS_NOT_SET'
+            $swap.status = 'pending'; $swap.model = 'stale-model'; Write-RouterJsonAtomic $path $swap
+            & (Join-Path $PSScriptRoot '../approve-roster.ps1') -DeclineEffort -Job $job -Difficulty $difficulty | Out-Null
+            Check ((Read-RouterJsonObject $path).status -eq 'declined') 'decline ignores stale roster and missing evidence'
+            Check ((Read-RouterRoster).roster.jobs.$job.first_effort -eq 'high') 'refused changes and decline preserve scalar'
+            Remove-Item -LiteralPath $path
+        }
+        $legacyPath = Join-Path $env:DT_MODEL_ROUTER_STATE "effort-proposals/$job.json"
+        $swap.status = 'pending'; Write-RouterJsonAtomic $legacyPath $swap
+        & (Join-Path $PSScriptRoot '../approve-roster.ps1') -ApproveTiers -Job $job | Out-Null
+        $closed = Read-RouterJsonObject $legacyPath
+        Check ($closed.status -eq 'superseded' -and $closed.superseded_at -and $closed.note -match 'tiers replaced') 'tier migration supersedes legacy proposal'
+        $display = & (Join-Path $PSScriptRoot '../approve-roster.ps1') -Show | Out-String
+        Check ($display -match "Effort proposal $job,.*superseded" -and $display -notmatch "Effort proposal $job,.*pending") 'Show lists superseded proposal as closed'
+        $roster = (Read-RouterRoster).roster
+    }
+    $entry = (Read-RouterRoster).roster.jobs.coder
+    $hardTiePath = Join-Path $env:DT_MODEL_ROUTER_STATE 'tie-proposals/coder-hard.json'
+    $hardTie = [pscustomobject]@{type='tie';job='coder';tier='hard';run_id='uppercase-hard';bank_hash=(Get-RouterBenchEvidenceContext).task_bank_sha256;status='pending';configurations=@{candidate=@{model=$entry.first;effort=$entry.first_efforts.hard};incumbent=@{model=$entry.backup;effort=$entry.backup_efforts.hard}}}
+    Write-RouterJsonAtomic $hardTiePath $hardTie
+    & (Join-Path $PSScriptRoot '../approve-roster.ps1') -ApproveTie -Job coder -Difficulty Hard | Out-Null
+    Check ((Read-RouterRoster).roster.jobs.coder.tie_evidence.tier -ceq 'hard') 'mixed-case hard tie approval normalized'
+    & (Join-Path $PSScriptRoot '../approve-roster.ps1') -RevokeTie -Job coder -Difficulty HARD | Out-Null
+    Check (-not (Read-RouterRoster).roster.jobs.coder.PSObject.Properties['tie_evidence']) 'uppercase hard tie revocation normalized'
+    $hardTie.status = 'pending'; Write-RouterJsonAtomic $hardTiePath $hardTie
+    & (Join-Path $PSScriptRoot '../approve-roster.ps1') -DeclineTie -Job coder -Difficulty Hard | Out-Null
+    Check ((Read-RouterJsonObject $hardTiePath).status -eq 'declined') 'mixed-case hard tie decline selects hard proposal'
     $roster = $savedRoster | ConvertFrom-Json -Depth 30; Save-Roster
     . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
     $project = Join-Path $fixture.root 'Synthetic Workstation/synthetic-repo'
@@ -205,6 +247,7 @@ try {
     }
     Save-Roster
     $legacyRetry = Resolve-RouterModel -Category routine-coding -RetryAtHardFrom gpt-5.6-sol -DifficultyReason 'Failed standard' -Catalog $catalog
+    Check ($legacyRetry.reason -match 'tiers are not set, effort unchanged' -and $legacyRetry.reason -notmatch 'at hard effort') 'untiered retry reason explains unchanged effort'
     Check ($legacyRetry.model -eq 'gpt-5.6-sol' -and $legacyRetry.effort -eq 'medium') 'hard retry retains an approved older model outside the current ladder'
     $roster.jobs.coder | Add-Member -NotePropertyName first_efforts -NotePropertyValue ([pscustomobject]@{standard='medium'})
     Check (@(Test-RouterRoster $roster) -contains 'ROSTER_TIER_EFFORT: coder/first/hard') 'incomplete tier object refused'
