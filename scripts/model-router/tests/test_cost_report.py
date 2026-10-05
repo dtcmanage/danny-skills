@@ -856,7 +856,9 @@ def test_cost_report_main_writes_discord_summary_json(tmp_path):
         "observed_at_utc": "2026-09-30T21:00:00Z", "resets_at_utc": "2026-10-03T18:00:00Z",
     }), encoding="utf-8")
     usage_path = state / "usage-all-sessions.jsonl"
-    monday, _ = cr.week_bounds_et(2026, 39)
+    # The summary covers the last complete ET week relative to the day the script runs,
+    # so the usage row is placed in that week instead of a fixed one.
+    monday, _ = cr.week_bounds_et(*cr.previous_complete_iso_week(cr.datetime.now(tz=cr.ET_ZONE).date()))
     usage_path.write_text(
         json.dumps(_row("claude", "claude-opus-5-5", monday.isoformat(), input=1_000_000, output=1_000_000)) + "\n",
         encoding="utf-8",

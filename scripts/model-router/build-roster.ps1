@@ -290,7 +290,7 @@ function Invoke-RouterTriggeredComparison {
     $judgeConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
     $judges = $judgeConfig.judges
     $judgeEffort = if ($judgeConfig.PSObject.Properties['judge_effort']) { $judgeConfig.judge_effort } else { (Get-Content (Join-Path $PSScriptRoot 'bench/bench-config.json') -Raw | ConvertFrom-Json).judge_effort }
-    $digest = & python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review import bank_hash; print(bank_hash(Path(sys.argv[1])/"tasks"))' (Join-Path $PSScriptRoot 'bench')
+    $digest = & python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review import bank_hash, private_bank_path; print(bank_hash(Path(sys.argv[1])/"tasks",private_bank_path(Path(sys.argv[2]))))' (Join-Path $PSScriptRoot 'bench') $state
     if ($LASTEXITCODE -ne 0) { throw 'BENCH_IDENTITY_FAILED' }
     try { $bench = & $BenchInvoker $Request }
     catch { $bench = [pscustomobject]@{raw_gate='unknown';gate='unknown';effort_down_qualified=$false;error=$_.Exception.Message} }

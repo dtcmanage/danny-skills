@@ -18,7 +18,7 @@ import tempfile
 from typing import Any, Callable
 from uuid import uuid4
 
-from review import Review, bank_hash
+from review import Review, bank_hash, private_bank_path, task_folders
 
 BENCH = Path(__file__).resolve().parent
 JOBS = {'fast', 'coder', 'deep-thinker', 'writer', 'illustrator'}
@@ -49,9 +49,9 @@ CANDIDATE_INPUTS = {
 }
 
 
-def candidate_prompt(task: Path) -> str:
+def candidate_prompt(task: Path, *, private: bool = False) -> str:
     prompt = (task / 'prompt.md').read_text(encoding='utf-8')
-    for name in CANDIDATE_INPUTS[task.name]:
+    for name in (CANDIDATE_INPUTS.get(task.name, ()) if private else CANDIDATE_INPUTS[task.name]):
         fixture = task / 'fixtures' / name
         prompt += '\n\nSynthetic fixture fixtures/' + name + ':\n' + fixture.read_text(encoding='utf-8')
     return prompt
@@ -205,7 +205,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             except (OSError, ValueError, KeyError):
                 entry = {}
         available = {json.loads(p.read_text(encoding='utf-8')).get('difficulty', 'standard')
-                     for p in tasks.glob('*/task.json')
+                     for folder, _ in task_folders(tasks, private_bank_path(state_dir)).values()
+                     for p in [folder / 'task.json']
                      if json.loads(p.read_text(encoding='utf-8'))['job'] == job}
         if not available <= {'standard', 'hard', 'beyond'}:
             raise ValueError('Invalid task difficulty')
@@ -266,13 +267,14 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     state = state_dir / 'bench'
     review = Review(tasks, state)
     approval = review.refresh()
-    digest = bank_hash(tasks)
-    selected = [p.parent for p in sorted(tasks.glob('*/task.json'))
+    digest = bank_hash(tasks, private_bank_path(state_dir))
+    selected = [p.parent for folder, _ in review.loaded.values()
+                for p in [folder / 'task.json']
                 if json.loads(p.read_text(encoding='utf-8'))['job'] == job
                 and json.loads(p.read_text(encoding='utf-8')).get('difficulty', 'standard') == tier]
     if not selected:
         raise ValueError('No tasks for job')
-    shadow = len(review.ids) != 20 or not approval['approved']
+    shadow = not approval['approved']
     run = state / 'runs' / uuid4().hex
     run.mkdir(parents=True)
     rows: list[dict[str, Any]] = []
@@ -319,9 +321,10 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                     row = {'source': 'bench', 'trigger': trigger, 'job': job, 'tier': tier, 'effort': level,
                            'model': model, 'side': side, 'task_bank_sha256': digest,
                            'task_id': task.name, 'rep': rep, 'attempt': attempt,
+                           'private': review.loaded[task.name][1],
                            'timestamp': datetime.now(timezone.utc).isoformat()}
                     try:
-                        prompt = candidate_prompt(task)
+                        prompt = candidate_prompt(task, private=review.loaded[task.name][1])
                     except OSError as error:
                         response = {'status': 'unknown', 'failure_category': 'environment',
                                     'detail': 'Required candidate input unavailable: ' + str(error)}
@@ -349,7 +352,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                         elif metadata['grader'] == 'rubric':
                             rubric = json.loads((task / 'golden/rubric.json').read_text(encoding='utf-8'))
                             prompt = ((task / 'judge-prompt.md').read_text(encoding='utf-8') + '\n'
-                                      + 'Original request and supplied input evidence:\n' + candidate_prompt(task) + '\n'
+                                      + 'Original request and supplied input evidence:\n' + candidate_prompt(task, private=review.loaded[task.name][1]) + '\n'
                                       + json.dumps(rubric) + '\n' + envelope(answer))
                             scores = []
                             status = 'pass'
@@ -393,7 +396,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                 reps.append(status)
             task_status = 'unknown' if 'unknown' in reps else ('ungraded' if count == 1 else
                           ('pass' if reps.count('pass') >= 2 else 'fail'))
-            results.append({'task_id': task.name, 'status': task_status, 'reps': reps})
+            results.append({'task_id': task.name, 'private': review.loaded[task.name][1], 'status': task_status, 'reps': reps})
         return {'model': model, 'effort': level, 'tasks': results,
                 'passed': sum(t['status'] == 'pass' for t in results),
                 'unknown': sum(t['status'] == 'unknown' for t in results)}
@@ -434,6 +437,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         raw_gate = 'advisory'
     result = {'gate': 'unknown' if raw_gate == 'unknown' else ('advisory' if shadow or tier == 'beyond' or job in {'writer', 'illustrator'} else raw_gate),
               'raw_gate': raw_gate, 'shadow': shadow, 'job': job, 'trigger': trigger,
+              'private_bank_warning': approval.get('private_bank_warning'),
               'task_bank_sha256': digest, 'judge_pair': judges, 'judge_effort': judge_effort,
               'dimension_framework': config.get('dimension_framework', 'provisional'),
               'candidate': candidate_table, 'incumbent': incumbent_table,
@@ -489,6 +493,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
              f"Effort-down qualified: {result['effort_down_qualified']}",
              f"Effort-up qualified: {result['effort_up_qualified']}",
              f"Judge pair: {json.dumps(judges)}; effort: {judge_effort}", f"Bank: {digest}"]
+    if result['private_bank_warning']:
+        lines.append(result['private_bank_warning'])
     for label, score_table in [('Candidate', candidate_table), ('Incumbent', incumbent_table), ('Effort-down', down_table), ('Effort-up', up_table)]:
         if score_table:
             lines += ['', f"{label}: {score_table['model']} / {score_table['effort']}",

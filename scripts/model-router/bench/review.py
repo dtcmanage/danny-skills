@@ -10,6 +10,7 @@ import hashlib
 from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
 from pathlib import Path
 import secrets
 from typing import Any
@@ -20,6 +21,16 @@ TASKS = Path(__file__).resolve().parent / "tasks"
 IGNORED = {"node_modules", "__pycache__", ".pytest_cache"}
 
 
+def private_bank_path(state: Path) -> Path:
+    """Private tasks live beside the router state directory, outside its ignores."""
+    return state.resolve().parent / "bench-private-bank"
+
+
+def reject_reserved_folder(tasks: Path) -> None:
+    if any(p.is_dir() and p.name.casefold() == "private" for p in tasks.glob("*")):
+        raise ValueError(f"In-repo task folder 'private' is reserved: {tasks / 'private'}")
+
+
 def bank_files(tasks: Path) -> list[Path]:
     """Versioned bank bytes, excluding generated dependency/cache directories."""
     return sorted((p for p in tasks.rglob("*") if p.is_file()
@@ -27,24 +38,106 @@ def bank_files(tasks: Path) -> list[Path]:
                   key=lambda p: p.relative_to(tasks).as_posix())
 
 
-def bank_hash(tasks: Path) -> str:
+def private_files(private: Path) -> list[Path]:
+    """Enumerate private bytes without silently swallowing permission errors."""
+    def fail(error: OSError) -> None:
+        raise error
+    if not private.exists():
+        return []
+    if not private.is_dir():
+        raise OSError(f"Private bank is not a folder: {private}")
+    files = []
+    for directory, folders, names in os.walk(private, onerror=fail):
+        folders[:] = [name for name in folders if name not in IGNORED]
+        files.extend(Path(directory) / name for name in names
+                     if name not in IGNORED and (Path(directory) / name).is_file())
+    return sorted(files, key=lambda p: p.relative_to(private).as_posix())
+
+
+def bank_hash(tasks: Path, private: Path | None = None) -> str:
+    reject_reserved_folder(tasks)
     digest = hashlib.sha256()
-    for path in bank_files(tasks):
-        name = path.relative_to(tasks).as_posix().encode()
-        data = path.read_bytes()
+    entries = [(p.relative_to(tasks).as_posix(), p.read_bytes()) for p in bank_files(tasks)]
+    if private is not None:
+        try:
+            entries += [("private/" + p.relative_to(private).as_posix(), p.read_bytes())
+                        for p in private_files(private)]
+        except OSError:
+            # An unavailable bank cannot retain its approved identity. Review and
+            # reports explain the loss using the approval's private task ids.
+            pass
+    for relative, data in entries:
+        name = relative.encode()
         digest.update(len(name).to_bytes(8, "big") + name)
         digest.update(len(data).to_bytes(8, "big") + data)
     return digest.hexdigest()
+
+
+def task_folders(tasks: Path, private: Path | None = None) -> dict[str, tuple[Path, bool]]:
+    reject_reserved_folder(tasks)
+    loaded = {p.parent.name: (p.parent, False) for p in sorted(tasks.glob("*/task.json"))}
+    seen: set[str] = set()
+    for task_id in loaded:
+        if task_id.casefold() in seen:
+            raise ValueError(f"Duplicate task id: {task_id}")
+        seen.add(task_id.casefold())
+    if private is not None:
+        try:
+            files = private_files(private)
+            # Check readability before exposing a partially available bank.
+            for path in files:
+                path.read_bytes()
+            folders = [p for p in private.iterdir() if p.is_dir() and p.name not in IGNORED] if private.exists() else []
+        except OSError:
+            files, folders = [], []
+        for path in files:
+            if path.name == "task.json" and len(path.relative_to(private).parts) != 2:
+                raise ValueError(f"Private task.json is at an invalid depth in folder: {path.parent}")
+        for folder in sorted(folders):
+            path = folder / "task.json"
+            if path not in files:
+                raise ValueError(f"Private task folder has no parseable task.json: {folder}")
+            try:
+                task = json.loads(path.read_text(encoding="utf-8"))
+            except (ValueError, UnicodeError) as error:
+                raise ValueError(f"Invalid JSON in private task file: {path}") from error
+            if not isinstance(task, dict) or any(key not in task for key in ("job", "grader", "category")):
+                raise ValueError(f"Private task file must be an object with job, grader and category: {path}")
+        for path in files:
+            if path.name != "task.json" or len(path.relative_to(private).parts) != 2:
+                continue
+            task_id = path.parent.name
+            if task_id.casefold() in seen:
+                raise ValueError(f"Duplicate task id in in-repo and private banks: {task_id}")
+            seen.add(task_id.casefold())
+            loaded[task_id] = (path.parent, True)
+    return dict(sorted(loaded.items()))
+
+
+def private_bank_warning(tasks: Path, private: Path, approval: dict[str, Any]) -> str | None:
+    if not approval.get("private_task_ids") or (not approval.get("private_bank_warning")
+            and approval.get("task_bank_sha256") == bank_hash(tasks, private)):
+        return None
+    try:
+        if not private.exists():
+            raise FileNotFoundError(private)
+        for path in private_files(private):
+            path.read_bytes()
+    except OSError:
+        return f"The private bank folder {private.resolve()} is missing or unreadable; approval is reset."
+    return None
 
 
 class Review:
     def __init__(self, tasks: Path, state: Path) -> None:
         self.tasks = tasks.resolve()
         self.state = state.resolve()
+        self.private = private_bank_path(self.state.parent)
         self.approval_path = self.state / "golden-approval.json"
         self.artifact_path = self.state / "review" / f"{date.today().isoformat()}-golden-review.html"
         self.token = secrets.token_urlsafe(32)
-        self.ids = sorted(p.parent.name for p in self.tasks.glob("*/task.json"))
+        self.loaded = task_folders(self.tasks, self.private)
+        self.ids = list(self.loaded)
         if not self.ids:
             raise ValueError("Task bank is empty")
         self.refresh()
@@ -54,7 +147,7 @@ class Review:
         temporary = self.approval_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
         temporary.replace(self.approval_path)
-        digest = bank_hash(self.tasks)
+        digest = bank_hash(self.tasks, self.private)
         hash_path = self.state / "bank-hash.json"
         temporary_hash = hash_path.with_suffix(".tmp")
         temporary_hash.write_text(json.dumps({"task_bank_sha256": digest,
@@ -62,23 +155,34 @@ class Review:
         temporary_hash.replace(hash_path)
 
     def refresh(self) -> dict[str, Any]:
-        self.ids = sorted(p.parent.name for p in self.tasks.glob("*/task.json"))
+        self.loaded = task_folders(self.tasks, self.private)
+        self.ids = list(self.loaded)
         if not self.ids:
             raise ValueError("Task bank is empty")
-        current = bank_hash(self.tasks)
+        current = bank_hash(self.tasks, self.private)
         try:
             value = json.loads(self.approval_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
             value = {}
-        if not isinstance(value, dict) or value.get("task_bank_sha256") != current:
+        if not isinstance(value, dict):
+            value = {}
+        warning = private_bank_warning(self.tasks, self.private, value)
+        private_ids = [task_id for task_id, (_, is_private) in self.loaded.items() if is_private]
+        covered_ids = value.get("private_task_ids", []) if warning else private_ids
+        if value.get("task_bank_sha256") != current:
             value = {"schema_version": 1, "task_bank_sha256": current,
                      "dimension_framework": "provisional", "approved": False,
                      "tasks": {task_id: "pending" for task_id in self.ids}}
+        value["private_task_ids"] = covered_ids
+        value["private_bank_warning"] = warning
         choices = value.get("tasks", {})
         if not isinstance(choices, dict):
             choices = {}
         value["tasks"] = {task_id: choices.get(task_id, "pending") for task_id in self.ids}
         value["approved"] = all(choice == "approved" for choice in value["tasks"].values())
+        if value["approved"]:
+            value["private_task_ids"] = private_ids
+            value["private_bank_warning"] = None
         self.save(value)
         self.artifact_path.parent.mkdir(parents=True, exist_ok=True)
         self.artifact_path.write_text(self.render(value), encoding="utf-8")
@@ -92,6 +196,9 @@ class Review:
             raise ValueError("Invalid task or choice")
         value["tasks"][task_id] = choice
         value["approved"] = all(v == "approved" for v in value["tasks"].values())
+        if value["approved"]:
+            value["private_task_ids"] = [task_id for task_id, (_, is_private) in self.loaded.items() if is_private]
+            value["private_bank_warning"] = None
         self.save(value)
         self.artifact_path.write_text(self.render(value), encoding="utf-8")
         return True
@@ -99,9 +206,9 @@ class Review:
     def render(self, value: dict[str, Any]) -> str:
         sections = []
         for task_id in self.ids:
-            task = self.tasks / task_id
+            task, is_private = self.loaded[task_id]
             metadata = json.loads((task / "task.json").read_text(encoding="utf-8"))
-            parts = [f'<section id="{escape(task_id, quote=True)}"><h2>{escape(task_id)}</h2>',
+            parts = [f'<section id="{escape(task_id, quote=True)}"><h2>{escape(task_id)}{" (private)" if is_private else ""}</h2>',
                      f'<p>Category: {escape(str(metadata["category"]))} · Choice: '
                      f'<strong>{escape(value["tasks"][task_id])}</strong></p>']
             paths = [task / "prompt.md"]
@@ -129,12 +236,13 @@ class Review:
                 '@media(max-width:600px){.flow{font-size:14px}.flow text{font-size:14px}}'
                 '</style><h1>Internal bench golden review</h1>'
                 f'<p id="status">{status}</p><p>Dimension framework: provisional</p>'
+                + (f'<p>{escape(value["private_bank_warning"])}</p>' if value.get("private_bank_warning") else '') +
                 f'<p>Bank SHA256: <code>{value["task_bank_sha256"]}</code></p>'
                 '<p>Use the loopback review server to save choices. Each task requires your approval.</p>'
                 '<svg class="flow" viewBox="0 0 960 300" role="img" aria-labelledby="flow-title flow-desc" '
                 'xmlns="http://www.w3.org/2000/svg"><title id="flow-title">Golden review flow</title>'
                 '<desc id="flow-desc">Each task starts pending and can be approved or marked needs change. '
-                'All 20 tasks approved makes the bank approved. Any bank byte or path edit resets every task to pending and returns the bank to shadow mode.</desc>'
+                f'All {len(self.ids)} tasks approved makes the bank approved. Any bank byte or path edit resets every task to pending and returns the bank to shadow mode.</desc>'
                 '<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">'
                 '<path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker></defs>'
                 '<rect class="node" x="24" y="38" width="200" height="68" rx="10"/>'
@@ -146,7 +254,7 @@ class Review:
                 '<text x="409" y="133" text-anchor="middle">needs-change</text>'
                 '<path class="edge" d="M514 54 H594"/>'
                 '<rect class="node approved" x="594" y="24" width="340" height="60" rx="10"/>'
-                '<text x="764" y="61" text-anchor="middle">All 20 approved → bank approved</text>'
+                f'<text x="764" y="61" text-anchor="middle">All {len(self.ids)} approved → bank approved</text>'
                 '<path class="edge" d="M764 84 V190"/>'
                 '<rect class="node changed" x="304" y="190" width="630" height="76" rx="10"/>'
                 '<text x="619" y="222" text-anchor="middle">Any bank byte or path edit</text>'

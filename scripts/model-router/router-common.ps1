@@ -10,7 +10,7 @@ function Get-RouterBenchEvidenceContext {
         if ($cmd) { $python = $cmd.Source; break }
     }
     if (-not $python) { throw 'BENCH_IDENTITY_FAILED: python not found on PATH' }
-    $raw = & $python -c 'import sys,json; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review import bank_hash; p=Path(sys.argv[1])/"tasks"; print(json.dumps({"task_bank_sha256":bank_hash(p),"rubric_jobs":sorted({json.loads(t.read_text(encoding="utf-8"))["job"] for t in p.glob("*/task.json") if json.loads(t.read_text(encoding="utf-8"))["grader"]=="rubric"})}))' $benchRoot
+    $raw = & $python -c 'import sys,json; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review import bank_hash, private_bank_path; p=Path(sys.argv[1])/"tasks"; print(json.dumps({"task_bank_sha256":bank_hash(p,private_bank_path(Path(sys.argv[2]))),"rubric_jobs":sorted({json.loads(t.read_text(encoding="utf-8"))["job"] for t in p.glob("*/task.json") if json.loads(t.read_text(encoding="utf-8"))["grader"]=="rubric"})}))' $benchRoot (Get-RouterStatePath)
     if ($LASTEXITCODE -ne 0) { throw 'BENCH_IDENTITY_FAILED' }
     $bank = $raw | ConvertFrom-Json
     $defaults = Get-Content (Join-Path $benchRoot 'bench-config.json') -Raw | ConvertFrom-Json

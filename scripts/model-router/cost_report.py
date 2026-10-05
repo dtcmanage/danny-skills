@@ -913,11 +913,14 @@ def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> lis
     approval = _load_json_object(state_dir / 'bench/golden-approval.json')
     if tasks.is_dir():
         sys.path.insert(0, str(tasks.parent))
-        from review import bank_hash
-        if not isinstance(approval, dict) or approval.get('task_bank_sha256') != bank_hash(tasks) or approval.get('approved') is not True:
+        from review import bank_hash, private_bank_path, private_bank_warning
+        warning = private_bank_warning(tasks, private_bank_path(state_dir), approval if isinstance(approval, dict) else {})
+        if warning:
+            lines.append(warning)
+        if not isinstance(approval, dict) or approval.get('task_bank_sha256') != bank_hash(tasks, private_bank_path(state_dir)) or approval.get('approved') is not True:
             lines.append('the bench golden review is waiting for your OK; comparisons remain in shadow mode.')
     jobs = _live_roster_jobs(state_dir)
-    digest = bank_hash(tasks) if tasks.is_dir() else None
+    digest = bank_hash(tasks, private_bank_path(state_dir)) if tasks.is_dir() else None
     default_config = _load_json_object(repo_root / 'scripts/model-router/bench/bench-config.json') or {}
     config_path = state_dir / 'bench/judge-config.json'
     evidence_config = _load_json_object(config_path) if config_path.exists() else default_config

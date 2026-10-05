@@ -498,5 +498,8 @@
   "scripts/model-router/request-frontier.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/difficulty-router-baseline.json": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/frontier-router-baseline.json": {"consumers": [], "summary_token": "model router"},
-  "scripts/model-router/tests/test-frontier-request.ps1": {"consumers": [], "summary_token": "model router"}
+  "scripts/model-router/tests/test-frontier-request.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/bench/add_task.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/tests/test_bench_private_bank.py": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/fixtures/bench-bank-sha256.txt": {"consumers": [], "summary_token": "model router"}
 }

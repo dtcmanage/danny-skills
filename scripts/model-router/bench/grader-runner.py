@@ -67,7 +67,18 @@ def main() -> int:
                 if importlib.util.find_spec(dependency) is None:
                     raise GraderEnvironment('Missing repo harness dependency: ' + dependency)
         with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
-            runpy.run_path(str(task / 'grader.py'), run_name='__main__')
+            if (task / 'grader.py').exists():
+                runpy.run_path(str(task / 'grader.py'), run_name='__main__')
+            elif kind in {'exact', 'numeric'} and task.parent.name == 'bench-private-bank' and not task.is_relative_to(Path(__file__).resolve().parent / 'tasks'):
+                # Intake tasks reuse the existing JSON graders without a copied
+                # harness. Plain text exact answers use whitespace-trimmed equality.
+                if kind == 'exact' and (task / 'golden/answer.txt').exists():
+                    raise SystemExit(0 if answer.read_text(encoding='utf-8').strip() ==
+                                     (task / 'golden/answer.txt').read_text(encoding='utf-8').strip() else 1)
+                primitives = runpy.run_path(str(Path(__file__).resolve().parent / 'tasks/_grading.py'))
+                raise SystemExit(primitives['main'](task, answer))
+            else:
+                raise GraderEnvironment('Missing task grader')
         status = 'pass'
     except SystemExit as error:
         status = 'pass' if error.code in (None, 0) else 'fail'
