@@ -100,7 +100,7 @@ function Request-RouterFrontier {
         $declineCommand = "pwsh -NoProfile -File scripts/model-router/approve-roster.ps1 -DeclineFrontier -RequestId '$id'"
         $message = "A hard-tier piece needs your frontier decision. The piece waits.`nProblem: $alertSummary`nAttempts: $($frontierAttemptRows.Count); details: $path`nScrutiny: needs_frontier. Failed: $failure`nWhy high is insufficient: $insufficient`nProposed: $($request.proposed_model), high effort.`n$quota`ncd '$((Resolve-Path (Join-Path $PSScriptRoot '../..')).Path.Replace("'","''"))'`n`$env:DT_MODEL_ROUTER_STATE = '$stateCommand'`n$approveCommand`n$declineCommand"
         $alert = Send-RouterAlert -Key "frontier-request:$id" -Message $message -ChatToStderr
-        $resultMessage = if ($alert.sent) { 'The piece waits for the named model approval.' } else { "ALERT_FAILED: request remains pending.`n$approveCommand`n$declineCommand" }
+        $resultMessage = if ($alert.sent) { 'The piece waits for the named model approval.' } else { "ALERT_FAILED: request remains pending.`ncd '$((Resolve-Path (Join-Path $PSScriptRoot '../..')).Path.Replace("'","''"))'`n`$env:DT_MODEL_ROUTER_STATE = '$stateCommand'`n$approveCommand`n$declineCommand" }
         return [pscustomobject]@{verdict='needs_frontier';request_id=$id;waits=$true;alert_sent=[bool]$alert.sent;message=$resultMessage}
     } finally { $env:DT_MODEL_ROUTER_STATE=$prior }
 }
