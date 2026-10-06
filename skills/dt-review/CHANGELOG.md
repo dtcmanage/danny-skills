@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.10 (2026-10-06): Model router: a triggered bench comparison with the same job, models, effort, bank and judges is run once (duplicates are logged, not re-run), and the nightly cadence no longer queues refresh research on its own; research runs only for a new frontier-vendor release or on Danny's call (run-router-cadence.ps1 -Refresh).
+
 - 1.16.9 (2026-10-05): Model router benchmark: private task bank beside the router state, Aider and HLE importers, a Node test grader, ranked quality tasks judged blind by both judges, quality verdicts that gate swap, effort and tie proposals and are rechecked at approval, a per-comparison spend stop, and valid UTF-8 bench output. The in-repo bank is now 25 tasks, so answer sheets need fresh approval.
 
 - 1.16.8 (2026-10-04): Resolve design review rounds at the hard difficulty tier so reviews keep high effort once difficulty tiers are approved.

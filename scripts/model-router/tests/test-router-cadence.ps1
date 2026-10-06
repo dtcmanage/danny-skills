@@ -121,6 +121,14 @@ try {
     $script:researchCalls.Clear()
     [void](Invoke-RouterCadence -Now $now -CheckOnly)
     Assert-True ($script:researchCalls.Count -eq 0) 'CheckOnly scans but runs no research'
+    # Refresh research (drift, stale readings, benchmark versions) is queued only on request, never by the schedule.
+    $script:refreshCalls = 0
+    function Add-RouterCadenceRefreshes { param($Now) $script:refreshCalls++; return 0 }
+    [void](Invoke-RouterCadence -Now $now -CheckOnly)
+    [void](Invoke-RouterCadence -Now $now)
+    Assert-True ($script:refreshCalls -eq 0) 'scheduled cadence queues no refresh research'
+    [void](Invoke-RouterCadence -Now $now -CheckOnly -Refresh)
+    Assert-True ($script:refreshCalls -eq 1) 'Refresh switch queues refresh research'
     function Invoke-RouterModelCheck { throw 'lookup called model check' }
     $catalog = [pscustomobject]@{models=@([pscustomobject]@{slug='gpt-6.1-sol';visibility='list'})}
     # Clear earlier cadence drift marks so the default roster's Codex pick is available for this lookup check.
@@ -238,7 +246,7 @@ try {
         Assert-True ((Test-Path -LiteralPath (Join-Path $failureDir $name)) -eq $pruneFiles[$name]) "pruning keep/delete: $name"
     }
     Assert-True ($pruned.ran.Count -eq 0) 'failure pruning dispatches no research in check-only mode'
-    # Reviewer reproduction: the same stale model on consecutive overnight runs.
+    # Reviewer reproduction: the same stale model on consecutive overnight runs (refreshes are queued only with -Refresh).
     . (Join-Path $PSScriptRoot '../run-router-cadence.ps1')
     $episodeState = Join-Path $temp 'stopped-episode'; [IO.Directory]::CreateDirectory($episodeState) | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $episodeState
@@ -251,17 +259,17 @@ try {
     function Send-RouterAlert { param($Key,$Message) }
     $script:episodeCalls = 0
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:episodeCalls++; throw 'reviewer unexplained failure' }
-    $nightOne = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -WarningAction SilentlyContinue
+    $nightOne = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -Refresh -WarningAction SilentlyContinue
     Assert-True ($script:episodeCalls -eq 2 -and $nightOne.ran.Count -eq 1 -and $nightOne.pending -eq 0) 'stale refresh unexplained stop is consumed after exactly two calls'
     $script:cadenceClock = $script:cadenceClock.AddDays(1)
-    $nightTwo = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -WarningAction SilentlyContinue
+    $nightTwo = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -Refresh -WarningAction SilentlyContinue
     Assert-True ($script:episodeCalls -eq 2 -and $nightTwo.ran.Count -eq 0 -and $nightTwo.pending -eq 0) 'next overnight stale refresh makes zero additional dispatches'
     $script:cadenceClock = $script:cadenceClock.AddDays(1)
     & {
         function Get-Date { return $script:cadenceClock.LocalDateTime }
         [void](Invoke-Expression (($nightOne.needs_you[0] -split 'Re-enqueue: ',2)[1]))
     }
-    $nightThree = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -WarningAction SilentlyContinue
+    $nightThree = Invoke-RouterCadence -Now $script:cadenceClock.LocalDateTime -Refresh -WarningAction SilentlyContinue
     Assert-True ($script:episodeCalls -eq 4 -and $nightThree.ran.Count -eq 1) 'generated operator command restores actual research dispatch'
     Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;

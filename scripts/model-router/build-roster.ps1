@@ -320,16 +320,29 @@ function Invoke-RouterTriggeredComparison {
     $judgeEffort = if ($judgeConfig.PSObject.Properties['judge_effort']) { $judgeConfig.judge_effort } else { (Get-Content (Join-Path $PSScriptRoot 'bench/bench-config.json') -Raw | ConvertFrom-Json).judge_effort }
     $digest = & python -c 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from review import bank_hash, private_bank_path; print(bank_hash(Path(sys.argv[1])/"tasks",private_bank_path(Path(sys.argv[2]))))' (Join-Path $PSScriptRoot 'bench') $state
     if ($LASTEXITCODE -ne 0) { throw 'BENCH_IDENTITY_FAILED' }
-    try { $bench = & $BenchInvoker $Request }
-    catch { $bench = [pscustomobject]@{raw_gate='unknown';gate='unknown';effort_down_qualified=$false;error=$_.Exception.Message} }
-    if ($bench.PSObject.Properties['task_bank_sha256']) { $digest = $bench.task_bank_sha256 }
-    if ($bench.PSObject.Properties['judge_pair']) { $judges = $bench.judge_pair }
-    if ($bench.PSObject.Properties['judge_effort']) { $judgeEffort = $bench.judge_effort }
-    $identity = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$digest/$($judges.claude)/$($judges.codex)/$judgeEffort"))).ToLowerInvariant()
+    $identityOf = { param($d, $j, $e) [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$d/$($j.claude)/$($j.codex)/$e"))).ToLowerInvariant() }
+    $requested = & $identityOf $digest $judges $judgeEffort
+    $identity = $requested
+    $logPath = Join-Path $state 'bench/trigger-log.jsonl'
+    # The same comparison (job, models, effort, bank, judges) is run once. Every research pass used to
+    # re-run it: six identical deep-thinker comparisons a night on 2026-10-03 to 10-05.
+    $previous = @(if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 10 } | Where-Object {
+        $_.PSObject.Properties['requested_identity'] -and $_.requested_identity -ceq $requested -and $_.gate -notin @('unknown','duplicate') -and
+        $_.job -ceq $Request.job -and $_.candidate -ceq $Request.candidate -and $_.incumbent -ceq $Request.incumbent -and [string]$_.effort -ceq [string]$Request.effort } })
+    if ($previous.Count) {
+        $bench = [pscustomobject]@{raw_gate='unknown';gate='duplicate';effort_down_qualified=$false;duplicate_of=$previous[-1].at}
+    } else {
+        try { $bench = & $BenchInvoker $Request }
+        catch { $bench = [pscustomobject]@{raw_gate='unknown';gate='unknown';effort_down_qualified=$false;error=$_.Exception.Message} }
+        if ($bench.PSObject.Properties['task_bank_sha256']) { $digest = $bench.task_bank_sha256 }
+        if ($bench.PSObject.Properties['judge_pair']) { $judges = $bench.judge_pair }
+        if ($bench.PSObject.Properties['judge_effort']) { $judgeEffort = $bench.judge_effort }
+        $identity = & $identityOf $digest $judges $judgeEffort
+    }
     Use-RouterOutcomeMutex -StateDir $state -Action {
-        $dir = Join-Path $state 'bench'; [void][IO.Directory]::CreateDirectory($dir)
-        $row = [pscustomobject]@{trigger=$Trigger;job=$Request.job;candidate=$Request.candidate;incumbent=$Request.incumbent;effort=$Request.effort;judge_effort=$judgeEffort;gate=$bench.gate;at=(Get-Date).ToUniversalTime().ToString('o')}
-        [IO.File]::AppendAllText((Join-Path $dir 'trigger-log.jsonl'), (($row | ConvertTo-Json -Compress)+"`n"), [Text.UTF8Encoding]::new($false))
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $logPath))
+        $row = [pscustomobject]@{trigger=$Trigger;job=$Request.job;candidate=$Request.candidate;incumbent=$Request.incumbent;effort=$Request.effort;judge_effort=$judgeEffort;gate=$bench.gate;identity=$identity;requested_identity=$requested;at=(Get-Date).ToUniversalTime().ToString('o')}
+        [IO.File]::AppendAllText($logPath, (($row | ConvertTo-Json -Compress)+"`n"), [Text.UTF8Encoding]::new($false))
     } | Out-Null
     if ($SendAlerts -and $bench.gate -eq 'unknown') {
         Send-RouterAlerts -Alerts @([pscustomobject]@{key="bench-unknown:$Trigger/$($Request.job)/$($Request.candidate)/$($Request.incumbent)/$($Request.effort)/$identity";message="Bench comparison could not run for $($Request.job). No model change proposed; see bench/trigger-log.jsonl."}) | Out-Null

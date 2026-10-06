@@ -1,4 +1,5 @@
-param([Alias('Now')][datetime]$RouterCadenceCliNow = (Get-Date), [Alias('CheckOnly')][switch]$RouterCadenceCliCheckOnly, [Alias('Json')][switch]$RouterCadenceCliJson)
+param([Alias('Now')][datetime]$RouterCadenceCliNow = (Get-Date), [Alias('CheckOnly')][switch]$RouterCadenceCliCheckOnly,
+    [Alias('Refresh')][switch]$RouterCadenceCliRefresh, [Alias('Json')][switch]$RouterCadenceCliJson)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
@@ -141,15 +142,19 @@ function Remove-RouterResolvedResearchFailures {
 }
 
 function Invoke-RouterCadence {
-    param([datetime]$Now = (Get-Date), [switch]$CheckOnly)
+    param([datetime]$Now = (Get-Date), [switch]$CheckOnly, [switch]$Refresh)
     Assert-RouterWindowsOwner -Action 'Router cadence'
     Publish-RouterRoster
     $state = Get-RouterStateDir
     $queuePath = Join-Path $state 'research-queue.json'
     $added = 0
     # Both daily runs (01:00 full, 13:00 check-only) check for new models, so releases are seen twice a day.
+    # Research runs only for new frontier-vendor releases (and their confirmation and follow-up passes) or on
+    # Danny's call. Refresh passes (drift, stale readings, benchmark versions) are queued only with -Refresh:
+    # the automatic version re-queued the same refreshes every night (2026-10-02 to 10-05) and each pass
+    # re-ran the same bench comparison.
     $check = Invoke-RouterModelCheck -Force -Now $Now; $added += @($check.new_models).Count
-    $added += Add-RouterCadenceRefreshes -Now $Now
+    if ($Refresh) { $added += Add-RouterCadenceRefreshes -Now $Now }
     $zone = [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')
     $eastern = [TimeZoneInfo]::ConvertTime($Now,$zone)
     $ran = [Collections.Generic.List[object]]::new()

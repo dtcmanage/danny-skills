@@ -81,6 +81,18 @@ try {
     Check ($script:sent.Count -eq 6) 'E1 exception identity includes judge effort'
     $triggerRow=Get-Content (Join-Path $a 'bench/trigger-log.jsonl') | Select-Object -Last 1 | ConvertFrom-Json
     Check ($triggerRow.judge_effort -eq 'medium') 'E1 trigger evidence records judge effort'
+    # A completed comparison is never re-run for the same job, models, effort, bank and judges.
+    $script:passRuns=0
+    $passing={param($r) $script:passRuns++; [pscustomobject]@{gate='pass';raw_gate='pass';task_bank_sha256='bank3';judge_pair=@{claude='fable';codex='astra'};judge_effort='medium'}}
+    $first=Invoke-RouterTriggeredComparison $request research $passing
+    $second=Invoke-RouterTriggeredComparison $request research $passing
+    Check ($script:passRuns -eq 1 -and $first.gate -eq 'pass' -and $second.gate -eq 'duplicate' -and $second.raw_gate -eq 'unknown') 'G1 completed comparison runs once'
+    $rows=@(Get-Content (Join-Path $a 'bench/trigger-log.jsonl') | ConvertFrom-Json)
+    Check ($rows[-1].gate -eq 'duplicate' -and $rows[-1].requested_identity -eq $rows[-2].requested_identity -and $script:sent.Count -eq 6) 'G1 duplicate logged without alert'
+    $null=Invoke-RouterTriggeredComparison ([pscustomobject]@{job='coder';candidate='candidate';incumbent=$roster.jobs.coder.first;effort='low'}) research $passing
+    $config.judge_effort='high'; Write-RouterJsonAtomic (Join-Path $a 'bench/judge-config.json') $config
+    $null=Invoke-RouterTriggeredComparison $request research $passing
+    Check ($script:passRuns -eq 3) 'G1 new effort or judge setup runs again'
     # Independent fixture roots exercise publication and the real delivered-log path.
     $priorTransport=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT
     $transport=Join-Path $root 'transport.ps1'
@@ -174,6 +186,11 @@ throw 'Unexpected fake transport request'
     Check ((Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')) -and @(Delivered 'effort-swap:*').Count -eq 0) 'F5 drift respects alerts disabled'
     Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'drift-marks.json')
     Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')
+    $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified -SendAlerts
+    Check (-not (Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')) -and @(Delivered 'effort-swap:*').Count -eq 0) 'F5 drift identical comparison is not re-run'
+    # A fresh drift mark with no prior record of the comparison runs it and delivers the proposal once.
+    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'drift-marks.json')
+    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'bench/trigger-log.jsonl')
     $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified -SendAlerts
     $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified -SendAlerts
     Check (@(Delivered 'effort-swap:*').Count -eq 1) 'F5 drift delivered once'
