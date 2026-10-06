@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.9 (2026-10-05): Model router benchmark: private task bank beside the router state, Aider and HLE importers, a Node test grader, ranked quality tasks judged blind by both judges, quality verdicts that gate swap, effort and tie proposals and are rechecked at approval, a per-comparison spend stop, and valid UTF-8 bench output. The in-repo bank is now 25 tasks, so answer sheets need fresh approval.
+
 - 0.3.8 (2026-10-04): Pick up the shared model router update: difficulty tiers for coder and deep-thinker work, quota tie-break, and the frontier request path. This skill's own routing is unchanged.
 
 - 0.3.7 (2026-10-03): Isolate model router benchmark calls from personal configuration, accept a single fenced answer with surrounding prose, and report first-attempt failures per model.

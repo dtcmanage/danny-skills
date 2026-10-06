@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.20.1
+
+- Model router benchmark: private task bank beside the router state, Aider and HLE importers, a Node test grader, ranked quality tasks judged blind by both judges, quality verdicts that gate swap, effort and tie proposals and are rechecked at approval, a per-comparison spend stop, and valid UTF-8 bench output. The in-repo bank is now 25 tasks, so answer sheets need fresh approval.
+
 ## 2.20.0
 
 - Add difficulty tiers to model routing: chunks run at standard (medium effort) or hard (high effort) through -Difficulty and -DifficultyReason, a failed standard attempt retries at hard with -RetryAtHardFrom before moving a model up, approved ties go to the vendor with more weekly quota left, and work harder than high effort waits on a frontier request Danny approves by name. The benchmark gains grounding tasks that catch made-up answers.
