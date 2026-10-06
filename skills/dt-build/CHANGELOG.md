@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.20.4
+
+- Model router bench: per-call and per-tier timing, call counts and latency in telemetry, a bench ledger (state/bench/ledger.jsonl) recording cost, duration and quota per comparison; an undecided quality verdict no longer qualifies effort-down or swap proposals. Codex judge turns that send rendered images now pass the raw-evidence check (input_image), so Astra image judging works live. A spend baseline must be a reading observed within 10 minutes of the comparison start, so earlier jobs' use no longer halts a later comparison. A vendor-incident block now needs a status-page outage; degraded_performance is recorded but never blocks.
+
 ## 2.20.3
 
 - Model router: new-model bench comparisons run in the overnight cadence with the release research pass (one per job the model does not already hold), never from the daytime catalog check.

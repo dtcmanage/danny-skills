@@ -485,7 +485,7 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
             if method == 'rawResponseItem/completed':
                 if set(params) != {'threadId','turnId','item'}: raw_invalid = True
                 item = params.get('item')
-                if not valid_raw_item(item):
+                if not valid_raw_item(item, images_sent=bool(server.image_paths)):
                     raw_invalid = True
                 elif item.get('type') == 'message' and item.get('role') == 'assistant' and item.get('phase') == 'final_answer':
                     text = ''.join(x['text'] for x in item['content'])
@@ -577,7 +577,21 @@ def schema_valid(value: Any, schema: dict, root: dict) -> bool:
     return True
 
 
-def valid_raw_item(item: Any) -> bool:
+def valid_raw_content(part: Any, role: Any, images_sent: bool) -> bool:
+    if not isinstance(part, dict): return False
+    if part.get('type') in ('input_text', 'output_text'):
+        return isinstance(part.get('text'), str)
+    # A localImage input arrives in the raw user message as an input_image data URL
+    # (codex-rs models.rs ContentItem::InputImage). Only a turn that sent images may carry one.
+    if part.get('type') == 'input_image':
+        return (images_sent and role == 'user'
+            and not (set(part) - {'type', 'image_url', 'detail'})
+            and isinstance(part.get('image_url'), str) and part['image_url'].startswith('data:image/')
+            and (part.get('detail') is None or isinstance(part.get('detail'), str)))
+    return False
+
+
+def valid_raw_item(item: Any, images_sent: bool = False) -> bool:
     if not isinstance(item, dict): return False
     if item.get('type') == 'message':
         return (isinstance(item.get('id'), str) and bool(item['id'])
@@ -585,8 +599,7 @@ def valid_raw_item(item: Any) -> bool:
             and item.get('role') in ('system', 'developer', 'user', 'assistant')
             and item.get('phase') in (None, 'commentary', 'final_answer')
             and isinstance(item.get('content'), list)
-            and all(isinstance(x, dict) and x.get('type') in ('input_text','output_text')
-                    and isinstance(x.get('text'), str) for x in item['content']))
+            and all(valid_raw_content(x, item.get('role'), images_sent) for x in item['content']))
     if item.get('type') == 'reasoning':
         return (isinstance(item.get('id'), str) and bool(item['id'])
             and isinstance(item.get('summary'), list)

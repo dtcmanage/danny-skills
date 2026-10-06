@@ -341,6 +341,17 @@ def test_codex_image_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     item = {'type': 'userMessage', 'id': 'u', 'content': [{'type': 'localImage', 'path': images[0]}]}
     assert transport.valid_item(item, frozenset(images))
     assert not transport.valid_item(item)  # Text-only requests retain their boundary.
+    # The raw user message echoes a sent image as an input_image data URL; only an image turn may carry one.
+    raw = {'id': 'raw-user', 'type': 'message', 'role': 'user',
+           'content': [{'type': 'input_text', 'text': 'x'}, {'type': 'input_image', 'image_url': 'data:image/png;base64,AA==', 'detail': 'auto'}]}
+    assert transport.valid_raw_item(raw, images_sent=True)
+    assert not transport.valid_raw_item(raw)
+    assert not transport.valid_raw_item({**raw, 'role': 'assistant'}, images_sent=True)
+    assert not transport.valid_raw_item({**raw, 'content': [{'type': 'input_image', 'image_url': 'https://example.invalid/a.png'}]}, images_sent=True)
+    assert not transport.valid_raw_item({**raw, 'content': [{'type': 'input_image', 'image_url': 'data:image/png;base64,AA==', 'file_id': 'f'}]}, images_sent=True)
+    with pytest.raises(transport.BoundaryError, match='single-inference raw evidence missing or ambiguous'):
+        transport.run([sys.executable, str(Path(__file__).with_name('fake-appserver.py')), 'raw-image-unrequested'],
+            {'model': 'gpt-6.1-sol', 'effort': 'high', 'prompt': 'Synthetic fixture\nexact bytes'}, tmp_path, 10000)
 
 
 def test_verdict_counts_tasks_instead_of_pooling_reps(tmp_path: Path) -> None:

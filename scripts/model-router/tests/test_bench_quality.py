@@ -71,6 +71,8 @@ def run(tmp_path: Path, job: str = 'coder', preference: str = 'higher',
             return {'status': 'ok', 'answer': request['model'] + ':' + request['effort']}
         if preference in ('no_difference', 'invalid'):
             return {'status': 'ok', 'answer': 'no_difference' if preference == 'no_difference' else 'bad'}
+        if preference == 'judge_outage':
+            return {'status': 'unknown', 'failure_category': 'environment', 'detail': 'quota blocked'}
         outputs = re.findall(r'BEGIN OUTPUT [AB] [a-f0-9]+\n([^\n]+)', request['prompt'])
         assert len(outputs) == 2
         if preference in ('candidate', 'incumbent'):
@@ -363,6 +365,28 @@ def test_spend_lost_reading_reapplies_call_cap_from_loss() -> None:
     assert [r['rule'] for r in spend.figures()['rules_in_force']] == ['weekly_points', 'weekly_points_and_call_cap']
 
 
+def test_spend_old_reading_cannot_seed_baseline() -> None:
+    # The writer halted on 2026-10-06 because a Codex reading observed 2h48m earlier became its
+    # baseline and the intervening jobs' spend was charged to the comparison.
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    old = (now - timedelta(hours=2, minutes=48)).isoformat()
+    recent = (now - timedelta(minutes=3)).isoformat()
+    readings = iter([{'claude': {'used_percent': 55, 'observed_at_utc': recent}, 'codex': {'used_percent': 58, 'observed_at_utc': old}},
+                     {'claude': {'used_percent': 55, 'observed_at_utc': recent}, 'codex': {'used_percent': 65, 'observed_at_utc': now.isoformat()}},
+                     {'claude': {'used_percent': 55, 'observed_at_utc': recent}, 'codex': {'used_percent': 70, 'observed_at_utc': now.isoformat()}},
+                     {'claude': {'used_percent': 55, 'observed_at_utc': recent}, 'codex': {'used_percent': 71, 'observed_at_utc': now.isoformat()}}])
+    spend = engine.ComparisonSpend(lambda: next(readings), {})
+    assert spend.baselines['claude']['used_percent'] == 55 and spend.baselines['codex'] is None and spend.fallback
+    assert spend.figures()['rules_in_force'][-1]['rule'] == 'weekly_points_and_call_cap'
+    spend.check()  # The first fresh Codex reading becomes the baseline instead of halting.
+    assert spend.baselines['codex']['used_percent'] == 65 and not spend.fallback
+    spend.check()  # Exactly five points on continues.
+    with pytest.raises(engine.SpendHalted, match='codex weekly use moved 6 points'):
+        spend.check()
+    assert spend.figures()['baseline_max_age_minutes'] == 10
+
+
 def test_spend_weekly_reset_takes_new_baseline() -> None:
     readings = iter([{'claude': {'used_percent': 80}, 'codex': {'used_percent': 10}},
                      {'claude': {'used_percent': 0}, 'codex': {'used_percent': 10}},
@@ -408,3 +432,36 @@ def test_spend_final_check_skips_call_cap() -> None:
     spend.check(final=True)  # A finished comparison is not discarded for reaching the cap.
     with pytest.raises(engine.SpendHalted, match='4/4'):
         spend.check()
+
+
+def test_judge_outage_never_qualifies_effort_down(tmp_path: Path) -> None:
+    """Live run 2026-10-06: every judge call on the ranked tasks failed (vendor incident plus a
+    protocol error), yet the undecided verdict read as no_difference and qualified an effort-down."""
+    standard = run(tmp_path, preference='judge_outage')['tiers'][0]
+    assert standard['raw_gate'] == 'pass'
+    assert not engine.quality_decided(standard['effort_down_quality_verdict'])
+    assert not standard['effort_down_qualified'] and not standard['effort_up_qualified']
+    assert not standard['swap_qualified'] and not standard['tie_qualified']
+
+
+def test_ledger_rows_record_timing_cost_and_quota(tmp_path: Path) -> None:
+    from bench_ledger import read_ledger, summary_lines
+    result = run(tmp_path, preference='no_difference')
+    rows = read_ledger(tmp_path / 'state' / 'bench')
+    assert [r['tier'] for r in rows] == ['standard'] and rows[0]['job'] == 'coder'
+    row = rows[0]
+    assert row['run_id'] == Path(result['tiers'][0]['report_paths']['json']).parent.name
+    assert row['gate'] == 'pass' and row['tied'] is True and row['quality_verdict'] == 'no_difference'
+    assert row['wall_seconds'] >= 0 and row['started_at_utc'] and row['at_utc']
+    assert row['codex']['calls'] + row['claude']['calls'] == len(result['tiers'][0]['calls'])
+    assert row['codex']['judge_calls'] > 0 and row['codex']['duration_ms_total'] is not None
+    assert row['codex']['dispatch_failures'] == 0 and row['tasks']['candidate']['passed'] == 1
+    assert all(isinstance(c.get('duration_ms'), int) and c['started_at_utc'] for c in result['tiers'][0]['calls'])
+    assert 'coder/standard' in summary_lines(rows)[2]
+    # Backfilling the same report twice in one call, and again later, never duplicates a tier row.
+    import subprocess, sys
+    report = result['tiers'][0]['report_paths']['json']
+    for _ in range(2):
+        subprocess.run([sys.executable, str(BENCH / 'bench_ledger.py'), '--state', str(tmp_path / 'state'),
+                        '--backfill', report, report], check=True, capture_output=True, timeout=60)
+    assert len(read_ledger(tmp_path / 'state' / 'bench')) == 1

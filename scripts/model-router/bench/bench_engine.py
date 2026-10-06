@@ -18,10 +18,12 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any, Callable
 from uuid import uuid4
 
 from review import Review, bank_hash, private_bank_path, task_folders
+from bench_ledger import append_ledger
 
 BENCH = Path(__file__).resolve().parent
 JOBS = {'fast', 'coder', 'deep-thinker', 'writer', 'illustrator'}
@@ -418,8 +420,13 @@ class ComparisonSpend:
         self.point_limit = config.get('spend_stop_points', 5)
         self.call_limit = config.get('spend_stop_model_calls', 450)
         self.stale_hours = config.get('spend_reading_stale_hours', 6)
+        # A baseline must postdate the comparison, give or take this allowance; an older reading
+        # would charge earlier jobs' spend to this comparison (a 2h48m-old Codex reading halted
+        # the writer on 2026-10-06 after nine calls).
+        self.baseline_max_age = config.get('spend_baseline_max_age_minutes', 10) * 60
         self.calls = 0
         self.completed_reports: list[dict[str, Any]] = []
+        self.started = datetime.now(timezone.utc)
         self.start = self.read()
         self.latest = self.start
         self.baselines: dict[str, Any] = {v: None for v in ('claude', 'codex')}
@@ -440,7 +447,7 @@ class ComparisonSpend:
         acquired_at = datetime.now(timezone.utc).isoformat()
         for vendor, reading in self.latest.items():
             value = self.percent(reading)
-            if self.baselines[vendor] is None and value is not None:
+            if self.baselines[vendor] is None and value is not None and self.baseline_fresh(reading):
                 usage = reading.get('usage', reading)
                 self.baselines[vendor] = {'used_percent': value,
                     'observed_at_utc': usage.get('observed_at_utc', acquired_at),
@@ -455,6 +462,19 @@ class ComparisonSpend:
         if not self.rules or self.rules[-1]['rule'] != rule:
             self.rules.append({'rule': rule, 'at_utc': acquired_at, 'model_calls': self.calls,
                                'weekly_vendors': weekly})
+
+    def baseline_fresh(self, reading: Any) -> bool:
+        """A reading can seed a baseline only when observed after the comparison started (minus the allowance).
+        A reading without an observation time counts as taken now."""
+        usage = reading.get('usage', reading) if isinstance(reading, dict) else {}
+        observed = usage.get('observed_at_utc') if isinstance(usage, dict) else None
+        if not observed:
+            return True
+        try:
+            taken = datetime.fromisoformat(str(observed).replace('Z', '+00:00'))
+        except (ValueError, TypeError):
+            return False
+        return (self.started - taken).total_seconds() <= self.baseline_max_age
 
     def read(self) -> dict[str, Any]:
         try:
@@ -513,7 +533,8 @@ class ComparisonSpend:
         return {'start': self.start, 'latest': self.latest, 'model_calls': self.calls,
                 'baselines': self.baselines, 'rules_in_force': self.rules,
                 'fallback_call_cap': self.fallback, 'point_limit': self.point_limit,
-                'call_limit': self.call_limit, 'reading_stale_hours': self.stale_hours}
+                'call_limit': self.call_limit, 'reading_stale_hours': self.stale_hours,
+                'baseline_max_age_minutes': self.baseline_max_age / 60}
 
 
 def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
@@ -531,6 +552,7 @@ def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
                 with Path(completed['report_paths']['markdown']).open('a', encoding='utf-8') as report:
                     report.write('\nComparison spend: ' + json.dumps(result['spend']) + '\n')
             Path(result['report_paths']['json']).write_text(json.dumps(result, indent=2), encoding='utf-8')
+        append_ledger(arguments['state_dir'] / 'bench', result)
     except SpendHalted as error:
         # A completed tier is still part of the halted job comparison, never history evidence.
         for completed in spend.completed_reports:
@@ -547,6 +569,8 @@ def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
                   'report_paths': {'json': str(run / 'report.json'), 'markdown': str(run / 'report.md')}}
         (run / 'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
         (run / 'report.md').write_text(f"Comparison halted: {error}\n\n" + json.dumps(result['spend'], indent=2), encoding='utf-8')
+        for completed in spend.completed_reports:
+            append_ledger(arguments['state_dir'] / 'bench', completed)
         return result
     # Delay proposal publication until all tiers and the final spend check finish.
     for tier in result.get('tiers', [result]):
@@ -608,6 +632,9 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         winners = {result['better'] for result in results if result['tier'] != 'beyond' and result['better'] is not None}
         combined['better'] = next(iter(winners)) if len(winners) == 1 and all(result['raw_gate'] != 'unknown' for result in results if result['tier'] != 'beyond') else None
         combined['telemetry'] = summarize_calls(combined['calls'], prices or {})
+        combined['started_at_utc'] = results[0]['started_at_utc']
+        combined['finished_at_utc'] = results[-1]['finished_at_utc']
+        combined['wall_seconds'] = round(sum(result['wall_seconds'] for result in results), 1)
         combined['proposed_relabels'] = [row for result in results for row in result.get('proposed_relabels', [])]
         gates = [result['gate'] for result in combined['tiers']]
         combined['gate'] = ('unknown' if 'unknown' in gates else 'fail' if 'fail' in gates
@@ -663,6 +690,7 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     shadow = not approval['approved']
     run = state / 'runs' / uuid4().hex
     run.mkdir(parents=True)
+    tier_started = datetime.now(timezone.utc)
     rows: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
     judges = config['judges']
@@ -685,6 +713,8 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         else:
             if spend:
                 spend.calls += 1
+            started = datetime.now(timezone.utc).isoformat()
+            clock = time.perf_counter()
             try:
                 request = {'model': model, 'vendor': vendor, 'effort': level,
                            'prompt': prompt, 'purpose': purpose}
@@ -696,7 +726,9 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             except Exception as error:
                 result = {'status': 'unknown', 'failure_category': 'unclassified',
                           'root_cause': 'unverified', 'detail': str(error)}
-            result = {**result, 'quota': quota}
+            # Wall-clock per call feeds the bench ledger (performance over time, not just cost).
+            result = {**result, 'quota': quota, 'started_at_utc': started,
+                      'duration_ms': round((time.perf_counter() - clock) * 1000)}
         calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result, 'effort': level})
         return result
 
@@ -865,7 +897,9 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         (not pass_insufficient or quality_decided(down_quality)) and
         effort_down_qualifies(down_table, incumbent_table,
             {t.name for t in selected if tier == 'hard' or json.loads((t / 'task.json').read_text(encoding='utf-8'))['grader'] == 'grounding'}) and
-        (down_quality is None or down_quality['verdict'] != 'incumbent_better'))
+        # Ranked tasks exist to catch a quality loss at lower effort: judges that never
+        # answered (outage, blocked vendor, protocol failure) are not evidence of no loss.
+        (down_quality is None or (quality_decided(down_quality) and down_quality['verdict'] != 'incumbent_better')))
     raw_gate = 'unknown' if pass_insufficient else compare(candidate_table, incumbent_table)
     if job == 'illustrator' and raw_gate != 'unknown':
         raw_gate = 'advisory'
@@ -891,6 +925,9 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                                  'incumbent': {'model': incumbent, 'effort': incumbent_effort}},
               'shortfall_tasks': max(0, incumbent_table['passed'] - candidate_table['passed']),
               'outcomes': rows, 'calls': calls, 'baseline_drops': [],
+              'started_at_utc': tier_started.isoformat(),
+              'finished_at_utc': datetime.now(timezone.utc).isoformat(),
+              'wall_seconds': round((datetime.now(timezone.utc) - tier_started).total_seconds(), 1),
               'report_paths': {'json': str(run / 'report.json'), 'markdown': str(run / 'report.md'),
                                'golden_review': str(review.artifact_path)}}
     baseline_path = state / 'baseline.json'
@@ -926,7 +963,8 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     known = not pass_insufficient and not candidate_table['unknown'] and not incumbent_table['unknown']
     result['tied'] = tier != 'beyond' and known and quality['candidate'] == quality['incumbent']
     result['better'] = (candidate if quality['candidate'] > quality['incumbent'] else incumbent) if known and not result['tied'] else None
-    result['swap_qualified'] = raw_gate == 'pass' and (quality_verdict is None or quality_verdict['verdict'] != 'incumbent_better')
+    result['swap_qualified'] = raw_gate == 'pass' and (quality_verdict is None or
+        (quality_decided(quality_verdict) and quality_verdict['verdict'] != 'incumbent_better'))
     result['tie_qualified'] = result['tied'] and (quality_verdict is None or
         (quality_decided(quality_verdict) and quality_verdict['verdict'] == 'no_difference'))
     verdict = 'tied' if result['tied'] else (result['better'] or 'unknown')
@@ -1007,12 +1045,24 @@ def summarize_first_attempts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return totals
 
 
+def percentile(values: list[int], point: int) -> int | None:
+    if not values:
+        return None
+    return values[min(len(values) - 1, max(0, math.ceil(len(values) * point / 100) - 1))]
+
+
 def summarize_calls(calls: list[dict[str, Any]], prices: dict[str, Any]) -> dict[str, Any]:
     totals = {}
     for vendor in ('claude', 'codex'):
         lane = [c for c in calls if c['vendor'] == vendor]
+        timed = sorted(c['duration_ms'] for c in lane if isinstance(c.get('duration_ms'), int))
         data = {'measured_calls': 0, 'unmeasured_calls': 0, 'partial_calls': 0, 'unpriced_calls': 0,
                 'priced_subtotal_usd': 0.0, 'tokens': {},
+                'calls': len(lane), 'answer_calls': sum(c.get('purpose') == 'answer' for c in lane),
+                'judge_calls': sum(c.get('purpose') not in (None, 'answer') for c in lane),
+                'dispatch_failures': sum(c.get('status') != 'ok' for c in lane),
+                'duration_ms': {'total': sum(timed), 'p50': percentile(timed, 50), 'p95': percentile(timed, 95),
+                                'max': timed[-1] if timed else None},
                 'quota_before': lane[0]['quota'] if lane else None,
                 'quota_after': lane[-1].get('quota_after') if lane else None}
         for call in lane:

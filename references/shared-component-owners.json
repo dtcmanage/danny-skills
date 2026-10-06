@@ -12,6 +12,7 @@
   "scripts/model-router/bench/appserver-methods.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/bench/bench-config.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/bench/bench_engine.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/bench/bench_ledger.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/bench/codex_appserver.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/bench/generate-fixtures.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/bench/grader-runner.py": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},

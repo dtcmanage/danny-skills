@@ -493,6 +493,16 @@ def test_two_public_runs_match_head(tmp_path: Path, monkeypatch):
         assert result.pop('swap_qualified') is (result['raw_gate'] == 'pass')
         assert result.pop('tie_qualified') is result['tied']
         old.pop('swap_qualified', None), old.pop('tie_qualified', None)
+        # Bench-ledger timing is additive and wall-clock dependent; strip it on both sides.
+        for side in (result, old):
+            assert isinstance(side.get('wall_seconds', 0.0), float)
+            for field in ('started_at_utc', 'finished_at_utc', 'wall_seconds'):
+                side.pop(field, None)
+            for call in side['calls'] + [row['response'] for row in side['outcomes']]:
+                call.pop('started_at_utc', None), call.pop('duration_ms', None)
+            for lane in side['telemetry'].values():
+                for field in ('calls', 'answer_calls', 'judge_calls', 'dispatch_failures', 'duration_ms'):
+                    lane.pop(field, None)
         assert result == old
         assert report == old_report
     assert not review.private_bank_path(state).exists()

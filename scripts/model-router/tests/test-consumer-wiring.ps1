@@ -66,7 +66,7 @@ $script:RouterDiagnosisHttp = {
     if ($Uri -like '*unresolved*') { return [pscustomobject]@{ incidents=@([pscustomobject]@{ id='fixture-incident'; components=@([pscustomobject]@{ id='component' }) }) } }
     $config = Get-Content -Raw (Join-Path $repoRoot 'references/model-router/vendor-status.json') | ConvertFrom-Json
     $lane = if ($Uri -eq $config.codex.components_url) { $config.codex } else { $config.claude }
-    return [pscustomobject]@{ components=@($lane.components | ForEach-Object { [pscustomobject]@{ name=$_; id='component'; status=$(if ($env:DT_FAKE_DIAGNOSIS -in @('incident','offline-incident')) { 'degraded_performance' } else { 'operational' }) } }) }
+    return [pscustomobject]@{ components=@($lane.components | ForEach-Object { [pscustomobject]@{ name=$_; id='component'; status=$(if ($env:DT_FAKE_DIAGNOSIS -in @('incident','offline-incident')) { 'partial_outage' } else { 'operational' }) } }) }
 }
 '@
     $env:DT_BUILD_DISPATCH_SEAMS = $seams

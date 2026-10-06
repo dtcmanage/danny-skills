@@ -12,5 +12,6 @@
   "judge_effort": "high",
   "spend_stop_points": 5,
   "spend_stop_model_calls": 450,
-  "spend_reading_stale_hours": 6
+  "spend_reading_stale_hours": 6,
+  "spend_baseline_max_age_minutes": 10
 }

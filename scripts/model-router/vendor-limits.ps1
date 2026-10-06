@@ -299,6 +299,9 @@ function Get-RouterResumeAfter {
     }
 }
 
+# Statuspage component statuses that take a lane out of service.
+$script:RouterOutageStatuses = @('partial_outage', 'major_outage', 'under_maintenance')
+
 function Get-RouterVendorBlocked {
     param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor, [hashtable]$UsageReadings)
     $now = [datetimeoffset](& $script:RouterDiagnosisClock)
@@ -378,13 +381,20 @@ function Resolve-RouterDispatchFailure {
         $blocks = @(Read-RouterJsonArray -Path $blockPath)
         $remaining = @($blocks | Where-Object {
             -not ($_.vendor -eq $Vendor -and $_.reason -eq 'vendor_incident' -and
-                $reading.components.ContainsKey([string]$_.component) -and $reading.components[$_.component].status -ceq 'operational')
+                $reading.components.ContainsKey([string]$_.component) -and $reading.components[$_.component].status -cnotin $script:RouterOutageStatuses)
         })
         if ($remaining.Count -ne $blocks.Count) { Write-RouterJsonAtomic -Path $blockPath -Value $remaining }
         $missing = @($lane.components | Where-Object { -not $reading.components.ContainsKey([string]$_) })
         if ($missing.Count) { throw "Named component not found: $($missing -join ', ')" }
-        $degraded = @($lane.components | Where-Object { $reading.components[$_].status -cne 'operational' })
-        if (-not $degraded.Count) { $checks.status = 'operational'; $result.detail = 'Named lane components are operational'; return $result }
+        # Only an outage blocks the lane. Statuspage's degraded_performance can stand for days while
+        # calls succeed (OpenAI Responses: degraded since 2026-09-29), so it is recorded, not blocking.
+        $degraded = @($lane.components | Where-Object { $reading.components[$_].status -cin $script:RouterOutageStatuses })
+        $slow = @($lane.components | Where-Object { $reading.components[$_].status -cne 'operational' -and $_ -cnotin $degraded })
+        if (-not $degraded.Count) {
+            if ($slow.Count) { $checks.status = 'degraded'; $result.detail = "Degraded lane component (not blocking): $($slow -join ', ')" }
+            else { $checks.status = 'operational'; $result.detail = 'Named lane components are operational' }
+            return $result
+        }
         $checks.status = 'non_operational'
         # The incident id is a courtesy detail. OpenAI's Statuspage serves components.json but returns 404 for
         # incidents/unresolved.json (checked 2026-10-01), so a failed incident lookup must not turn a real

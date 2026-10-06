@@ -124,9 +124,12 @@ both renders failing is a draw.
 The verdict narrows or adds proposals as follows:
 
 - A model swap still needs the pass-fail gate and the existing winner conditions;
-  it is blocked when the candidate loses on quality at any measured tier.
+  it is blocked when the candidate loses on quality at any measured tier, and
+  when the tier has ranked tasks but its verdict is undecided (judges unavailable,
+  invalid replies or splits only). Draws never qualify a swap.
 - Effort-down compares the lower effort as candidate with the current effort as
-  incumbent. A quality loss blocks it. The writer never proposes effort-down.
+  incumbent. A quality loss blocks it, and so does an undecided verdict at a tier
+  with ranked tasks. The writer never proposes effort-down.
 - Effort-up compares the higher effort as candidate with the current effort as
   incumbent. A quality win can propose the higher effort when both pass-fail
   tables are known and the higher effort has no fewer passes, including equal counts,
@@ -148,8 +151,11 @@ resolving a model remains a lookup.
 At the start of each job comparison the runner records both vendors' weekly
 use, then reads them again between tasks. A move of more than 5 percentage
 points by either vendor halts the comparison; exactly 5 points can continue.
-When a vendor starts without a fresh reading, the runner rechecks between tasks
-and takes its first fresh reading as that vendor's baseline. The 5-point rule
+A baseline must be a reading observed no more than 10 minutes before the
+comparison started (`spend_baseline_max_age_minutes`); an older reading would
+charge earlier jobs' use to this comparison. When a vendor starts without such a
+reading, the runner rechecks between tasks and takes its first fresh reading as
+that vendor's baseline. The 5-point rule
 applies to each vendor once its baseline exists. While either baseline is missing,
 a cap of 450 model calls, including answer and judge calls, applies across the
 whole comparison and all its tiers. If a vendor's reading is later lost, that
@@ -163,8 +169,8 @@ applied, so a comparison that finished is not discarded for reaching the cap.
 The report's Codex quota column shows the weekly window. Readings marked stale, with future timestamps
 or older than 6 hours are unavailable. Codex use comes from the 10080-minute
 weekly window; the 300-minute window is not spend-stop evidence.
-`spend_stop_points`, `spend_stop_model_calls` and `spend_reading_stale_hours` in
-`bench-config.json` default to 5, 450 and 6; a persisted
+`spend_stop_points`, `spend_stop_model_calls`, `spend_reading_stale_hours` and
+`spend_baseline_max_age_minutes` in `bench-config.json` default to 5, 450, 6 and 10; a persisted
 `<state>/bench/judge-config.json` that lacks these keys takes them from
 `bench-config.json`. Reports record the rules in force,
 each baseline and its time, latest readings and call count. A halted comparison
@@ -172,6 +178,30 @@ marks its report and any completed per-tier reports `halted`; discrimination
 history ignores halted runs. It files no proposal and exits without error so the
 next job can still report.
 
+## Bench ledger and timing
+
+Every model call records `started_at_utc` and `duration_ms`; every tier records
+`started_at_utc`, `finished_at_utc` and `wall_seconds`, and a multi-tier job sums
+them. Per-vendor telemetry adds `calls`, `answer_calls`, `judge_calls`,
+`dispatch_failures` and `duration_ms` (`total`, `p50`, `p95`, `max`) beside the
+existing token, priced-cost and quota readings.
+
+The engine appends one row per finished tier to `<state>/bench/ledger.jsonl`
+(halted comparisons append the tiers that completed). A row carries the job, tier,
+trigger, both configurations, bank hash, judges and judge effort, gate, verdict,
+tasks passed per table, answer reps, wall time, and per vendor the call counts,
+tokens, priced dollars, call latency and weekly-quota points moved. Reports stay
+the evidence; the ledger is the long-run statistics record for assessing cost,
+duration and quota per comparison over time.
+
+```powershell
+cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills\scripts\model-router\bench"
+python bench_ledger.py --state "<state>" --summary
+python bench_ledger.py --state "<state>" --backfill "<run>\report.json"
+```
+
+Backfill skips run ids already in the ledger. Ledger writes never fail a
+comparison.
 
 ## Approved quota ties
 
@@ -212,7 +242,12 @@ exactly 5.0 or less keeps first choice. Both observation times use the same US
 Eastern format, and the reason describes the final chosen model after overrides.
 
 Lane, drift, escalation, 95 percent quota blocks, vendor incident blocks and
-protected handling retain precedence. Ordinary Claude usage refreshes, stale
+protected handling retain precedence. A vendor incident block needs a monitored
+status-page component in outage (`partial_outage`, `major_outage` or
+`under_maintenance`) at the time a dispatch fails; `degraded_performance` is
+recorded in the diagnosis (`checks.status = degraded`) but never blocks, because
+vendors leave it standing for days while calls succeed. The block clears when the
+component is no longer in outage. Ordinary Claude usage refreshes, stale
 incident recovery and the bounded Codex catalog retry retain their existing
 behavior. A tie-selected vendor and a catalog fallback undergo the ordinary
 block evaluation, including its bounded Claude refresh. The weekly comparison

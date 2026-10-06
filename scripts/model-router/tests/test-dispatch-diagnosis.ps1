@@ -81,7 +81,11 @@ try {
         Reset-Fixture $vendor
         $script:components[0].status = 'degraded_performance'
         $result = Invoke-Diagnosis $vendor
-        Assert-True ($result.verdict -eq 'vendor_incident' -and $result.incident_id -eq 'lane-incident' -and $result.detail.Contains($script:components[0].name)) "$vendor degraded named component links matching incident"
+        Assert-True ($result.verdict -eq 'unexplained' -and $result.checks.status -eq 'degraded' -and $result.detail.Contains($script:components[0].name) -and -not (Test-Path (Join-Path $temp 'vendor-blocks.json'))) "$vendor degraded named component is recorded without a block"
+        Reset-Fixture $vendor
+        $script:components[0].status = 'partial_outage'
+        $result = Invoke-Diagnosis $vendor
+        Assert-True ($result.verdict -eq 'vendor_incident' -and $result.incident_id -eq 'lane-incident' -and $result.detail.Contains($script:components[0].name)) "$vendor outage named component links matching incident"
     }
     Reset-Fixture
     $script:components[-1].status = 'major_outage'

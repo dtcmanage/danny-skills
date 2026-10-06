@@ -118,6 +118,10 @@ for line in sys.stdin:
   if scenario=='usage-total-missing':total=None
   if scenario!='usage-missing':event('thread/tokenUsage/updated',dict(base,tokenUsage={'last':last,'total':total}))
   if scenario in ('usage-duplicate','usage-retry'):event('thread/tokenUsage/updated',dict(base,tokenUsage={'last':last,'total':total}))
+  # The live server echoes the user turn as a raw message first; a localImage input arrives as an input_image data URL.
+  user_content=[{'type':'input_text','text':'Synthetic fixture\nexact bytes'}]
+  if scenario in ('images','raw-image-unrequested'):user_content.append({'type':'input_image','image_url':'data:image/png;base64,c3ludGhldGljIFBORw==','detail':'auto'})
+  event('rawResponseItem/completed',dict(base,item={'id':'raw-user','type':'message','role':'user','content':user_content}))
   raw={'id':'raw-final','type':'message','role':'assistant','phase':'final_answer','content':[{'type':'output_text','text':'synthetic answer'}]}
   if scenario!='raw-missing':event('rawResponseItem/completed',dict(base,item={'type':'function_call'} if scenario=='raw-tool' else raw))
   if scenario not in ('raw-missing','usage-missing'):
