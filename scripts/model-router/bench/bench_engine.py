@@ -158,9 +158,22 @@ def effort_down_qualifies(candidate: dict[str, Any], incumbent: dict[str, Any],
 
 def has_informative_evidence(tables: list[dict[str, Any]], excluded: set[str],
                              quality_verdict: dict[str, Any] | None = None) -> bool:
-    return bool(quality_verdict and any(t['candidate_wins'] or t['incumbent_wins']
-        for t in quality_verdict['tasks'])) or any(task['task_id'] not in excluded
+    return quality_decided(quality_verdict) or any(task['task_id'] not in excluded
         for table in tables for task in table['tasks'])
+
+
+def quality_decided(verdict: dict[str, Any] | None) -> bool:
+    """Outages, invalid replies and split judge votes alone establish no evidence."""
+    return bool(verdict and any(t['candidate_wins'] or t['incumbent_wins'] or
+        any(len(rep.get('judges', [])) == 2 and all(j.get('reply') == 'no_difference'
+            for j in rep['judges']) for rep in t.get('reps', []))
+        for t in verdict.get('tasks', [])))
+
+
+def quality_evidence(verdict: dict[str, Any] | None, run_id: str) -> dict[str, Any] | None:
+    if verdict is None:
+        return None
+    return {key: verdict[key] for key in ('job', 'tier', 'configurations', 'verdict')} | {'run_id': run_id}
 
 
 def ranked_order(run_id: str, task_id: str, rep: int, judge: str) -> tuple[int, list[str]]:
@@ -205,11 +218,13 @@ def render_ranked(task: Path, answer: str, png: Path) -> dict[str, Any]:
 
 def rank_tasks(tasks: list[Path], *, run: Path, job: str, tier: str,
                configurations: dict[str, Any], judges: dict[str, str], judge_effort: str,
-               call: Callable[..., dict[str, Any]], renderer: Callable[..., dict[str, Any]]) -> dict[str, Any] | None:
+               call: Callable[..., dict[str, Any]], renderer: Callable[..., dict[str, Any]],
+               between_tasks: Callable[[], None] = lambda: None) -> dict[str, Any] | None:
     if not tasks:
         return None
     results = []
     for task in tasks:
+        between_tasks()
         metadata = json.loads((task / 'task.json').read_text(encoding='utf-8'))
         result: dict[str, Any] = {'task_id': task.name, 'candidate_wins': 0, 'incumbent_wins': 0,
             'draws': 0, 'reps': [], 'disagreements': [], 'invalid_replies': [], 'render_failures': []}
@@ -321,10 +336,12 @@ def discrimination(tables: list[dict[str, Any]], state: Path, job: str, tier: st
                 previous = json.loads(path.read_text(encoding='utf-8'))
             except (OSError, ValueError):
                 continue
+            if previous.get('halted'):
+                continue
             comparisons = previous.get('tiers', [previous])
             if previous.get('beyond'):
                 comparisons = [*comparisons, previous['beyond']]
-            comparison = next((r for r in comparisons if r.get('job') == job and r.get('tier', 'standard') == tier
+            comparison = next((r for r in comparisons if not r.get('halted') and r.get('job') == job and r.get('tier', 'standard') == tier
                 and any(t['task_id'] == task_id for t in r.get('candidate', {}).get('tasks', []))), None)
             if comparison is None:
                 continue
@@ -355,7 +372,7 @@ def baseline_key(job: str, model: str, effort: str | None, digest: str,
 
 
 def save_tie_proposal(state_dir: Path, result: dict[str, Any], run_id: str) -> None:
-    if result['shadow'] or not result['tied'] or result['tier'] == 'beyond':
+    if result['shadow'] or not result.get('tie_qualified', result['tied']) or result['tier'] == 'beyond':
         return
     try:
         roster = json.loads((state_dir / 'roster.json').read_text(encoding='utf-8'))
@@ -370,6 +387,8 @@ def save_tie_proposal(state_dir: Path, result: dict[str, Any], run_id: str) -> N
     proposal = {key: result[key] for key in ('job', 'tier', 'configurations')}
     proposal.update(type='tie', run_id=run_id, bank_hash=result['task_bank_sha256'],
                     status='pending')
+    if result.get('quality_verdict') is not None:
+        proposal['quality_evidence'] = quality_evidence(result['quality_verdict'], run_id)
     directory = state_dir / 'tie-proposals'
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{result['job']}{'-hard' if result['tier'] == 'hard' else ''}.json"
@@ -388,7 +407,145 @@ def save_tie_proposal(state_dir: Path, result: dict[str, Any], run_id: str) -> N
     temporary.replace(path)
 
 
-def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
+class SpendHalted(Exception):
+    pass
+
+
+class ComparisonSpend:
+    """One job comparison, including all tiers, shares its budget and call count."""
+    def __init__(self, callback: Callable[[], dict[str, Any]], config: dict[str, Any]) -> None:
+        self.callback = callback
+        self.point_limit = config.get('spend_stop_points', 5)
+        self.call_limit = config.get('spend_stop_model_calls', 450)
+        self.stale_hours = config.get('spend_reading_stale_hours', 6)
+        self.calls = 0
+        self.completed_reports: list[dict[str, Any]] = []
+        self.start = self.read()
+        self.latest = self.start
+        self.baselines: dict[str, Any] = {v: None for v in ('claude', 'codex')}
+        self.rules: list[dict[str, Any]] = []
+        # Call count at which some vendor last became uncovered by a weekly baseline.
+        self.uncovered_since: int | None = None
+        self.acquire_baselines()
+
+    @property
+    def fallback(self) -> bool:
+        return any(baseline is None for baseline in self.baselines.values())
+
+    def acquire_baselines(self) -> None:
+        acquired_at = datetime.now(timezone.utc).isoformat()
+        for vendor, reading in self.latest.items():
+            value = self.percent(reading)
+            if self.baselines[vendor] is None and value is not None:
+                usage = reading.get('usage', reading)
+                self.baselines[vendor] = {'used_percent': value,
+                    'observed_at_utc': usage.get('observed_at_utc', acquired_at),
+                    'acquired_at_utc': acquired_at, 'model_calls': self.calls}
+        if not self.fallback:
+            self.uncovered_since = None
+        elif self.uncovered_since is None:
+            self.uncovered_since = self.calls
+        rule = ('call_cap' if all(b is None for b in self.baselines.values()) else
+                'weekly_points_and_call_cap' if self.fallback else 'weekly_points')
+        if not self.rules or self.rules[-1]['rule'] != rule:
+            self.rules.append({'rule': rule, 'at_utc': acquired_at, 'model_calls': self.calls,
+                               'weekly_vendors': [v for v, b in self.baselines.items() if b is not None]})
+
+    def read(self) -> dict[str, Any]:
+        try:
+            readings = self.callback()
+            return {v: readings.get(v) for v in ('claude', 'codex')}
+        except Exception as error:
+            return {v: {'measurement': 'unavailable', 'detail': str(error)} for v in ('claude', 'codex')}
+
+    def percent(self, reading: Any) -> float | None:
+        if not isinstance(reading, dict):
+            return None
+        if reading.get('stale') or reading.get('measurement') in {'stale', 'unavailable'}:
+            return None
+        reading = reading.get('usage', reading)
+        if not isinstance(reading, dict) or reading.get('stale') or reading.get('measurement') in {'stale', 'unavailable'}:
+            return None
+        observed = reading.get('observed_at_utc')
+        if observed:
+            try:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(observed.replace('Z', '+00:00'))).total_seconds()
+                if age < 0 or age > self.stale_hours * 3600:
+                    return None
+            except (ValueError, TypeError):
+                return None
+        value = reading.get('used_percent')
+        return float(value) if type(value) in (int, float) and math.isfinite(value) else None
+
+    def before_call(self) -> None:
+        if self.fallback and self.calls - (self.uncovered_since or 0) >= self.call_limit:
+            uncovered = self.calls - (self.uncovered_since or 0)
+            raise SpendHalted(f'Model-call cap reached ({uncovered}/{self.call_limit}); weekly readings unavailable or stale.')
+
+    def check(self) -> None:
+        self.latest = self.read()
+        for vendor in ('claude', 'codex'):
+            baseline, latest = self.baselines[vendor], self.percent(self.latest[vendor])
+            # A lost reading puts the vendor back under the call cap; a reading below
+            # its baseline is a weekly reset, so the vendor takes a new baseline.
+            if baseline is not None and (latest is None or latest < baseline['used_percent']):
+                self.baselines[vendor] = None
+        self.acquire_baselines()
+        for vendor in ('claude', 'codex'):
+            baseline, latest = self.baselines[vendor], self.percent(self.latest[vendor])
+            if baseline is None or latest is None:
+                continue
+            start = baseline['used_percent']
+            if latest - start > self.point_limit:
+                raise SpendHalted(f'{vendor} weekly use moved {latest - start:g} points ({start:g} to {latest:g}); limit {self.point_limit:g}.')
+        self.before_call()
+
+    def figures(self) -> dict[str, Any]:
+        return {'start': self.start, 'latest': self.latest, 'model_calls': self.calls,
+                'baselines': self.baselines, 'rules_in_force': self.rules,
+                'fallback_call_cap': self.fallback, 'point_limit': self.point_limit,
+                'call_limit': self.call_limit, 'reading_stale_hours': self.stale_hours}
+
+
+def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
+              **arguments: Any) -> dict[str, Any]:
+    """Host-injected weekly readings and a comparison-wide stop; no live calls here."""
+    spend = ComparisonSpend(spend_check, arguments['config']) if spend_check else None
+    try:
+        result = _run_bench(**arguments, spend=spend)
+        if spend:
+            spend.check()
+            result['spend'] = spend.figures()
+            for completed in spend.completed_reports:
+                completed['spend'] = result['spend']
+                Path(completed['report_paths']['json']).write_text(json.dumps(completed, indent=2), encoding='utf-8')
+                with Path(completed['report_paths']['markdown']).open('a', encoding='utf-8') as report:
+                    report.write('\nComparison spend: ' + json.dumps(result['spend']) + '\n')
+            Path(result['report_paths']['json']).write_text(json.dumps(result, indent=2), encoding='utf-8')
+    except SpendHalted as error:
+        # A completed tier is still part of the halted job comparison, never history evidence.
+        for completed in spend.completed_reports:
+            completed.update(halted=True, halt_reason=str(error), spend=spend.figures())
+            Path(completed['report_paths']['json']).write_text(json.dumps(completed, indent=2), encoding='utf-8')
+            with Path(completed['report_paths']['markdown']).open('a', encoding='utf-8') as report:
+                report.write(f'\nComparison halted: {error}\n\n' + json.dumps(completed['spend']) + '\n')
+        run = arguments['state_dir'] / 'bench/runs' / uuid4().hex
+        run.mkdir(parents=True)
+        result = {'job': arguments['job'], 'halted': True, 'halt_reason': str(error),
+                  'gate': 'unknown', 'raw_gate': 'unknown', 'shadow': True,
+                  'effort_down_qualified': False, 'effort_up_qualified': False,
+                  'tied': False, 'better': None, 'spend': spend.figures(),
+                  'report_paths': {'json': str(run / 'report.json'), 'markdown': str(run / 'report.md')}}
+        (run / 'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+        (run / 'report.md').write_text(f"Comparison halted: {error}\n\n" + json.dumps(result['spend'], indent=2), encoding='utf-8')
+        return result
+    # Delay proposal publication until all tiers and the final spend check finish.
+    for tier in result.get('tiers', [result]):
+        save_tie_proposal(arguments['state_dir'], tier, Path(tier['report_paths']['json']).parent.name)
+    return result
+
+
+def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
               effort: str | None, state_dir: Path, tasks: Path,
               config: dict[str, Any], dispatch: Callable[[dict[str, Any]], dict[str, Any]],
               limits: Callable[[str], dict[str, Any]], envelope: Callable[[str], str],
@@ -398,6 +555,7 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
               roster_entry: dict[str, Any] | None = None,
               effort_override: bool = True,
               renderer: Callable[..., dict[str, Any]] = render_ranked,
+              spend: Any = None,
               _tier: str | None = None) -> dict[str, Any]:
     if _tier is None and job in {'coder', 'deep-thinker'}:
         entry = roster_entry
@@ -415,14 +573,19 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         results = []
         for tier in ('standard', 'hard', 'beyond'):
             if tier in available:
-                results.append(run_bench(job=job, candidate=candidate, incumbent=incumbent,
+                results.append(_run_bench(job=job, candidate=candidate, incumbent=incumbent,
                     trigger=trigger, effort=effort, state_dir=state_dir, tasks=tasks, config=config,
                     dispatch=dispatch, limits=limits, envelope=envelope, outcome=outcome,
-                    grade=grade, prices=prices, roster_entry=entry, effort_override=effort_override, renderer=renderer, _tier=tier))
+                    grade=grade, prices=prices, roster_entry=entry, effort_override=effort_override, renderer=renderer, spend=spend, _tier=tier))
         if not results:
             raise ValueError('No tasks for job')
         combined = dict(results[0])
         combined['quality_verdict'] = None
+        for field in ('quality_evidence', 'effort_down_quality_verdict', 'effort_up_quality_verdict',
+                      'effort_down_quality_evidence', 'effort_up_quality_evidence'):
+            combined[field] = None
+        for field in ('swap_qualified', 'tie_qualified', 'effort_down_qualified', 'effort_up_qualified'):
+            combined[field] = False
         combined['tiers'] = [result for result in results if result['tier'] != 'beyond']
         combined['beyond'] = next((result for result in results if result['tier'] == 'beyond'), None)
         combined['outcomes'] = [row for result in results for row in result['outcomes']]
@@ -497,6 +660,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
 
     def call(model: str, level: str | None, prompt: str, purpose: str,
              images: list[str] | None = None) -> dict[str, Any]:
+        if spend:
+            spend.before_call()
         vendor = 'claude' if model.startswith('claude-') else 'codex'
         try:
             quota = limits(vendor)
@@ -509,6 +674,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             result = {'status': 'unknown', 'failure_category': 'environment',
                       'detail': 'Image invocation unsupported by text CLI', 'quota': quota}
         else:
+            if spend:
+                spend.calls += 1
             try:
                 request = {'model': model, 'vendor': vendor, 'effort': level,
                            'prompt': prompt, 'purpose': purpose}
@@ -529,6 +696,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     def table(model: str, level: str | None, side: str) -> dict[str, Any]:
         results = []
         for task in selected:
+            if spend:
+                spend.check()
             metadata = json.loads((task / 'task.json').read_text(encoding='utf-8'))
             if task.name == 'pelican' and trigger != 'manual':
                 results.append({'task_id': task.name, 'status': 'ungraded', 'reps': [],
@@ -644,18 +813,26 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                     'proposed': 'standard' if low_passes >= 2 else 'beyond', 'model': first,
                     'standard_effort': standard, 'hard_effort': hard,
                     'standard_passes': low_passes, 'hard_passes': high_passes})
-    up = {'low': 'medium', 'medium': 'high', 'high': 'xhigh'}.get(incumbent_effort) if job == 'writer' else None
+    up = ({'low': 'medium', 'medium': 'high', 'high': 'xhigh'} if job == 'writer' else
+          {'low': 'medium', 'medium': 'high'}).get(incumbent_effort) if (job == 'writer' or
+          (job in {'coder', 'deep-thinker'} and ranked)) and tier != 'beyond' else None
     up_table = table(incumbent, up, 'effort-up') if up else None
-    quality_verdict = rank_tasks(ranked, run=run, job=job, tier=tier,
-        configurations={'candidate': {'model': candidate, 'effort': candidate_effort},
-                        'incumbent': {'model': incumbent, 'effort': incumbent_effort}},
-        judges=judges, judge_effort=judge_effort, call=call, renderer=renderer)
+    def rank_pair(model: str, level: str | None) -> dict[str, Any] | None:
+        return rank_tasks(ranked, run=run, job=job, tier=tier,
+            configurations={'candidate': {'model': model, 'effort': level},
+                            'incumbent': {'model': incumbent, 'effort': incumbent_effort}},
+            judges=judges, judge_effort=judge_effort, call=call, renderer=renderer,
+            between_tasks=spend.check if spend else lambda: None)
+    quality_verdict = rank_pair(candidate, candidate_effort)
+    # Effort comparisons always put the proposed effort on the candidate side:
+    # lower for effort-down, higher for effort-up; incumbent is the current effort.
+    down_quality = rank_pair(incumbent, down) if down else None
+    up_quality = rank_pair(incumbent, up) if up else None
     uninformative, proposed_drops = discrimination(comparison_tables, state, job, tier, run.name)
     excluded = set(uninformative)
-    # Quality can establish evidence, but M03 does not change the existing
-    # pass-fail gate, parity or proposal qualification rules.
     pass_insufficient = not has_informative_evidence(comparison_tables, excluded)
-    insufficient = not has_informative_evidence(comparison_tables, excluded, quality_verdict)
+    insufficient = not (has_informative_evidence(comparison_tables, excluded, quality_verdict)
+                        or quality_decided(down_quality) or quality_decided(up_quality))
     for score in comparison_tables:
         for task_result in score['tasks']:
             if task_result['task_id'] in excluded:
@@ -669,6 +846,17 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                         and (up_table['passed'] > incumbent_table['passed'] or
                              (up_table['passed'] == incumbent_table['passed'] and up_mean is not None
                               and incumbent_mean is not None and up_mean > incumbent_mean)))
+    if up_quality is not None:
+        up_qualified = bool(up_table is not None and not up_table['unknown'] and not incumbent_table['unknown']
+            and up_table['passed'] >= incumbent_table['passed']
+            and quality_decided(up_quality) and up_quality['verdict'] == 'candidate_better')
+    elif job != 'writer':
+        up_qualified = False  # Null quality retains the pre-M04 non-writer behavior.
+    down_qualified = bool(down_table is not None and
+        (not pass_insufficient or quality_decided(down_quality)) and
+        effort_down_qualifies(down_table, incumbent_table,
+            {t.name for t in selected if tier == 'hard' or json.loads((t / 'task.json').read_text(encoding='utf-8'))['grader'] == 'grounding'}) and
+        (down_quality is None or down_quality['verdict'] != 'incumbent_better'))
     raw_gate = 'unknown' if pass_insufficient else compare(candidate_table, incumbent_table)
     if job == 'illustrator' and raw_gate != 'unknown':
         raw_gate = 'advisory'
@@ -678,10 +866,14 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
               'task_bank_sha256': digest, 'judge_pair': judges, 'judge_effort': judge_effort,
               'dimension_framework': config.get('dimension_framework', 'provisional'),
               'quality_verdict': quality_verdict,
+              'quality_evidence': quality_evidence(quality_verdict, run.name),
+              'effort_down_quality_verdict': down_quality,
+              'effort_up_quality_verdict': up_quality,
+              'effort_down_quality_evidence': quality_evidence(down_quality, run.name),
+              'effort_up_quality_evidence': quality_evidence(up_quality, run.name),
               'candidate': candidate_table, 'incumbent': incumbent_table,
               'effort_down': down_table,
-              'effort_down_qualified': not pass_insufficient and down_table is not None and effort_down_qualifies(down_table, incumbent_table,
-                  {t.name for t in selected if tier == 'hard' or json.loads((t / 'task.json').read_text(encoding='utf-8'))['grader'] == 'grounding'}),
+              'effort_down_qualified': down_qualified,
               'effort_up': up_table, 'effort_up_qualified': up_qualified,
               'tier': tier, 'proposed_relabels': proposed_relabels,
               'uninformative_tasks': uninformative, 'proposed_drops': proposed_drops,
@@ -725,7 +917,9 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     known = not pass_insufficient and not candidate_table['unknown'] and not incumbent_table['unknown']
     result['tied'] = tier != 'beyond' and known and quality['candidate'] == quality['incumbent']
     result['better'] = (candidate if quality['candidate'] > quality['incumbent'] else incumbent) if known and not result['tied'] else None
-    save_tie_proposal(state_dir, result, run.name)
+    result['swap_qualified'] = raw_gate == 'pass' and (quality_verdict is None or quality_verdict['verdict'] != 'incumbent_better')
+    result['tie_qualified'] = result['tied'] and (quality_verdict is None or
+        (quality_decided(quality_verdict) and quality_verdict['verdict'] == 'no_difference'))
     verdict = 'tied' if result['tied'] else (result['better'] or 'unknown')
     lines = [f"Gate: {result['gate']} (raw: {raw_gate}); shadow: {shadow}",
              f"Shortfall: {result['shortfall_tasks']} task(s)",
@@ -761,6 +955,8 @@ def run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         lines += ['', 'Ranked quality: ' + json.dumps(quality_verdict)]
     (run / 'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     (run / 'report.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    if spend:
+        spend.completed_reports.append(result)
     return result
 
 
@@ -853,6 +1049,7 @@ def main() -> None:
     arguments['tasks'] = Path(arguments['tasks'])
     timeout = arguments.pop('grader_timeout', 30)
     result = run_bench(**arguments, dispatch=lambda p: callback('dispatch', p),
+                       spend_check=lambda: callback('spend', None),
                        limits=lambda v: callback('limits', v), envelope=lambda a: callback('envelope', a),
                        outcome=lambda r: callback('outcome', r),
                        grade=lambda t, a: grade_answer(t, a, timeout=timeout))

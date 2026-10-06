@@ -243,6 +243,13 @@ function Complete-RouterDriftBench {
         -not @($declines | Where-Object { $_.job -eq $mark.job -and $_.model -eq $mark.model }).Count -and
         $BenchResults.ContainsKey($_.job) -and $BenchResults[$_.job].raw_gate -ne 'unknown' -and $BenchResults[$_.job].gate -notin @('fail','unknown') -and -not ($_.job -in @('fast','coder','deep-thinker') -and $BenchResults[$_.job].raw_gate -eq 'fail') -and -not $BenchResults[$_.job].tied -and $BenchResults[$_.job].better -eq $roster.jobs.($_.job).backup
     })
+    # Drift swaps use the same per-tier quality veto as research swaps.
+    $marks = @($marks | Where-Object {
+        $bench = $BenchResults[$_.job]
+        $measured = @(if ($bench.PSObject.Properties['tiers']) { $bench.tiers | ForEach-Object { [pscustomobject]$_ } } else { $bench })
+        -not ($bench.PSObject.Properties['halted'] -and $bench.halted) -and
+        -not @($measured | Where-Object { $_.PSObject.Properties['quality_verdict'] -and $_.quality_verdict -and $_.quality_verdict.verdict -ceq 'incumbent_better' }).Count
+    })
     $marks = @($marks | Where-Object { -not (Get-RouterBenchProposalEvidenceError -Job $_.job -Evidence (New-RouterBenchProposalEvidence -Job $_.job -Bench $BenchResults[$_.job])) })
     $proposalPath = $null
     if ($marks.Count -gt 0 -and @($marks | Where-Object { $roster.jobs.($_.job).backup }).Count) {
@@ -263,6 +270,10 @@ function Complete-RouterDriftBench {
             $target.backup = $first; $target.backup_vendor = $vendor; $target.backup_effort = $effort
             foreach ($slot in @('first','backup')) { if ($target.PSObject.Properties["${slot}_efforts"]) { $target.("${slot}_efforts").standard = $target.("${slot}_effort") } }
             $changes += [pscustomobject]@{job=$mark.job;slot='first';from=$first;to=$target.first;evidence='Drift; Bench comparison';bench_evidence=(New-RouterBenchProposalEvidence -Job $mark.job -Bench $BenchResults[$mark.job])}
+            $bench = $BenchResults[$mark.job]
+            $measured = @(if ($bench.PSObject.Properties['tiers']) { $bench.tiers | ForEach-Object { [pscustomobject]$_ } } else { $bench })
+            $quality = @($measured | Where-Object { $_.PSObject.Properties['quality_evidence'] -and $_.quality_evidence } | ForEach-Object quality_evidence)
+            if ($quality.Count) { $changes[-1] | Add-Member -NotePropertyName quality_evidence -NotePropertyValue $quality }
         }
         $proposal | Add-Member -NotePropertyName changes -NotePropertyValue $changes -Force
         $dir = Join-Path $state 'roster-proposals'; [IO.Directory]::CreateDirectory($dir) | Out-Null

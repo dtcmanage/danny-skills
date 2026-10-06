@@ -133,6 +133,151 @@ try {
     $before = [IO.File]::ReadAllText((Join-Path $temp 'roster.json'))
     $null = Invoke-Approval -Options @('-DeclineTie','-Job','coder')
     Assert-True ($LASTEXITCODE -eq 0 -and (Read-RouterJsonObject $tiePath).status -ceq 'declined' -and [IO.File]::ReadAllText((Join-Path $temp 'roster.json')) -ceq $before) 'decline persists even stale tie without roster change'
+    # M04: quality evidence is bound to the exact run, tier and configurations.
+    . (Join-Path $PSScriptRoot 'fixtures/bench-proposal-evidence.ps1')
+    Initialize-TestBenchEvidence
+    $qualityRoster=Read-Seed;$qualityRoster.approved=$true;$qualityRoster.approved_at='2026-10-05T12:00:00Z'
+    $qualityContext=Get-RouterBenchEvidenceContext
+    $basis=New-RouterBenchProposalEvidence -Job coder -Bench ([pscustomobject]@{task_bank_sha256=$qualityContext.task_bank_sha256;judge_pair=$qualityContext.judge_pair;judge_effort=$qualityContext.judge_effort})
+    $runDir=Join-Path $temp 'bench/runs/quality-test';[void][IO.Directory]::CreateDirectory($runDir)
+    foreach($kind in @('swap','effort','tie')) {
+        Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $qualityRoster
+        $entry=$qualityRoster.jobs.coder
+        $configs=if($kind -eq 'effort'){
+            [pscustomobject]@{candidate=[pscustomobject]@{model=$entry.first;effort='high'};incumbent=[pscustomobject]@{model=$entry.first;effort='medium'}}
+        } elseif($kind -eq 'tie'){
+            [pscustomobject]@{candidate=[pscustomobject]@{model=$entry.backup;effort='medium'};incumbent=[pscustomobject]@{model=$entry.first;effort='medium'}}
+        } else {
+            [pscustomobject]@{candidate=[pscustomobject]@{model=$qualityRoster.jobs.fast.first;effort='medium'};incumbent=[pscustomobject]@{model=$entry.first;effort='medium'}}
+        }
+        $value=if($kind -eq 'effort'){'candidate_better'}else{'no_difference'}
+        $record=[pscustomobject]@{job='coder';tier='standard';verdict=$value;configurations=$configs;run_id='quality-test'}
+        $verdict=$record | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $verdict | Add-Member -NotePropertyName tasks -NotePropertyValue @([pscustomobject]@{candidate_wins=$(if($kind -eq 'effort'){1}else{0});incumbent_wins=0;reps=@([pscustomobject]@{judges=@([pscustomobject]@{reply='no_difference'},[pscustomobject]@{reply='no_difference'})})})
+        $field=if($kind -eq 'effort'){'effort_up_quality_verdict'}else{'quality_verdict'}
+        $measured=[pscustomobject]@{tier='standard';configurations=$configs};$measured | Add-Member -NotePropertyName $field -NotePropertyValue $verdict
+        $report=[pscustomobject]@{task_bank_sha256=$qualityContext.task_bank_sha256;quality_verdict=$null;tiers=@($measured)}
+        if($kind -eq 'tie') {
+            $proposal=[pscustomobject]@{type='tie';job='coder';tier='standard';status='pending';run_id='quality-test';bank_hash=$qualityContext.task_bank_sha256;configurations=$configs;quality_evidence=$record}
+            $path=Join-Path $temp 'tie-proposals/coder.json';$options=@('-ApproveTie','-Job','coder')
+        } elseif($kind -eq 'effort') {
+            [void][IO.Directory]::CreateDirectory((Join-Path $temp 'effort-proposals'))
+            $proposal=[pscustomobject]@{type='effort-swap';job='coder';tier='standard';status='pending';model=$entry.first;current_effort='medium';proposed_effort='high';bench_evidence=$basis;effort_up=$configs.candidate;quality_evidence=$record}
+            $path=Join-Path $temp 'effort-proposals/coder-standard.json';$options=@('-ApproveEffort','-Job','coder')
+        } else {
+            $proposal=$qualityRoster | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+            $proposal.jobs.coder.first=$configs.candidate.model
+            $proposal | Add-Member -NotePropertyName changes -NotePropertyValue @([pscustomobject]@{job='coder';slot='first';from=$configs.incumbent.model;to=$configs.candidate.model;evidence='Synthetic bench';bench_evidence=$basis;quality_evidence=@($record)})
+            $path=$latest.proposal;$options=@('-Approve','-Jobs','coder')
+        }
+        foreach($defect in @('tier','configuration','verdict','bank','record-tier','record-configuration')) {
+            $bad=$report | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+            $badProposal=$proposal | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+            if($defect -eq 'tier'){$bad.tiers[0].$field.tier='hard'}
+            if($defect -eq 'configuration'){$bad.tiers[0].$field.configurations.candidate.effort='low'}
+            if($defect -eq 'verdict'){$bad.tiers[0].$field.verdict='incumbent_better'}
+            if($defect -eq 'bank'){$bad.task_bank_sha256='obsolete'}
+            $proposalRecord=if($kind -eq 'swap'){$badProposal.changes[0].quality_evidence[0]}else{$badProposal.quality_evidence}
+            if($defect -eq 'record-tier'){$proposalRecord.tier='hard'}
+            if($defect -eq 'record-configuration'){$proposalRecord.configurations.incumbent.model='changed'}
+            Write-RouterJsonAtomic $path $badProposal
+            Write-RouterJsonAtomic (Join-Path $runDir 'report.json') $bad
+            $before=[IO.File]::ReadAllText((Join-Path $temp 'roster.json'))
+            $output=@(Invoke-Approval -Options $options) -join "`n"
+            Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'Quality|quality|bank' -and [IO.File]::ReadAllText((Join-Path $temp 'roster.json')) -ceq $before) "$kind quality approval rejects $defect without roster mutation"
+        }
+        if($kind -eq 'tie') {
+            $bad=$report | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+            $bad.tiers[0].$field.tasks[0].reps=@()
+            Write-RouterJsonAtomic $path $proposal
+            Write-RouterJsonAtomic (Join-Path $runDir 'report.json') $bad
+            $output=@(Invoke-Approval -Options $options) -join "`n"
+            Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'no longer supports') 'Tie approval rejects no_difference based only on unavailable draws'
+        }
+        Write-RouterJsonAtomic $path $proposal
+        Write-RouterJsonAtomic (Join-Path $runDir 'report.json') $report
+        $output=@(Invoke-Approval -Options $options) -join "`n"
+        Assert-True ($LASTEXITCODE -eq 0) "$kind exact recorded quality still approves: $output"
+        if($kind -eq 'effort') {
+            $after=(Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder
+            Assert-True ($after.first_efforts.standard -ceq 'high' -and $after.first_efforts.hard -ceq 'high') 'Quality effort-up changes only the measured tier'
+        }
+    }
+    # A legacy effort proposal has bank evidence but no quality record or run.
+    Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $qualityRoster
+    $legacy=[pscustomobject]@{type='effort-swap';job='coder';tier='standard';status='pending';model=$qualityRoster.jobs.coder.first;current_effort='medium';proposed_effort='low';bench_evidence=$basis;effort_down=[pscustomobject]@{model=$qualityRoster.jobs.coder.first;effort='low'}}
+    Write-RouterJsonAtomic (Join-Path $temp 'effort-proposals/coder-standard.json') $legacy
+    $output=@(Invoke-Approval -Options @('-ApproveEffort','-Job','coder')) -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder.first_efforts.standard -ceq 'low') "Legacy effort proposal still approves: $output"
+
+    # Build actual drift/research proposals whose slot efforts differ from the
+    # explicit medium configurations measured by the triggered comparison.
+    . (Join-Path $PSScriptRoot '../build-roster.ps1')
+    . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
+    function Get-RouterProposalJobVerdict {
+        param($Job,$Incumbent,$Vendor,$Readings,$Prices,$Frontier)
+        [pscustomobject]@{result=$(if($Job -eq 'coder' -and -not $Vendor){$script:researchTarget}else{'keep'});evidence='Synthetic independent research';tradeoffs=@()}
+    }
+    $readingDir=Join-Path $temp 'readings';[void][IO.Directory]::CreateDirectory($readingDir)
+    [IO.File]::WriteAllText((Join-Path $readingDir 'passes.jsonl'),'{"pass_id":"swap-efforts","categories":["routine-coding"]}'+"`n")
+    foreach($mode in @('drift','research','mismatch')) {
+        $swapRoster=$qualityRoster | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+        $swapRoster.jobs.coder.backup_effort='low'
+        $swapRoster.jobs.coder.backup_efforts.standard='low'
+        $swapRoster.jobs.coder.backup_efforts.hard='medium'
+        Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $swapRoster
+        $script:researchTarget=$swapRoster.jobs.coder.backup
+        $swapRun=Join-Path $temp "bench/runs/swap-$mode";[void][IO.Directory]::CreateDirectory($swapRun)
+        $tiers=@(foreach($tier in @('standard','hard')) {
+            $configs=[pscustomobject]@{candidate=[pscustomobject]@{model=$swapRoster.jobs.coder.backup;effort='medium'};incumbent=[pscustomobject]@{model=$swapRoster.jobs.coder.first;effort='medium'}}
+            $record=[pscustomobject]@{job='coder';tier=$tier;verdict='candidate_better';configurations=$configs;run_id="swap-$mode"}
+            $verdict=$record | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $verdict | Add-Member -NotePropertyName tasks -NotePropertyValue @([pscustomobject]@{candidate_wins=1;incumbent_wins=0;reps=@()})
+            [pscustomobject]@{job='coder';tier=$tier;configurations=$configs;quality_evidence=$record;quality_verdict=$verdict}
+        })
+        $bench=Add-TestBenchEvidence ([pscustomobject]@{raw_gate='pass';gate='pass';shadow=$false;tied=$false;better=$swapRoster.jobs.coder.backup;shortfall_tasks=0;tiers=$tiers;report_paths=[pscustomobject]@{markdown='synthetic-swap.md'}})
+        Write-RouterJsonAtomic (Join-Path $swapRun 'report.json') $bench
+        if($mode -eq 'drift') {
+            Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @([pscustomobject]@{job='coder';model=$swapRoster.jobs.coder.first;prior_rate=1;recent_rate=0.5})
+            $staged=[pscustomobject]@{identity=(ConvertTo-Json $swapRoster.jobs -Compress -Depth 30)}
+            $swapPath=Complete-RouterDriftBench -Staged $staged -BenchResults @{coder=$bench} -Now (Get-Date)
+        } else {
+            $history=Join-Path $temp 'roster-proposals/verdicts.jsonl'
+            [IO.File]::WriteAllText($history,(@{pass_id='previous-swap';job='coder';slot='first';result=$script:researchTarget}|ConvertTo-Json -Compress)+"`n"+(@{pass_id='swap-efforts';job='coder';slot='first';result=$script:researchTarget}|ConvertTo-Json -Compress)+"`n")
+            $key="coder/first/$($swapRoster.jobs.coder.backup)/$($swapRoster.jobs.coder.first)"
+            # The other-vendor slot also has its own measured comparison.
+            $reverse=$bench | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+            $reverse.better=$swapRoster.jobs.coder.first
+            foreach($tierResult in $reverse.tiers) {
+                foreach($configs in @($tierResult.configurations,$tierResult.quality_verdict.configurations,$tierResult.quality_evidence.configurations)) {
+                    $configs.candidate.model=$swapRoster.jobs.coder.first
+                    $configs.incumbent.model=$swapRoster.jobs.coder.backup
+                }
+                $tierResult.quality_evidence.run_id="swap-$mode-reverse"
+            }
+            $reverseRun=Join-Path $temp "bench/runs/swap-$mode-reverse";[void][IO.Directory]::CreateDirectory($reverseRun)
+            Write-RouterJsonAtomic (Join-Path $reverseRun 'report.json') $reverse
+            $reverseKey="coder/backup/$($swapRoster.jobs.coder.first)/$($swapRoster.jobs.coder.backup)"
+            $built=Build-RouterRosterProposalLocked -Now (Get-Date) -BenchResults @{$key=$bench;$reverseKey=$reverse} -Notification ([pscustomobject]@{alert=$null})
+            $swapPath=$built.proposal
+        }
+        Assert-True ([bool]$swapPath) "$mode swap publisher files a proposal"
+        if($mode -eq 'mismatch') {
+            $badProposal=Read-RouterJsonObject $swapPath
+            $badProposal.changes[0].quality_evidence[0].configurations.candidate.effort='low'
+            Write-RouterJsonAtomic $swapPath $badProposal
+            $badReport=Read-RouterJsonObject (Join-Path $swapRun 'report.json')
+            $badReport.tiers[0].quality_verdict.configurations.candidate.effort='low'
+            Write-RouterJsonAtomic (Join-Path $swapRun 'report.json') $badReport
+        }
+        $before=[IO.File]::ReadAllText((Join-Path $temp 'roster.json'))
+        $output=@(Invoke-Approval -Options @('-Approve','-Jobs','coder')) -join "`n"
+        if($mode -eq 'mismatch') {
+            Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'measured tier' -and [IO.File]::ReadAllText((Join-Path $temp 'roster.json')) -ceq $before) 'Swap mismatching actual measured configuration refuses without mutation'
+        } else {
+            Assert-True ($LASTEXITCODE -eq 0 -and (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder.first -ceq $swapRoster.jobs.coder.backup) "$mode swap to current backup approves with differing tier efforts: $output"
+        }
+    }
     Write-Output "PASS: $script:passed tests"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState

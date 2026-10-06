@@ -161,7 +161,10 @@ function Build-RouterRosterProposalLocked {
                 if (-not $StageOnly) {
                     if (-not $BenchResults -or -not $BenchResults.ContainsKey($key)) { continue }
                     $bench = $BenchResults[$key]
+                    if ($bench.PSObject.Properties['halted'] -and $bench.halted) { continue }
                     if ($bench.raw_gate -eq 'unknown' -or $bench.gate -in @('unknown','fail') -or ($job -in @('fast','coder','deep-thinker') -and $bench.raw_gate -eq 'fail')) { continue }
+                    $measured = @(if ($bench.PSObject.Properties['tiers']) { $bench.tiers | ForEach-Object { [pscustomobject]$_ } } else { $bench })
+                    if (@($measured | Where-Object { $_.PSObject.Properties['quality_verdict'] -and $_.quality_verdict -and $_.quality_verdict.verdict -ceq 'incumbent_better' }).Count) { continue }
                     if ($bench.tied -or $bench.better -ne $target) { continue }
                     $benchEvidence = New-RouterBenchProposalEvidence -Job $job -Bench $bench
                     if (Get-RouterBenchProposalEvidenceError -Job $job -Evidence $benchEvidence) { continue }
@@ -169,7 +172,11 @@ function Build-RouterRosterProposalLocked {
                 }
                 $entry.$slot = $target; $entry."${slot}_vendor" = Get-RouterProposalVendor $target
                 $changes += [pscustomobject]@{job=$job;slot=$slot;from=$currentEntry.$slot;to=$target;evidence=$verdict.evidence}
-                if (-not $StageOnly) { $changes[-1] | Add-Member -NotePropertyName bench_evidence -NotePropertyValue $benchEvidence }
+                if (-not $StageOnly) {
+                    $changes[-1] | Add-Member -NotePropertyName bench_evidence -NotePropertyValue $benchEvidence
+                    $quality = @($measured | Where-Object { $_.PSObject.Properties['quality_evidence'] -and $_.quality_evidence } | ForEach-Object quality_evidence)
+                    if ($quality.Count) { $changes[-1] | Add-Member -NotePropertyName quality_evidence -NotePropertyValue $quality }
+                }
             } elseif ($verdict.result -eq 'keep') { $tradeoffs += "$job/$slot`: $($verdict.evidence)" }
         }
     }
@@ -228,9 +235,20 @@ function Build-RouterRosterProposalLocked {
     return [pscustomobject]@{changed=$true;pass_id=$passId;changes=@($changes);proposal=$jsonPath;report=$reportPath;over_cap=$overCap;conflicts=$conflicts;validation_errors=$errors}
 }
 
+function Test-RouterQualityDecided {
+    param([object]$Verdict)
+    $Verdict = [pscustomobject]$Verdict
+    if (-not $Verdict -or -not $Verdict.PSObject.Properties['tasks']) { return $false }
+    return @($Verdict.tasks | Where-Object {
+        $_.candidate_wins -gt 0 -or $_.incumbent_wins -gt 0 -or
+        @($_.reps | Where-Object { @($_.judges).Count -eq 2 -and @($_.judges | Where-Object reply -CEQ 'no_difference').Count -eq 2 }).Count -gt 0
+    }).Count -gt 0
+}
+
 function Save-RouterEffortProposal {
     param([object]$Request, [object]$Bench)
     # Caller holds the outcome lock and has revalidated the roster snapshot.
+    if ($Bench.PSObject.Properties['halted'] -and $Bench.halted) { return }
     if ($Bench.PSObject.Properties['tiers']) {
         foreach ($tierResult in @($Bench.tiers)) {
             $tierRequest = [pscustomobject]@{job=$Request.job;candidate=$Request.candidate;incumbent=$tierResult.incumbent.model;effort=$tierResult.incumbent.effort}
@@ -241,14 +259,23 @@ function Save-RouterEffortProposal {
     $tier = if ($Bench.PSObject.Properties['tier']) { $Bench.tier } else { 'standard' }
     if (-not $Bench.PSObject.Properties['shadow'] -or $Bench.shadow -isnot [bool] -or $Bench.shadow) { return }
     $writer = $Request.job -eq 'writer'
-    $qualification = if ($writer) { 'effort_up_qualified' } else { 'effort_down_qualified' }
-    if (-not $Bench.PSObject.Properties[$qualification] -or -not $Bench.$qualification -or $Bench.raw_gate -eq 'unknown') { return }
+    $raising = $Bench.PSObject.Properties['effort_up_qualified'] -and $Bench.effort_up_qualified
+    $qualification = if ($raising) { 'effort_up_qualified' } else { 'effort_down_qualified' }
+    if ($writer -and -not $raising) { return }
+    if (-not $Bench.PSObject.Properties[$qualification] -or -not $Bench.$qualification) { return }
+    $qualityName = if ($raising) { 'effort_up_quality_evidence' } else { 'effort_down_quality_evidence' }
+    $quality = if ($Bench.PSObject.Properties[$qualityName]) { $Bench.$qualityName } else { $null }
+    if ($raising -and -not $writer -and -not $quality) { return }
+    $verdictName = if ($raising) { 'effort_up_quality_verdict' } else { 'effort_down_quality_verdict' }
+    $verdict = if ($Bench.PSObject.Properties[$verdictName]) { $Bench.$verdictName } else { $null }
+    if ($Bench.raw_gate -eq 'unknown' -and -not (Test-RouterQualityDecided $verdict)) { return }
+    if ($quality -and (($raising -and $quality.verdict -cne 'candidate_better') -or (-not $raising -and $quality.verdict -ceq 'incumbent_better'))) { return }
     $current = (Read-RouterRoster).roster.jobs.($Request.job)
     # Without tier objects the scalar drives both tiers; neither tier may change it independently.
     if ($Request.job -in @('coder','deep-thinker') -and -not $current.PSObject.Properties['first_efforts']) { return }
     if ($current.first -cne $Request.incumbent -or (Get-RouterTierEffort $current first $tier) -cne $Request.effort) { return }
-    $next = if ($writer) { @{low='medium';medium='high';high='xhigh'}[[string]$Request.effort] } else { @{medium='low';high='medium'}[[string]$Request.effort] }
-    $laneName = if ($writer) { 'effort_up' } else { 'effort_down' }
+    $next = if ($raising) { $(if ($writer) { @{low='medium';medium='high';high='xhigh'} } else { @{low='medium';medium='high'} })[[string]$Request.effort] } else { @{medium='low';high='medium'}[[string]$Request.effort] }
+    $laneName = if ($raising) { 'effort_up' } else { 'effort_down' }
     $lane = $Bench.$laneName
     if (-not $next -or $lane.model -cne $current.first -or $lane.effort -cne $next) { return }
     $evidence = New-RouterBenchProposalEvidence -Job $Request.job -Bench $Bench
@@ -260,6 +287,7 @@ function Save-RouterEffortProposal {
     if ($old -and $old.model -ceq $current.first -and $old.current_effort -ceq $Request.effort -and $old.proposed_effort -ceq $next -and $old.PSObject.Properties['bench_evidence'] -and (ConvertTo-Json $old.bench_evidence -Compress -Depth 10) -ceq (ConvertTo-Json $evidence -Compress -Depth 10)) { return }
     $proposal = [pscustomobject]@{type='effort-swap';job=$Request.job;tier=$tier;model=$current.first;current_effort=$Request.effort;proposed_effort=$next;status='pending';bench_evidence=$evidence;incumbent=$Bench.incumbent;report=$Bench.report_paths.markdown;dimension_framework='provisional'}
     $proposal | Add-Member -NotePropertyName $laneName -NotePropertyValue $lane
+    if ($quality) { $proposal | Add-Member -NotePropertyName quality_evidence -NotePropertyValue $quality }
     Write-RouterJsonAtomic -Path $path -Value $proposal
 }
 

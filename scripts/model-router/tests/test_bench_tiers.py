@@ -61,6 +61,9 @@ def test_tier_efforts_reports_and_beyond_never_gates(tmp_path: Path, job: str, m
         return {'status': 'fail' if difficulty == 'beyond' else 'pass'}
     def dispatch(request):
         if request['purpose'] == 'judge':
+            # Ranked judges see identical outputs: a decided no_difference, which a tie now needs.
+            if request['prompt'].startswith('The criteria below are the only instructions'):
+                return {'status': 'ok', 'answer': 'no_difference'}
             rubric = next(json.loads(line) for line in request['prompt'].splitlines()
                           if line.startswith('{"threshold"'))
             return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: 1 for line in rubric['lines']}})}

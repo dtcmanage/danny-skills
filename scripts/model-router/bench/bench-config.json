@@ -9,5 +9,8 @@
   "judge_disagreement_threshold": 0.3,
   "judge_answer_envelope": "scripts/wrap-prompt-envelope.ps1",
   "pelican_scoring": "artifact-only; unchanged canary behavior",
-  "judge_effort": "high"
+  "judge_effort": "high",
+  "spend_stop_points": 5,
+  "spend_stop_model_calls": 450,
+  "spend_reading_stale_hours": 6
 }

@@ -1,7 +1,7 @@
 param([string[]]$Jobs, [string[]]$Models,
     [ValidateSet('new-model','research','drift','manual')][string]$Trigger='manual',
     [string]$StateDir, [switch]$NoAlerts, [switch]$Json,
-    [scriptblock]$Limits)
+    [scriptblock]$Limits, [scriptblock]$CliInvoker)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $script:BenchRoot=$PSScriptRoot
@@ -32,6 +32,14 @@ function Set-BenchClaudeNativeEnvironment {
     }
     $ProcessInfo.Environment['CLAUDE_CONFIG_DIR']=$ConfigDirectory
     $ProcessInfo.Environment['CLAUDE_SECURESTORAGE_CONFIG_DIR']=$secure
+}
+
+function Add-BenchSpendDefaults {
+    param([Parameter(Mandatory)][hashtable]$Config, [Parameter(Mandatory)][string]$ShippedPath)
+    $shipped = Get-Content -LiteralPath $ShippedPath -Raw | ConvertFrom-Json -AsHashtable
+    foreach ($key in @('spend_stop_points','spend_stop_model_calls','spend_reading_stale_hours')) {
+        if (-not $Config.ContainsKey($key) -and $shipped.ContainsKey($key)) { $Config[$key] = $shipped[$key] }
+    }
 }
 
 function Get-BenchErrorDetail {
@@ -237,8 +245,12 @@ function Invoke-RouterBench {
     if (-not $PSBoundParameters.ContainsKey('ConfigPath') -and -not $config.ContainsKey('judge_effort')) {
         $config.judge_effort = (Get-Content (Join-Path $script:BenchRoot 'bench-config.json') -Raw | ConvertFrom-Json).judge_effort
     }
+    # A persisted judge catalog has no spend thresholds; they always come from the shipped config.
+    if (-not $PSBoundParameters.ContainsKey('ConfigPath')) {
+        Add-BenchSpendDefaults -Config $config -ShippedPath (Join-Path $script:BenchRoot 'bench-config.json')
+    }
     if(-not $CliInvoker){$CliInvoker={param($r) Invoke-BenchCli -Request $r -TimeoutMs $TimeoutMs}}
-    if(-not $Limits){$Limits={param($v) $u=if($v -eq 'claude'){Get-RouterClaudeUsage}else{Get-RouterCodexUsage}; @{blocked=(Get-RouterVendorBlocked -Vendor $v);usage=$u}}}
+    if(-not $Limits){$Limits={param($v) $u=if($v -eq 'claude'){Get-RouterClaudeUsage}else{Get-RouterCodexUsage -Weekly}; @{blocked=(Get-RouterVendorBlocked -Vendor $v);usage=$u}}}
     if(-not $Diagnosis){$Diagnosis={param($v,$e) Resolve-RouterDispatchFailure -Vendor $v -ErrorText $e}}
     if(-not $Envelope){$Envelope={param($a) New-PromptEnvelope -Label 'BENCH ANSWER EVIDENCE' -Content $a}}
     if(-not $Outcome){$Outcome={param($r) Add-RouterOutcome -Row $r -StateDir $benchStateRoot}}
@@ -274,6 +286,14 @@ function Invoke-RouterBench {
             }
             try {
                 $value=switch($message.operation){
+                    'spend' {
+                        $figures=@{}
+                        foreach($spendVendor in @('claude','codex')) {
+                            try {$figures[$spendVendor]=& $Limits $spendVendor}
+                            catch {$figures[$spendVendor]=@{measurement='unavailable';detail=$_.Exception.Message}}
+                        }
+                        $figures
+                    }
                     'limits' {
                         $reading=& $Limits $message.payload
                         if(Get-RouterVendorBlocked -Vendor $message.payload){$reading.blocked=$true}
@@ -312,6 +332,9 @@ function Invoke-RouterBench {
 }
 
 if($MyInvocation.InvocationName -ne '.') {
+    # Final stdout must use UTF-8; dot-sourcing must preserve the caller's console.
+    [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+    $OutputEncoding=[Text.UTF8Encoding]::new($false)
     Assert-RouterWindowsOwner -Action 'Benchmark execution'
     if(-not $StateDir){$StateDir=Get-RouterStateDir}
     $script:cliBenchStateRoot=[IO.Path]::GetFullPath($StateDir)
@@ -322,7 +345,7 @@ if($MyInvocation.InvocationName -ne '.') {
     $results=foreach($job in $Jobs){
         $entry=$read.roster.jobs.$job
         $candidates=if($Models){$Models}else{@($entry.first)}
-        foreach($model in $candidates){Invoke-RouterBench -Job $job -Candidate $model -Incumbent $entry.first -Trigger $Trigger -StateDir $StateDir -Limits $Limits -NoAlerts:$NoAlerts}
+        foreach($model in $candidates){Invoke-RouterBench -Job $job -Candidate $model -Incumbent $entry.first -Trigger $Trigger -StateDir $StateDir -Limits $Limits -CliInvoker $CliInvoker -NoAlerts:$NoAlerts}
     }
     if($Json){$results | ConvertTo-Json -Depth 40}else{$results}
 }

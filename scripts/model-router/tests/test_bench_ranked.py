@@ -17,6 +17,16 @@ import codex_appserver as transport
 import review
 
 
+@pytest.fixture(autouse=True)
+def isolate_subprocess_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    for key, leaf in {'CLAUDE_CONFIG_DIR': 'claude', 'DT_MODEL_ROUTER_CLAUDE_CREDENTIALS': 'missing-credentials.json',
+                      'CODEX_HOME': 'codex', 'DT_MODEL_ROUTER_CODEX_SESSIONS': 'sessions'}.items():
+        monkeypatch.setenv(key, str(tmp_path / 'isolated' / leaf))
+    for key in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+                'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_ACCESS_TOKEN'):
+        monkeypatch.delenv(key, raising=False)
+
+
 def make_task(root: Path, name: str = 'ranked-plan-critique', render: str | None = None,
               tiers: list[str] | None = None) -> Path:
     task = root / name
@@ -210,7 +220,8 @@ def test_tiers_counts_parity_relabels_and_informative_evidence(tmp_path: Path) -
             persisted = next(row for row in persisted['tiers'] if row['tier'] == tier['tier'])
         assert persisted['quality_verdict'] == quality
         assert 'Ranked quality:' in Path(tier['report_paths']['markdown']).read_text()
-    assert len([r for r in requests if r['purpose'] == 'judge']) == 12
+    # M04 also ranks lower/current and higher/current effort at each tier.
+    assert len([r for r in requests if r['purpose'] == 'judge']) == 30
     assert not engine.has_informative_evidence([{'tasks': []}], set(), {'tasks': [{'candidate_wins': 0, 'incumbent_wins': 0}]})
     assert engine.has_informative_evidence([{'tasks': []}], set(), {'tasks': [{'candidate_wins': 1, 'incumbent_wins': 0}]})
 
@@ -226,6 +237,8 @@ def test_engine_dispatch_images_and_unavailable_judge(tmp_path: Path, available:
             if request['vendor'] == 'claude' and not available:
                 raise RuntimeError('synthetic unavailable judge')
             first = Path(request['images'][0]).read_text()
+            if first == Path(request['images'][1]).read_text():
+                return {'status': 'ok', 'answer': 'no_difference'}
             return {'status': 'ok', 'answer': 'A' if first == 'candidate' else 'B'}
         return {'status': 'ok', 'answer': request['model']}
     def renderer(task: Path, answer: str, png: Path) -> dict:
@@ -241,7 +254,15 @@ def test_engine_dispatch_images_and_unavailable_judge(tmp_path: Path, available:
     assert task['draws'] == (0 if available else 3)
     assert result['insufficient_evidence'] is not available
     assert result['raw_gate'] == 'unknown' and not result['tied']
-    assert not result['effort_down_qualified'] and not result['effort_up_qualified']
+    assert not result['tiers'][0]['effort_down_qualified']
+    # Explicit outcomes for each judge-availability case: equal effort outputs
+    # draw with both judges, and unavailable judges supply no decided evidence.
+    up = result['tiers'][0]['effort_up_quality_verdict']
+    assert up['verdict'] == 'no_difference'
+    assert up['tasks'][0]['draws'] == 3
+    assert up['tasks'][0]['candidate_wins'] == 0
+    assert up['tasks'][0]['incumbent_wins'] == 0
+    assert not result['tiers'][0]['effort_up_qualified']
     assert result['candidate']['passed'] == result['incumbent']['passed'] == 0
     requests = [r for r in received if r['purpose'] == 'judge']
     records = [(rep, j) for rep in task['reps'] for j in rep['judges']]

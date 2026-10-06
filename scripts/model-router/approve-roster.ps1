@@ -60,7 +60,60 @@ function Get-RouterRosterProposalEvidenceErrors {
             $reason = Get-RouterBenchProposalEvidenceError -Job $change.job -Evidence $basis
             if ($reason) { "$($change.job)/$($change.slot): $reason" }
         }
+        if ($change.PSObject.Properties['quality_evidence']) {
+            foreach ($record in @($change.quality_evidence)) {
+                # Swaps may move an existing backup or be measured at an explicit effort.
+                # Verify models here; effort identity comes from the measured tier below.
+                $configs = [pscustomobject]@{candidate=[pscustomobject]@{model=$change.to};incumbent=[pscustomobject]@{model=$change.from}}
+                $reason = Get-RouterQualityApprovalError -Job $change.job -Tier $record.tier -Record $record -Configurations $configs -Kind swap
+                if ($reason) { "$($change.job)/$($change.slot): $reason" }
+            }
+        }
     }
+}
+
+function Get-RouterQualityApprovalError {
+    param([string]$Job, [string]$Tier, [object]$Record, [object]$Configurations,
+        [ValidateSet('swap','tie','effort-down','effort-up')][string]$Kind)
+    # No recorded quality verdict means the pre-M04 approval path still applies.
+    if (-not $Record) { return $null }
+    try {
+        if ($Record.job -cne $Job -or $Record.tier -cne $Tier -or $Tier -cnotin @('standard','hard')) { return 'Quality verdict tier or job does not match the proposal.' }
+        foreach ($side in @('candidate','incumbent')) {
+            foreach ($field in $(if ($Kind -eq 'swap') { @('model') } else { @('model','effort') })) {
+                if ($Record.configurations.$side.$field -cne $Configurations.$side.$field) { return 'Quality verdict configurations do not match the proposal.' }
+            }
+        }
+        if ($Record.run_id -notmatch '^[A-Za-z0-9_-]+$') { return 'Quality verdict run is unavailable; rerun the comparison.' }
+        $report = Read-RouterJsonObject (Join-Path (Get-RouterStateDir) ('bench/runs/' + $Record.run_id + '/report.json'))
+        if (-not $report -or ($report.PSObject.Properties['halted'] -and $report.halted)) { return 'Quality verdict run is unavailable or halted; rerun the comparison.' }
+        $context = Get-RouterBenchEvidenceContext
+        if ($report.task_bank_sha256 -cne $context.task_bank_sha256 -or -not $context.approval.approved -or $context.approval.task_bank_sha256 -cne $report.task_bank_sha256) { return 'Task bank differs from the approved bank; rerun the comparison.' }
+        $measured = if ($report.PSObject.Properties['tiers']) { @($report.tiers | Where-Object tier -CEQ $Tier) } else { @($report | Where-Object tier -CEQ $Tier) }
+        if ($measured.Count -ne 1) { return 'Quality verdict tier does not match the proposal.' }
+        $field = if ($Kind -eq 'effort-down') { 'effort_down_quality_verdict' } elseif ($Kind -eq 'effort-up') { 'effort_up_quality_verdict' } else { 'quality_verdict' }
+        $verdict = $measured[0].$field
+        if (-not $verdict -or $verdict.job -cne $Job -or $verdict.tier -cne $Tier) { return 'Quality verdict tier or job does not match the proposal.' }
+        foreach ($side in @('candidate','incumbent')) {
+            foreach ($part in @('model','effort')) {
+                if ($verdict.configurations.$side.$part -cne $Record.configurations.$side.$part) { return 'Recorded quality configurations changed; rerun the comparison.' }
+                if ($Kind -eq 'swap' -and $Record.configurations.$side.$part -cne $measured[0].configurations.$side.$part) { return 'Quality verdict configurations do not match the measured tier.' }
+            }
+        }
+        $decided = @($verdict.tasks | Where-Object {
+            $_.candidate_wins -gt 0 -or $_.incumbent_wins -gt 0 -or
+            @($_.reps | Where-Object { @($_.judges).Count -eq 2 -and @($_.judges | Where-Object reply -CEQ 'no_difference').Count -eq 2 }).Count -gt 0
+        }).Count -gt 0
+        $supported = switch ($Kind) {
+            'swap' { $verdict.verdict -cin @('candidate_better','no_difference') }
+            'effort-down' { $verdict.verdict -cin @('candidate_better','no_difference') }
+            'effort-up' { $decided -and $verdict.verdict -ceq 'candidate_better' }
+            'tie' { $decided -and $verdict.verdict -ceq 'no_difference' }
+        }
+        if (-not $supported) { return 'Recorded quality verdict no longer supports this proposal.' }
+        if ($verdict.verdict -cne $Record.verdict) { return 'Recorded quality verdict changed; rerun the comparison.' }
+    } catch { return 'Recorded quality evidence is incomplete; rerun the comparison.' }
+    return $null
 }
 
 if (([int][bool]$Show + [int][bool]$Approve + [int][bool]$Revoke + [int][bool]$Seed + [int][bool]$DeclineDrift + [int][bool]$ApproveEffort + [int][bool]$DeclineEffort + [int][bool]$RevokeEffort + [int][bool]$ApproveTie + [int][bool]$DeclineTie + [int][bool]$RevokeTie + [int][bool]$ApproveTiers + [int][bool]$RevokeTiers + [int][bool]$ApproveFrontier + [int][bool]$DeclineFrontier) -ne 1) { throw 'Choose exactly one roster action.' }
@@ -201,6 +254,10 @@ if ($Show) {
         if ($ApproveTie) {
             $reason = Get-RouterTieEvidenceError -Entry $entry -Evidence $proposal -CurrentBank
             if ($reason) { throw "TIE_STALE_EVIDENCE: $reason" }
+            if ($proposal.PSObject.Properties['quality_evidence']) {
+                $reason = Get-RouterQualityApprovalError -Job $Job -Tier $Difficulty -Record $proposal.quality_evidence -Configurations $proposal.configurations -Kind tie
+                if ($reason) { throw "TIE_STALE_EVIDENCE: $reason" }
+            }
             $evidence = [pscustomobject]@{tier=$proposal.tier;configurations=$proposal.configurations;run_id=$proposal.run_id;bank_hash=$proposal.bank_hash;approved_at=[datetimeoffset]::UtcNow.ToString('o')}
             $entry | Add-Member -NotePropertyName tie_evidence -NotePropertyValue $evidence -Force
             Write-RouterApprovalJson $rosterPath $current
@@ -222,13 +279,20 @@ if ($Show) {
     if (-not $DeclineEffort -and ($entry.first -cne $swap.model -or (Get-RouterTierEffort $entry first $Difficulty) -cne $expected)) { throw 'EFFORT_STALE_ROSTER: model or current effort changed.' }
     if ($RevokeEffort -and $swap.status -ne 'approved') { throw 'No approved effort swap to revoke.' }
     if (-not $RevokeEffort -and $swap.status -ne 'pending') { throw 'Effort proposal is not pending.' }
-    $next = if ($Job -eq 'writer') { @{low='medium';medium='high';high='xhigh'}[[string]$swap.current_effort] } else { @{medium='low';high='medium'}[[string]$swap.current_effort] }
+    $raising = $swap.PSObject.Properties['effort_up'] -and $swap.PSObject.Properties['quality_evidence'] -and $swap.quality_evidence
+    $next = if ($Job -eq 'writer' -or $raising) { $(if ($Job -eq 'writer') { @{low='medium';medium='high';high='xhigh'} } else { @{low='medium';medium='high'} })[[string]$swap.current_effort] } else { @{medium='low';high='medium'}[[string]$swap.current_effort] }
     # Declining or revoking must stay possible for a proposal filed under an older direction rule.
     if ($ApproveEffort -and (-not $next -or $next -cne $swap.proposed_effort)) { throw 'Invalid effort step.' }
     if ($ApproveEffort) {
         $basis = if ($swap.PSObject.Properties['bench_evidence']) { $swap.bench_evidence } else { $null }
         $reason = Get-RouterBenchProposalEvidenceError -Job $Job -Evidence $basis
         if ($reason) { throw "EFFORT_STALE_EVIDENCE: $reason" }
+        if ($swap.PSObject.Properties['quality_evidence']) {
+            $configs = [pscustomobject]@{candidate=[pscustomobject]@{model=$swap.model;effort=$swap.proposed_effort};incumbent=[pscustomobject]@{model=$swap.model;effort=$swap.current_effort}}
+            $kind = if ($Job -eq 'writer' -or $raising) { 'effort-up' } else { 'effort-down' }
+            $reason = Get-RouterQualityApprovalError -Job $Job -Tier $Difficulty -Record $swap.quality_evidence -Configurations $configs -Kind $kind
+            if ($reason) { throw "EFFORT_STALE_EVIDENCE: $reason" }
+        }
     }
     if ($DeclineEffort) { $swap.status = 'declined' }
     else {

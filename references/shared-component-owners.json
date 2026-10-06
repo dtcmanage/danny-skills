@@ -528,6 +528,8 @@
   "scripts/model-router/bench/tasks/ranked-tradeoff-memo/task.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/bench/tasks/ui-frontend-card/harness/render-ranked.cjs": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/tests/test_bench_ranked.py": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test_bench_quality.py": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test-bench-quality-proposals.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/bench/tasks/ranked-pelican-svg/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/bench/tasks/ranked-single-file-game/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"}
 }

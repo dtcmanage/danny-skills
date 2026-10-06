@@ -485,6 +485,14 @@ def test_two_public_runs_match_head(tmp_path: Path, monkeypatch):
         assert result.pop('uninformative_tasks') == []
         assert result.pop('proposed_drops') == []
         assert result.pop('insufficient_evidence') is False
+        # M04's additive fields: with no ranked task they carry no quality evidence
+        # and the qualification flags reduce to the pass-fail values.
+        for field in ('quality_evidence', 'effort_down_quality_verdict', 'effort_up_quality_verdict',
+                      'effort_down_quality_evidence', 'effort_up_quality_evidence'):
+            assert result.pop(field) is None and old.pop(field, None) is None
+        assert result.pop('swap_qualified') is (result['raw_gate'] == 'pass')
+        assert result.pop('tie_qualified') is result['tied']
+        old.pop('swap_qualified', None), old.pop('tie_qualified', None)
         assert result == old
         assert report == old_report
     assert not review.private_bank_path(state).exists()

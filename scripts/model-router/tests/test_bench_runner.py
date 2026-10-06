@@ -603,7 +603,8 @@ def test_judges_receive_all_rubric_source_evidence(tmp_path: Path, job: str) -> 
     run(tmp_path, job=job, effort='medium', dispatch=dispatch, envelope=lambda answer: envelope)
     for task in rubric_tasks:
         for vendor in ('claude', 'codex'):
-            assert sum(r['vendor'] == vendor and (task / 'prompt.md').read_text() in r['prompt'] for r in captured) == 9
+            # Three reps each for candidate, incumbent and effort-up; the deep thinker also runs effort-down.
+            assert sum(r['vendor'] == vendor and (task / 'prompt.md').read_text() in r['prompt'] for r in captured) == (12 if job == 'deep-thinker' else 9)
 
 @pytest.mark.parametrize('write', [None, 0, 5])
 def test_codex_cache_write_cost(write: int | None) -> None:

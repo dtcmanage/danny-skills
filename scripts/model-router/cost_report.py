@@ -225,7 +225,7 @@ def week_bounds_utc(iso_year: int, iso_week: int) -> tuple[datetime, datetime]:
 
 def compute_blocked_intervals(readings: list[dict]) -> list[tuple[datetime, datetime]]:
     """Codex-only. From rate_limits.primary readings (used_percent, resets_at), build
-    intervals where the weekly quota sat at 100% until either resets_at or the next
+    intervals where that window's quota sat at 100% until either resets_at or the next
     reading below 100%, whichever is earlier. No dollar figure is ever attached to
     blocked time; this is elapsed time only."""
     parsed = []

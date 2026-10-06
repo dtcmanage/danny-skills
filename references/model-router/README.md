@@ -22,7 +22,7 @@ Use `approve-roster.ps1 -ApproveTiers -Job <deep-thinker|coder>` to adopt the de
 
 Inside dt-build's two-attempt budget, a standard first attempt retries with `-RetryAtHardFrom <failed model> -DifficultyReason "<reason>"`, retaining that model at hard effort. A first attempt already at hard retries with `-EscalateFrom <failed model> -Difficulty hard -DifficultyReason "<reason>"`, moving one non-frontier rung. A category without tiers (unprotected `mechanical`, which routes to the fast job) retries with `-EscalateFrom <failed model>` as before. Legacy callers without difficulty flags keep their escalation behavior. Like `-EscalateFrom`, `-RetryAtHardFrom` does not apply drift marks without `-Lane`; a constrained lane applies drift and may wait.
 
-Bench caller effort overrides (including build-roster slot efforts) take precedence over roster tiers. Without an override, only coder and deep-thinker use roster tiers. The 20-task bank has no beyond tasks; the engine retains beyond support at hard effort, reported and never gating. Bank edits invalidate golden approval. Relabel proposals are skipped when standard and hard efforts are equal.
+Bench caller effort overrides (including build-roster slot efforts) take precedence over roster tiers. Without an override, only coder and deep-thinker use roster tiers. The committed bank has no beyond tasks; the engine retains beyond support at hard effort, reported and never gating. Bank edits invalidate golden approval. Relabel proposals are skipped when standard and hard efforts are equal.
 
 ## Main-session delegation
 
@@ -65,6 +65,109 @@ rate calculations. Pending roster detection includes both slot efforts.
 Triggered comparisons stage outside outcome locks and revalidate roster model and effort before publication. Research offers incumbent effort-down even when it keeps the model. New-model checks retain release and day-seven research queues and refresh known frontier judges in bench/judge-config.json. Failed/unknown results are in bench/trigger-log.jsonl; unknown alerts use stable identities. Weekly rubric reminders apply to the current bank and judge pair; rubric correction changes the bank hash and returns golden approval to shadow mode.
 
 Use approve-roster.ps1 -ApproveEffort, -DeclineEffort or -RevokeEffort with -Job for separate effort proposals; approval and revocation revalidate exact model and effort; decline can close stale proposals. Coder and deep-thinker jobs without tier objects file no effort proposals and refuse effort approval or revocation until `-ApproveTiers -Job <job>`. Tier approval supersedes pending legacy proposals. The default roster routes deep-thinker standard work at medium effort.
+
+## Private tasks and discrimination
+
+The bench reads the committed tasks alongside a private bank at
+`<state-parent>/bench-private-bank/<task-id>/`, beside the router state directory.
+With the default Windows state folder, that is
+`D:/Claude/_Claude-Workspace/Skill Creation/model-router/bench-private-bank/`.
+The private bank stays outside this public repo. A duplicate task id in the two
+banks is an error. Golden review lists both banks and marks private tasks.
+The combined hash includes every private file; adding, changing or removing any
+task resets golden approval. An absent or empty private bank keeps the original
+committed-bank hash. A missing or unreadable previously approved private bank is
+named in the report.
+
+Use `scripts/model-router/bench/add_task.py --state <state> --problem <file>
+--answer <file> --job <job> --grader <exact|numeric> --difficulty <standard|hard>`
+to add a private task. It creates the task folder and refuses to overwrite one.
+`import_aider.py --source <local-clone> --ids <ids-file> --state <state>` imports
+selected synthetic or licensed Python and JavaScript exercises as hard coder
+tasks. `import_hle.py --source <local-jsonl> --ids <ids-file> --state <state>`
+imports selected text-only exact-answer questions as hard deep-thinker tasks;
+image and multiple-choice questions are skipped. Both importers refuse a bank
+inside the repo. Check the source terms before importing. Never commit borrowed
+exercise or question text, answers, imported tests, private bank files, source
+exports, credentials, or reports that contain borrowed text.
+
+Python exercises use the existing pytest grader. JavaScript exercises use
+`nodetest`, a small dependency-free runner for the supplied test syntax and
+matchers, with a timeout and no network. Its result reports skipped tests.
+Golden review remains required before either kind of imported task can gate a
+proposal.
+
+A task that every tested configuration fails is reported as uninformative and
+does not count toward parity. A private task that every configuration passes on
+every rep in two consecutive completed runs of the same job and tier appears under
+`proposed_drops`; Danny confirms removal, and the bench never removes it itself.
+A tier without informative results is marked `insufficient_evidence` and cannot
+support effort or tie proposals. A decided quality comparison supplies evidence
+for effort-down and effort-up, even when pass counts do not separate the efforts.
+
+## Ranked quality and proposals
+
+Ranked tasks compare candidate and incumbent answers against the task's criteria.
+Both frontier judges see the answers unlabeled, in a recorded random order.
+SVG and HTML answers are rendered for judging. Results record each rep, judge
+disagreements, invalid replies and the quality verdict: `candidate_better`,
+`incumbent_better` or `no_difference`. Ranked tasks do not change pass counts.
+Each verdict names the job, tier and both model-and-effort configurations.
+For coder and deep-thinker, read the matching entry under `tiers`; the top-level
+`quality_verdict` is null.
+
+An unavailable answer is a draw (`answer_unavailable`), never a quality loss.
+Unavailable judges, invalid replies and split judge votes also produce draws.
+Draws alone do not establish a decided verdict. `no_difference` supplies tie
+evidence only when at least one rep has both judges answer `no_difference`, or
+the sides have actual wins that balance. A render failure loses that side's rep;
+both renders failing is a draw.
+
+The verdict narrows or adds proposals as follows:
+
+- A model swap still needs the pass-fail gate and the existing winner conditions;
+  it is blocked when the candidate loses on quality at any measured tier.
+- Effort-down compares the lower effort as candidate with the current effort as
+  incumbent. A quality loss blocks it. The writer never proposes effort-down.
+- Effort-up compares the higher effort as candidate with the current effort as
+  incumbent. A quality win can propose the higher effort when both pass-fail
+  tables are known and the higher effort has no fewer passes, including equal counts,
+  for coder, deep-thinker or writer, only at the measured tier. For the writer,
+  strictly better means winning this quality verdict.
+- A tie needs the existing parity conditions plus a decided `no_difference`.
+  An insufficient-evidence tier cannot file a tie.
+
+When a tier has no ranked task, its verdict is null and the previous proposal
+rules apply. Each proposal that uses quality records its verdict, tier, both
+configurations and run id. Approval re-reads that run's matching verdict and
+refuses a changed tier, configuration, unsupported verdict or bank hash.
+Proposals from before quality evidence was recorded retain their previous
+approval behavior. Nothing changes routing without Danny's recorded approval;
+resolving a model remains a lookup.
+
+## Comparison spend stop
+
+At the start of each job comparison the runner records both vendors' weekly
+use, then reads them again between tasks. A move of more than 5 percentage
+points by either vendor halts the comparison; exactly 5 points can continue.
+When a vendor starts without a fresh reading, the runner rechecks between tasks
+and takes its first fresh reading as that vendor's baseline. The 5-point rule
+applies to each vendor once its baseline exists. While either baseline is missing,
+a cap of 450 model calls, including answer and judge calls, applies across the
+whole comparison and all its tiers. If a vendor's reading is later lost, that
+vendor goes back under the cap, counted from the call where the reading was
+lost, until a fresh reading gives it a new baseline. A reading below a vendor's
+baseline is treated as a weekly reset and becomes its new baseline. Readings marked stale, with future timestamps
+or older than 6 hours are unavailable. Codex use comes from the 10080-minute
+weekly window; the 300-minute window is not spend-stop evidence.
+`spend_stop_points`, `spend_stop_model_calls` and `spend_reading_stale_hours` in
+`bench-config.json` default to 5, 450 and 6; a persisted
+`<state>/bench/judge-config.json` that lacks these keys takes them from
+`bench-config.json`. Reports record the rules in force,
+each baseline and its time, latest readings and call count. A halted comparison
+marks its report and any completed per-tier reports `halted`; discrimination
+history ignores halted runs. It files no proposal and exits without error so the
+next job can still report.
 
 
 ## Approved quota ties

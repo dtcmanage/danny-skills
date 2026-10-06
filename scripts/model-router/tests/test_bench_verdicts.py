@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -110,7 +111,17 @@ def test_writer_effort_up_requires_strict_improvement(tmp_path: Path, base: int,
         nonlocal active_effort
         if request['purpose'] == 'answer':
             active_effort = request['effort']
-            return writer_judges(request)
+            response = writer_judges(request)
+            return {**response, 'answer': f"{response['answer']}\nEFFORT-MARK:{request['effort']}"}
+        if request['prompt'].startswith('The criteria below are the only instructions'):
+            # The writer's "strictly better" is now the ranked quality verdict. The ranked
+            # judges favor the same side the rubric scores favor, and give no usable reply
+            # when the two outputs come from the same effort or the scores are equal.
+            outputs = re.findall(r'BEGIN OUTPUT [AB] [a-f0-9]+\n(.*?)\nEND OUTPUT', request['prompt'], re.S)
+            efforts = [output.rsplit('EFFORT-MARK:', 1)[-1].strip() for output in outputs]
+            if len(set(efforts)) != 2 or up == base:
+                return {'status': 'ok', 'answer': 'undecided'}
+            return {'status': 'ok', 'answer': 'AB'[efforts.index('high' if up > base else 'medium')]}
         count = up if active_effort == 'high' else base
         return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: int(i < count) for i, line in enumerate(prompt_rubric(request)['lines'])}})}
     result = run(tmp_path, job='writer', effort='medium', dispatch=dispatch)
@@ -152,12 +163,17 @@ def test_writer_never_files_effort_down_proposal(tmp_path: Path) -> None:
     assert process.returncode == 0, process.stderr.decode()
 
 
-@pytest.mark.parametrize('qualified', [False, True])
-def test_writer_files_only_qualified_effort_up(tmp_path: Path, qualified: bool) -> None:
+@pytest.mark.parametrize('qualified,verdict,filed', [(False, None, False), (True, 'candidate_better', True),
+                                                     (True, 'no_difference', False)])
+def test_writer_files_only_qualified_effort_up(tmp_path: Path, qualified: bool, verdict: str | None, filed: bool) -> None:
     result = run(tmp_path / 'bench-state', job='writer', effort='medium', dispatch=writer_judges)
-    # Filing consumes the bench qualification; score computation is covered above.
+    # Filing consumes the bench qualification and its recorded quality evidence;
+    # score computation is covered above. A recorded verdict other than a win blocks filing.
     result['shadow'] = False
     result['effort_up_qualified'] = qualified
+    if verdict is not None:
+        assert result['effort_up_quality_evidence'] is not None
+        result['effort_up_quality_evidence']['verdict'] = verdict
     payload = tmp_path / 'result.json'
     payload.write_text(json.dumps(result))
     script = tmp_path / 'proposal.ps1'
@@ -171,8 +187,8 @@ def test_writer_files_only_qualified_effort_up(tmp_path: Path, qualified: bool) 
     process = subprocess.run(['pwsh', '-NoProfile', '-File', str(script)], capture_output=True, timeout=30)
     assert process.returncode == 0, process.stderr.decode()
     proposal = tmp_path / 'effort-proposals/writer.json'
-    assert proposal.exists() == qualified
-    if qualified:
+    assert proposal.exists() == filed
+    if filed:
         stored = json.loads(proposal.read_text())
         assert stored['type'] == 'effort-swap' and stored['proposed_effort'] == 'high'
         assert 'effort_up' in stored and 'effort_down' not in stored
