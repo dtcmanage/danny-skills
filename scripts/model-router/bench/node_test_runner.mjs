@@ -40,13 +40,15 @@ registerHooks({resolve(specifier, context, next) {
 }, load(url, context, next) {
   return next(url, url === solutionURL ? {...context, format: "module"} : context);
 }});
+// Captured before any answer code loads, so an answer cannot replace it to drop registrations.
+const push = Function.prototype.call.bind(Array.prototype.push);
 const tests = [], suites = [];
 const defineGlobal = (name, value) => Object.defineProperty(globalThis, name,
   {value, writable: false, configurable: false});
-defineGlobal('describe', (name, fn) => { suites.push({name, hooks: []}); try { fn(); } finally { suites.pop(); } });
-defineGlobal('beforeEach', fn => { if (!suites.length) rootHooks.push(fn); else suites.at(-1).hooks.push(fn); });
+defineGlobal('describe', (name, fn) => { push(suites, {name, hooks: []}); try { fn(); } finally { suites.pop(); } });
+defineGlobal('beforeEach', fn => { if (!suites.length) push(rootHooks, fn); else push(suites.at(-1).hooks, fn); });
 const rootHooks = [];
-const test = (name, fn) => tests.push({name: [...suites.map(s => s.name), name].join(' / '), fn,
+const test = (name, fn) => push(tests, {name: [...suites.map(s => s.name), name].join(' / '), fn,
   hooks: [rootHooks, ...suites.map(s => s.hooks)]});
 for (const name of ['test', 'it', 'xtest', 'xit']) defineGlobal(name, test);
 // Jest compares enumerable values recursively, ignoring undefined properties,

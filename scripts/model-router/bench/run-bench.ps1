@@ -245,7 +245,7 @@ function Invoke-RouterBench {
     if (-not $PSBoundParameters.ContainsKey('ConfigPath') -and -not $config.ContainsKey('judge_effort')) {
         $config.judge_effort = (Get-Content (Join-Path $script:BenchRoot 'bench-config.json') -Raw | ConvertFrom-Json).judge_effort
     }
-    # A persisted judge catalog has no spend thresholds; they always come from the shipped config.
+    # A persisted judge catalog usually has no spend thresholds; missing ones come from the shipped config.
     if (-not $PSBoundParameters.ContainsKey('ConfigPath')) {
         Add-BenchSpendDefaults -Config $config -ShippedPath (Join-Path $script:BenchRoot 'bench-config.json')
     }

@@ -428,9 +428,13 @@ class ComparisonSpend:
         self.uncovered_since: int | None = None
         self.acquire_baselines()
 
+    def covered(self, vendor: str) -> bool:
+        """A vendor is under the weekly-points rule only with a baseline and a readable latest value."""
+        return self.baselines[vendor] is not None and self.percent(self.latest.get(vendor)) is not None
+
     @property
     def fallback(self) -> bool:
-        return any(baseline is None for baseline in self.baselines.values())
+        return not all(self.covered(vendor) for vendor in self.baselines)
 
     def acquire_baselines(self) -> None:
         acquired_at = datetime.now(timezone.utc).isoformat()
@@ -445,11 +449,12 @@ class ComparisonSpend:
             self.uncovered_since = None
         elif self.uncovered_since is None:
             self.uncovered_since = self.calls
-        rule = ('call_cap' if all(b is None for b in self.baselines.values()) else
+        weekly = [v for v in self.baselines if self.covered(v)]
+        rule = ('call_cap' if not weekly else
                 'weekly_points_and_call_cap' if self.fallback else 'weekly_points')
         if not self.rules or self.rules[-1]['rule'] != rule:
             self.rules.append({'rule': rule, 'at_utc': acquired_at, 'model_calls': self.calls,
-                               'weekly_vendors': [v for v, b in self.baselines.items() if b is not None]})
+                               'weekly_vendors': weekly})
 
     def read(self) -> dict[str, Any]:
         try:
@@ -482,13 +487,16 @@ class ComparisonSpend:
             uncovered = self.calls - (self.uncovered_since or 0)
             raise SpendHalted(f'Model-call cap reached ({uncovered}/{self.call_limit}); weekly readings unavailable or stale.')
 
-    def check(self) -> None:
+    def check(self, final: bool = False) -> None:
         self.latest = self.read()
         for vendor in ('claude', 'codex'):
             baseline, latest = self.baselines[vendor], self.percent(self.latest[vendor])
-            # A lost reading puts the vendor back under the call cap; a reading below
-            # its baseline is a weekly reset, so the vendor takes a new baseline.
-            if baseline is not None and (latest is None or latest < baseline['used_percent']):
+            # A lost reading keeps its baseline (movement across the gap still counts) and
+            # puts the vendor under the call cap meanwhile. A drop larger than the point
+            # limit is a weekly reset: the vendor takes a new baseline and the reset is recorded.
+            if baseline is not None and latest is not None and baseline['used_percent'] - latest > self.point_limit:
+                self.rules.append({'rule': 'weekly_reset', 'vendor': vendor, 'from_percent': baseline['used_percent'],
+                    'to_percent': latest, 'at_utc': datetime.now(timezone.utc).isoformat(), 'model_calls': self.calls})
                 self.baselines[vendor] = None
         self.acquire_baselines()
         for vendor in ('claude', 'codex'):
@@ -498,7 +506,8 @@ class ComparisonSpend:
             start = baseline['used_percent']
             if latest - start > self.point_limit:
                 raise SpendHalted(f'{vendor} weekly use moved {latest - start:g} points ({start:g} to {latest:g}); limit {self.point_limit:g}.')
-        self.before_call()
+        if not final:  # After the last task there is no next call for the cap to stop.
+            self.before_call()
 
     def figures(self) -> dict[str, Any]:
         return {'start': self.start, 'latest': self.latest, 'model_calls': self.calls,
@@ -514,7 +523,7 @@ def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
     try:
         result = _run_bench(**arguments, spend=spend)
         if spend:
-            spend.check()
+            spend.check(final=True)
             result['spend'] = spend.figures()
             for completed in spend.completed_reports:
                 completed['spend'] = result['spend']

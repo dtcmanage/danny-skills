@@ -506,3 +506,9 @@ def test_node_array_tampering_cannot_hide_failures(tmp_path: Path):
               "{ if (typeof a[0] === 'string') return this.length; return p.apply(this, a); };")
     result = engine.grade_answer(task, attack + '\nexport const double = x => 0;')
     assert result['status'] == 'fail' and result['failure_category'] == 'implementation'
+    # Dropping a test's registration (an object pushed onto the runner's list) must not hide it either.
+    drop = ("const q = Array.prototype.push; Array.prototype.push = function(...a)"
+            "{ if (a[0] && typeof a[0] === 'object' && String(a[0].name).includes('three')) return this.length;"
+            " return q.apply(this, a); };")
+    result = engine.grade_answer(task, drop + '\nexport const double = x => 0;')
+    assert result['status'] == 'fail' and result['failure_category'] == 'implementation'

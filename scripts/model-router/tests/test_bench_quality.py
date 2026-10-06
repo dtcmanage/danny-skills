@@ -371,6 +371,40 @@ def test_spend_weekly_reset_takes_new_baseline() -> None:
     spend = engine.ComparisonSpend(lambda: next(readings), {})
     spend.check()
     assert spend.baselines['claude']['used_percent'] == 0 and not spend.fallback
+    reset = [r for r in spend.figures()['rules_in_force'] if r['rule'] == 'weekly_reset']
+    assert len(reset) == 1 and reset[0]['vendor'] == 'claude' and reset[0]['from_percent'] == 80 and reset[0]['to_percent'] == 0
     spend.check()  # Exactly five points after the reset passes.
     with pytest.raises(engine.SpendHalted, match='claude weekly use moved'):
+        spend.check()
+
+
+def test_spend_intermittent_reading_keeps_baseline() -> None:
+    def claude(value):
+        return {'measurement': 'unavailable'} if value is None else {'used_percent': value}
+    readings = iter({'claude': claude(v), 'codex': {'used_percent': 10}} for v in (40, 44, None, 44, 48))
+    spend = engine.ComparisonSpend(lambda: next(readings), {})
+    spend.check()
+    spend.check()  # Reading lost: baseline kept, call cap in force meanwhile.
+    assert spend.fallback and spend.baselines['claude']['used_percent'] == 40
+    spend.check()
+    assert not spend.fallback
+    with pytest.raises(engine.SpendHalted, match='claude weekly use moved 8 points'):
+        spend.check()
+
+
+def test_spend_small_downward_correction_keeps_baseline() -> None:
+    readings = iter({'claude': {'used_percent': v}, 'codex': {'used_percent': 10}} for v in (40, 44, 39.9, 45, 45.1))
+    spend = engine.ComparisonSpend(lambda: next(readings), {})
+    for _ in range(3):
+        spend.check()
+    assert spend.baselines['claude']['used_percent'] == 40
+    with pytest.raises(engine.SpendHalted, match='claude weekly use moved'):
+        spend.check()
+
+
+def test_spend_final_check_skips_call_cap() -> None:
+    spend = engine.ComparisonSpend(lambda: {}, {'spend_stop_model_calls': 4})
+    spend.calls = 4
+    spend.check(final=True)  # A finished comparison is not discarded for reaching the cap.
+    with pytest.raises(engine.SpendHalted, match='4/4'):
         spend.check()

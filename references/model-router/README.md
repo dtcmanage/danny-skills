@@ -70,8 +70,6 @@ Use approve-roster.ps1 -ApproveEffort, -DeclineEffort or -RevokeEffort with -Job
 
 The bench reads the committed tasks alongside a private bank at
 `<state-parent>/bench-private-bank/<task-id>/`, beside the router state directory.
-With the default Windows state folder, that is
-`D:/Claude/_Claude-Workspace/Skill Creation/model-router/bench-private-bank/`.
 The private bank stays outside this public repo. A duplicate task id in the two
 banks is an error. Golden review lists both banks and marks private tasks.
 The combined hash includes every private file; adding, changing or removing any
@@ -155,9 +153,14 @@ and takes its first fresh reading as that vendor's baseline. The 5-point rule
 applies to each vendor once its baseline exists. While either baseline is missing,
 a cap of 450 model calls, including answer and judge calls, applies across the
 whole comparison and all its tiers. If a vendor's reading is later lost, that
-vendor goes back under the cap, counted from the call where the reading was
-lost, until a fresh reading gives it a new baseline. A reading below a vendor's
-baseline is treated as a weekly reset and becomes its new baseline. Readings marked stale, with future timestamps
+vendor keeps its baseline and also goes under the cap, counted from the call
+where the reading was lost, until a fresh reading returns. A reading more than
+5 points below a vendor's baseline is treated as a weekly reset: it becomes the
+new baseline and the report records the reset. The cap is a runaway guard: at
+450 it is above every full comparison, so it stops only a comparison that has
+grown well beyond the current bank. After the last task only the 5-point rule is
+applied, so a comparison that finished is not discarded for reaching the cap.
+The report's Codex quota column shows the weekly window. Readings marked stale, with future timestamps
 or older than 6 hours are unavailable. Codex use comes from the 10080-minute
 weekly window; the 300-minute window is not spend-stop evidence.
 `spend_stop_points`, `spend_stop_model_calls` and `spend_reading_stale_hours` in

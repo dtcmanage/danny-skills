@@ -136,6 +136,18 @@ def private_bank_warning(tasks: Path, private: Path, approval: dict[str, Any]) -
     return None
 
 
+def replace_with_retry(source: Path, target: Path) -> None:
+    for attempt in range(5):
+        try:
+            source.replace(target)
+            return
+        except PermissionError:
+            # Windows briefly denies the rename while a scanner holds the file.
+            if attempt == 4:
+                raise
+            time.sleep(0.1 * (attempt + 1))
+
+
 class Review:
     def __init__(self, tasks: Path, state: Path) -> None:
         self.tasks = tasks.resolve()
@@ -154,21 +166,13 @@ class Review:
         self.state.mkdir(parents=True, exist_ok=True)
         temporary = self.approval_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
-        for attempt in range(5):
-            try:
-                temporary.replace(self.approval_path)
-                break
-            except PermissionError:
-                # Windows briefly denies the rename while a scanner holds the file.
-                if attempt == 4:
-                    raise
-                time.sleep(0.1 * (attempt + 1))
+        replace_with_retry(temporary, self.approval_path)
         digest = bank_hash(self.tasks, self.private)
         hash_path = self.state / "bank-hash.json"
         temporary_hash = hash_path.with_suffix(".tmp")
         temporary_hash.write_text(json.dumps({"task_bank_sha256": digest,
                                              "written_at": datetime.now(timezone.utc).isoformat()}) + "\n", encoding="utf-8")
-        temporary_hash.replace(hash_path)
+        replace_with_retry(temporary_hash, hash_path)
 
     def refresh(self) -> dict[str, Any]:
         self.loaded = task_folders(self.tasks, self.private)
