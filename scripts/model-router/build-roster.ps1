@@ -324,13 +324,19 @@ function Invoke-RouterTriggeredComparison {
     $requested = & $identityOf $digest $judges $judgeEffort
     $identity = $requested
     $logPath = Join-Path $state 'bench/trigger-log.jsonl'
-    # The same comparison (job, models, effort, bank, judges) is run once. Every research pass used to
-    # re-run it: six identical deep-thinker comparisons a night on 2026-10-03 to 10-05.
+    # The same comparison (job, models, effort, bank, judges) is run once; a repeat reuses the saved
+    # result. Every research pass used to re-run it: six identical deep-thinker comparisons a night on
+    # 2026-10-03 to 10-05.
+    $requestKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$($Request.job)/$($Request.candidate)/$($Request.incumbent)/$($Request.effort)/$requested"))).ToLowerInvariant()
+    $cachePath = Join-Path $state "bench/triggered/$requestKey.json"
     $previous = @(if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 10 } | Where-Object {
         $_.PSObject.Properties['requested_identity'] -and $_.requested_identity -ceq $requested -and $_.gate -notin @('unknown','duplicate') -and
         $_.job -ceq $Request.job -and $_.candidate -ceq $Request.candidate -and $_.incumbent -ceq $Request.incumbent -and [string]$_.effort -ceq [string]$Request.effort } })
-    if ($previous.Count) {
-        $bench = [pscustomobject]@{raw_gate='unknown';gate='duplicate';effort_down_qualified=$false;duplicate_of=$previous[-1].at}
+    $duplicate = $previous.Count -gt 0
+    if ($duplicate) {
+        $bench = Read-RouterJsonObject -Path $cachePath
+        if (-not $bench) { $bench = [pscustomobject]@{raw_gate='unknown';gate='duplicate';effort_down_qualified=$false} }
+        $bench | Add-Member -NotePropertyName duplicate_of -NotePropertyValue $previous[-1].at -Force
     } else {
         try { $bench = & $BenchInvoker $Request }
         catch { $bench = [pscustomobject]@{raw_gate='unknown';gate='unknown';effort_down_qualified=$false;error=$_.Exception.Message} }
@@ -341,7 +347,8 @@ function Invoke-RouterTriggeredComparison {
     }
     Use-RouterOutcomeMutex -StateDir $state -Action {
         [void][IO.Directory]::CreateDirectory((Split-Path -Parent $logPath))
-        $row = [pscustomobject]@{trigger=$Trigger;job=$Request.job;candidate=$Request.candidate;incumbent=$Request.incumbent;effort=$Request.effort;judge_effort=$judgeEffort;gate=$bench.gate;identity=$identity;requested_identity=$requested;at=(Get-Date).ToUniversalTime().ToString('o')}
+        if (-not $duplicate -and $bench.gate -ne 'unknown') { Write-RouterJsonAtomic -Path $cachePath -Value $bench }
+        $row = [pscustomobject]@{trigger=$Trigger;job=$Request.job;candidate=$Request.candidate;incumbent=$Request.incumbent;effort=$Request.effort;judge_effort=$judgeEffort;gate=$(if ($duplicate) { 'duplicate' } else { $bench.gate });identity=$identity;requested_identity=$requested;at=(Get-Date).ToUniversalTime().ToString('o')}
         [IO.File]::AppendAllText($logPath, (($row | ConvertTo-Json -Compress)+"`n"), [Text.UTF8Encoding]::new($false))
     } | Out-Null
     if ($SendAlerts -and $bench.gate -eq 'unknown') {

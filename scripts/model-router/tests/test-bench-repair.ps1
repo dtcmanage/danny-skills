@@ -3,6 +3,7 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../build-roster.ps1')
 . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
 . (Join-Path $PSScriptRoot '../check-new-models.ps1')
+. (Join-Path $PSScriptRoot '../run-router-cadence.ps1')
 . (Join-Path $PSScriptRoot '../bench/run-bench.ps1')
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 . (Join-Path $PSScriptRoot 'fixtures/bench-proposal-evidence.ps1')
@@ -85,8 +86,9 @@ try {
     $script:passRuns=0
     $passing={param($r) $script:passRuns++; [pscustomobject]@{gate='pass';raw_gate='pass';task_bank_sha256='bank3';judge_pair=@{claude='fable';codex='astra'};judge_effort='medium'}}
     $first=Invoke-RouterTriggeredComparison $request research $passing
+    $rowsBefore=@(Get-Content (Join-Path $a 'bench/trigger-log.jsonl') | ConvertFrom-Json)
     $second=Invoke-RouterTriggeredComparison $request research $passing
-    Check ($script:passRuns -eq 1 -and $first.gate -eq 'pass' -and $second.gate -eq 'duplicate' -and $second.raw_gate -eq 'unknown') 'G1 completed comparison runs once'
+    Check ($script:passRuns -eq 1 -and $first.gate -eq 'pass' -and $second.gate -eq 'pass' -and $second.PSObject.Properties['duplicate_of'] -and $second.duplicate_of -eq $rowsBefore[-1].at) 'G1 completed comparison runs once and the repeat reuses the saved result'
     $rows=@(Get-Content (Join-Path $a 'bench/trigger-log.jsonl') | ConvertFrom-Json)
     Check ($rows[-1].gate -eq 'duplicate' -and $rows[-1].requested_identity -eq $rows[-2].requested_identity -and $script:sent.Count -eq 6) 'G1 duplicate logged without alert'
     $null=Invoke-RouterTriggeredComparison ([pscustomobject]@{job='coder';candidate='candidate';incumbent=$roster.jobs.coder.first;effort='low'}) research $passing
@@ -164,7 +166,10 @@ throw 'Unexpected fake transport request'
     $checked=Invoke-RouterModelCheck -Force -Now $now.AddHours(13) -BenchInvoker $qualified
     Check ($checked.errors.Count -eq 0 -and $checked.alerts -notcontains 'bench-trigger-error') 'F4 fake listing completes'
     Check (@($script:requests | Where-Object candidate -in @('gpt-9-astra','claude-fable-9-2')).Count -eq 0) 'F4 no automatic frontier dispatch'
-    Check (@($script:requests | Where-Object candidate -eq 'gpt-9-sol').Count -eq 4) 'F4 ordinary model dispatches all text jobs'
+    Check ($script:requests.Count -eq 0) 'F4 catalog check dispatches no comparisons'
+    foreach($model in @('gpt-9-astra','claude-fable-9-2','gpt-9-sol')){ $null=Invoke-RouterNewModelComparisons -Model $model -Categories @(Get-RouterCadenceCategories -Model $model) -BenchInvoker $qualified }
+    Check (@($script:requests | Where-Object candidate -in @('gpt-9-astra','claude-fable-9-2')).Count -eq 0) 'F4 no automatic frontier comparison from the release pass'
+    Check (@($script:requests | Where-Object candidate -eq 'gpt-9-sol').Count -eq 4) 'F4 ordinary model release pass compares all text jobs'
     $queue=@(Read-RouterJsonArray (Join-Path $env:DT_MODEL_ROUTER_STATE 'research-queue.json'))
     foreach($model in @('gpt-9-astra','claude-fable-9-2','gpt-9-sol')){
         Check (@($queue | Where-Object {$_.model -eq $model -and $_.trigger -eq 'release'}).Count -eq 1 -and @($queue | Where-Object {$_.model -eq $model -and $_.trigger -eq 'confirmation' -and [datetime]$_.due_at -eq $now.AddHours(13).AddDays(7)}).Count -eq 1) "F4 queues retained $model"
@@ -173,8 +178,8 @@ throw 'Unexpected fake transport request'
     Check ($judges.codex -eq 'gpt-9-astra' -and $judges.claude -eq 'claude-fable-9-2') 'F4 listing refreshes judges'
     Check (@(Delivered 'effort-swap:*').Count -eq 1 -and (Read-RouterJsonObject (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')).status -eq 'pending') 'F5 new-model immediate proposal delivery'
     Send-RouterEffortAlerts
-    $null=Invoke-RouterModelCheck -Force -Now $now.AddHours(26) -BenchInvoker $qualified
-    Check (@(Delivered 'effort-swap:*').Count -eq 1) 'F5 new-model delivered once'
+    $null=Invoke-RouterNewModelComparisons -Model 'gpt-9-sol' -Categories @(Get-RouterCadenceCategories -Model 'gpt-9-sol') -BenchInvoker $qualified
+    Check (@(Delivered 'effort-swap:*').Count -eq 1 -and @($script:requests | Where-Object candidate -eq 'gpt-9-sol').Count -eq 4) 'F5 new-model delivered once and repeated release pass re-runs nothing'
     Check ((Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'transport.jsonl') -Raw) -match 'coder.*medium -> low.*fixture-effort-report') 'F5 new-model contents and unlocked delivery'
     Fresh-State 'drift-alert'
     $sources=Join-Path $root 'empty-sources.json';[IO.File]::WriteAllText($sources,'[]')
@@ -187,11 +192,8 @@ throw 'Unexpected fake transport request'
     Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'drift-marks.json')
     Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')
     $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified -SendAlerts
-    Check (-not (Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')) -and @(Delivered 'effort-swap:*').Count -eq 0) 'F5 drift identical comparison is not re-run'
-    # A fresh drift mark with no prior record of the comparison runs it and delivers the proposal once.
-    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'drift-marks.json')
-    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'bench/trigger-log.jsonl')
-    $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified -SendAlerts
+    $driftRows=@(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'bench/trigger-log.jsonl') | ConvertFrom-Json)
+    Check ($driftRows[-1].gate -eq 'duplicate' -and (Test-Path (Join-Path $env:DT_MODEL_ROUTER_STATE 'effort-proposals/coder-standard.json')) -and @(Delivered 'effort-swap:*').Count -eq 1) 'F5 drift repeat reuses the saved comparison and still files and delivers the proposal'
     $null=Update-RouterOutcomes -Now $now -SourcesPath $sources -BenchInvoker $qualified -SendAlerts
     Check (@(Delivered 'effort-swap:*').Count -eq 1) 'F5 drift delivered once'
     Check ((Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'transport.jsonl') -Raw) -match 'coder.*medium -> low.*fixture-effort-report') 'F5 drift contents and unlocked delivery'

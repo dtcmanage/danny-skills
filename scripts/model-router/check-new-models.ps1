@@ -163,30 +163,36 @@ function Invoke-RouterModelCheck {
         }
         Write-RouterJsonAtomic -Path $stamp -Value @{ checked_at = $result.checked_at }
         Update-RouterBenchJudges -Listing @($listing.ToArray())
-        if (@($result.new_models).Count) {
-            try {
-                . (Join-Path $PSScriptRoot 'build-roster.ps1')
-                $snapshot = (Read-RouterRoster).roster
-                foreach ($model in $result.new_models) {
-                    if (Test-RouterFrontierModel -Model $model) { continue }
-                    $categories = @(Get-RouterCadenceCategories -Model $model)
-                    foreach ($job in @($categories | ForEach-Object { Get-RouterCategoryJob $_ } | Sort-Object -Unique)) {
-                        $entry = $snapshot.jobs.$job
-                        $request = [pscustomobject]@{job=$job;candidate=$model;incumbent=$entry.first;effort=$entry.first_effort}
-                        $bench = Invoke-RouterTriggeredComparison -Request $request -Trigger new-model -BenchInvoker $BenchInvoker
-                        Use-RouterOutcomeMutex -StateDir $state -Action {
-                            if ((ConvertTo-Json (Read-RouterRoster).roster.jobs -Compress -Depth 30) -cne (ConvertTo-Json $snapshot.jobs -Compress -Depth 30)) { throw 'BENCH_STALE_ROSTER' }
-                            Save-RouterEffortProposal $request $bench
-                        } | Out-Null
-                        Send-RouterEffortAlerts
-                    }
-                }
-            } catch { $result.alerts += 'bench-trigger-error' }
-        }
+        # Job-scoped bench comparisons for a new model run in the overnight cadence with its release
+        # research pass (Invoke-RouterNewModelComparisons), never from the daytime catalog check.
         return [pscustomobject]$result
     } finally {
         foreach ($job in $jobs) { if ($job.State -notin @('Completed','Failed','Stopped')) { Stop-Job -Job $job }; Remove-Job -Job $job -Force }
     }
+}
+
+function Invoke-RouterNewModelComparisons {
+    param([Parameter(Mandatory)][string]$Model, [Parameter(Mandatory)][string[]]$Categories, [scriptblock]$BenchInvoker)
+    # One comparison per job the model could serve, against the current first choice. The triggered
+    # comparison dedupes on bank, judges and models, so a repeated release pass costs nothing.
+    if (Test-RouterFrontierModel -Model $Model) { return 0 }
+    if (-not (Get-Command Invoke-RouterTriggeredComparison -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'build-roster.ps1') }
+    $state = Get-RouterStateDir
+    $snapshot = (Read-RouterRoster).roster
+    $count = 0
+    foreach ($job in @($Categories | ForEach-Object { Get-RouterCategoryJob $_ } | Sort-Object -Unique)) {
+        $entry = $snapshot.jobs.$job
+        if ($Model -ceq $entry.first -or $Model -ceq $entry.backup) { continue }  # Already on the roster for this job.
+        $request = [pscustomobject]@{job=$job;candidate=$Model;incumbent=$entry.first;effort=$entry.first_effort}
+        $bench = Invoke-RouterTriggeredComparison -Request $request -Trigger new-model -BenchInvoker $BenchInvoker
+        $count++
+        Use-RouterOutcomeMutex -StateDir $state -Action {
+            if ((ConvertTo-Json (Read-RouterRoster).roster.jobs -Compress -Depth 30) -cne (ConvertTo-Json $snapshot.jobs -Compress -Depth 30)) { throw 'BENCH_STALE_ROSTER' }
+            Save-RouterEffortProposal $request $bench
+        } | Out-Null
+        Send-RouterEffortAlerts
+    }
+    return $count
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

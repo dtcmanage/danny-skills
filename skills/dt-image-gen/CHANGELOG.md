@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.11 (2026-10-06): Model router: new-model bench comparisons run in the overnight cadence with the release research pass (one per job the model does not already hold), never from the daytime catalog check.
+
 - 0.3.10 (2026-10-06): Model router: a triggered bench comparison with the same job, models, effort, bank and judges is run once (duplicates are logged, not re-run), and the nightly cadence no longer queues refresh research on its own; research runs only for a new frontier-vendor release or on Danny's call (run-router-cadence.ps1 -Refresh).
 
 - 0.3.9 (2026-10-05): Model router benchmark: private task bank beside the router state, Aider and HLE importers, a Node test grader, ranked quality tasks judged blind by both judges, quality verdicts that gate swap, effort and tie proposals and are rechecked at approval, a per-comparison spend stop, and valid UTF-8 bench output. The in-repo bank is now 25 tasks, so answer sheets need fresh approval.

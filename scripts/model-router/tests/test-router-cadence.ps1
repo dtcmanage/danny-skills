@@ -52,8 +52,7 @@ try {
     $refresh = @(Read-RouterJsonArray -Path $queuePath | Where-Object trigger -eq 'refresh')
     Assert-True (@($refresh | Where-Object reason -eq 'drift:coder').Count -eq 1) 'drift mark queues job refresh'
     Assert-True (@($refresh | Where-Object reason -eq 'stale-reading').Count -eq 1) 'stale roster model queues refresh'
-    Assert-True (@($refresh | Where-Object { $_.reason -eq 'benchmark-version' -and $_.categories -contains 'complex-coding' }).Count -eq 1) 'new benchmark version queues category refresh'
-    Assert-True ((Compare-RouterBenchmarkVersion '10' '9') -gt 0 -and (Compare-RouterBenchmarkVersion '1.10' '1.9') -gt 0) 'benchmark versions compare numerically'
+    Assert-True (@($refresh | Where-Object reason -eq 'benchmark-version').Count -eq 0) 'benchmark version text never queues a refresh'
 
     $script:researchCalls = [Collections.Generic.List[object]]::new()
     $script:usagePercent = 51
@@ -71,6 +70,8 @@ try {
         return $record
     }
     function Build-RouterRosterProposal { param($Now) $script:proposalCalls++ }
+    $script:newModelComparisons = [Collections.Generic.List[string]]::new()
+    function Invoke-RouterNewModelComparisons { param($Model,$Categories,$BenchInvoker) $script:newModelComparisons.Add($Model); return 1 }
     function Write-RouterCadenceConfirmationVerdicts {
         param($Item,$PassId)
         if ($script:confirmationWinner) {
@@ -90,6 +91,7 @@ try {
     Assert-True (@(Read-RouterJsonArray -Path $queuePath).Count -lt $before -and $script:proposalCalls -eq $script:researchCalls.Count) 'written passes each build a proposal'
     Assert-True (@($script:researchCalls | Where-Object { $_.models -contains 'gpt-6-new' -and $_.models -contains 'gpt-6-luna' -and $_.models -contains 'claude-haiku-4-5-20251001' -and $_.models -notcontains 'gpt-6.1-sol' }).Count -gt 0) 'research receives candidate and only its categories roster models'
     Assert-True (@($script:researchCalls | Where-Object { $_.trigger -eq 'release' -and $_.new_model -eq 'gpt-6-new' -and $_.models.Count -gt 1 }).Count -gt 0) 'release passes new model separately from roster models'
+    Assert-True (@($script:newModelComparisons | Where-Object { $_ -eq 'gpt-6-new' }).Count -eq @($script:researchCalls | Where-Object trigger -eq 'release').Count) 'each written release pass runs the new-model comparisons'
     Assert-True (@($script:researchCalls | Where-Object lane -eq 'claude').Count -eq $script:researchCalls.Count) '51 percent Codex usage chooses Claude'
     $script:usagePercent = 50
     [void](Add-RouterResearchQueueItem -Model 'gpt-6.1-sol' -Trigger release -Categories @('mechanical') -DueAt $now -Reason 'lane-test')
@@ -150,6 +152,7 @@ try {
     . (Join-Path $PSScriptRoot '../build-roster.ps1')
     $script:cadenceRealBuilder = (Get-Command Build-RouterRosterProposal).ScriptBlock
     function Build-RouterRosterProposal { param($Now) & $script:cadenceRealBuilder -Now $Now -BenchInvoker $script:cadenceFakeBench }
+    function Invoke-RouterNewModelComparisons { param($Model,$Categories,$BenchInvoker) return 0 }
     function Invoke-RouterModelCheck { param([switch]$Force,$Now) return [pscustomobject]@{new_models=@()} }
     function Add-RouterCadenceRefreshes { param($Now) return 0 }
     function Invoke-RouterCategoryResearch {

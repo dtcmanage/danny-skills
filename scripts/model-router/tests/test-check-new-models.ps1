@@ -59,7 +59,17 @@ try {
     $queue = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research-queue.json') -Raw | ConvertFrom-Json)
     Assert-True ($r.new_models -contains 'gpt-6-new' -and $r.alerts -contains 'new-model:gpt-6-new' -and @($queue | Where-Object { $_.model -eq 'gpt-6-new' -and $_.trigger -eq 'release' }).Count -eq 1) 'new model queued and alerted'
     Assert-True ($script:launchCount -eq 0 -and @($queue | Where-Object trigger -eq 'confirmation').Count -eq 1) 'new queue waits for offline cadence and includes confirmation'
-    Assert-True ($script:canaryLaunchCount -gt 0) 'new models run job-scoped bench comparisons'
+    Assert-True ($script:canaryLaunchCount -eq 0) 'the catalog check runs no bench comparisons'
+    $script:comparisonJobs = [Collections.Generic.List[string]]::new()
+    function Invoke-RouterTriggeredComparison { param($Request,$Trigger,$BenchInvoker) $script:comparisonJobs.Add("$Trigger/$($Request.job)/$($Request.candidate)"); [pscustomobject]@{effort_down_qualified=$false;raw_gate='pass'} }
+    function Save-RouterEffortProposal { param($Request,$Bench) }
+    function Send-RouterEffortAlerts { }
+    function Invoke-RouterBench { throw 'live bench call inside a test' }
+    $ran = Invoke-RouterNewModelComparisons -Model 'gpt-6-new' -Categories @('routine-coding','complex-coding','planning','long-form-writing')
+    Assert-True ($ran -gt 0 -and $ran -eq $script:comparisonJobs.Count -and @($script:comparisonJobs | Where-Object { $_ -like 'new-model/*/gpt-6-new' }).Count -eq $ran) 'release pass runs one new-model comparison per job'
+    Assert-True ((Invoke-RouterNewModelComparisons -Model 'gpt-7-astra' -Categories @('planning')) -eq 0) 'frontier models get no automatic comparison'
+    $rosterFirst = (Read-RouterRoster).roster.jobs.coder.first
+    Assert-True ((Invoke-RouterNewModelComparisons -Model $rosterFirst -Categories @('complex-coding')) -eq 0) 'a model already on the roster for the job is not compared with itself'
     $registry = @(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json)
     Assert-True ((@($registry | Where-Object id -eq 'gpt-6-new')[0]).status -eq 'unprofiled') 'new model remains unprofiled'
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.20.3
+
+- Model router: new-model bench comparisons run in the overnight cadence with the release research pass (one per job the model does not already hold), never from the daytime catalog check.
+
 ## 2.20.2
 
 - Model router: a triggered bench comparison with the same job, models, effort, bank and judges is run once (duplicates are logged, not re-run), and the nightly cadence no longer queues refresh research on its own; research runs only for a new frontier-vendor release or on Danny's call (run-router-cadence.ps1 -Refresh).

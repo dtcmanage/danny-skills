@@ -60,15 +60,6 @@ function Get-RouterCadenceJobCategories {
     return @($Roster.category_jobs.PSObject.Properties | Where-Object { $jobs -contains [string]$_.Value } | ForEach-Object Name | Sort-Object -Unique)
 }
 
-function Compare-RouterBenchmarkVersion {
-    param([string]$Left, [string]$Right)
-    $leftVersion = $null; $rightVersion = $null
-    if ([version]::TryParse($Left,[ref]$leftVersion) -and [version]::TryParse($Right,[ref]$rightVersion)) { return $leftVersion.CompareTo($rightVersion) }
-    $leftNumber = [decimal]0; $rightNumber = [decimal]0
-    if ([decimal]::TryParse($Left,[ref]$leftNumber) -and [decimal]::TryParse($Right,[ref]$rightNumber)) { return $leftNumber.CompareTo($rightNumber) }
-    return [string]::Compare($Left,$Right,[StringComparison]::OrdinalIgnoreCase)
-}
-
 function Add-RouterCadenceRefreshes {
     param([datetime]$Now = (Get-Date))
     $state = Get-RouterStateDir
@@ -83,20 +74,9 @@ function Add-RouterCadenceRefreshes {
         $categories = @(Get-RouterCadenceJobCategories -Model $model -Roster $roster)
         if (Add-RouterResearchQueueItem -Model $model -Trigger refresh -Categories $categories -DueAt $Now -Reason 'stale-reading' -Automatic) { $added++ }
     }
-    $readDir = Join-Path $state 'readings'
-    foreach ($category in @($roster.category_jobs.PSObject.Properties.Name)) {
-        $stored = Read-RouterJsonObject -Path (Join-Path $readDir "$category.json")
-        if (-not $stored -or -not $stored.PSObject.Properties['readings']) { continue }
-        $models = @($roster.jobs.PSObject.Properties | Where-Object { $_.Name -eq $roster.category_jobs.$category } | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ })
-        foreach ($model in $models) {
-            $outdated = $false
-            foreach ($reading in @($stored.readings)) {
-                $versions = @($stored.readings | Where-Object { $_.benchmark -ceq $reading.benchmark } | ForEach-Object version | Sort-Object -Unique)
-                if (@($reading.results | Where-Object model -CEQ $model).Count -and @($versions | Where-Object { (Compare-RouterBenchmarkVersion ([string]$_) ([string]$reading.version)) -gt 0 }).Count) { $outdated = $true; break }
-            }
-            if ($outdated -and (Add-RouterResearchQueueItem -Model $model -Trigger refresh -Categories @($category) -DueAt $Now -Reason 'benchmark-version' -Automatic)) { $added++ }
-        }
-    }
+    # No benchmark-version refresh: the research models write the version as free text ("05/2026",
+    # "May 2026", "v2 private set"), so every comparison found a "newer" version and the same refresh
+    # re-queued itself nightly (2026-10-02 to 10-05).
     return $added
 }
 
@@ -209,6 +189,10 @@ function Invoke-RouterCadence {
                     }
                 }
                 if (-not $interrupted) {
+                    if ($item.trigger -eq 'release') {
+                        try { [void](Invoke-RouterNewModelComparisons -Model ([string]$item.model) -Categories @($item.categories)) }
+                        catch { Write-Warning "New-model comparisons for $($item.model) failed: $($_.Exception.Message)" }
+                    }
                     if ($item.trigger -eq 'confirmation') { Write-RouterCadenceConfirmationVerdicts -Item $item -PassId $record.pass_id }
                     [void](Build-RouterRosterProposal -Now $Now)
                     if ($item.trigger -eq 'confirmation') {
