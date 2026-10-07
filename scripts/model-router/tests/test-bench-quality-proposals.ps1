@@ -142,7 +142,7 @@ try {
     foreach($key in @('spend_stop_points','spend_stop_model_calls','spend_reading_stale_hours')){$persisted.Remove($key)}
     $persisted | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $catalogState 'bench/judge-config.json') -Encoding utf8
     $filled=Invoke-RouterBench -Job fast -Candidate $roster.jobs.fast.first -Incumbent $roster.jobs.fast.first -StateDir $catalogState -NoAlerts -Limits {param($v) @{blocked=$false;used_percent=10}} -CliInvoker {param($r) @{status='ok';answer='ok'}} -Outcome {param($r)}
-    Assert ($filled.spend.point_limit -eq 5 -and $filled.spend.call_limit -eq 450 -and $filled.spend.reading_stale_hours -eq 6) 'Runner with a persisted judge catalog reports the shipped spend thresholds'
+    Assert ($filled.spend.point_limit -eq 5 -and $filled.spend.call_limit -eq 700 -and $filled.spend.reading_stale_hours -eq 6) 'Runner with a persisted judge catalog reports the shipped spend thresholds'
 
     $usageFiles=@(Get-ChildItem -LiteralPath $root -Recurse -Filter 'claude-usage.json' | Where-Object { (Get-Content $_.FullName -Raw | ConvertFrom-Json).source -ceq 'oauth-usage' })
     Assert ($usageFiles.Count -eq 0) 'Synthetic tests must never write live OAuth usage'

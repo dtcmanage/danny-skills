@@ -319,6 +319,9 @@ function Invoke-RouterBench {
                             }
                             $response.diagnosis=& $Diagnosis $r.vendor ([string]$response.detail)
                         }
+                        if($r.vendor -eq 'codex' -and $response.ContainsKey('rate_limits_weekly') -and $response.rate_limits_weekly -is [hashtable]){
+                            try { $null = Save-RouterCodexAppServerReading -Reading $response.rate_limits_weekly } catch { Write-Warning "Codex app-server reading not saved: $($_.Exception.Message)" }
+                        }
                         try {$response.quota_after=& $Limits $r.vendor} catch {$response.quota_after=@{measurement='unavailable';detail=$_.Exception.Message}}
                         $response
                     }

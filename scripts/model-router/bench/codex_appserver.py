@@ -443,12 +443,18 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
         raw_answer = None
         cumulative_seen = False
         host_warning_seen = False
+        weekly_limits: dict[str, Any] | None = None
         while True:
             event = server.events.pop(0) if server.events else server.receive()
             if 'method' not in event:
                 raise BoundaryError('unexpected response')
             method, params = event['method'], event.get('params', {})
-            if method in ('remoteControl/status/changed', 'account/rateLimits/updated', 'account/updated'): continue
+            if method == 'account/rateLimits/updated':
+                # Ephemeral turns write no rollout file, so this snapshot is the only fresh weekly
+                # reading a bench call produces; the runner persists it for the spend stop and resolver.
+                weekly_limits = weekly_rate_limit(params.get('rateLimits')) or weekly_limits
+                continue
+            if method in ('remoteControl/status/changed', 'account/updated'): continue
             if method == 'warning':
                 if params.get('threadId') != thread_id or host_warning_seen:
                     raise BoundaryError('stale or duplicate disabled-host warning')
@@ -534,7 +540,8 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
                     raise BoundaryError('raw and cumulative usage disagree')
                 return {'status': 'ok', 'answer': final, 'usage': measured,
                         'usage_partial': False, 'resolved_model': model, 'resolved_effort': effort,
-                        'tools': 'host disabled; unsupported attempts rejected'}
+                        'tools': 'host disabled; unsupported attempts rejected',
+                        'rate_limits_weekly': weekly_limits}
     except BoundaryError as error:
         pending_error = error
         error.usage = retained_usage()
@@ -575,6 +582,19 @@ def schema_valid(value: Any, schema: dict, root: dict) -> bool:
         if set(value) - set(properties) or any(k not in value for k in schema.get('required', [])): return False
         return all(schema_valid(v, properties[k], root) for k,v in value.items())
     return True
+
+
+def weekly_rate_limit(snapshot: Any) -> dict[str, Any] | None:
+    """The 10080-minute window of a validated rate-limit snapshot, as the router's usage shape."""
+    if not isinstance(snapshot, dict):
+        return None
+    for key in ('primary', 'secondary'):
+        window = snapshot.get(key)
+        if isinstance(window, dict) and window.get('windowDurationMins') == 10080 and type(window.get('usedPercent')) is int:
+            reset = window.get('resetsAt')
+            return {'used_percent': float(window['usedPercent']), 'window_minutes': 10080,
+                    'resets_at_utc': datetime.fromtimestamp(reset, timezone.utc).isoformat() if type(reset) is int else None}
+    return None
 
 
 def valid_raw_content(part: Any, role: Any, images_sent: bool) -> bool:

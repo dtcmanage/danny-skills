@@ -133,6 +133,7 @@ for line in sys.stdin:
     event('rawResponse/completed',dict(base,responseId='resp-3',usage=last))
    if scenario=='usage-retry':event('rawResponse/completed',dict(base,responseId='resp-2',usage=last))
   if scenario=='quota-valid':event('account/rateLimits/updated',{'rateLimits':{'limitId':'codex','primary':None}})
+  if scenario=='quota-weekly':event('account/rateLimits/updated',{'rateLimits':{'limitId':'codex','primary':{'usedPercent':12,'windowDurationMins':300,'resetsAt':1800000000},'secondary':{'usedPercent':66,'windowDurationMins':10080,'resetsAt':1800000000}}})
   if scenario=='quota-invalid':event('account/rateLimits/updated',{'rateLimits':{'primary':{'usedPercent':True}}})
   if scenario=='compaction':event('thread/compacted',base)
   if scenario=='async-input':emit({'id':99,'method':'item/tool/requestUserInput','params':base});continue

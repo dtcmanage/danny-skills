@@ -16,7 +16,8 @@ try {
         Assert ($r.effort -in @('medium','low')) 'Live roster effort not honored'
         Assert (-not $r.prompt.Contains('known-good.txt')) 'Golden path leaked'
         $id=if($r.prompt.Contains('shipment record')){'grounding-missing-field'}elseif($r.prompt.Contains('fee table')){'mechanical-extract-table'}else{'mechanical-rename-sweep'}
-        @{status='ok';answer=(Get-Content (Join-Path $script:BenchRoot "tasks/$id/known-good.txt") -Raw);usage=@{input=100;cached_input=50;output=10};resolved_model=$r.model}
+        # A live Codex reply carries the app-server's weekly snapshot; the runner must save it without leaking it into the IPC reply.
+        @{status='ok';answer=(Get-Content (Join-Path $script:BenchRoot "tasks/$id/known-good.txt") -Raw);usage=@{input=100;cached_input=50;output=10};resolved_model=$r.model;rate_limits_weekly=@{used_percent=7;window_minutes=10080;resets_at_utc='2026-10-14T04:19:43+00:00'}}
     }
     # Current approved roster wins over job defaults (fast low -> coder low).
     $roster=Get-Content (Join-Path $script:BenchRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json
@@ -29,6 +30,9 @@ try {
     $rows=@(Get-Content (Join-Path $root 'outcomes.jsonl') | ForEach-Object {$_ | ConvertFrom-Json})
     Assert ($rows.Count -eq 27 -and $rows[0].response.quota_after.used_percent -eq 12) 'Host outcome/telemetry failure'
     Assert ($result.telemetry.codex.measured_calls -eq 27) 'Usage aggregation failure'
+    Assert ($result.candidate.unknown -eq 0 -and @($result.calls | Where-Object { $_.status -ne 'ok' }).Count -eq 0) 'A reply with a weekly snapshot must still reach the engine as one dict'
+    $savedReading=Get-Content (Join-Path $root 'readings/codex-appserver.json') -Raw | ConvertFrom-Json
+    Assert ($savedReading.used_percent -eq 7 -and $savedReading.source -eq 'codex-app-server' -and $savedReading.resets_at_utc -eq '2026-10-14T04:19:43.0000000+00:00') 'Codex app-server weekly snapshot saved as a reading'
     Assert (Test-Path $result.report_paths.markdown) 'Report missing'
     $blocked=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir (Join-Path $root 'blocked') -CliInvoker {throw 'must not call'} -Limits {param($v) @{blocked=$true}} -NoAlerts
     Assert ($blocked.raw_gate -eq 'unknown') 'Blocked quota failure'

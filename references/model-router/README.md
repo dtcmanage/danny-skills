@@ -55,7 +55,9 @@ After comparisons, publication reacquires the mutex and checks the complete rost
 job identity, including model picks and efforts. A changed identity rejects the
 staged result with `BENCH_STALE_ROSTER`.
 
-UNKNOWN blocks publication even in shadow mode and for writer. Approved-bank
+Each rep gets two attempts; an unknown second attempt stays unknown, except
+a vendor identity failure (the CLI answering on a different model, which the
+bench rejects) earns a third attempt. UNKNOWN blocks publication even in shadow mode and for writer. Approved-bank
 fast, coder and deep-thinker failures block publication; writer and shadow results
 are advisory. Equal results are reported as tied; otherwise the better model is decided by pass count, then fewer fabrications, then fewer first-attempt failures;
 a one-task candidate deficit remains visible in the proposal evidence with the
@@ -157,20 +159,24 @@ charge earlier jobs' use to this comparison. When a vendor starts without such a
 reading, the runner rechecks between tasks and takes its first fresh reading as
 that vendor's baseline. The 5-point rule
 applies to each vendor once its baseline exists. While either baseline is missing,
-a cap of 450 model calls, including answer and judge calls, applies across the
+a cap of 700 model calls, including answer and judge calls, applies across the
 whole comparison and all its tiers. If a vendor's reading is later lost, that
 vendor keeps its baseline and also goes under the cap, counted from the call
 where the reading was lost, until a fresh reading returns. A reading more than
 5 points below a vendor's baseline is treated as a weekly reset: it becomes the
 new baseline and the report records the reset. The cap is a runaway guard: at
-450 it is above every full comparison, so it stops only a comparison that has
+700 it is above every full comparison (a two-tier deep-thinker job makes about 550 calls), so it stops only a comparison that has
 grown well beyond the current bank. After the last task only the 5-point rule is
 applied, so a comparison that finished is not discarded for reaching the cap.
 The report's Codex quota column shows the weekly window. Readings marked stale, with future timestamps
 or older than 6 hours are unavailable. Codex use comes from the 10080-minute
-weekly window; the 300-minute window is not spend-stop evidence.
+weekly window; the 300-minute window is not spend-stop evidence. Codex rollout
+files are written only by interactive sessions, so each bench Codex call also
+saves the app-server's weekly rate-limit snapshot to
+`<state>/readings/codex-appserver.json`; `Get-RouterCodexUsage -Weekly` returns
+whichever of that snapshot and the newest rollout reading was observed later.
 `spend_stop_points`, `spend_stop_model_calls`, `spend_reading_stale_hours` and
-`spend_baseline_max_age_minutes` in `bench-config.json` default to 5, 450, 6 and 10; a persisted
+`spend_baseline_max_age_minutes` in `bench-config.json` default to 5, 700, 6 and 10; a persisted
 `<state>/bench/judge-config.json` that lacks these keys takes them from
 `bench-config.json`. Reports record the rules in force,
 each baseline and its time, latest readings and call count. A halted comparison

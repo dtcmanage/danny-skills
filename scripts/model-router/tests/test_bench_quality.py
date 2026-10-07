@@ -191,11 +191,11 @@ def test_spend_more_than_five_points_between_tasks(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize('reading', [None, {'measurement': 'unavailable'},
     {'used_percent': 1, 'stale': True}, {'used_percent': 1, 'observed_at_utc': '2000-01-01T00:00:00Z'}])
-def test_unavailable_or_stale_450_call_cap(tmp_path: Path, reading: dict | None) -> None:
-    result = run(tmp_path, job='fast', count=60, ranked=False,
+def test_unavailable_or_stale_700_call_cap(tmp_path: Path, reading: dict | None) -> None:
+    result = run(tmp_path, job='fast', count=90, ranked=False,
         spend_check=lambda: {'claude': reading, 'codex': {'used_percent': 10}})
-    assert result['halted'] and result['spend']['model_calls'] == 450
-    assert '450/450' in result['halt_reason']
+    assert result['halted'] and result['spend']['model_calls'] == 700
+    assert '700/700' in result['halt_reason']
     assert not (tmp_path / 'state/tie-proposals').exists()
 
 
@@ -235,7 +235,7 @@ def test_first_fresh_reading_replaces_missing_baseline(initial: str | None) -> N
     ])
     spend = engine.ComparisonSpend(lambda: next(readings), {})
     assert spend.fallback and spend.baselines['codex'] is None
-    spend.calls = 450
+    spend.calls = 700
     spend.check()  # Acquire before checking the call cap at the task boundary.
     assert not spend.fallback
     assert spend.baselines['codex']['used_percent'] == 20

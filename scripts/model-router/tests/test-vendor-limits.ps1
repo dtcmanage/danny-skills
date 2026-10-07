@@ -249,6 +249,20 @@ try {
     Assert-True ($resume.resume_after_utc -eq $block.reset_at_utc -and $resume.resume_after_source -eq 'recheck') 'minimum vendor reset retains its constraint source'
     Assert-True ((Format-RouterResumeAfterEt -AtUtc '2026-07-01T18:00:00Z' -Source usage-reset) -ceq 'resume after Wed 2026-07-01 2:00 PM ET') 'EDT rendering uses Eastern time zone'
     Assert-True ((Format-RouterResumeAfterEt -AtUtc '2026-01-01T19:00:00Z' -Source refusal-reset) -ceq 'resume after Thu 2026-01-01 2:00 PM ET') 'EST rendering uses Eastern time zone'
+    # A bench app-server snapshot is a weekly reading; the newer of it and the rollout reading wins.
+    $rolloutWeekly = Get-RouterCodexUsage -Weekly
+    $saved = Save-RouterCodexAppServerReading -Reading @{ used_percent=66; resets_at_utc=([datetimeoffset]::UtcNow.AddDays(3)).ToString('o'); window_minutes=10080 }
+    $merged = Get-RouterCodexUsage -Weekly
+    Assert-True ($merged.used_percent -eq 66 -and $merged.source_file -eq (Get-RouterCodexAppServerReadingPath) -and $merged.observed_at_utc -eq $saved.observed_at_utc) 'fresh app-server weekly reading wins over the rollout reading'
+    Assert-True ($null -eq (Save-RouterCodexAppServerReading -Reading @{ used_percent=1 })) 'a snapshot without a reset time is not saved'
+    $stale = Read-RouterJsonObject -Path (Get-RouterCodexAppServerReadingPath)
+    $stale.observed_at_utc = ([datetimeoffset]::UtcNow.AddDays(-2)).ToString('o')
+    Write-RouterJsonAtomic -Path (Get-RouterCodexAppServerReadingPath) -Value $stale
+    $after = Get-RouterCodexUsage -Weekly
+    Assert-True (($null -eq $rolloutWeekly -and $after.used_percent -eq 66) -or ($null -ne $rolloutWeekly -and $after.source_file -ne (Get-RouterCodexAppServerReadingPath))) 'an older app-server reading yields to a newer rollout reading'
+    Assert-True ($null -eq (Get-RouterCodexUsage) -or (Get-RouterCodexUsage).source_file -ne (Get-RouterCodexAppServerReadingPath)) 'the five-hour window never uses the weekly snapshot'
+    $parsed = (@{ used_percent=2; resets_at_utc='2026-10-14T00:19:43+00:00' } | ConvertTo-Json | ConvertFrom-Json -AsHashtable)
+    Assert-True ((Save-RouterCodexAppServerReading -Reading $parsed).resets_at_utc -eq '2026-10-14T00:19:43.0000000+00:00') 'a reset already parsed to DateTime is saved as ISO UTC'
     Write-Output "SUMMARY: $script:passed passed"
 } finally { $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials; Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState

@@ -286,6 +286,30 @@ def test_environment_retry_and_quota(tmp_path: Path) -> None:
     assert result['raw_gate'] == 'pass' and len(result['outcomes']) == 21
 
 
+def test_identity_failure_earns_a_third_attempt(tmp_path: Path) -> None:
+    # Two identity failures in a row (the CLI answering on another model) still get a third try;
+    # any other unknown stops at two attempts, and a third identity failure stays unknown.
+    seen: dict[tuple, int] = {}
+    def dispatch(request: dict) -> dict:
+        key = (request['model'], request['prompt'][:40])
+        seen[key] = seen.get(key, 0) + 1
+        if request['model'] == 'candidate':
+            if seen[key] <= 2:
+                return {'status': 'unknown', 'failure_category': 'identity', 'detail': 'Claude model changed during comparison.'}
+            return {'status': 'ok', 'answer': '{}'}
+        if request['model'] == 'incumbent':
+            return {'status': 'unknown', 'failure_category': 'environment', 'detail': 'timeout'}
+        return {'status': 'ok', 'answer': '{}'}
+    result = run(tmp_path, dispatch=dispatch)
+    candidate = [row for row in result['outcomes'] if row['side'] == 'candidate']
+    incumbent = [row for row in result['outcomes'] if row['side'] == 'incumbent']
+    assert max(row['attempt'] for row in candidate) == 3 and all(not row['unknown'] for row in candidate if row['attempt'] == 3)
+    assert result['candidate']['unknown'] == 0
+    assert max(row['attempt'] for row in incumbent) == 2 and all(row['unknown'] for row in incumbent)
+    always = run(tmp_path / 'always', dispatch=lambda request: {'status': 'unknown', 'failure_category': 'identity', 'detail': 'changed'})
+    assert max(row['attempt'] for row in always['outcomes']) == 3 and always['raw_gate'] == 'unknown'
+
+
 def test_deterministic_failure_no_retry(tmp_path: Path) -> None:
     result = run(tmp_path, grade=lambda task, answer: {'status': 'fail'})
     assert len(result['outcomes']) == 18

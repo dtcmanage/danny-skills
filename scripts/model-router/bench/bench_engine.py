@@ -418,7 +418,7 @@ class ComparisonSpend:
     def __init__(self, callback: Callable[[], dict[str, Any]], config: dict[str, Any]) -> None:
         self.callback = callback
         self.point_limit = config.get('spend_stop_points', 5)
-        self.call_limit = config.get('spend_stop_model_calls', 450)
+        self.call_limit = config.get('spend_stop_model_calls', 700)
         self.stale_hours = config.get('spend_reading_stale_hours', 6)
         # A baseline must postdate the comparison, give or take this allowance; an older reading
         # would charge earlier jobs' spend to this comparison (a 2h48m-old Codex reading halted
@@ -747,7 +747,9 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             reps = []
             count = 1 if task.name == 'pelican' else 3
             for rep in range(1, count + 1):
-                for attempt in (1, 2):
+                # Two attempts per rep; a vendor identity failure (the Claude CLI silently answering on a
+                # different model, about 11% of opus-5-5 high calls on 2026-10-06/07) earns a third.
+                for attempt in (1, 2, 3):
                     row = {'source': 'bench', 'trigger': trigger, 'job': job, 'tier': tier, 'effort': level,
                            'model': model, 'side': side, 'task_bank_sha256': digest,
                            'task_id': task.name, 'rep': rep, 'attempt': attempt,
@@ -821,7 +823,8 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                                ('implementation' if status == 'fail' else None))
                     rows.append(row)
                     outcome(row)
-                    if status != 'unknown' or attempt == 2:
+                    identity_failure = status == 'unknown' and unknown_category == 'identity'
+                    if status != 'unknown' or attempt == 3 or (attempt == 2 and not identity_failure):
                         break
                 reps.append(status)
             task_status = 'unknown' if 'unknown' in reps else ('ungraded' if count == 1 else

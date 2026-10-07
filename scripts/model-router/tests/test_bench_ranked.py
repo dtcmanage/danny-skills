@@ -354,6 +354,20 @@ def test_codex_image_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             {'model': 'gpt-6.1-sol', 'effort': 'high', 'prompt': 'Synthetic fixture\nexact bytes'}, tmp_path, 10000)
 
 
+def test_codex_weekly_rate_limit_snapshot_is_returned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    auth = tmp_path / 'auth'
+    auth.mkdir()
+    (auth / 'auth.json').write_text('{}')
+    monkeypatch.setenv('CODEX_HOME', str(auth))
+    request = {'model': 'gpt-6.1-sol', 'effort': 'high', 'prompt': 'Synthetic fixture\nexact bytes'}
+    fake = str(Path(__file__).with_name('fake-appserver.py'))
+    result = transport.run([sys.executable, fake, 'quota-weekly'], request, tmp_path, 10000)
+    assert result['rate_limits_weekly'] == {'used_percent': 66.0, 'window_minutes': 10080, 'resets_at_utc': '2027-01-15T08:00:00+00:00'}
+    assert transport.run([sys.executable, fake, 'quota-valid'], request, tmp_path, 10000)['rate_limits_weekly'] is None
+    assert transport.weekly_rate_limit({'primary': {'usedPercent': 5, 'windowDurationMins': 300}}) is None
+    assert transport.weekly_rate_limit({'primary': {'usedPercent': 5.5, 'windowDurationMins': 10080}}) is None
+
+
 def test_verdict_counts_tasks_instead_of_pooling_reps(tmp_path: Path) -> None:
     tasks = [make_task(tmp_path / 'tasks', name=f'ranked-synthetic-{i}') for i in range(3)]
     run = tmp_path / 'run'

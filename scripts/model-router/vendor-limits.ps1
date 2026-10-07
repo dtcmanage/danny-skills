@@ -112,7 +112,49 @@ function Get-RouterClaudeUsage {
     }
 }
 
+function Get-RouterCodexAppServerReadingPath {
+    return Join-Path (Join-Path (Get-RouterStateDir) 'readings') 'codex-appserver.json'
+}
+
+function Save-RouterCodexAppServerReading {
+    # The bench's ephemeral app-server turns write no rollout file; their rate-limit snapshot is
+    # persisted here so Get-RouterCodexUsage sees a fresh weekly reading during a comparison.
+    param([Parameter(Mandatory)][hashtable]$Reading)
+    if (-not $Reading.ContainsKey('used_percent') -or -not $Reading.ContainsKey('resets_at_utc') -or $null -eq $Reading.used_percent -or -not $Reading.resets_at_utc) { return $null }
+    # The runner's JSON round trip may already have parsed the reset into a DateTime; keep the ISO UTC shape.
+    $value = [pscustomobject]@{ used_percent=[double]$Reading.used_percent
+        resets_at_utc=([datetimeoffset]$Reading.resets_at_utc).ToUniversalTime().ToString('o')
+        observed_at_utc=([datetimeoffset]::UtcNow).ToString('o'); source='codex-app-server' }
+    $path = Get-RouterCodexAppServerReadingPath
+    $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path)
+    Write-RouterJsonAtomic -Path $path -Value $value
+    return $value
+}
+
 function Get-RouterCodexUsage {
+    param([string]$SessionsRoot, [switch]$Weekly)
+    $rollout = Get-RouterCodexRolloutUsage -SessionsRoot $SessionsRoot -Weekly:$Weekly
+    if (-not $Weekly) { return $rollout }
+    $saved = $null
+    try {
+        $path = Get-RouterCodexAppServerReadingPath
+        if (Test-Path -LiteralPath $path) {
+            $candidate = Read-RouterJsonObject -Path $path
+            if ($candidate -and $candidate.PSObject.Properties['used_percent'] -and $candidate.PSObject.Properties['observed_at_utc'] -and $candidate.PSObject.Properties['resets_at_utc']) {
+                # Read-RouterJsonObject parses ISO strings into DateTime; restore the router's ISO UTC shape.
+                $saved = [pscustomobject]@{ used_percent=[double]$candidate.used_percent
+                    resets_at_utc=([datetimeoffset]$candidate.resets_at_utc).ToUniversalTime().ToString('o')
+                    observed_at_utc=([datetimeoffset]$candidate.observed_at_utc).ToUniversalTime().ToString('o'); source_file=$path }
+                if ([datetimeoffset]$saved.resets_at_utc -le [datetimeoffset]::UtcNow) { $saved.used_percent = 0.0 }
+            }
+        }
+    } catch { $saved = $null }
+    if ($null -eq $saved) { return $rollout }
+    if ($null -eq $rollout) { return $saved }
+    return $(if ([datetimeoffset]$saved.observed_at_utc -gt [datetimeoffset]$rollout.observed_at_utc) { $saved } else { $rollout })
+}
+
+function Get-RouterCodexRolloutUsage {
     param([string]$SessionsRoot, [switch]$Weekly)
     if (-not $SessionsRoot) {
         $SessionsRoot = if ($env:DT_MODEL_ROUTER_CODEX_SESSIONS) { $env:DT_MODEL_ROUTER_CODEX_SESSIONS }
