@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.20.6
+
+- Shared model router scripts: declined effort swaps stay declined, one bench comparison at a time, research replies parse past a timestamp preface.
+
 ## 2.20.5
 
 - Model router bench: each Codex bench call saves the app-server weekly rate-limit snapshot as a fresh reading (ephemeral turns write no rollout file, so the spend stop had no Codex baseline and hit the call cap); the runaway call cap rises to 700, above a two-tier deep-thinker job. A rep whose first two attempts were vendor identity failures gets a third attempt.

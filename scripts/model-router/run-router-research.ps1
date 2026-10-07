@@ -23,6 +23,20 @@ function Format-RouterCodexFailure {
     return "$Label (exit_code=$($Result.exit_code); timed_out=$($Result.timed_out); duration_ms=$($Result.duration_ms)). stderr tail:`n$stderr"
 }
 
+function Get-RouterResearchJsonBody {
+    # The reply is one JSON object, possibly fenced. On 2026-10-07 every Claude reply opened with a "[HH:mm:ss] " preface
+    # (the local-time note each prompt carries, echoed back) and all nine categories failed to parse, so text before the
+    # first brace or after the last is dropped.
+    param([string]$Text)
+    $body = ([string]$Text).Trim()
+    if ($body -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $body = $Matches[1].Trim() }
+    if (-not $body.StartsWith('{')) {
+        $start = $body.IndexOf('{'); $end = $body.LastIndexOf('}')
+        if ($start -ge 0 -and $end -gt $start) { $body = $body.Substring($start, $end - $start + 1) }
+    }
+    return $body
+}
+
 function Write-RouterResearchFailure {
     param([Parameter(Mandatory)][string]$StateDir, [Parameter(Mandatory)][string]$FileName, [Parameter(Mandatory)][string]$Detail)
     $failDir = Join-Path $StateDir 'research-failures'; New-Item -ItemType Directory -Path $failDir -Force | Out-Null
@@ -365,9 +379,7 @@ function Invoke-RouterCategoryResearch {
                         }
                     }
                     $returned = $true
-                    $body = ([string]$raw).Trim()
-                    if ($body -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $body = $Matches[1] }
-                    $parsed = $body | ConvertFrom-Json -Depth 40
+                    $parsed = (Get-RouterResearchJsonBody -Text ([string]$raw)) | ConvertFrom-Json -Depth 40
                     if (-not (Test-RouterReadings -Readings $parsed -Category $category -Models $request.models)) { throw 'Invalid category readings' }
                     $attempt.succeeded = $true
                 } catch {

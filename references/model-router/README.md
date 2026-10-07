@@ -34,7 +34,7 @@ v2 routes delegated work from a short roster (at most 5 models) defined in `rost
 
 A caller that passes `-Lane` gets that lane's member of the pair or a `wait`. A caller without a lane gets the first choice, or the backup when the first choice's vendor is blocked, unselectable, or drifting. `vendor-limits.ps1` reads Codex weekly use from local session logs and Claude weekly use from `GET https://api.anthropic.com/api/oauth/usage`, using the `claudeAiOauth.accessToken` in `.credentials.json` under `CLAUDE_CONFIG_DIR` (falling back to `~\.claude`) with `anthropic-beta: oauth-2025-04-20`. It reads `seven_day.utilization`; at 95% or more either vendor is blocked and the job moves to its other-vendor backup. Claude readings are cached in `<state>/claude-usage.json` for 5 minutes. The router never refreshes or logs the token; a missing or expired token produces no reading and does not block Claude; a failed request falls back to the last cached reading, or to no reading when none exists. A recorded limit refusal also blocks that vendor until reset. If both vendors are blocked, the resolver returns `status = wait`, never a weaker model. The 5-hour Claude session figure appears only in the weekly cost report.
 
-Research runs per category (`run-router-research.ps1 -Categories`), reading the named sources in `benchmark-sources.json` and storing readings under `<state>/readings/`. `build-roster.ps1` turns readings into a proposal: two independent comparable leads and no trail win a category; the job's primary category decides a multi-category job; a change needs two consecutive conclusive passes that covered the job; the fast job clears a quality floor, then the lower list price wins. A change sends one Discord DM and writes a report under `<state>/roster-proposals/`.
+Research runs per category (`run-router-research.ps1 -Categories`), reading the named sources in `benchmark-sources.json` and storing readings under `<state>/readings/`. A category reply is one JSON object; a code fence or any preface before the first brace (every Claude reply on 2026-10-07 opened with a `[HH:mm:ss]` stamp) is dropped before parsing. `build-roster.ps1` turns readings into a proposal: two independent comparable leads and no trail win a category; the job's primary category decides a multi-category job; a change needs two consecutive conclusive passes that covered the job; the fast job clears a quality floor, then the lower list price wins. A change sends one Discord DM and writes a report under `<state>/roster-proposals/`.
 
 Manage the roster with `approve-roster.ps1`: `-Show`, `-Approve` (uses the approved roster), `-Revoke` (clears approval and uses the default roster with an alert), and `-DeclineDrift -Job <job>` (keep the first choice after a drift alert). Drift on a first choice sends that job to its approved backup until Danny approves the swap proposal or declines it.
 Use `-Approve -Jobs fast,coder` to approve only named jobs when a full proposal exceeds the five-model cap.
@@ -55,9 +55,16 @@ After comparisons, publication reacquires the mutex and checks the complete rost
 job identity, including model picks and efforts. A changed identity rejects the
 staged result with `BENCH_STALE_ROSTER`.
 
+One comparison runs per state root at a time: `Invoke-RouterBench` holds
+`bench/bench.lock` (holder described in `bench/bench.lock.json`) and a second
+caller, manual or cadence, waits with a stderr notice until it is free or four
+hours pass (`-LockTimeoutMs`); the OS drops the handle on exit, including a crash.
 Each rep gets two attempts; an unknown second attempt stays unknown, except
 a vendor identity failure (the CLI answering on a different model, which the
-bench rejects) earns a third attempt. UNKNOWN blocks publication even in shadow mode and for writer. Approved-bank
+bench rejects) earns a third attempt. A declined effort swap stays declined: `-DeclineEffort` records the swap and its
+evidence identity (bank, judges) in `effort-declines.jsonl`, and no comparison,
+reused or fresh, re-files that swap while the identity is unchanged; a new task
+bank or judge pair makes a new proposal. UNKNOWN blocks publication even in shadow mode and for writer. Approved-bank
 fast, coder and deep-thinker failures block publication; writer and shadow results
 are advisory. Equal results are reported as tied; otherwise the better model is decided by pass count, then fewer fabrications, then fewer first-attempt failures;
 a one-task candidate deficit remains visible in the proposal evidence with the

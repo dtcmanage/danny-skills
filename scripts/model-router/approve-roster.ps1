@@ -294,7 +294,7 @@ if ($Show) {
             if ($reason) { throw "EFFORT_STALE_EVIDENCE: $reason" }
         }
     }
-    if ($DeclineEffort) { $swap.status = 'declined' }
+    if ($DeclineEffort) { $swap.status = 'declined'; $null = Add-RouterEffortDecline -Proposal $swap -StateDir $state }
     else {
         $value = if ($RevokeEffort) { $swap.current_effort } else { $swap.proposed_effort }
         if ($Job -in @('coder','deep-thinker') -and $swap.PSObject.Properties['tier'] -and $swap.tier -cne $Difficulty) { throw 'EFFORT_TIER_MISMATCH' }

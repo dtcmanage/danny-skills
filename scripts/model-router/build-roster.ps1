@@ -280,6 +280,9 @@ function Save-RouterEffortProposal {
     if (-not $next -or $lane.model -cne $current.first -or $lane.effort -cne $next) { return }
     $evidence = New-RouterBenchProposalEvidence -Job $Request.job -Bench $Bench
     if (Get-RouterBenchProposalEvidenceError -Job $Request.job -Evidence $evidence) { return }
+    # A swap Danny declined under this evidence identity is never re-filed, whichever file now sits at the path.
+    $key = Get-RouterEffortProposalKey -Proposal ([pscustomobject]@{job=$Request.job;tier=$tier;model=$current.first;current_effort=$Request.effort;proposed_effort=$next;bench_evidence=$evidence})
+    if (Test-RouterEffortDeclined -Key $key) { return }
     $dir = Join-Path (Get-RouterStateDir) 'effort-proposals'
     [IO.Directory]::CreateDirectory($dir) | Out-Null
     $path = Join-Path $dir ($Request.job + $(if ($Request.job -in @('coder','deep-thinker')) { '-' + $tier } else { '' }) + '.json')

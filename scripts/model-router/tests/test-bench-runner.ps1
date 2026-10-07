@@ -274,7 +274,17 @@ if($streamInput -ge 0 -and $args[$streamInput+1] -eq 'stream-json') {
     try {Invoke-RouterBench -Job fast -Candidate gpt-6-astra -Incumbent gpt-6-luna -Trigger research -StateDir $root;throw 'accepted frontier'} catch {Assert ($_.Exception.Message.Contains('Frontier candidates')) 'Automatic frontier validation'}
     $manual=Invoke-RouterBench -Job fast -Candidate gpt-6-astra -Incumbent gpt-6-luna -Trigger manual -StateDir $root -Limits {param($v) @{blocked=$true}} -NoAlerts
     Assert ($manual.candidate.model -eq 'gpt-6-astra') 'Manual frontier rejected'
-    Write-Output 'PASS: existing checks plus Claude process/model/cache/timeout/cleanup/resolver; roster fallback/override; actual CLI scopes/monthly/frontier'
+    # One comparison per state root: a second caller waits on bench/bench.lock and times out; the lock is released afterwards.
+    [void][IO.Directory]::CreateDirectory((Join-Path $root 'bench'))
+    $lockHold=[IO.FileStream]::new((Join-Path $root 'bench/bench.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try {
+        try {Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6-luna -StateDir $root -Limits {param($v) @{blocked=$true}} -NoAlerts -LockTimeoutMs 1500;throw 'ran while locked'}
+        catch {Assert ($_.Exception.Message.Contains('ROUTER_BENCH_LOCK_TIMEOUT')) "A second comparison waits on the bench lock and times out: $($_.Exception.Message)"}
+    } finally {$lockHold.Dispose()}
+    $afterLock=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6-luna -StateDir $root -Limits {param($v) @{blocked=$true}} -NoAlerts -LockTimeoutMs 1500
+    Assert ($afterLock.raw_gate -eq 'unknown' -and -not (Test-Path (Join-Path $root 'bench/bench.lock.json'))) 'The bench lock is released after a comparison'
+    $reLock=[IO.FileStream]::new((Join-Path $root 'bench/bench.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None); $reLock.Dispose()
+    Write-Output 'PASS: existing checks plus Claude process/model/cache/timeout/cleanup/resolver; roster fallback/override; actual CLI scopes/monthly/frontier; bench lock'
 } finally {$env:DT_MODEL_ROUTER_STATE=$priorState; Exit-RouterTestCodexHome $fixtureCodexHome; Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'router-bench-tests-'}
 
 # Fresh child processes keep each regression's state/config seams isolated.

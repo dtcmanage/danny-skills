@@ -102,6 +102,13 @@ if($args -contains '--fail'){[Console]::Error.Write($text);exit 9}
     $null = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol') -Lane claude
     $stored = Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json
     Assert-True ($stored.readings.Count -eq 3 -and @($stored.readings | Where-Object { $_.effort_class -eq 'low' -and $_.results[0].score -eq 92 }).Count -eq 1) 'a reading with a different independence flag never overwrites or inherits another'
+    # A reply with a timestamp preface before the object (every Claude reply on 2026-10-07) and a fenced one both parse.
+    Assert-True ((Get-RouterResearchJsonBody -Text ('[01:15:12] ' + '{"a":1}')) -ceq '{"a":1}') 'timestamp preface dropped'
+    Assert-True ((Get-RouterResearchJsonBody -Text ("[01:15:12] ``````json`n{`"a`":1}`n``````")) -ceq '{"a":1}') 'preface before a fence dropped'
+    Assert-True ((Get-RouterResearchJsonBody -Text ("``````json`n{`"a`":1}`n``````")) -ceq '{"a":1}') 'fence alone stripped'
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) return ('[01:15:12] ' + (Fixture $category 'gpt-6.1-sol' '2026-09-15' 93 | ConvertTo-Json -Depth 20)) }
+    $prefaced = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol') -Lane claude
+    Assert-True (-not ($prefaced.failed_categories -contains 'complex-coding') -and @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt' -ErrorAction SilentlyContinue).Count -eq 0) 'a reply with a timestamp preface before the JSON object is read'
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) return 'refused' }
     $pass = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol')
     Assert-True ($pass.failed_categories -contains 'complex-coding' -and @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt').Count -eq 1 -and ((Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json).readings[0].results[0].score -eq 91)) 'invalid saved and stored reading untouched'

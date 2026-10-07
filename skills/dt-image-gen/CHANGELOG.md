@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.14 (2026-10-07): Shared model router scripts: declined effort swaps stay declined, one bench comparison at a time, research replies parse past a timestamp preface.
+
 - 0.3.13 (2026-10-07): Model router bench: each Codex bench call saves the app-server weekly rate-limit snapshot as a fresh reading (ephemeral turns write no rollout file, so the spend stop had no Codex baseline and hit the call cap); the runaway call cap rises to 700, above a two-tier deep-thinker job. A rep whose first two attempts were vendor identity failures gets a third attempt.
 
 - 0.3.12 (2026-10-06): Model router bench: per-call and per-tier timing, call counts and latency in telemetry, a bench ledger (state/bench/ledger.jsonl) recording cost, duration and quota per comparison; an undecided quality verdict no longer qualifies effort-down or swap proposals. Codex judge turns that send rendered images now pass the raw-evidence check (input_image), so Astra image judging works live. A spend baseline must be a reading observed within 10 minutes of the comparison start, so earlier jobs' use no longer halts a later comparison. A vendor-incident block now needs a status-page outage; degraded_performance is recorded but never blocks.

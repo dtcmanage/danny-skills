@@ -220,7 +220,7 @@ function Invoke-RouterBench {
         [ValidateSet('low','medium','high')][string]$EffortOverride,
         [scriptblock]$CliInvoker,[scriptblock]$Limits,[scriptblock]$Diagnosis,
         [scriptblock]$Envelope,[scriptblock]$Outcome,[switch]$NoAlerts,
-        [int]$TimeoutMs=120000,[double]$GraderTimeout=30)
+        [int]$TimeoutMs=120000,[double]$GraderTimeout=30,[int]$LockTimeoutMs=14400000)
     # Bind all shared state readers/diagnosis to the explicit router root.
     Assert-RouterWindowsOwner -Action 'Benchmark execution'
     # Load proposal dependencies before binding explicit state readers locally.
@@ -258,6 +258,9 @@ function Invoke-RouterBench {
         state_dir=$benchStateRoot;tasks=[IO.Path]::GetFullPath($Tasks);grader_timeout=$GraderTimeout;
         config=$config;roster_entry=$read.roster.jobs.$Job;effort_override=[bool]$EffortOverride;
         prices=(Get-Content (Join-Path $script:BenchRoot '../../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json -AsHashtable)}
+    # One comparison per state root at a time; manual and cadence runs otherwise overlap and time each other out.
+    $benchLock=Enter-RouterBenchLock -StateDir $benchStateRoot -Owner @{job=$Job;candidate=$Candidate;incumbent=$Incumbent;trigger=$Trigger} -TimeoutMs $LockTimeoutMs
+    try {
     $psi=[Diagnostics.ProcessStartInfo]::new()
     $psi.FileName=(Get-Command python -ErrorAction Stop).Source
     $psi.WorkingDirectory=$benchStateRoot;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
@@ -332,6 +335,7 @@ function Invoke-RouterBench {
             $process.StandardInput.WriteLine(($reply | ConvertTo-Json -Depth 40 -Compress));$process.StandardInput.Flush()
         }
     } finally {if(-not $process.HasExited){$process.Kill($true)};$process.Dispose()}
+    } finally { Exit-RouterBenchLock $benchLock }
 }
 
 if($MyInvocation.InvocationName -ne '.') {

@@ -58,6 +58,27 @@ try {
         Save-RouterEffortProposal $request $standard
         Assert ((Test-Path $path) -eq ($job -ne 'writer')) "$job null quality retains prior effort behavior"
         if(Test-Path $path){Remove-Item -LiteralPath $path}
+        if($job -ne 'writer'){
+            # A declined swap stays declined: the ledger blocks re-filing after the file is gone or holds another swap.
+            Save-RouterEffortProposal $request $standard
+            $declined=Read-RouterJsonObject $path
+            Assert ($declined.proposed_effort -ceq 'low' -and $declined.status -eq 'pending') "$job effort-down filed before the decline"
+            $declined.status='declined'; Write-RouterJsonAtomic $path $declined
+            $null=Add-RouterEffortDecline -Proposal $declined -StateDir $root
+            Remove-Item -LiteralPath $path
+            Save-RouterEffortProposal $request $standard
+            Assert (-not(Test-Path $path)) "$job declined effort-down is not re-filed once its file is gone"
+            $other=$declined | ConvertTo-Json -Depth 20 | ConvertFrom-Json; $other.status='pending'; $other.proposed_effort='high'
+            Write-RouterJsonAtomic $path $other
+            Save-RouterEffortProposal $request $standard
+            Assert ((Read-RouterJsonObject $path).proposed_effort -ceq 'high') "$job declined effort-down does not replace another swap at the path"
+            Remove-Item -LiteralPath $path
+            Remove-Item -LiteralPath (Get-RouterEffortDeclinePath -StateDir $root)
+            Write-RouterJsonAtomic $path $declined
+            Save-RouterEffortProposal $request $standard
+            Assert ((Read-RouterJsonObject $path).status -eq 'declined') "$job declined proposal file alone also blocks re-filing"
+            Remove-Item -LiteralPath $path
+        }
         $standard.raw_gate='unknown'
         $standard.effort_down_quality_evidence=Quality $job standard $lower $base no_difference
         $undecided=DecidedQuality $standard.effort_down_quality_evidence

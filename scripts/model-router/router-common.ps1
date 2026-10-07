@@ -309,6 +309,85 @@ function Write-RouterJsonAtomic {
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
 
+function Get-RouterEffortProposalKey {
+    # A declined swap is identified by the swap itself (job, tier, model, efforts) plus its evidence identity
+    # (task bank, judges). New data under the same identity is the same proposal; a new bank or judge pair is not.
+    param([Parameter(Mandatory)][object]$Proposal)
+    $tier = if ($Proposal.PSObject.Properties['tier'] -and $Proposal.tier) { [string]$Proposal.tier } else { 'standard' }
+    $evidence = if ($Proposal.PSObject.Properties['bench_evidence'] -and $null -ne $Proposal.bench_evidence) { ConvertTo-Json $Proposal.bench_evidence -Compress -Depth 10 } else { 'null' }
+    return "$($Proposal.job)/$tier/$($Proposal.model)/$($Proposal.current_effort)/$($Proposal.proposed_effort)/$evidence"
+}
+
+function Get-RouterEffortDeclinePath { param([string]$StateDir = (Get-RouterStateDir)) return (Join-Path $StateDir 'effort-declines.jsonl') }
+
+function Add-RouterEffortDecline {
+    # Danny's decline outlives the proposal file. One file per job tier holds the latest swap, so a swap in the other
+    # direction overwrote a declined one and a reused comparison result then re-filed the declined swap as pending
+    # (coder standard, 2026-10-07 08:26 ET). The ledger lives beside the proposals, not among them: readers glob *.json there.
+    param([Parameter(Mandatory)][object]$Proposal, [string]$StateDir = (Get-RouterStateDir))
+    $path = Get-RouterEffortDeclinePath -StateDir $StateDir
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
+    $tier = if ($Proposal.PSObject.Properties['tier'] -and $Proposal.tier) { [string]$Proposal.tier } else { 'standard' }
+    $row = [ordered]@{ key=(Get-RouterEffortProposalKey -Proposal $Proposal); job=$Proposal.job; tier=$tier; model=$Proposal.model
+        current_effort=$Proposal.current_effort; proposed_effort=$Proposal.proposed_effort; declined_at=([datetimeoffset]::UtcNow).ToString('o') }
+    [IO.File]::AppendAllText($path, (($row | ConvertTo-Json -Compress -Depth 10) + "`n"), [Text.UTF8Encoding]::new($false))
+    return $row.key
+}
+
+function Test-RouterEffortDeclined {
+    # True when this swap was declined under the same evidence identity: in the ledger, or as a declined proposal file.
+    param([Parameter(Mandatory)][string]$Key, [string]$StateDir = (Get-RouterStateDir))
+    $path = Get-RouterEffortDeclinePath -StateDir $StateDir
+    if (Test-Path -LiteralPath $path) {
+        foreach ($line in [IO.File]::ReadAllLines($path)) {
+            if (-not $line.Trim()) { continue }
+            try { if (($line | ConvertFrom-Json -Depth 10).key -ceq $Key) { return $true } } catch { }
+        }
+    }
+    $dir = Join-Path $StateDir 'effort-proposals'
+    if (Test-Path -LiteralPath $dir) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $dir -File -Filter '*.json')) {
+            $old = Read-RouterJsonObject $file.FullName
+            if ($old -and $old.PSObject.Properties['status'] -and $old.status -eq 'declined' -and $old.PSObject.Properties['job'] -and (Get-RouterEffortProposalKey -Proposal $old) -ceq $Key) { return $true }
+        }
+    }
+    return $false
+}
+
+function Enter-RouterBenchLock {
+    # One comparison at a time per state root. The research cadence's comparisons (3:33 to 8:26 AM ET on 2026-10-07)
+    # overlapped a manual deep-thinker run and both paid in Claude timeouts. A waiter blocks, with a notice on stderr,
+    # until the holder finishes or the timeout passes. The OS drops the handle on exit, including a crash.
+    param([Parameter(Mandatory)][string]$StateDir, [Parameter(Mandatory)][hashtable]$Owner, [int]$TimeoutMs = 14400000, [int]$NoticeMs = 300000)
+    $dir = Join-Path $StateDir 'bench'
+    [IO.Directory]::CreateDirectory($dir) | Out-Null
+    $path = Join-Path $dir 'bench.lock'
+    $infoPath = Join-Path $dir 'bench.lock.json'
+    $watch = [Diagnostics.Stopwatch]::StartNew(); $nextNotice = 0
+    $handle = $null
+    while ($null -eq $handle) {
+        try { $handle = [IO.FileStream]::new($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch [IO.IOException] {
+            $holder = Read-RouterJsonObject $infoPath
+            $description = if ($holder) { "$($holder.trigger) $($holder.job) ($($holder.candidate) vs $($holder.incumbent)) in process $($holder.pid) since $($holder.started_at_utc)" } else { 'another comparison' }
+            if ($watch.ElapsedMilliseconds -ge $TimeoutMs) { throw "ROUTER_BENCH_LOCK_TIMEOUT: waited $([int][Math]::Ceiling($watch.ElapsedMilliseconds / 60000)) min for $description" }
+            if ($watch.ElapsedMilliseconds -ge $nextNotice) { [Console]::Error.WriteLine("Bench busy: $description; waiting."); $nextNotice = $watch.ElapsedMilliseconds + $NoticeMs }
+            Start-Sleep -Milliseconds 1000
+        }
+    }
+    $info = [ordered]@{ pid=$PID; started_at_utc=([datetimeoffset]::UtcNow).ToString('o') }
+    foreach ($key in $Owner.Keys) { $info[$key] = $Owner[$key] }
+    try { Write-RouterJsonAtomic -Path $infoPath -Value ([pscustomobject]$info) } catch { }
+    return [pscustomobject]@{ handle=$handle; info=$infoPath }
+}
+
+function Exit-RouterBenchLock {
+    param($Lock)
+    if (-not $Lock) { return }
+    try { Remove-Item -LiteralPath $Lock.info -Force -ErrorAction SilentlyContinue } catch { }
+    $Lock.handle.Dispose()
+}
+
 function Use-RouterOutcomeMutex {
     # Keep the file in place: unlinking a lock file can let waiters lock different inodes on Unix.
     # The OS releases the exclusive handle on process exit, including a crash.
