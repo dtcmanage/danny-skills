@@ -1,9 +1,9 @@
 #Requires -Version 7.0
 # Model-free dt-build watcher. The dt-build-watcher scheduled task runs it every 2 minutes through
-# run-hidden.vbs. For each registered run it reconciles the ledger, then relaunches a managed
-# coordinator only when the run is runnable, has an event past its cursor, and its watcher-launched
-# coordinator is provably gone. It never grants approvals and never changes run_status except to
-# awaiting_danny after repeated failed launches.
+# run-hidden.vbs. For each registered run it reconciles the ledger, retries undelivered stop and approval
+# DMs, then relaunches a managed coordinator only when the run is runnable, has an event past its cursor,
+# and has no coordinator: none ever started, or its watcher-launched coordinator is provably gone. It never
+# grants approvals and never changes run_status except to awaiting_danny after repeated failed launches.
 param()
 
 Set-StrictMode -Version Latest
@@ -18,6 +18,9 @@ $script:WatcherVendorLimits = if ($env:DT_BUILD_VENDOR_LIMITS_SCRIPT) { $env:DT_
 # previous attempt; when the last retry also fails, the run stops for Danny.
 $script:WatcherRetryDelaysMin = @(2, 10, 30)
 $script:WatcherMaxAttempts = $script:WatcherRetryDelaysMin.Count + 1
+# Whatever the trigger, a run gets at most this many launches in any rolling window before it stops for Danny.
+$script:WatcherRunLaunchCap = 6
+$script:WatcherRunLaunchWindowMin = 60
 
 function Get-WatcherNow {
     if ($env:DT_BUILD_WATCHER_NOW_UTC) { return (ConvertTo-DtJobUtc $env:DT_BUILD_WATCHER_NOW_UTC) }
@@ -42,6 +45,20 @@ function Add-WatcherLaunch {
     [System.IO.File]::AppendAllText($path, (($Record | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
 }
 
+function Get-WatcherInteractiveDmSeq {
+    # The trigger seq of the last delivered interactive DM, or $null when none was delivered.
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$RunId)
+    $prefix = "dt-build:${RunId}:interactive:"
+    $last = $null
+    foreach ($row in (Get-DtJobNotifications -RunFolder $RunFolder)) {
+        $key = [string]$row.key
+        if (-not $key.StartsWith($prefix, [System.StringComparison]::Ordinal) -or -not (Test-DtJobNotificationDelivered $row)) { continue }
+        $seq = [int64]0
+        if ([int64]::TryParse($key.Substring($prefix.Length), [ref]$seq) -and ($null -eq $last -or $seq -gt $last)) { $last = $seq }
+    }
+    return $last
+}
+
 function Get-WatcherDecision {
     # Pure read: what this tick should do for one run. Called once unlocked and again under the coordinator lock.
     param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)][DateTime]$NowUtc)
@@ -52,30 +69,51 @@ function Get-WatcherDecision {
     if ($state.run_status -ne 'runnable') { return [pscustomobject]@{ action = 'none'; detail = "run_status $($state.run_status)" } }
     $trigger = Get-DtJobLastEventSeq -RunFolder $folder
     if ($trigger -le $state.last_consumed_event_seq) { return [pscustomobject]@{ action = 'none'; detail = 'no unconsumed event' } }
+    $managed = [bool]$Entry.managed
     $lease = Get-DtJobLease -RunFolder $folder
-    if ($null -eq $lease) { return [pscustomobject]@{ action = 'none'; detail = 'no coordinator lease' } }
-    if (-not (Test-DtJobLeaseExpired $lease $NowUtc)) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator lease live' } }
-    if ($lease.launched_by -eq 'interactive') { return [pscustomobject]@{ action = 'notify_interactive'; trigger_seq = $trigger; detail = 'interactive coordinator idle' } }
-    if ($lease.launched_by -ne 'watcher') { return [pscustomobject]@{ action = 'none'; detail = 'unknown coordinator kind' } }
-    if (-not [bool]$Entry.managed) { return [pscustomobject]@{ action = 'none'; detail = 'run is not managed' } }
-    if (-not $lease.pid) { return [pscustomobject]@{ action = 'none'; detail = 'watcher lease has no pid' } }
-    $pidStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
-    if (Test-DtJobProcessIdentity $lease.pid $pidStart) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator process alive' } }
+    if ($null -eq $lease) {
+        # A managed run with no lease file has no coordinator at all, so it goes on to a launch.
+        if (-not $managed) { return [pscustomobject]@{ action = 'none'; detail = 'no coordinator lease' } }
+    }
+    elseif ($lease.launched_by -eq 'interactive') {
+        if (-not (Test-DtJobLeaseExpired $lease $NowUtc)) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator lease live' } }
+        # One DM per waiting period: the next one only after the cursor passes the event behind the last one.
+        $dmSeq = Get-WatcherInteractiveDmSeq -RunFolder $folder -RunId ([string]$Entry.run_id)
+        if ($null -ne $dmSeq -and $state.last_consumed_event_seq -lt $dmSeq) { return [pscustomobject]@{ action = 'none'; detail = "interactive coordinator already told about event $dmSeq" } }
+        return [pscustomobject]@{ action = 'notify_interactive'; trigger_seq = $trigger; detail = 'interactive coordinator idle' }
+    }
+    elseif ($lease.launched_by -ne 'watcher') { return [pscustomobject]@{ action = 'none'; detail = 'unknown coordinator kind' } }
+    else {
+        if (-not $managed) { return [pscustomobject]@{ action = 'none'; detail = 'run is not managed' } }
+        $pidStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
+        if (Test-DtJobProcessIdentity $lease.pid $pidStart) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator process alive' } }
+        # A provably dead watcher-launched coordinator is not waited out to its lease expiry.
+        if (-not (Test-DtJobLeaseHolderGone $lease) -and -not (Test-DtJobLeaseExpired $lease $NowUtc)) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator lease live' } }
+    }
 
-    $history = @(Get-WatcherLaunches -RunFolder $folder | Where-Object { [int64]$_.trigger_seq -eq $trigger })
+    $rows = @(Get-WatcherLaunches -RunFolder $folder)
+    $history = @($rows | Where-Object { [int64]$_.trigger_seq -eq $trigger })
     $attempts = @($history | Where-Object { $_.type -eq 'launch' })
     if ($attempts.Count -ge $script:WatcherMaxAttempts) {
         if (@($history | Where-Object { $_.type -eq 'stopped' }).Count -gt 0) { return [pscustomobject]@{ action = 'none'; detail = 'stopped after failed launches' } }
-        return [pscustomobject]@{ action = 'stop'; trigger_seq = $trigger; detail = "$($attempts.Count) launches did not consume trigger $trigger" }
+        return [pscustomobject]@{ action = 'stop'; stop_kind = 'retries'; trigger_seq = $trigger; detail = "$($attempts.Count) launches did not consume trigger $trigger" }
     }
     if ($attempts.Count -gt 0) {
         $delayMin = $script:WatcherRetryDelaysMin[$attempts.Count - 1]
         $due = (ConvertTo-DtJobUtc $attempts[-1].launched_utc).AddMinutes($delayMin)
         if ($NowUtc -lt $due) { return [pscustomobject]@{ action = 'none'; detail = "retry due $($due.ToString('o'))" } }
     }
-    $deferred = @($history | Where-Object { $_.type -eq 'deferred' } | Select-Object -Last 1)
-    if ($deferred.Count -gt 0 -and $NowUtc -lt (ConvertTo-DtJobUtc $deferred[0].resume_after_utc)) {
+    $deferred = @($rows | Where-Object { $_.type -eq 'deferred' } | Select-Object -Last 1)
+    if ($deferred.Count -gt 0 -and $deferred[0].resume_after_utc -and $NowUtc -lt (ConvertTo-DtJobUtc $deferred[0].resume_after_utc)) {
         return [pscustomobject]@{ action = 'none'; detail = "both vendors blocked until $((ConvertTo-DtJobUtc $deferred[0].resume_after_utc).ToString('o'))" }
+    }
+    # Run-wide cap, counted from the last stop so that resume re-arms the run.
+    $lastStop = -1
+    for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].type -eq 'stopped') { $lastStop = $i } }
+    $windowStart = $NowUtc.AddMinutes(-$script:WatcherRunLaunchWindowMin)
+    $recent = @($rows | Select-Object -Skip ($lastStop + 1) | Where-Object { $_.type -eq 'launch' -and (ConvertTo-DtJobUtc $_.launched_utc) -gt $windowStart })
+    if ($recent.Count -ge $script:WatcherRunLaunchCap) {
+        return [pscustomobject]@{ action = 'stop'; stop_kind = 'cap'; trigger_seq = $trigger; detail = "$($recent.Count) launches in the last $($script:WatcherRunLaunchWindowMin) minutes" }
     }
     return [pscustomobject]@{ action = 'launch'; trigger_seq = $trigger; attempt = $attempts.Count + 1; detail = "trigger $trigger" }
 }
@@ -102,19 +140,30 @@ function Invoke-WatcherLaunch {
         $otherState = Get-WatcherVendorState -Vendor $other
         if ($otherState.blocked) {
             $resets = @(@($pinnedState.resets_at_utc, $otherState.resets_at_utc) | Where-Object { $_ } | ForEach-Object { ConvertTo-DtJobUtc $_ } | Sort-Object)
-            $resumeAfter = if ($resets.Count -gt 0) { $resets[0] } else { $NowUtc.AddMinutes($script:WatcherRetryDelaysMin[0]) }
-            Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'deferred'; trigger_seq = $Decision.trigger_seq; resume_after_utc = $resumeAfter.ToString('o'); recorded_utc = $NowUtc.ToString('o'); reason = "$pinned and $other blocked" })
+            $resumeAfter = if ($resets.Count -gt 0) { $resets[0] } else { $null }
+            $reason = "$pinned and $other blocked"
+            # Record the block once; a new row only when the resume time or the reason changes.
+            $last = @(Get-WatcherLaunches -RunFolder $folder | Where-Object { $_.type -eq 'deferred' } | Select-Object -Last 1)
+            $lastResume = if ($last.Count -gt 0 -and $last[0].resume_after_utc) { (ConvertTo-DtJobUtc $last[0].resume_after_utc).Ticks } else { $null }
+            $nextResume = if ($null -ne $resumeAfter) { $resumeAfter.Ticks } else { $null }
+            if ($last.Count -eq 0 -or $lastResume -ne $nextResume -or [string]$last[0].reason -cne $reason) {
+                Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'deferred'; trigger_seq = $Decision.trigger_seq; resume_after_utc = $(if ($null -ne $resumeAfter) { $resumeAfter.ToString('o') } else { $null }); recorded_utc = $NowUtc.ToString('o'); reason = $reason })
+            }
+            if ($null -eq $resumeAfter) { return 'deferred: both vendors blocked, no reset time reported' }
             return "deferred until $($resumeAfter.ToString('o'))"
         }
         $chosen = $other
     }
     $coordinatorId = 'mc-{0}-{1}' -f $NowUtc.ToString('yyyyMMddHHmmss'), ([guid]::NewGuid().ToString('N').Substring(0, 6))
     $launcherExit = $null
+    # The launcher runs under this tick's coordinator.lock, so its lease acquire must not wait on that lock.
+    $env:DT_BUILD_COORDINATOR_LOCK_HELD = $folder
     try {
         & pwsh -NoProfile -NonInteractive -File $script:WatcherLauncher -Host $chosen -RunId ([string]$Entry.run_id) -RunFolder $folder -BuildStatePath ([string]$Entry.build_state_path) -CoordinatorId $coordinatorId *> $null
         $launcherExit = $LASTEXITCODE
     }
     catch { $launcherExit = -1 }
+    finally { Remove-Item Env:DT_BUILD_COORDINATOR_LOCK_HELD -ErrorAction SilentlyContinue }
     $lease = Get-DtJobLease -RunFolder $folder
     $launchedPid = if ($null -ne $lease -and $lease.coordinator_id -eq $coordinatorId) { $lease.pid } else { $null }
     # Every attempt counts toward the retry schedule, including one whose launcher failed.
@@ -128,11 +177,19 @@ function Invoke-WatcherStop {
     Invoke-DtJobLocked -RunFolder $folder -Action {
         Set-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path) -RunStatus 'awaiting_danny'
     }
-    Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'stopped'; trigger_seq = $Decision.trigger_seq; stopped_utc = $NowUtc.ToString('o') })
+    Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'stopped'; trigger_seq = $Decision.trigger_seq; stopped_utc = $NowUtc.ToString('o'); reason = $Decision.stop_kind })
     $runId = [string]$Entry.run_id
-    $text = "dt-build run $runId is paused: the watcher started a fresh coordinator $($script:WatcherMaxAttempts) times and none picked up the work. Evidence is in $folder (launches.jsonl). After checking, restart it with: /dt-build resume $runId"
-    $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:launch-failed:$($Decision.trigger_seq)" -Message $text
-    return "stopped after failed launches; alert $alert"
+    if ($Decision.stop_kind -eq 'cap') {
+        $text = "dt-build run $runId is paused: the watcher started $($script:WatcherRunLaunchCap) coordinators within $($script:WatcherRunLaunchWindowMin) minutes and the run still has unhandled work. Evidence is in $folder (launches.jsonl). After checking, restart it with: /dt-build resume $runId"
+        $key = "dt-build:${runId}:launch-cap:$($Decision.trigger_seq)"
+    }
+    else {
+        $text = "dt-build run $runId is paused: the watcher started a fresh coordinator $($script:WatcherMaxAttempts) times and none picked up the work. Evidence is in $folder (launches.jsonl). After checking, restart it with: /dt-build resume $runId"
+        $key = "dt-build:${runId}:launch-failed:$($Decision.trigger_seq)"
+    }
+    # A failed delivery stays pending and is retried on later ticks until it lands.
+    $alert = Send-DtJobRunAlert -RunFolder $folder -Key $key -Message $text -RetryUntilDelivered
+    return "stopped ($($Decision.stop_kind)); alert $alert"
 }
 
 function Invoke-WatcherRun {
@@ -142,28 +199,38 @@ function Invoke-WatcherRun {
     if (-not (Test-Path -LiteralPath $folder)) { return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = 'run folder missing' } }
     & pwsh -NoProfile -NonInteractive -File $script:WatcherDtJob reconcile -RunFolder $folder -Json *> $null
     $reconcileExit = $LASTEXITCODE
+    # Stop and approval DMs that failed to send are retried while the run still waits on Danny.
+    $statePath = [string]$Entry.build_state_path
+    $retried = @()
+    if ((Test-Path -LiteralPath $statePath) -and (Get-DtJobRunState -BuildStatePath $statePath).run_status -eq 'awaiting_danny') {
+        $retried = @(Send-DtJobPendingAlerts -RunFolder $folder)
+    }
     $now = Get-WatcherNow
     $decision = Get-WatcherDecision -Entry $Entry -NowUtc $now
-    if ($decision.action -eq 'none') { return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = $decision.detail; reconcile_exit = $reconcileExit } }
+    if ($decision.action -eq 'none') { return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = $decision.detail; reconcile_exit = $reconcileExit; pending_alerts = $retried } }
     if ($decision.action -eq 'notify_interactive') {
-        # Never replace an interactive coordinator; tell Danny once per trigger.
+        # Never replace an interactive coordinator; tell Danny once per waiting period.
         $text = "dt-build run $runId has new results waiting (event $($decision.trigger_seq)) and its interactive session is idle. Reopen that session or run: /dt-build resume $runId"
         $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:interactive:$($decision.trigger_seq)" -Message $text
-        return [pscustomobject]@{ run_id = $runId; action = 'notify_interactive'; detail = "alert $alert"; reconcile_exit = $reconcileExit }
+        return [pscustomobject]@{ run_id = $runId; action = 'notify_interactive'; detail = "alert $alert"; reconcile_exit = $reconcileExit; pending_alerts = $retried }
     }
     $lockPath = (Get-DtJobPaths -RunFolder $folder).CoordinatorLock
     try { $lock = [System.IO.File]::Open($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None) }
-    catch [System.IO.IOException] { return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = 'coordinator lock busy'; reconcile_exit = $reconcileExit } }
+    catch [System.IO.IOException] { return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = 'coordinator lock busy'; reconcile_exit = $reconcileExit; pending_alerts = $retried } }
     try {
         $recheck = Get-WatcherDecision -Entry $Entry -NowUtc $now
-        if ($recheck.action -ne $decision.action -or $recheck.trigger_seq -ne $decision.trigger_seq) {
-            return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = "changed under lock: $($recheck.detail)"; reconcile_exit = $reconcileExit }
+        $recheckSeq = if ($recheck.PSObject.Properties['trigger_seq']) { $recheck.trigger_seq } else { $null }
+        if ($recheck.action -ne $decision.action -or $recheckSeq -ne $decision.trigger_seq) {
+            return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = "changed under lock: $($recheck.detail)"; reconcile_exit = $reconcileExit; pending_alerts = $retried }
         }
         $detail = if ($recheck.action -eq 'stop') { Invoke-WatcherStop -Entry $Entry -Decision $recheck -NowUtc $now } else { Invoke-WatcherLaunch -Entry $Entry -Decision $recheck -NowUtc $now }
-        return [pscustomobject]@{ run_id = $runId; action = $recheck.action; detail = $detail; reconcile_exit = $reconcileExit }
+        return [pscustomobject]@{ run_id = $runId; action = $recheck.action; detail = $detail; reconcile_exit = $reconcileExit; pending_alerts = $retried }
     }
     finally { $lock.Dispose() }
 }
+
+# Dot-sourcing (the tests do) loads the functions only.
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 $exitCode = 0
 foreach ($entry in (Get-DtJobRegistryRuns)) {

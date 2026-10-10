@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 # Default coordinator launcher for dt-build-watcher.ps1 (override with DT_BUILD_COORDINATOR_LAUNCHER).
-# Starts a hidden, detached headless coordinator (`claude -p` or `codex exec`) for one managed run,
-# writes the coordinator lease with launched_by watcher and the child pid, and returns at once.
+# Takes the coordinator lease (launched_by watcher), then starts a hidden, detached headless coordinator
+# (`claude -p` or `codex exec`) for one managed run, records the child pid in the lease, and returns at once.
+# A refused lease starts nothing; a failed start releases the lease. A replacement launcher keeps that order.
 param(
     # $Host is an automatic variable, so the host binds through an alias.
     [Parameter(Mandatory)]
@@ -50,13 +51,26 @@ else { $lines.Add("& claude -p $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo
 $lines.Add('exit $LASTEXITCODE')
 $encoded = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(($lines -join "`n")))
 
-$pwsh = [System.Environment]::ProcessPath
-$commandLine = "`"$pwsh`" -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encoded"
-$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
-$result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $commandLine; CurrentDirectory = $workDir; ProcessStartupInformation = $startup }
-if ($result.ReturnValue -ne 0) { throw "DT_BUILD_LAUNCH_FAILED: Win32_Process.Create returned $($result.ReturnValue)" }
-$childPid = [int]$result.ProcessId
+# The watcher runs this launcher under coordinator.lock and sets DT_BUILD_COORDINATOR_LOCK_HELD, so this
+# acquire skips that lock. Take the lease before starting anything: if it is refused, no child exists.
+& pwsh -NoProfile -NonInteractive -File $dtJob lease -RunFolder $runRoot -Action acquire -CoordinatorId $CoordinatorId -Host $CoordinatorHost -LaunchedBy watcher -Json | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "DT_BUILD_LEASE_FAILED: lease acquire for $CoordinatorId exited $LASTEXITCODE; nothing started" }
 
-& pwsh -NoProfile -NonInteractive -File $dtJob lease -RunFolder $runRoot -Action acquire -CoordinatorId $CoordinatorId -Host $CoordinatorHost -Pid $childPid -LaunchedBy watcher -Json | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "DT_BUILD_LEASE_FAILED: lease acquire for $CoordinatorId exited $LASTEXITCODE" }
+$childPid = $null
+try {
+    $pwsh = [System.Environment]::ProcessPath
+    $commandLine = "`"$pwsh`" -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encoded"
+    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $commandLine; CurrentDirectory = $workDir; ProcessStartupInformation = $startup }
+    if ($result.ReturnValue -ne 0) { throw "DT_BUILD_LAUNCH_FAILED: Win32_Process.Create returned $($result.ReturnValue)" }
+    $childPid = [int]$result.ProcessId
+    & pwsh -NoProfile -NonInteractive -File $dtJob lease -RunFolder $runRoot -Action renew -CoordinatorId $CoordinatorId -Pid $childPid -Json | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "DT_BUILD_LEASE_FAILED: recording pid $childPid for $CoordinatorId exited $LASTEXITCODE" }
+}
+catch {
+    # A child the lease does not name would be a second coordinator: stop it, then give the lease back.
+    if ($childPid) { Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue }
+    & pwsh -NoProfile -NonInteractive -File $dtJob lease -RunFolder $runRoot -Action release -CoordinatorId $CoordinatorId -Json *> $null
+    throw
+}
 [pscustomobject][ordered]@{ coordinator_id = $CoordinatorId; host = $CoordinatorHost; pid = $childPid; log = $log } | ConvertTo-Json -Compress
