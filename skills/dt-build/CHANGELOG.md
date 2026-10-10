@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.0
+
+- Orchestration hardening: job ledger and bounded evidence, watcher and managed relaunch, context guard and hooks, report v3 and continuation, host adapters, scenario validation and adoption procedure.
+
 ## 2.20.6
 
 - Shared model router scripts: declined effort swaps stay declined, one bench comparison at a time, research replies parse past a timestamp preface.

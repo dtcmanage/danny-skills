@@ -17,3 +17,4 @@ Lifecycle controls:
 - Cleanup is executed through one orchestrator cleanup path.
 - No scratch prompt artifacts should survive run finalization.
 - Orchestration state files stay out of milestone commits; they live in the run folder, never in the worktree diff.
+- The tree-hash temporary index writes git objects into the repository's object store, which `git gc` reclaims; nothing else cleans them.

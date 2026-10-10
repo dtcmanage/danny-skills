@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.20.6
+  version: 2.21.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -22,6 +22,8 @@ Path resolution is governed by `../../references/conventions.md` (resolve from t
 If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
 
 ## Host adapter
+
+For rollout and rollback, follow [the adoption procedure](references/adoption-procedure.md) only on Danny's go-ahead.
 
 Load exactly one host adapter before step 1: on a Claude Code host (CLI, Cowork, or `claude -p`) read `references/adapter-claude.md`; on a Codex host (CLI or `codex exec`) read `references/adapter-codex.md`. Never load both. The adapter covers only dispatch, waiting and completion, bootstrap and context, hooks, managed relaunch, and evidence reads; everything else in this SKILL.md is shared by both hosts.
 

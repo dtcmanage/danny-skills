@@ -1,5 +1,7 @@
 # dt-pipeline changelog
 
+- 0.1.4 (2026-10-10): Version the inherited orchestration build-state template changes: run status and event cursor.
+
 - 0.1.3 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.
 
 - 0.1.2 (2026-08-30): Review-phase spawn prompt must state dt-review's subagent cap-gate contract: USER_DECISION and A/B/C packages are sent to the orchestrator via SendMessage immediately, never idled on.
