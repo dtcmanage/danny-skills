@@ -222,6 +222,9 @@ foreach ($row in $entryRows) {
     $headerLines += ("reference_pack.{0}.payload_sha256: {1}" -f $row.name, $row.payload_sha256)
 }
 
+# Workers compute tree hashes with this script's sibling dt-job.ps1, named by absolute path.
+$dtJobPath = Join-Path $PSScriptRoot 'dt-job.ps1'
+
 $assembled = @(
     ($headerLines -join "`n")
     ""
@@ -236,7 +239,7 @@ Standing execution rules (context discipline):
 - Do not spawn subagents, nested agents, or parallel workers. Search and read with your own tools.
 - Keep command output out of your context: redirect test, build, install, and log output to a file, then read only the summary or the last 40 lines. Read file ranges, not whole large files. Never print a full diff or log you do not need.
 - Never sit idle on a long command. Run it with a bounded timeout and output redirected to a file.
-- Checkpoint instead of bloating: after about 100 tool calls, or sooner if you have already taken in many large outputs, stop at the next clean boundary. Write a state note (done, remaining, decisions and why, files touched, commands that pass) to the path the brief names, or to .dt-build-continuation.md in the worktree root if none is named, as a continuation record: a markdown file whose first ``````json block holds run_id, chunk_id, attempt, completed (list of task descriptions), tests (list of {command, exit_code, evidence_path, tree_hash, recorded_utc}; record each passing test with its tree hash from ``dt-job tree-hash -WorkingTree <worktree>``), running_jobs (list of dt-job job ids), blockers (list), authorization (the operations approved in the run record, copied verbatim), and next_step (string); free notes may follow the block; and report that path in CONTINUATION_STATE. A fresh session continues from the note. Do not rush or cut scope to avoid a checkpoint.
+- Checkpoint instead of bloating: after about 100 tool calls, or sooner if you have already taken in many large outputs, stop at the next clean boundary. Write a state note (done, remaining, decisions and why, files touched, commands that pass) to the path the brief names, or to .dt-build-continuation.md in the worktree root if none is named, as a continuation record: a markdown file whose first ``````json block holds run_id, chunk_id, attempt, completed (list of task descriptions), tests (list of {command, exit_code, evidence_path, tree_hash, recorded_utc}; record each passing test with its tree hash, computed with ``pwsh -NoProfile -File "$dtJobPath" tree-hash -WorkingTree "<worktree>"``), running_jobs (list of dt-job job ids), blockers (list), authorization (the operations approved in the run record, copied verbatim), and next_step (string); free notes may follow the block; and report that path in CONTINUATION_STATE. A fresh session continues from the note. Do not rush or cut scope to avoid a checkpoint.
 
 Return exactly one structured report with these fields and echo values exactly:
 DT_BUILD_REPORT_VERSION: 3

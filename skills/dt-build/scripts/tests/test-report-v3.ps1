@@ -112,6 +112,53 @@ try {
     Assert-True (@((& $check (New-Report -Continuation $otherRun)).errors | Where-Object { $_ -match 'run_id' }).Count -eq 1) "a continuation record for another run is rejected"
     Assert-True (@((& $check ((New-Report) -replace 'DT_BUILD_REPORT_VERSION: 3', 'DT_BUILD_REPORT_VERSION: 4')).errors | Where-Object { $_ -eq 'missing or mismatched DT_BUILD_REPORT_VERSION' }).Count -eq 1) 'an unknown report version is rejected'
 
+    # ---- UNC and relative paths are rejected; every entry up to the next header is read.
+    foreach ($unc in @('\\fixture-server\share\suite.txt', '//fixture-server/share/suite.txt', '\\?\C:\evidence\suite.txt')) {
+        $r = & $check (New-Report -Evidence @($evidence, $unc))
+        if (@($r.errors | Where-Object { $_ -like "EVIDENCE_PATHS entry is not an absolute local path: $unc" }).Count -ne 1) { throw "ASSERT_FAIL: UNC evidence path was not rejected: $unc ($(@($r.errors) -join '; '))" }
+        $r = & $check (New-Report -Continuation $unc)
+        if (@($r.errors | Where-Object { $_ -like "CONTINUATION_STATE is not an absolute local path: $unc" }).Count -ne 1) { throw "ASSERT_FAIL: UNC continuation path was not rejected: $unc ($(@($r.errors) -join '; '))" }
+    }
+    $script:passed++
+    $r = & $check (New-Report -Evidence @('evidence\suite.txt'))
+    Assert-True (@($r.errors | Where-Object { $_ -eq 'EVIDENCE_PATHS entry is not an absolute local path: evidence\suite.txt' }).Count -eq 1) 'a relative evidence path is rejected as not absolute'
+    $r = & $check (New-Report -Continuation 'records\good.md')
+    Assert-True (@($r.errors | Where-Object { $_ -eq 'CONTINUATION_STATE is not an absolute local path: records\good.md' }).Count -eq 1) 'a relative continuation path is rejected'
+    $r = & $check (New-Report -Evidence @($evidence, '', $missingEvidence))
+    Assert-True (@($r.errors | Where-Object { $_ -match 'EVIDENCE_PATHS entry does not exist' -and $_ -match 'missing\.txt' }).Count -eq 1) "an evidence entry after a blank line is still validated ($(@($r.errors) -join '; '))"
+    $r = & $check (New-Report -Evidence @($evidence, '', $evidence2))
+    Assert-True (@($r.errors).Count -eq 0) 'existing evidence entries split by a blank line validate'
+    $r = & $check (New-Report -Continuation "NONE`n$goodRecord")
+    Assert-True (@($r.errors | Where-Object { $_ -eq 'CONTINUATION_STATE must hold one entry, NONE or one path; found 2' }).Count -eq 1) "two CONTINUATION_STATE entries are rejected ($(@($r.errors) -join '; '))"
+    $r = & $check (New-Report -Continuation "$goodRecord`n`n$goodRecord")
+    Assert-True (@($r.errors | Where-Object { $_ -match '^CONTINUATION_STATE must hold one entry' }).Count -eq 1) 'a second CONTINUATION_STATE entry after a blank line is rejected'
+
+    # ---- a missing or malformed tree_hash names the field and the command that computes it.
+    $hintPattern = 'compute it with: pwsh -NoProfile -File "(?<path>[^"]+dt-job\.ps1)" tree-hash -WorkingTree "<worktree>"'
+    $noHash = New-ContinuationRecord -Path (Join-Path $tempRoot 'records\no-hash.md') -Tests @([ordered]@{ command = 'x'; exit_code = 0; evidence_path = $evidence; recorded_utc = '2026-10-10T08:00:00Z' })
+    $r = & $check (New-Report -Continuation $noHash)
+    $hint = @($r.errors | Where-Object { $_ -match '^CONTINUATION_STATE invalid: continuation tests\[0\] missing field tree_hash; ' -and $_ -match $hintPattern })
+    Assert-True ($hint.Count -eq 1 -and @($r.errors).Count -eq 1) "a record without tree_hash is rejected with the field and the command ($(@($r.errors) -join '; '))"
+    $hintPath = ([regex]::Match($hint[0], $hintPattern)).Groups['path'].Value
+    Assert-True ([System.IO.Path]::IsPathFullyQualified($hintPath) -and (Test-Path -LiteralPath $hintPath -PathType Leaf)) "the tree_hash hint names an existing absolute dt-job.ps1 ($hintPath)"
+    $badHash = New-ContinuationRecord -Path (Join-Path $tempRoot 'records\bad-hash.md') -Tests @([ordered]@{ command = 'x'; exit_code = 0; evidence_path = $evidence; tree_hash = 'HEAD'; recorded_utc = '2026-10-10T08:00:00Z' })
+    $r = & $check (New-Report -Continuation $badHash)
+    Assert-True (@($r.errors | Where-Object { $_ -match '^CONTINUATION_STATE invalid: continuation tests\[0\]\.tree_hash must be a git tree sha; ' -and $_ -match $hintPattern }).Count -eq 1) 'a malformed tree_hash is rejected with the field and the command'
+
+    # ---- the assembled checkpoint rule names dt-job.ps1 by an existing absolute path.
+    $packFile = Join-Path $tempRoot 'assemble\contracts.md'
+    Write-Utf8 -Path $packFile -Content "# Contracts pack`n`n=== REFERENCE PACK PAYLOAD ===`nFixture contract.`n"
+    $manifestFile = Join-Path $tempRoot 'assemble\manifest.json'
+    Write-Utf8 -Path $manifestFile -Content (@{ contracts = @{ path = $packFile; payload_sha256 = '' } } | ConvertTo-Json -Depth 3)
+    $assembledPath = Join-Path $tempRoot 'assemble\prompt.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $manifestFile -RequiredEntitlements contracts -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -PreambleText 'Fixture preamble.' -BriefText 'Fixture brief.' -OutputPath $assembledPath *> $null
+    Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $assembledPath)) "the assembler runs on a fixture manifest (exit $LASTEXITCODE)"
+    $assembled = [System.IO.File]::ReadAllText($assembledPath)
+    $ruleMatch = [regex]::Match($assembled, '`pwsh -NoProfile -File "(?<path>[^"]+)" tree-hash -WorkingTree "<worktree>"`')
+    $rulePath = $ruleMatch.Groups['path'].Value
+    Assert-True ($ruleMatch.Success -and [System.IO.Path]::IsPathFullyQualified($rulePath) -and (Split-Path -Leaf $rulePath) -eq 'dt-job.ps1' -and (Test-Path -LiteralPath $rulePath -PathType Leaf)) "the assembled checkpoint rule gives a copy-paste tree-hash command with an existing absolute dt-job.ps1 ($rulePath)"
+    Assert-True ($assembled -notmatch '(?<![\\/])dt-job tree-hash') 'the assembled rule no longer names a bare dt-job command'
+
     # ---- both wrappers validate through the one shared contract.
     foreach ($wrapperName in @('invoke-claude-chunk.ps1', 'invoke-codex-chunk.ps1')) {
         $wrapperPath = Join-Path $scriptDir $wrapperName
@@ -336,6 +383,56 @@ Write-Output (@{ type = 'result'; is_error = $false; result = [System.IO.File]::
     Assert-True ($c.result.reuse -eq $true) 'a valid record against the current hash reuses (control for the malformed set)'
     $raw = & pwsh -NoProfile -File $dtJob can-reuse -Record $match -Command $cmd -WorkingTree $notRepo -Json
     Assert-True ((($raw -join "`n") | ConvertFrom-Json).reuse -eq $false -and (($raw -join "`n") | ConvertFrom-Json).reason -match 'cannot decide') 'a tree hash that cannot be computed returns false with the reason'
+
+    # ---- tracked files that .gitignore matches (force-added) are in the hash, committed or only staged.
+    $forced = Join-Path $tempRoot 'forced-repo'
+    New-Item -ItemType Directory -Path $forced -Force | Out-Null
+    & git -C $forced init -q
+    & git -C $forced config user.email 'fixture@example.invalid'
+    & git -C $forced config user.name 'Fixture'
+    & git -C $forced config core.autocrlf false
+    Write-Utf8 -Path (Join-Path $forced '.gitignore') -Content "*.log`n"
+    Write-Utf8 -Path (Join-Path $forced 'a.txt') -Content "a`n"
+    Write-Utf8 -Path (Join-Path $forced 'secret.log') -Content "committed v1`n"
+    & git -C $forced add .gitignore a.txt
+    & git -C $forced add -f secret.log
+    & git -C $forced commit -q -m 'fixture'
+    Write-Utf8 -Path (Join-Path $forced 'staged.log') -Content "staged v1`n"
+    & git -C $forced add -f staged.log
+    $forcedIndex = Join-Path $forced '.git\index'
+    $forcedIndexBefore = (Get-FileHash -LiteralPath $forcedIndex -Algorithm SHA256).Hash
+    $reuseIn = { param([string]$Tree, [string]$Record, [string]$Command) $raw = & pwsh -NoProfile -File $dtJob can-reuse -Record $Record -Command $Command -WorkingTree $Tree -Json; (($raw -join "`n") | ConvertFrom-Json) }
+    $f0 = & $hash $forced
+    $forcedTree = @(& git -C $forced ls-tree --name-only $f0)
+    Assert-True (($forcedTree -contains 'secret.log') -and ($forcedTree -contains 'staged.log')) "committed and staged force-added files are in the hashed tree ($($forcedTree -join ','))"
+    $forcedRecord = New-ContinuationRecord -Path (Join-Path $tempRoot 'records\forced.md') -Tests @([ordered]@{ command = $cmd; exit_code = 0; evidence_path = $evidence; tree_hash = $f0; recorded_utc = $now })
+    Assert-True ((& $reuseIn $forced $forcedRecord $cmd).reuse -eq $true) 'can-reuse is true before the force-added file changes'
+    Write-Utf8 -Path (Join-Path $forced 'secret.log') -Content "committed v2`n"
+    $c = & $reuseIn $forced $forcedRecord $cmd
+    Assert-True ($c.reuse -eq $false -and $c.reason -match 'tree hash changed') "an edit to a committed force-added file after recording forces a rerun ($($c.reason))"
+    Write-Utf8 -Path (Join-Path $forced 'secret.log') -Content "committed v1`n"
+    Assert-True ((& $reuseIn $forced $forcedRecord $cmd).reuse -eq $true) 'restoring the force-added file restores the hash'
+    Write-Utf8 -Path (Join-Path $forced 'staged.log') -Content "staged v2`n"
+    Assert-True ((& $reuseIn $forced $forcedRecord $cmd).reuse -eq $false) 'an edit to a staged-only force-added file forces a rerun'
+    Write-Utf8 -Path (Join-Path $forced 'staged.log') -Content "staged v1`n"
+    Write-Utf8 -Path (Join-Path $forced 'other.log') -Content 'ignored noise'
+    Assert-True ((& $hash $forced) -eq $f0) 'an untracked file matching .gitignore stays out of the hash'
+    Assert-True ((Get-FileHash -LiteralPath $forcedIndex -Algorithm SHA256).Hash -eq $forcedIndexBefore) 'seeding from HEAD leaves the real index byte-identical'
+
+    # ---- the continuation record itself never changes the hash.
+    $before = & $hash $forced
+    $defaultRecord = New-ContinuationRecord -Path (Join-Path $forced '.dt-build-continuation.md') -Tests @([ordered]@{ command = $cmd; exit_code = 0; evidence_path = $evidence; tree_hash = $before; recorded_utc = $now })
+    Assert-True ((& $hash $forced) -eq $before) 'writing the default .dt-build-continuation.md leaves tree-hash unchanged'
+    $c = & $reuseIn $forced $defaultRecord $cmd
+    Assert-True ($c.reuse -eq $true) "a record written in the worktree root after hashing still allows reuse ($($c.reason))"
+    $namedRecord = New-ContinuationRecord -Path (Join-Path $forced 'notes\state.md') -Tests @([ordered]@{ command = $cmd; exit_code = 0; evidence_path = $evidence; tree_hash = $before; recorded_utc = $now })
+    $c = & $reuseIn $forced $namedRecord $cmd
+    Assert-True ($c.reuse -eq $true) "a record at another path inside the worktree is left out of its own hash ($($c.reason))"
+    $withRecord = & pwsh -NoProfile -File $dtJob tree-hash -WorkingTree $forced -Record $namedRecord
+    Assert-True (([string]@($withRecord)[0]).Trim() -eq $before) 'tree-hash -Record leaves that record out'
+    Assert-True ((& $hash $forced) -ne $before) 'without -Record a record at a non-default path is hashed like any file (control)'
+    Write-Utf8 -Path (Join-Path $forced 'a.txt') -Content "a edited`n"
+    Assert-True ((& $reuseIn $forced $namedRecord $cmd).reuse -eq $false) 'an edit beside the record still forces a rerun'
 }
 catch {
     Write-Output "FAIL: $($_.Exception.Message)"

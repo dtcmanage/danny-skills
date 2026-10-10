@@ -558,14 +558,15 @@ COMMANDS_AND_RESULTS:
 NONE
 EVIDENCE_PATHS:
 NONE
+CONTINUATION_STATE:
+NONE
 UNRESOLVED_BLOCKERS:
 NONE
 DISCOVERED_ENHANCEMENTS:
 NONE
-CONTINUATION_STATE:
-NONE
 credential: ghp_abcdefghijklmnopqrstuvwxyz123456
 "@
+# CONTINUATION_STATE holds exactly one entry, so the trailing free text sits under DISCOVERED_ENHANCEMENTS.
 if($env:DT_FAKE_UNICODE_TEXT){
     $report += "`n"+$env:DT_FAKE_UNICODE_TEXT
     [Console]::Error.WriteLine($env:DT_FAKE_UNICODE_TEXT)

@@ -23,6 +23,8 @@ $script:WatcherRunLaunchCap = 6
 $script:WatcherRunLaunchWindowMin = 60
 # One retry of a failed registry read, this long after the first attempt, before it counts as an error.
 $script:WatcherRegistryRetryMs = 500
+# The same step error on this many consecutive ticks of a run sends Danny one DM.
+$script:WatcherStepErrorRepeatTicks = 3
 
 function Get-WatcherNow {
     if ($env:DT_BUILD_WATCHER_NOW_UTC) { return (ConvertTo-DtJobUtc $env:DT_BUILD_WATCHER_NOW_UTC) }
@@ -67,6 +69,9 @@ function Get-WatcherDecision {
     $folder = [string]$Entry.run_folder
     $statePath = [string]$Entry.build_state_path
     if (-not (Test-Path -LiteralPath $statePath)) { return [pscustomobject]@{ action = 'none'; detail = 'build state missing' } }
+    # A rotation kill that left a survivor holds the run until every survivor is gone, so no second
+    # coordinator starts beside it; only the rotation step's episode check removes the file.
+    if (Test-Path -LiteralPath (Get-DtJobPaths -RunFolder $folder).KillFailed) { return [pscustomobject]@{ action = 'none'; detail = 'rotation kill failed; a survivor still holds the run' } }
     $state = Get-DtJobRunState -BuildStatePath $statePath
     if ($state.run_status -ne 'runnable') { return [pscustomobject]@{ action = 'none'; detail = "run_status $($state.run_status)" } }
     $trigger = Get-DtJobLastEventSeq -RunFolder $folder
@@ -213,10 +218,12 @@ function Invoke-WatcherContextRotation {
     # Codex runs no hooks, so a managed Codex coordinator past its hard limit is ended here, within one
     # tick: kill its process tree, release its lease, and request a continuation so the relaunch rules
     # start a fresh one. Its jobs are detached and keep running. Claude coordinators are left to their
-    # hooks, and an irreversible step this coordinator opened defers the kill. A kill that leaves the
-    # process running changes nothing and tells Danny once. Returns a detail string, or $null when idle.
+    # hooks, and an irreversible step this coordinator opened defers the kill. A kill that leaves any
+    # process running opens a kill-failed episode (kill-failed.json) that holds the run until every
+    # survivor is gone. Returns a detail string, or $null when idle.
     param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)][DateTime]$NowUtc)
     $folder = [string]$Entry.run_folder
+    if (Test-Path -LiteralPath (Get-DtJobPaths -RunFolder $folder).KillFailed) { return (Invoke-WatcherKillFailedEpisode -Entry $Entry -NowUtc $NowUtc) }
     $lease = Get-DtJobLease -RunFolder $folder
     if ($null -eq $lease -or $lease.launched_by -ne 'watcher' -or -not $lease.PSObject.Properties['host'] -or $lease.host -ne 'codex') { return $null }
     if ($lease.PSObject.Properties['released_utc'] -and $lease.released_utc) { return $null }
@@ -232,25 +239,39 @@ function Invoke-WatcherContextRotation {
     $open = @((Split-DtCtxIrreversibleSteps -Open @(Get-DtJobIrreversibleOpen -RunFolder $folder) -Lease $lease).deferring)
     if ($open.Count -gt 0) { return "rotation deferred: $coordinatorId at $tokens past hard $($report.hard), irreversible $($open[0].operation) open" }
     # The coordinator's descendants (the codex process under the wrapper), snapshotted before the kill so
-    # each one's exit can be confirmed by pid and start time.
-    $descendants = @(Get-WatcherDescendantProcesses -ProcessId ([int]$lease.pid))
+    # each one's exit can be confirmed by pid and start time. A failed snapshot still kills the root tree,
+    # but the result cannot be confirmed, so the root is listed as a survivor for the episode check.
+    $snapshotError = $null
+    $descendants = @()
+    try { $descendants = @(Get-WatcherDescendantProcesses -ProcessId ([int]$lease.pid)) }
+    catch { $snapshotError = [string]$_.Exception.Message }
     $killError = $null
     try { Stop-WatcherProcessTree -ProcessId ([int]$lease.pid) }
     catch { $killError = [string]$_.Exception.Message }
     # The lease is released only once the old coordinator and every descendant are provably gone;
     # otherwise the relaunch rules would start a second coordinator beside a survivor.
-    $survivors = @(@(if (Test-DtJobProcessIdentity $lease.pid $pidStart) { [int]$lease.pid }) + @($descendants | Where-Object { Test-DtJobProcessIdentity $_.pid $_.start_utc } | ForEach-Object { [int]$_.pid }))
+    $rootRow = [pscustomobject][ordered]@{ pid = [int]$lease.pid; start_utc = $pidStart }
+    $liveDescendants = @($descendants | Where-Object { Test-DtJobProcessIdentity $_.pid $_.start_utc } | ForEach-Object { [pscustomobject][ordered]@{ pid = [int]$_.pid; start_utc = $_.start_utc } })
+    $survivors = @(@(if ($snapshotError -or (Test-DtJobProcessIdentity $lease.pid $pidStart)) { $rootRow }) + $liveDescendants)
     if ($survivors.Count -gt 0) {
-        $runId = [string]$Entry.run_id
-        $why = if ($killError) { " ($killError)" } else { '' }
-        $pids = $survivors -join ', '
-        $text = "dt-build run $runId could not be handed to a fresh coordinator: its coordinator reached its context limit and the watcher could not stop it$why. It is still running as process $pids, and the run stays with it so no second coordinator starts. Stop it with: Stop-Process -Id $pids -Force"
-        $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:rotation-kill-failed:$coordinatorId" -Message $text
-        return "rotation kill failed: $coordinatorId pid $pids still running$why; alert $alert"
+        $why = @(@($killError, $(if ($snapshotError) { "descendant snapshot failed: $snapshotError" })) | Where-Object { $_ })
+        $episode = [ordered]@{ coordinator_id = $coordinatorId; first_seen_utc = $NowUtc.ToString('o'); survivors = @($survivors); reason = $(if ($why.Count -gt 0) { $why -join '; ' } else { $null }) }
+        Write-DtJobAtomic -Path (Get-DtJobPaths -RunFolder $folder).KillFailed -Content ($episode | ConvertTo-Json -Depth 4)
+        return (Invoke-WatcherKillFailedEpisode -Entry $Entry -NowUtc $NowUtc -NoRetry)
     }
+    Complete-WatcherRotation -Entry $Entry -CoordinatorId $coordinatorId -NowUtc $NowUtc
+    $row = [ordered]@{ coordinator_id = $coordinatorId; tokens_at_kill = [long]$tokens; hard_limit = [long]$report.hard; overshoot = ([long]$tokens - [long]$report.hard); killed_utc = $NowUtc.ToString('o') }
+    [System.IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $folder).Rotations, (($row | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
+    return "rotated $coordinatorId at $tokens (hard $($report.hard), overshoot $($row.overshoot))"
+}
+
+function Complete-WatcherRotation {
+    # Hands the run on: releases the old coordinator's lease (when it still holds it) and requests a continuation.
+    param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)][string]$CoordinatorId, [Parameter(Mandatory)][DateTime]$NowUtc)
+    $folder = [string]$Entry.run_folder
     Invoke-DtJobLocked -RunFolder $folder -Action {
         $current = Get-DtJobLease -RunFolder $folder
-        if ($null -ne $current -and $current.coordinator_id -eq $coordinatorId) {
+        if ($null -ne $current -and $current.coordinator_id -eq $CoordinatorId) {
             if (-not $current.PSObject.Properties['released_utc']) { $current | Add-Member -NotePropertyName released_utc -NotePropertyValue $null }
             $current.expires_utc = $NowUtc.ToString('o')
             $current.released_utc = $NowUtc.ToString('o')
@@ -259,9 +280,42 @@ function Invoke-WatcherContextRotation {
         $state = Get-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path)
         Add-DtJobEvent -RunFolder $folder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason 'context_rotation'
     }
-    $row = [ordered]@{ coordinator_id = $coordinatorId; tokens_at_kill = [long]$tokens; hard_limit = [long]$report.hard; overshoot = ([long]$tokens - [long]$report.hard); killed_utc = $NowUtc.ToString('o') }
-    [System.IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $folder).Rotations, (($row | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
-    return "rotated $coordinatorId at $tokens (hard $($report.hard), overshoot $($row.overshoot))"
+}
+
+function Invoke-WatcherKillFailedEpisode {
+    # One kill-failed episode. On the tick that opens it (-NoRetry) every listed survivor counts, so an
+    # unconfirmed kill is never handed on at once. On later ticks, while any listed survivor is alive, its
+    # tree kill is retried; Danny is told once per episode. Once every survivor is gone, the run is handed
+    # on and the file removed, and the relaunch rules apply as usual.
+    param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)][DateTime]$NowUtc, [switch]$NoRetry)
+    $folder = [string]$Entry.run_folder
+    $runId = [string]$Entry.run_id
+    $path = (Get-DtJobPaths -RunFolder $folder).KillFailed
+    $episode = Read-DtJobText -Path $path | ConvertFrom-Json -ErrorAction Stop
+    $coordinatorId = [string]$episode.coordinator_id
+    $listed = @($episode.survivors)
+    $retryErrors = [System.Collections.Generic.List[string]]::new()
+    if ($NoRetry) { $live = $listed }
+    else {
+        $live = @($listed | Where-Object { Test-DtJobProcessIdentity $_.pid $_.start_utc })
+        foreach ($survivor in $live) {
+            try { Stop-WatcherProcessTree -ProcessId ([int]$survivor.pid) }
+            catch { $retryErrors.Add([string]$_.Exception.Message) }
+        }
+        $live = @($live | Where-Object { Test-DtJobProcessIdentity $_.pid $_.start_utc })
+        if ($live.Count -eq 0) {
+            Complete-WatcherRotation -Entry $Entry -CoordinatorId $coordinatorId -NowUtc $NowUtc
+            Remove-Item -LiteralPath $path -Force
+            return "rotation kill confirmed: $coordinatorId survivors gone; run handed on"
+        }
+    }
+    $pids = @($live | ForEach-Object { [int]$_.pid }) -join ', '
+    $reason = if ($episode.PSObject.Properties['reason'] -and $episode.reason) { " ($($episode.reason))" } else { '' }
+    $episodeKey = (ConvertTo-DtJobUtc $episode.first_seen_utc).ToString('yyyyMMddHHmmss')
+    $text = "dt-build run $runId could not be handed to a fresh coordinator: its coordinator reached its context limit and the watcher could not stop it$reason. It may still be running as process $pids, and the run stays with it so no second coordinator starts. The watcher retries the kill every tick and hands the run on once it is gone. Stop it with: Stop-Process -Id $pids -Force"
+    $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:rotation-kill-failed:${coordinatorId}:$episodeKey" -Message $text
+    $retryText = if ($retryErrors.Count -gt 0) { " (retry: $($retryErrors[0]))" } else { '' }
+    return "rotation kill failed: $coordinatorId pid $pids still running$reason$retryText; alert $alert"
 }
 
 function Get-WatcherDescendantProcesses {
@@ -337,9 +391,43 @@ function Invoke-WatcherRun {
         if ($null -ne $rotation) { $result | Add-Member -NotePropertyName rotation -NotePropertyValue $rotation -Force }
         if ($stale.Count -gt 0) { $result | Add-Member -NotePropertyName stale_irreversible -NotePropertyValue $stale -Force }
         if ($stepErrors.Count -gt 0) { $result | Add-Member -NotePropertyName step_errors -NotePropertyValue @($stepErrors) -Force }
+        $stepAlerts = @(Send-WatcherRepeatedStepErrorAlerts -Entry $Entry -StepErrors @($stepErrors))
+        if ($stepAlerts.Count -gt 0) { $result | Add-Member -NotePropertyName step_error_alerts -NotePropertyValue $stepAlerts -Force }
         return $result
     }
     return (Invoke-WatcherRunTick -Entry $Entry)
+}
+
+function Send-WatcherRepeatedStepErrorAlerts {
+    # The same step error on $script:WatcherStepErrorRepeatTicks consecutive ticks of a run sends one DM,
+    # keyed on the run and the error text. step-errors.json holds each error's consecutive count; an error
+    # missing from a tick drops out, and a tick with no errors removes the file.
+    param([Parameter(Mandatory)]$Entry, [string[]]$StepErrors = @())
+    $folder = [string]$Entry.run_folder
+    $runId = [string]$Entry.run_id
+    $path = (Get-DtJobPaths -RunFolder $folder).StepErrors
+    if (@($StepErrors).Count -eq 0) {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        return @()
+    }
+    $prior = @{}
+    if (Test-Path -LiteralPath $path) {
+        try { foreach ($row in @((Read-DtJobText -Path $path | ConvertFrom-Json -ErrorAction Stop).errors)) { $prior[[string]$row.hash] = [int]$row.count } }
+        catch { $prior = @{} }
+    }
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $results = [System.Collections.Generic.List[object]]::new()
+    foreach ($errorText in @($StepErrors | Select-Object -Unique)) {
+        $hash = [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes([string]$errorText))).Substring(0, 12).ToLowerInvariant()
+        $count = 1 + $(if ($prior.ContainsKey($hash)) { $prior[$hash] } else { 0 })
+        $rows.Add([ordered]@{ hash = $hash; count = $count; text = [string]$errorText })
+        if ($count -lt $script:WatcherStepErrorRepeatTicks) { continue }
+        $text = "dt-build run $runId has hit the same watcher error on $count ticks in a row: $errorText. Its relaunch and stop checks still run, but this step does not. Fix the cause in $folder."
+        $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:step-error:$hash" -Message $text
+        $results.Add([pscustomobject][ordered]@{ hash = $hash; count = $count; alert = $alert })
+    }
+    Write-DtJobAtomic -Path $path -Content ([ordered]@{ errors = @($rows) } | ConvertTo-Json -Depth 4)
+    return @($results)
 }
 
 function Invoke-WatcherRunTick {

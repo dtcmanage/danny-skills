@@ -132,6 +132,8 @@ function Get-DtJobPaths {
         ContextBaseline = Join-Path $root 'context-baseline.json'
         Irreversible = Join-Path $root 'irreversible.json'
         Rotations = Join-Path $root 'rotations.jsonl'
+        KillFailed = Join-Path $root 'kill-failed.json'
+        StepErrors = Join-Path $root 'step-errors.json'
     }
 }
 
@@ -1434,20 +1436,47 @@ function Invoke-DtJobIrreversible {
 }
 
 function Get-DtJobTreeHash {
-    # The working-state tree hash: everything, tracked, untracked (respecting .gitignore), and binary,
-    # staged into a temporary index and written as a tree. The real index is never touched.
-    param([Parameter(Mandatory)][string]$WorkingTree)
+    # The working-state tree hash: everything, tracked (including files force-added despite .gitignore),
+    # untracked (respecting .gitignore), and binary, staged into a temporary index and written as a tree.
+    # The continuation record (-ExcludePath, and the default .dt-build-continuation.md at the root) is
+    # left out, so writing it never changes the hash. The real index is never touched.
+    param([Parameter(Mandatory)][string]$WorkingTree, [string[]]$ExcludePath = @())
     if (-not (Test-Path -LiteralPath $WorkingTree -PathType Container)) { throw "DT_JOB_TREE_HASH: working tree not found: $WorkingTree" }
     $root = @(& git -C $WorkingTree rev-parse --show-toplevel 2>$null)
     if ($LASTEXITCODE -ne 0 -or -not $root) { throw "DT_JOB_TREE_HASH: not a git working tree: $WorkingTree" }
+    $top = [System.IO.Path]::GetFullPath([string]$root[0])
+    # Tracked files the real index holds that .gitignore matches; `git add -A` alone skips them. ls-files only reads.
+    $listed = (@(& git -C $top ls-files -ci --exclude-standard -z 2>$null) -join '')
+    if ($LASTEXITCODE -ne 0) { throw 'DT_JOB_TREE_HASH: git ls-files failed' }
+    $ignoredTracked = @($listed -split "`0" | Where-Object { $_ } | Select-Object -Unique)
+    $excluded = [System.Collections.Generic.List[string]]::new()
+    $excluded.Add('.dt-build-continuation.md')
+    foreach ($path in @($ExcludePath | Where-Object { $_ })) {
+        $full = [System.IO.Path]::GetFullPath($path, $top)
+        $relative = [System.IO.Path]::GetRelativePath($top, $full)
+        if ($relative -ne '.' -and -not $relative.StartsWith('..') -and -not [System.IO.Path]::IsPathRooted($relative)) { $excluded.Add($relative.Replace('\', '/')) }
+    }
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('dt-job-tree-hash-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     $priorIndex = $env:GIT_INDEX_FILE
     try {
         $env:GIT_INDEX_FILE = Join-Path $tempDir 'index'
-        $addOutput = @(& git -C $root[0] add -A 2>&1)
+        # Seed from HEAD so tracked files stay in the set; a repository with no commit yet starts empty.
+        & git -C $top rev-parse --verify --quiet HEAD *> $null
+        if ($LASTEXITCODE -eq 0) {
+            $seedOutput = @(& git -C $top read-tree HEAD 2>&1)
+            if ($LASTEXITCODE -ne 0) { throw "DT_JOB_TREE_HASH: git read-tree HEAD failed: $(($seedOutput | Select-Object -Last 3) -join ' ')" }
+        }
+        $addOutput = @(& git -C $top add -A 2>&1)
         if ($LASTEXITCODE -ne 0) { throw "DT_JOB_TREE_HASH: git add -A failed: $(($addOutput | Select-Object -Last 3) -join ' ')" }
-        $tree = @(& git -C $root[0] write-tree 2>$null)
+        $present = @($ignoredTracked | Where-Object { Test-Path -LiteralPath (Join-Path $top $_) -PathType Leaf })
+        if ($present.Count -gt 0) {
+            $forceOutput = @(& git --literal-pathspecs -C $top add -f -- @present 2>&1)
+            if ($LASTEXITCODE -ne 0) { throw "DT_JOB_TREE_HASH: git add -f failed: $(($forceOutput | Select-Object -Last 3) -join ' ')" }
+        }
+        $dropOutput = @(& git --literal-pathspecs -C $top rm --cached -q -r --ignore-unmatch -- @excluded 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "DT_JOB_TREE_HASH: git rm --cached failed: $(($dropOutput | Select-Object -Last 3) -join ' ')" }
+        $tree = @(& git -C $top write-tree 2>$null)
         if ($LASTEXITCODE -ne 0 -or -not $tree -or [string]$tree[0] -notmatch '^[0-9a-f]{40}([0-9a-f]{24})?$') { throw 'DT_JOB_TREE_HASH: git write-tree failed' }
         return [string]$tree[0]
     }
@@ -1470,7 +1499,7 @@ function Test-DtJobCanReuse {
         if ($matching.Count -eq 0) { return (& $no 'no recorded test with this exact command') }
         $passing = @($matching | Where-Object { [long]$_['exit_code'] -eq 0 })
         if ($passing.Count -eq 0) { return (& $no 'the recorded test did not pass') }
-        $current = Get-DtJobTreeHash -WorkingTree $WorkingTree
+        $current = Get-DtJobTreeHash -WorkingTree $WorkingTree -ExcludePath @($RecordPath)
         $hit = @($passing | Where-Object { [string]$_['tree_hash'] -ceq $current }) | Select-Object -First 1
         if ($null -eq $hit) { return (& $no "tree hash changed: current $current") }
         return [pscustomobject][ordered]@{ reuse = $true; reason = "tree hash $current matches"; evidence_path = [string]$hit['evidence_path'] }
@@ -1484,7 +1513,7 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 # Worker-side verbs: no run folder, lease, or context line.
 if ($Verb -eq 'tree-hash') {
     if (-not $WorkingTree) { throw 'DT_JOB_USAGE: tree-hash requires -WorkingTree.' }
-    $hash = Get-DtJobTreeHash -WorkingTree $WorkingTree
+    $hash = Get-DtJobTreeHash -WorkingTree $WorkingTree -ExcludePath @($Record)
     if ($Json) { [pscustomobject][ordered]@{ working_tree = $WorkingTree; tree_hash = $hash } | ConvertTo-Json -Compress } else { $hash }
     exit 0
 }

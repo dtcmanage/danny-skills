@@ -26,7 +26,7 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-watcher-tests-{0}" 
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 $savedEnv = @{}
-foreach ($name in @('DT_BUILD_STATE_DIR', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALERT_TRANSPORT', 'DT_BUILD_COORDINATOR_LAUNCHER', 'DT_BUILD_VENDOR_LIMITS_SCRIPT', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_ID', 'DT_TEST_DM_LOG', 'DT_TEST_LAUNCH_LOG', 'DT_TEST_DEAD_PID', 'DT_TEST_BLOCKED', 'DT_TEST_RESET_CLAUDE', 'DT_TEST_RESET_CODEX', 'DT_TEST_DTJOB', 'DT_TEST_LIVE_CHILD', 'DT_TEST_LAUNCH_SLEEP_MS', 'DT_TEST_LAUNCH_FAIL', 'DT_TEST_DM_FAIL', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID', 'DT_TEST_TREE_FAIL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME')) {
+foreach ($name in @('DT_BUILD_STATE_DIR', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALERT_TRANSPORT', 'DT_BUILD_COORDINATOR_LAUNCHER', 'DT_BUILD_VENDOR_LIMITS_SCRIPT', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_ID', 'DT_TEST_DM_LOG', 'DT_TEST_LAUNCH_LOG', 'DT_TEST_DEAD_PID', 'DT_TEST_BLOCKED', 'DT_TEST_RESET_CLAUDE', 'DT_TEST_RESET_CODEX', 'DT_TEST_DTJOB', 'DT_TEST_LIVE_CHILD', 'DT_TEST_LAUNCH_SLEEP_MS', 'DT_TEST_LAUNCH_FAIL', 'DT_TEST_DM_FAIL', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID', 'DT_TEST_TREE_FAIL', 'DT_TEST_KILLABLE', 'DT_TEST_KILL_LOG', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME')) {
     $savedEnv[$name] = [System.Environment]::GetEnvironmentVariable($name)
 }
 
@@ -214,8 +214,62 @@ function Stop-Job {
     Invoke-DtJob @('cancel', '-RunFolder', $RunFolder, '-JobId', $JobId) | Out-Null
 }
 
+function New-CodexRollout {
+    # A Codex rollout whose last token_count reports the final input size.
+    param([string]$Path, [long[]]$Inputs)
+    $lines = @(([ordered]@{ timestamp = [DateTime]::UtcNow.ToString('o'); type = 'session_meta'; payload = [ordered]@{ id = [guid]::NewGuid().ToString(); cwd = 'C:\fixture'; cli_version = '0.0.0' } } | ConvertTo-Json -Compress -Depth 6))
+    foreach ($n in $Inputs) {
+        $lines += ([ordered]@{ timestamp = [DateTime]::UtcNow.ToString('o'); type = 'event_msg'; payload = [ordered]@{ type = 'token_count'; info = [ordered]@{ total_token_usage = [ordered]@{ input_tokens = $n * 3 }; last_token_usage = [ordered]@{ input_tokens = $n; cached_input_tokens = 1000; output_tokens = 50 } } } } | ConvertTo-Json -Compress -Depth 6)
+    }
+    Write-Utf8 -Path $Path -Content (($lines -join "`n") + "`n")
+}
+
+function Start-RotationFixture {
+    # A managed Codex run whose watcher-launched coordinator (a pwsh child with a ping grandchild standing in
+    # for codex) is past its hard limit, with an unconsumed event so a free run would relaunch at once.
+    param([string]$Name)
+    $run = New-Run -Name $Name -PinnedHost 'codex' -NoLease
+    $grandFile = Join-Path $tempRoot "$Name.grand"
+    $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','120','127.0.0.1' -WindowStyle Hidden -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 120"
+    $child = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript -WindowStyle Hidden -PassThru
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not (Test-Path -LiteralPath $grandFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+    $grand = [int](Get-Content -Raw -LiteralPath $grandFile)
+    $script:spawned += @($child.Id, $grand)
+    $childStart = (Get-Process -Id $child.Id).StartTime.ToUniversalTime().ToString('o')
+    $coordinatorId = "mc-$Name"
+    $lease = [ordered]@{ coordinator_id = $coordinatorId; host = 'codex'; session_id = $null; pid = $child.Id; pid_start_utc = $childStart; launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(9).ToString('o'); released_utc = $null }
+    Write-Utf8 -Path (Join-Path $run.folder 'coordinator.lease') -Content ($lease | ConvertTo-Json)
+    $rollout = Join-Path $tempRoot "$Name-rollout.jsonl"
+    New-CodexRollout -Path $rollout -Inputs @(50000, 130000)
+    $baseline = [ordered]@{ coordinators = [ordered]@{ $coordinatorId = [ordered]@{ coordinator_id = $coordinatorId; host = 'codex'; transcript_path = $rollout; session_id = $null; transcript_source = 'explicit'; baseline_tokens = 50000; marked_utc = [DateTime]::UtcNow.ToString('o') } } }
+    Write-Utf8 -Path (Join-Path $run.folder 'context-baseline.json') -Content ($baseline | ConvertTo-Json -Depth 6)
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    return [pscustomobject]@{ run_id = $Name; folder = $run.folder; coordinator_id = $coordinatorId; child = $child.Id; grandchild = $grand }
+}
+
+function ConvertTo-TestUtc {
+    param($Value)
+    if ($Value -is [DateTime]) { return $Value.ToUniversalTime() }
+    return [DateTime]::Parse([string]$Value, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+}
+
+function Test-Alive {
+    param([int]$ProcessId)
+    return ($null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue))
+}
+
+function Invoke-StubbedRun {
+    # One watcher tick for one run, in a process whose watcher functions $Stubs replaces.
+    param([string]$RunFolder, [string]$Stubs)
+    $raw = & pwsh -NoProfile -Command ". '$watcher'; $Stubs; Invoke-WatcherRun -Entry (Get-DtJobRegistryEntry -RunFolder '$RunFolder') | ConvertTo-Json -Compress -Depth 6"
+    if ($LASTEXITCODE -ne 0) { throw "stubbed watcher run exited $LASTEXITCODE : $($raw -join ' | ')" }
+    return (@($raw | Where-Object { $_ })[-1] | ConvertFrom-Json)
+}
+
 $exitCode = 0
 $background = $null
+$script:spawned = @()
 try {
     # ---- wait: -Any, -All, timeout, compact text lines.
     Use-Scenario 'wait'
@@ -579,6 +633,81 @@ try {
         Assert-True ($tick.action -ne 'error' -and @($tick.step_errors | Where-Object { $_ -match '^context rotation failed' }).Count -eq 1 -and (Get-LaunchCount 'corrupt-baseline') -eq 0 -and -not $live.HasExited) "a corrupt context-baseline.json fails only the rotation step; the tick still decides ($($tick | ConvertTo-Json -Compress))"
     }
     finally { if (-not $live.HasExited) { $live.Kill() } }
+
+    # ---- the same step error on 3 consecutive ticks sends one DM; other runs still tick and the watcher exits 0.
+    Use-Scenario 'step-repeat'
+    $okRun = New-Run -Name 'step-ok' -NoLease
+    Invoke-DtJob @('request-continuation', '-RunFolder', $okRun.folder) | Out-Null
+    $live = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        $run = New-Run -Name 'step-err' -PinnedHost 'codex' -NoLease
+        $liveStart = (Get-Process -Id $live.Id).StartTime.ToUniversalTime().ToString('o')
+        $lease = [ordered]@{ coordinator_id = 'mc-live'; host = 'codex'; session_id = $null; pid = $live.Id; pid_start_utc = $liveStart; launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(9).ToString('o'); released_utc = $null }
+        Write-Utf8 -Path (Join-Path $run.folder 'coordinator.lease') -Content ($lease | ConvertTo-Json)
+        Write-Utf8 -Path (Join-Path $run.folder 'context-baseline.json') -Content '{ broken'
+        $ticks = @()
+        foreach ($n in 1..4) { $ticks += , @(Invoke-Tick) }
+        $errTicks = @($ticks | ForEach-Object { @($_ | Where-Object { $_.run_id -eq 'step-err' })[0] })
+        $stepDms = @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | Where-Object { $_ -match 'run step-err ' -and $_ -match 'same watcher error on 3 ticks in a row' -and $_ -match 'context rotation failed' })
+        Assert-True (-not $errTicks[0].PSObject.Properties['step_error_alerts'] -and -not $errTicks[1].PSObject.Properties['step_error_alerts'] -and @($errTicks[2].step_error_alerts)[0].alert -eq 'sent' -and @($errTicks[3].step_error_alerts)[0].alert -eq 'already_sent') "the repeated step error alerts on the third tick only ($($errTicks | ConvertTo-Json -Compress -Depth 5))"
+        Assert-True ($stepDms.Count -eq 1 -and (Get-DmCount 'step-err') -eq 1) "a step error repeated on 4 ticks sends exactly one DM ($($stepDms.Count))"
+        $okTicks = @($ticks | ForEach-Object { @($_ | Where-Object { $_.run_id -eq 'step-ok' })[0] })
+        Assert-True ($okTicks[0].action -eq 'launch' -and (Get-LaunchCount 'step-ok') -ge 1 -and -not $okTicks[0].PSObject.Properties['step_errors'] -and (Get-DmCount 'step-ok') -eq 0) 'another run in the same tick still launches, with no step error or DM'
+        $counts = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'step-errors.json') | ConvertFrom-Json).errors
+        Assert-True (@($counts).Count -eq 1 -and [int]@($counts)[0].count -eq 4) 'step-errors.json counts consecutive ticks per error'
+        Write-Utf8 -Path (Join-Path $run.folder 'context-baseline.json') -Content '{ "coordinators": {} }'
+        Invoke-Tick | Out-Null
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $run.folder 'step-errors.json'))) 'a tick with no step error clears the consecutive count'
+        Write-Utf8 -Path (Join-Path $run.folder 'context-baseline.json') -Content '{ broken'
+        $again = @(foreach ($n in 1..3) { @(Invoke-Tick | Where-Object { $_.run_id -eq 'step-err' })[0] })
+        Assert-True (-not $again[1].PSObject.Properties['step_error_alerts'] -and @($again[2].step_error_alerts)[0].alert -eq 'already_sent' -and (Get-DmCount 'step-err') -eq 1) 'an interrupted streak starts over, and the same error on the same run is never sent twice'
+    }
+    finally { if (-not $live.HasExited) { $live.Kill() } }
+
+    # ---- a rotation kill that leaves the codex child alive holds the run until every survivor is gone.
+    Use-Scenario 'kill-episode'
+    $killLog = Join-Path $tempRoot 'kill-calls.txt'
+    $env:DT_TEST_KILL_LOG = $killLog
+    $rootOnlyStub = 'function Stop-WatcherProcessTree { param([int]$ProcessId) [System.IO.File]::AppendAllText($env:DT_TEST_KILL_LOG, "$ProcessId`n"); if ($ProcessId -eq [int]$env:DT_TEST_KILLABLE) { Stop-Process -Id $ProcessId -Force; Start-Sleep -Milliseconds 500 } }'
+    $ep = Start-RotationFixture -Name 'kill-episode'
+    $env:DT_TEST_KILLABLE = [string]$ep.child
+    $killFailedPath = Join-Path $ep.folder 'kill-failed.json'
+    $first = Invoke-StubbedRun -RunFolder $ep.folder -Stubs $rootOnlyStub
+    Assert-True (-not (Test-Alive $ep.child) -and (Test-Alive $ep.grandchild) -and [string]$first.rotation -match "^rotation kill failed: $($ep.coordinator_id) pid [0-9, ]*(?<![0-9])$($ep.grandchild)(?![0-9])[0-9, ]* still running" -and [string]$first.rotation -notmatch "(?<![0-9])$($ep.child)(?![0-9])" -and $first.action -eq 'none' -and (Get-LaunchCount 'kill-episode') -eq 0) "root dead, child alive: the tick that opens the episode launches nothing ($($first | ConvertTo-Json -Compress -Depth 5))"
+    $episode = Get-Content -Raw -LiteralPath $killFailedPath | ConvertFrom-Json
+    $grandStart = (Get-Process -Id $ep.grandchild).StartTime.ToUniversalTime()
+    $grandRow = @(@($episode.survivors) | Where-Object { [int]$_.pid -eq $ep.grandchild })
+    Assert-True ($episode.coordinator_id -eq $ep.coordinator_id -and $episode.first_seen_utc -and $grandRow.Count -eq 1 -and (ConvertTo-TestUtc $grandRow[0].start_utc).Ticks -eq $grandStart.Ticks -and @(@($episode.survivors) | Where-Object { [int]$_.pid -eq $ep.child }).Count -eq 0) "kill-failed.json lists the survivor pid with its start time, the coordinator, and first_seen_utc ($($episode | ConvertTo-Json -Compress -Depth 5))"
+    Remove-Item -LiteralPath $killLog -Force -ErrorAction SilentlyContinue
+    $later = @(foreach ($n in 1..2) { Invoke-StubbedRun -RunFolder $ep.folder -Stubs $rootOnlyStub })
+    $retried = @(Get-Content -LiteralPath $killLog | Where-Object { $_ } | ForEach-Object { [int]$_ })
+    Assert-True (@($later | Where-Object { $_.action -ne 'none' -or [string]$_.rotation -notmatch 'rotation kill failed' }).Count -eq 0 -and (Get-LaunchCount 'kill-episode') -eq 0 -and (Test-Path -LiteralPath $killFailedPath)) "while the survivor lives, later ticks launch nothing ($($later | ConvertTo-Json -Compress -Depth 5))"
+    Assert-True (@($retried | Where-Object { $_ -eq $ep.grandchild }).Count -eq 2 -and @($retried | Where-Object { $_ -eq $ep.child }).Count -eq 0) "each later tick retries the survivor's tree kill, never the dead root ($($retried -join ','))"
+    Assert-True ((Get-DmCount 'kill-episode') -eq 1 -and [string]$later[-1].rotation -match 'alert already_sent') 'one DM for the whole kill-failed episode'
+    $leaseMid = Get-Content -Raw -LiteralPath (Join-Path $ep.folder 'coordinator.lease') | ConvertFrom-Json
+    Assert-True (-not $leaseMid.released_utc -and @(Get-Content -LiteralPath (Join-Path $ep.folder 'jobs/events.jsonl') | Where-Object { $_ -match 'context_rotation' }).Count -eq 0) 'the lease stays held and no continuation is requested while the survivor lives'
+    Stop-Process -Id $ep.grandchild -Force
+    Start-Sleep -Milliseconds 500
+    $resolved = Invoke-StubbedRun -RunFolder $ep.folder -Stubs $rootOnlyStub
+    $leaseAfter = Get-Content -Raw -LiteralPath (Join-Path $ep.folder 'coordinator.lease') | ConvertFrom-Json
+    Assert-True ([string]$resolved.rotation -match '^rotation kill confirmed' -and -not (Test-Path -LiteralPath $killFailedPath) -and $resolved.action -eq 'launch' -and (Get-LaunchCount 'kill-episode') -eq 1) "once the survivor is gone the file is removed and exactly one coordinator launches ($($resolved | ConvertTo-Json -Compress -Depth 5))"
+    Assert-True (@(Get-Content -LiteralPath (Join-Path $ep.folder 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.type -eq 'continuation_requested' -and $_.reason -eq 'context_rotation' }).Count -eq 1 -and $leaseAfter.coordinator_id -ne $ep.coordinator_id) 'the old lease was released and one continuation_requested appended before the relaunch'
+    Invoke-StubbedRun -RunFolder $ep.folder -Stubs $rootOnlyStub | Out-Null
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-LaunchCount 'kill-episode') -eq 1 -and (Get-DmCount 'kill-episode') -eq 1) 'later ticks start no second coordinator and send no second DM'
+
+    # ---- a failed descendant snapshot still kills the root tree but holds the run as an unconfirmed kill.
+    Use-Scenario 'snapshot-fail'
+    $sf = Start-RotationFixture -Name 'snapshot-fail'
+    $snapshotStub = 'function Get-WatcherDescendantProcesses { param([int]$ProcessId) throw "CIM unavailable" }'
+    $sfFirst = Invoke-StubbedRun -RunFolder $sf.folder -Stubs $snapshotStub
+    Start-Sleep -Milliseconds 500
+    $sfEpisode = Get-Content -Raw -LiteralPath (Join-Path $sf.folder 'kill-failed.json') | ConvertFrom-Json
+    Assert-True (-not (Test-Alive $sf.child) -and -not (Test-Alive $sf.grandchild)) 'with no descendant snapshot the root tree is still killed'
+    Assert-True ($sfFirst.action -eq 'none' -and (Get-LaunchCount 'snapshot-fail') -eq 0 -and [string]$sfFirst.rotation -match "^rotation kill failed: $($sf.coordinator_id) pid $($sf.child) " -and [string]$sfFirst.rotation -match 'descendant snapshot failed: CIM unavailable' -and @($sfEpisode.survivors).Count -eq 1 -and [int]@($sfEpisode.survivors)[0].pid -eq $sf.child) "an unconfirmed kill opens a kill-failed episode listing the root pid ($($sfFirst | ConvertTo-Json -Compress -Depth 5))"
+    Assert-True ((Get-DmCount 'snapshot-fail') -eq 1) 'an unconfirmed kill sends one DM'
+    $sfNext = Invoke-StubbedRun -RunFolder $sf.folder -Stubs $snapshotStub
+    Assert-True ([string]$sfNext.rotation -match '^rotation kill confirmed' -and $sfNext.action -eq 'launch' -and (Get-LaunchCount 'snapshot-fail') -eq 1 -and -not (Test-Path -LiteralPath (Join-Path $sf.folder 'kill-failed.json'))) "the next tick finds the root gone and hands the run to exactly one new coordinator ($($sfNext | ConvertTo-Json -Compress -Depth 5))"
 
     # ---- a live watcher-launched pid is not replaced, even with its lease expired.
     Use-Scenario 'live-pid'
@@ -989,6 +1118,7 @@ catch {
 }
 finally {
     if ($null -ne $background -and -not $background.HasExited) { $background.Kill($true) }
+    foreach ($spawnedPid in $script:spawned) { Get-Process -Id $spawnedPid -ErrorAction SilentlyContinue | Where-Object { @('ping', 'pwsh') -contains $_.ProcessName } | Stop-Process -Force -ErrorAction SilentlyContinue }
     # Fake coordinators told to stay up are ping processes; stop any a failed test left behind.
     if ($env:DT_TEST_LAUNCH_LOG -and (Test-Path -LiteralPath $env:DT_TEST_LAUNCH_LOG)) {
         foreach ($spawn in @(Get-Content -LiteralPath $env:DT_TEST_LAUNCH_LOG | ForEach-Object { $_ | ConvertFrom-Json })) {

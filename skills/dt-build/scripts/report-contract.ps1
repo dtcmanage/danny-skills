@@ -16,6 +16,8 @@ $script:DtReportHeaders = @(
 )
 $script:DtContinuationFields = @('run_id', 'chunk_id', 'attempt', 'completed', 'tests', 'running_jobs', 'blockers', 'authorization', 'next_step')
 $script:DtContinuationTestFields = @('command', 'exit_code', 'evidence_path', 'tree_hash', 'recorded_utc')
+# How a worker computes a test's tree_hash; named in the error when the field is missing or malformed.
+$script:DtContractTreeHashHint = 'compute it with: pwsh -NoProfile -File "' + (Join-Path $PSScriptRoot 'dt-job.ps1') + '" tree-hash -WorkingTree "<worktree>"'
 
 function Test-DtContractList {
     param($Value)
@@ -25,6 +27,14 @@ function Test-DtContractList {
 function Test-DtContractInt {
     param($Value)
     return ($Value -is [int] -or $Value -is [long])
+}
+
+function Test-DtContractLocalPath {
+    # An absolute local path. Relative paths and UNC or device paths (\\server\share, //server/share) are
+    # rejected before any file system call, so a worker-supplied path never opens a network connection.
+    param([string]$Path)
+    if (-not $Path -or $Path -match '^[\\/]{2}') { return $false }
+    return [System.IO.Path]::IsPathFullyQualified($Path)
 }
 
 function Get-DtContinuationRecord {
@@ -71,12 +81,15 @@ function Get-DtContinuationRecord {
             foreach ($test in $record['tests']) {
                 if ($test -isnot [System.Collections.IDictionary]) { $errors.Add("continuation tests[$i] must be an object") | Out-Null; $i++; continue }
                 foreach ($field in $script:DtContinuationTestFields) {
-                    if (-not $test.Contains($field)) { $errors.Add("continuation tests[$i] missing field $field") | Out-Null }
+                    if (-not $test.Contains($field)) {
+                        $hint = if ($field -eq 'tree_hash') { "; $($script:DtContractTreeHashHint)" } else { '' }
+                        $errors.Add("continuation tests[$i] missing field $field$hint") | Out-Null
+                    }
                 }
                 if ($test.Contains('command') -and ($test['command'] -isnot [string] -or -not $test['command'])) { $errors.Add("continuation tests[$i].command must be a non-empty string") | Out-Null }
                 if ($test.Contains('exit_code') -and -not (Test-DtContractInt $test['exit_code'])) { $errors.Add("continuation tests[$i].exit_code must be an integer") | Out-Null }
                 if ($test.Contains('evidence_path') -and $test['evidence_path'] -isnot [string]) { $errors.Add("continuation tests[$i].evidence_path must be a string") | Out-Null }
-                if ($test.Contains('tree_hash') -and ($test['tree_hash'] -isnot [string] -or $test['tree_hash'] -notmatch '^[0-9a-f]{40}([0-9a-f]{24})?$')) { $errors.Add("continuation tests[$i].tree_hash must be a git tree sha") | Out-Null }
+                if ($test.Contains('tree_hash') -and ($test['tree_hash'] -isnot [string] -or $test['tree_hash'] -notmatch '^[0-9a-f]{40}([0-9a-f]{24})?$')) { $errors.Add("continuation tests[$i].tree_hash must be a git tree sha; $($script:DtContractTreeHashHint)") | Out-Null }
                 if ($test.Contains('recorded_utc')) {
                     $stamp = [datetimeoffset]::MinValue
                     $value = $test['recorded_utc']
@@ -93,8 +106,8 @@ function Get-DtContinuationRecord {
 }
 
 function Get-DtReportSection {
-    # A report field's entries: an inline value after the colon, then the following lines up to the next
-    # field header, a code fence, or a blank line after the first entry. $null when the header is absent.
+    # A report field's entries: an inline value after the colon, then every non-blank line up to the next
+    # field header or a code fence. $null when the header is absent.
     param([Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string]$Name)
     $lines = $Text -split '\r?\n'
     $headerPattern = '^\s*(?:' + (($script:DtReportHeaders | ForEach-Object { [regex]::Escape($_) }) -join '|') + '):'
@@ -106,7 +119,7 @@ function Get-DtReportSection {
         for ($j = $i + 1; $j -lt $lines.Count; $j++) {
             $line = $lines[$j]
             if ($line -cmatch $headerPattern -or $line -match '^\s*```') { break }
-            if (-not $line.Trim()) { if ($entries.Count -gt 0) { break } else { continue } }
+            if (-not $line.Trim()) { continue }
             $entries.Add($line.Trim()) | Out-Null
         }
         return , @($entries)
@@ -145,15 +158,18 @@ function Get-ReportShapeResult {
         if ($null -eq $evidence -or @($evidence).Count -eq 0) { $errors.Add('missing EVIDENCE_PATHS') | Out-Null }
         elseif (-not (@($evidence).Count -eq 1 -and $evidence[0] -ceq 'NONE')) {
             foreach ($path in $evidence) {
-                if (-not [System.IO.Path]::IsPathFullyQualified($path) -or -not (Test-Path -LiteralPath $path)) { $errors.Add("EVIDENCE_PATHS entry does not exist as an absolute path: $path") | Out-Null }
+                if (-not (Test-DtContractLocalPath $path)) { $errors.Add("EVIDENCE_PATHS entry is not an absolute local path: $path") | Out-Null }
+                elseif (-not (Test-Path -LiteralPath $path)) { $errors.Add("EVIDENCE_PATHS entry does not exist as an absolute path: $path") | Out-Null }
             }
         }
 
         $continuation = Get-DtReportSection -Text $Text -Name 'CONTINUATION_STATE'
         if ($null -eq $continuation -or @($continuation).Count -eq 0) { $errors.Add('missing CONTINUATION_STATE') | Out-Null }
+        elseif (@($continuation).Count -gt 1) { $errors.Add("CONTINUATION_STATE must hold one entry, NONE or one path; found $(@($continuation).Count)") | Out-Null }
         elseif ($continuation[0] -cne 'NONE') {
             $path = $continuation[0]
-            if (-not [System.IO.Path]::IsPathFullyQualified($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { $errors.Add("CONTINUATION_STATE does not exist as an absolute path: $path") | Out-Null }
+            if (-not (Test-DtContractLocalPath $path)) { $errors.Add("CONTINUATION_STATE is not an absolute local path: $path") | Out-Null }
+            elseif (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $errors.Add("CONTINUATION_STATE does not exist as an absolute path: $path") | Out-Null }
             else {
                 foreach ($problem in (Get-DtContinuationRecord -Path $path -RunId $RunId -ChunkId $ChunkId).errors) { $errors.Add("CONTINUATION_STATE invalid: $problem") | Out-Null }
             }
