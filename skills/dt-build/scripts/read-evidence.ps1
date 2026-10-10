@@ -27,6 +27,8 @@ $ErrorActionPreference = 'Stop'
 
 $maxBytes = 16384
 $maxLineChars = 400
+# Each emitted line costs its UTF-8 bytes plus the platform line ending (CRLF on Windows).
+$newlineBytes = [Environment]::NewLine.Length
 $repeatWarning = 'repeat_read: same selection of an unchanged file was already read; use the earlier result.'
 
 # Ledger helpers (run lock, shared reads); pass our own values so the dot-sourced param block does not clear them.
@@ -65,7 +67,7 @@ try {
             $script:truncated = $true
         }
         $selected.Add($Text)
-        $script:selectedBytes += [System.Text.Encoding]::UTF8.GetByteCount($Text) + 1
+        $script:selectedBytes += [System.Text.Encoding]::UTF8.GetByteCount($Text) + $newlineBytes
     }
     if ($PSCmdlet.ParameterSetName -eq 'Lines') {
         $parts = $Lines -split '-'
@@ -121,20 +123,20 @@ if ($repeat) { $warnings += $repeatWarning }
 # In text mode the warning lines and the truncation marker count against the cap too.
 $marker = "[truncated: true; full file: $fullPath]"
 $reserved = 0
-if (-not $Json) { foreach ($w in $warnings) { $reserved += [System.Text.Encoding]::UTF8.GetByteCount("WARNING $w") + 1 } }
+if (-not $Json) { foreach ($w in $warnings) { $reserved += [System.Text.Encoding]::UTF8.GetByteCount("WARNING $w") + $newlineBytes } }
 
 $out = [System.Collections.Generic.List[string]]::new()
 $used = 0
 foreach ($text in $selected) {
-    $size = [System.Text.Encoding]::UTF8.GetByteCount($text) + 1
+    $size = [System.Text.Encoding]::UTF8.GetByteCount($text) + $newlineBytes
     if ($used + $size + $reserved -gt $maxBytes) { $truncated = $true; break }
     $out.Add($text)
     $used += $size
 }
 if (-not $Json -and $truncated) {
-    $markerBytes = [System.Text.Encoding]::UTF8.GetByteCount($marker) + 1
+    $markerBytes = [System.Text.Encoding]::UTF8.GetByteCount($marker) + $newlineBytes
     while ($out.Count -gt 0 -and $used + $reserved + $markerBytes -gt $maxBytes) {
-        $used -= [System.Text.Encoding]::UTF8.GetByteCount($out[$out.Count - 1]) + 1
+        $used -= [System.Text.Encoding]::UTF8.GetByteCount($out[$out.Count - 1]) + $newlineBytes
         $out.RemoveAt($out.Count - 1)
     }
 }
@@ -143,7 +145,7 @@ if ($Json) {
     # The JSON form escapes characters; trim lines until the whole reply fits the cap too.
     $probe = [ordered]@{ path = $fullPath; selector = $selector; sha256 = $sha256; bytes_returned = $used; lines = $out; truncated = $true; evidence_path = $fullPath; warnings = @($repeatWarning) }
     while ($out.Count -gt 0 -and [System.Text.Encoding]::UTF8.GetByteCount(($probe | ConvertTo-Json -Depth 6 -Compress)) -gt $maxBytes) {
-        $used -= [System.Text.Encoding]::UTF8.GetByteCount($out[$out.Count - 1]) + 1
+        $used -= [System.Text.Encoding]::UTF8.GetByteCount($out[$out.Count - 1]) + $newlineBytes
         $out.RemoveAt($out.Count - 1)
         $truncated = $true
         $probe.bytes_returned = $used
