@@ -114,11 +114,13 @@ function Test-DtReportPathShaped {
 function Get-DtReportSection {
     # A report field's entries: an inline value after the colon, then every non-blank line up to the next
     # field header or a code fence. $null when the header is absent.
-    # -PathField also ends the field at a '---' line and, after its first entry, at the first non-blank line
-    # that is not path-shaped, so prose after an unfenced report is not read as an entry while a second
-    # path, even after a blank line, still is. Each entry drops a leading '- ' or '* ' bullet and
+    # -PathField entries are the unbroken lines after the header: the field ends at the first blank line
+    # after an entry, a code fence, a '---' line, or the next header. Every line inside that block is an
+    # entry and is validated by the caller, so prose after the boundary is ignored and a stray line inside
+    # it is an error, never silently dropped. -SingleValue (CONTINUATION_STATE) also ends at the first
+    # non-path line after its value. Each entry drops a leading '- ' or '* ' bullet and
     # surrounding backticks.
-    param([Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string]$Name, [switch]$PathField)
+    param([Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string]$Name, [switch]$PathField, [switch]$SingleValue)
     $lines = $Text -split '\r?\n'
     $headerPattern = '^\s*(?:' + (($script:DtReportHeaders | ForEach-Object { [regex]::Escape($_) }) -join '|') + '):'
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -131,9 +133,13 @@ function Get-DtReportSection {
             if ($j -gt 0 -and ($line -cmatch $headerPattern -or $line -match '^\s*```')) { break }
             if ($PathField -and $line -match '^\s*---\s*$') { break }
             $entry = $line.Trim()
-            if ($PathField) { $entry = ($entry -replace '^[-*]\s+', '') -replace '^`(.*)`$', '$1' }
-            if (-not $entry) { continue }
-            if ($PathField -and $entries.Count -gt 0 -and -not (Test-DtReportPathShaped $entry)) { break }
+            if ($PathField) { $entry = ($entry -replace '^[-*]\s+', '') -replace '^`+(.*?)`+$', '$1' }
+            if (-not $entry) {
+                if ($PathField -and $entries.Count -gt 0) { break }
+                continue
+            }
+            # A single-value field ends at its first non-path line after the value (closing prose); a second path is kept and rejected by the caller.
+            if ($SingleValue -and $entries.Count -gt 0 -and -not (Test-DtReportPathShaped $entry)) { break }
             $entries.Add($entry) | Out-Null
         }
         return , @($entries)
@@ -177,7 +183,7 @@ function Get-ReportShapeResult {
             }
         }
 
-        $continuation = Get-DtReportSection -Text $Text -Name 'CONTINUATION_STATE' -PathField
+        $continuation = Get-DtReportSection -Text $Text -Name 'CONTINUATION_STATE' -PathField -SingleValue
         if ($null -eq $continuation -or @($continuation).Count -eq 0) { $errors.Add('missing CONTINUATION_STATE') | Out-Null }
         elseif (@($continuation).Count -gt 1) { $errors.Add("CONTINUATION_STATE must hold one entry, NONE or one path; found $(@($continuation).Count)") | Out-Null }
         elseif ($continuation[0] -cne 'NONE') {

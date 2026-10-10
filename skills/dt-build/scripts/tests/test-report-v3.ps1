@@ -124,14 +124,23 @@ try {
     Assert-True (@($r.errors | Where-Object { $_ -eq 'EVIDENCE_PATHS entry is not an absolute local path: evidence\suite.txt' }).Count -eq 1) 'a relative evidence path is rejected as not absolute'
     $r = & $check (New-Report -Continuation 'records\good.md')
     Assert-True (@($r.errors | Where-Object { $_ -eq 'CONTINUATION_STATE is not an absolute local path: records\good.md' }).Count -eq 1) 'a relative continuation path is rejected'
+    # One boundary rule: a blank line after an entry ends the field; lines past it are ignored, lines inside it are validated.
     $r = & $check (New-Report -Evidence @($evidence, '', $missingEvidence))
-    Assert-True (@($r.errors | Where-Object { $_ -match 'EVIDENCE_PATHS entry does not exist' -and $_ -match 'missing\.txt' }).Count -eq 1) "an evidence entry after a blank line is still validated ($(@($r.errors) -join '; '))"
+    Assert-True (@($r.errors | Where-Object { $_ -match 'EVIDENCE_PATHS' }).Count -eq 0) "an entry after a blank line is past the field boundary and ignored ($(@($r.errors) -join '; '))"
+    $r = & $check (New-Report -Evidence @($evidence, $missingEvidence))
+    Assert-True (@($r.errors | Where-Object { $_ -match 'EVIDENCE_PATHS entry does not exist' -and $_ -match 'missing\.txt' }).Count -eq 1) "a second evidence entry inside the field is validated, never dropped ($(@($r.errors) -join '; '))"
+    $r = & $check (New-Report -Evidence @($evidence, 'see the log for details'))
+    Assert-True (@($r.errors | Where-Object { $_ -match 'EVIDENCE_PATHS entry is not an absolute local path: see the log for details' }).Count -eq 1) "a prose line inside the field is an error, not silently dropped ($(@($r.errors) -join '; '))"
+    $r = & $check ((New-Report -Evidence @($evidence)) + "`r`n`r`nN/A and/or Pass/fail`r`nD:\logs has the full output.`r`n")
+    Assert-True (@($r.errors).Count -eq 0) "slash-bearing prose after a blank line following CONTINUATION_STATE is ignored ($(@($r.errors) -join '; '))"
+    $r = & $check ((New-Report -Evidence @(('``' + $evidence + '``'))))
+    Assert-True (@($r.errors).Count -eq 0) "a double-backtick evidence entry is accepted ($(@($r.errors) -join '; '))"
     $r = & $check (New-Report -Evidence @($evidence, '', $evidence2))
     Assert-True (@($r.errors).Count -eq 0) 'existing evidence entries split by a blank line validate'
     $r = & $check (New-Report -Continuation "NONE`n$goodRecord")
     Assert-True (@($r.errors | Where-Object { $_ -eq 'CONTINUATION_STATE must hold one entry, NONE or one path; found 2' }).Count -eq 1) "two CONTINUATION_STATE entries are rejected ($(@($r.errors) -join '; '))"
     $r = & $check (New-Report -Continuation "$goodRecord`n`n$goodRecord")
-    Assert-True (@($r.errors | Where-Object { $_ -match '^CONTINUATION_STATE must hold one entry' }).Count -eq 1) 'a second CONTINUATION_STATE entry after a blank line is rejected'
+    Assert-True (@($r.errors).Count -eq 0) "a line after the blank line that ends CONTINUATION_STATE is past the boundary and ignored ($(@($r.errors) -join '; '))"
 
     # ---- text after an unfenced report ends the last field; a second path before that boundary does not.
     foreach ($continuation in @('NONE', $goodRecord)) {
