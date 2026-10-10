@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'resume', 'finish')]
+    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'resume', 'finish', 'mark-bootstrap', 'irreversible')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -36,7 +36,7 @@ param(
 
     [switch]$All,
 
-    [ValidateSet('acquire', 'renew', 'release')]
+    [ValidateSet('acquire', 'renew', 'release', 'begin', 'end')]
     [string]$Action,
 
     [string]$CoordinatorId,
@@ -71,6 +71,8 @@ param(
 
     [string]$Message,
 
+    [string]$TranscriptPath,
+
     [switch]$Json
 )
 
@@ -100,6 +102,12 @@ $script:DtJobLeaseRenewMaxSec = 60
 $script:DtJobWaitPollMs = 500
 $script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
 $script:DtJobAlertScript = Join-Path $PSScriptRoot '..\..\..\scripts\model-router\send-router-alert.ps1'
+# The coordinator's context report for this call; set only when DT_BUILD_COORDINATOR_ID is.
+$script:DtJobContext = $null
+# Room the context line takes inside the envelope cap.
+$script:DtJobContextReserveBytes = 256
+
+. (Join-Path $PSScriptRoot 'context-guard.ps1')
 
 function Get-DtJobPaths {
     param([Parameter(Mandatory)][string]$RunFolder)
@@ -116,6 +124,9 @@ function Get-DtJobPaths {
         Approvals = Join-Path $root 'approvals.json'
         Launches = Join-Path $root 'launches.jsonl'
         Notifications = Join-Path $root 'notifications.jsonl'
+        ContextBaseline = Join-Path $root 'context-baseline.json'
+        Irreversible = Join-Path $root 'irreversible.json'
+        Rotations = Join-Path $root 'rotations.jsonl'
     }
 }
 
@@ -560,13 +571,21 @@ function Get-DtJobEnvironment {
 }
 
 function Write-DtJobOutput {
+    # A coordinator's call carries its context line: a field in JSON output, a trailing line otherwise.
     param($Object, [switch]$AsJson)
-    if ($AsJson) { $Object | ConvertTo-Json -Depth 8 -Compress }
+    if ($AsJson) {
+        if ($null -ne $script:DtJobContext -and $null -ne $Object) { $Object | Add-Member -NotePropertyName context -NotePropertyValue $script:DtJobContext.line -Force }
+        $Object | ConvertTo-Json -Depth 8 -Compress
+    }
     else { $Object }
 }
 
 function Invoke-DtJobStart {
     $paths = Get-DtJobPaths -RunFolder $RunFolder
+    $ctx = $script:DtJobContext
+    if ($null -ne $ctx -and $ctx.state -eq 'rotate' -and -not $ctx.deferred) {
+        throw "ROTATE_REQUIRED: $($ctx.line). No new dispatch at the context limit: write _build-state.md and a coordinator handoff, run dt-job request-continuation -RunFolder `"$($paths.Root)`" -Reason context_rotation, release the lease, and end the turn."
+    }
     if ([string]::IsNullOrWhiteSpace($Command) -eq [string]::IsNullOrWhiteSpace($ScriptPath)) {
         throw 'DT_JOB_USAGE: start takes exactly one of -Command or -ScriptPath.'
     }
@@ -999,6 +1018,7 @@ function Invoke-DtJobWait {
     }
     $running = @($records | Where-Object { -not (Test-DtJobTerminal $_.status) } | ForEach-Object { $_.job_id })
     $envelope = [ordered]@{ result = $result; jobs = $jobs; still_running = @($running); omitted = 0; truncated = $false }
+    if ($Json -and $null -ne $script:DtJobContext) { $envelope.context = $script:DtJobContext.line }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
         $lines.RemoveAt($lines.Count - 1)
@@ -1042,7 +1062,7 @@ function Test-DtJobCoordinatorLockHeldByCaller {
 }
 
 function Invoke-DtJobLease {
-    if (-not $Action) { throw 'DT_JOB_USAGE: lease requires -Action acquire|renew|release.' }
+    if (@('acquire', 'renew', 'release') -notcontains $Action) { throw 'DT_JOB_USAGE: lease requires -Action acquire|renew|release.' }
     if (-not $CoordinatorId) { throw 'DT_JOB_USAGE: lease requires -CoordinatorId.' }
     $leaseAction = $Action
     $body = { Invoke-DtJobLocked -RunFolder $RunFolder -Action {
@@ -1065,8 +1085,10 @@ function Invoke-DtJobLease {
             $ttl = if ($TtlSec -gt 0) { $TtlSec } else { $script:DtJobLeaseDefaultTtlSec }
             # The holder's own re-acquire keeps who launched it and its process unless the call names new ones,
             # so a managed coordinator that re-acquires stays watcher-launched and can still be relaunched.
-            $keepLaunchedBy = ($isHolder -and $script:DtJobExplicitParams -notcontains 'LaunchedBy' -and $current.PSObject.Properties['launched_by'] -and $current.launched_by)
-            $keepPid = ($isHolder -and $CoordinatorPid -le 0 -and $current.PSObject.Properties['pid'] -and $current.pid)
+            # A released lease keeps none of it: its process is no longer the coordinator.
+            $holderLive = ($isHolder -and -not ($current.PSObject.Properties['released_utc'] -and $current.released_utc))
+            $keepLaunchedBy = ($holderLive -and $script:DtJobExplicitParams -notcontains 'LaunchedBy' -and $current.PSObject.Properties['launched_by'] -and $current.launched_by)
+            $keepPid = ($holderLive -and $CoordinatorPid -le 0 -and $current.PSObject.Properties['pid'] -and $current.pid)
             $leasePid = if ($CoordinatorPid -gt 0) { $CoordinatorPid } elseif ($keepPid) { $current.pid } else { $null }
             $leasePidStart = if ($keepPid) { $(if ($current.PSObject.Properties['pid_start_utc']) { $current.pid_start_utc } else { $null }) } elseif ($leasePid) { Get-DtJobProcessStartUtc -ProcessId $leasePid } else { $null }
             $next = [pscustomobject][ordered]@{
@@ -1259,10 +1281,136 @@ function Invoke-DtJobFinish {
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ unregistered = [int]$removed }) -AsJson:$Json
 }
 
+function Get-DtJobContextBaselines {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $path = (Get-DtJobPaths -RunFolder $RunFolder).ContextBaseline
+    $empty = [pscustomobject]@{ coordinators = [pscustomobject]@{} }
+    if (-not (Test-Path -LiteralPath $path)) { return $empty }
+    $parsed = Read-DtJobText -Path $path | ConvertFrom-Json
+    if ($null -eq $parsed -or -not $parsed.PSObject.Properties['coordinators'] -or $null -eq $parsed.coordinators) { return $empty }
+    return $parsed
+}
+
+function Get-DtJobContextBaseline {
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$CoordinatorId)
+    $prop = (Get-DtJobContextBaselines -RunFolder $RunFolder).coordinators.PSObject.Properties[$CoordinatorId]
+    if ($null -eq $prop) { return $null }
+    return $prop.Value
+}
+
+function Get-DtJobIrreversibleOpen {
+    # Open irreversible steps, oldest first; while any is open, rotation and watcher termination wait.
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $path = (Get-DtJobPaths -RunFolder $RunFolder).Irreversible
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    $parsed = Read-DtJobText -Path $path | ConvertFrom-Json
+    if ($null -eq $parsed -or -not $parsed.PSObject.Properties['open']) { return @() }
+    return @($parsed.open | Where-Object { $null -ne $_ })
+}
+
+function Resolve-DtJobContextHost {
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$CoordinatorId, [string]$RequestedHost)
+    if ($RequestedHost) { return $RequestedHost }
+    $lease = Get-DtJobLease -RunFolder $RunFolder
+    if ($null -ne $lease -and $lease.coordinator_id -eq $CoordinatorId -and $lease.PSObject.Properties['host'] -and $lease.host) { return [string]$lease.host }
+    return $null
+}
+
+function Get-DtJobContextReport {
+    # The coordinator's context state: with a bootstrap marker, its recorded transcript and baseline;
+    # before one, the transcript discovered for this cwd against the absolute ceiling.
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$CoordinatorId, [string]$RequestedHost)
+    $ignored = $false
+    try {
+        $open = @(Get-DtJobIrreversibleOpen -RunFolder $RunFolder)
+        $entry = Get-DtJobContextBaseline -RunFolder $RunFolder -CoordinatorId $CoordinatorId
+        if ($null -ne $entry) {
+            $tokens = Get-DtCtxTokens -TranscriptHost ([string]$entry.host) -TranscriptPath ([string]$entry.transcript_path)
+            $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entry.baseline_tokens)
+        }
+        else {
+            $ctxHost = Resolve-DtJobContextHost -RunFolder $RunFolder -CoordinatorId $CoordinatorId -RequestedHost $RequestedHost
+            if (-not $ctxHost) { throw 'host unknown before mark-bootstrap' }
+            $transcript = Find-DtCtxTranscript -TranscriptHost $ctxHost
+            $report = Get-DtCtxState -Tokens (Get-DtCtxTokens -TranscriptHost $ctxHost -TranscriptPath $transcript) -Baseline $null
+        }
+    }
+    catch {
+        # An unreadable context never breaks a verb; it is reported, and nothing is refused on it.
+        $line = Limit-DtJobLine "context: unavailable ($([string]$_.Exception.Message))" ([ref]$ignored)
+        return [pscustomobject][ordered]@{ tokens = $null; state = 'unknown'; deferred = $false; line = $line }
+    }
+    $deferred = ($report.state -eq 'rotate' -and $open.Count -gt 0)
+    $line = $report.line
+    if ($deferred) { $line = "$line; rotation deferred: irreversible $($open[0].operation) open" }
+    $report | Add-Member -NotePropertyName deferred -NotePropertyValue $deferred
+    $report.line = Limit-DtJobLine $line ([ref]$ignored)
+    return $report
+}
+
+function Invoke-DtJobMarkBootstrap {
+    $coordinator = if ($CoordinatorId) { $CoordinatorId } else { $env:DT_BUILD_COORDINATOR_ID }
+    if (-not $coordinator) { throw 'DT_JOB_USAGE: mark-bootstrap requires -CoordinatorId.' }
+    $paths = Get-DtJobPaths -RunFolder $RunFolder
+    $result = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        # Once per coordinator session: a second call returns the stored baseline unchanged.
+        $existing = Get-DtJobContextBaseline -RunFolder $RunFolder -CoordinatorId $coordinator
+        if ($null -ne $existing) { return [pscustomobject]@{ entry = $existing; marked = $false } }
+        $ctxHost = Resolve-DtJobContextHost -RunFolder $RunFolder -CoordinatorId $coordinator -RequestedHost $CoordinatorHost
+        if (-not $ctxHost) { throw 'DT_JOB_USAGE: mark-bootstrap requires -Host claude|codex.' }
+        $transcript = if ($TranscriptPath) { [System.IO.Path]::GetFullPath($TranscriptPath) } else { Find-DtCtxTranscript -TranscriptHost $ctxHost }
+        $tokens = Get-DtCtxTokens -TranscriptHost $ctxHost -TranscriptPath $transcript
+        if ($null -eq $tokens) { throw "DT_JOB_CONTEXT_UNREADABLE: no $ctxHost token usage in $transcript yet; nothing marked" }
+        $new = [pscustomobject][ordered]@{
+            coordinator_id  = $coordinator
+            host            = $ctxHost
+            transcript_path = $transcript
+            session_id      = (Get-DtCtxSessionId -TranscriptHost $ctxHost -TranscriptPath $transcript)
+            baseline_tokens = [long]$tokens
+            marked_utc      = [DateTime]::UtcNow.ToString('o')
+        }
+        $all = Get-DtJobContextBaselines -RunFolder $RunFolder
+        $all.coordinators | Add-Member -NotePropertyName $coordinator -NotePropertyValue $new -Force
+        Write-DtJobAtomic -Path $paths.ContextBaseline -Content ($all | ConvertTo-Json -Depth 6)
+        return [pscustomobject]@{ entry = $new; marked = $true }
+    }
+    if ($env:DT_BUILD_COORDINATOR_ID) { $script:DtJobContext = Get-DtJobContextReport -RunFolder $RunFolder -CoordinatorId $env:DT_BUILD_COORDINATOR_ID }
+    $out = [pscustomobject][ordered]@{
+        coordinator_id  = $result.entry.coordinator_id
+        host            = $result.entry.host
+        transcript_path = $result.entry.transcript_path
+        baseline_tokens = $result.entry.baseline_tokens
+        marked_utc      = $result.entry.marked_utc
+        newly_marked    = $result.marked
+    }
+    Write-DtJobOutput -Object $out -AsJson:$Json
+}
+
+function Invoke-DtJobIrreversible {
+    if (@('begin', 'end') -notcontains $Action) { throw 'DT_JOB_USAGE: irreversible requires -Action begin|end.' }
+    if (-not $Operation) { throw 'DT_JOB_USAGE: irreversible requires -Operation.' }
+    $paths = Get-DtJobPaths -RunFolder $RunFolder
+    # Invoke-DtJobLocked's own -Action shadows $Action inside the block.
+    $stepAction = $Action
+    $open = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $steps = @(Get-DtJobIrreversibleOpen -RunFolder $RunFolder)
+        if ($stepAction -eq 'begin') {
+            if (@($steps | Where-Object { [string]$_.operation -ceq $Operation }).Count -eq 0) {
+                $who = if ($CoordinatorId) { $CoordinatorId } elseif ($env:DT_BUILD_COORDINATOR_ID) { $env:DT_BUILD_COORDINATOR_ID } else { $null }
+                $steps = @($steps) + @([pscustomobject][ordered]@{ operation = $Operation; coordinator_id = $who; began_utc = [DateTime]::UtcNow.ToString('o') })
+            }
+        }
+        else { $steps = @($steps | Where-Object { [string]$_.operation -cne $Operation }) }
+        Write-DtJobAtomic -Path $paths.Irreversible -Content ([ordered]@{ open = @($steps) } | ConvertTo-Json -Depth 4)
+        , @($steps | ForEach-Object { [string]$_.operation })
+    }
+    Write-DtJobOutput -Object ([pscustomobject][ordered]@{ action = $Action; operation = $Operation; open = @($open) }) -AsJson:$Json
+}
+
 # Dot-sourcing (the runner does) loads the functions only.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
-if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb is required (start, status, wait, cancel, reconcile, lease, register-run, unregister-run, consume, request-continuation, await-danny, approve, resume, finish).' }
+if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb is required (start, status, wait, cancel, reconcile, lease, register-run, unregister-run, consume, request-continuation, await-danny, approve, resume, finish, mark-bootstrap, irreversible).' }
 if (-not $RunFolder) { throw 'DT_JOB_USAGE: -RunFolder is required.' }
 $script:DtJobExplicitParams = @($PSBoundParameters.Keys)
 
@@ -1278,7 +1426,13 @@ if ($env:DT_BUILD_COORDINATOR_ID -and $Verb -ne 'lease') {
     try { [void](Update-DtJobLeaseIfHolder -RunFolder $RunFolder -CoordinatorId $env:DT_BUILD_COORDINATOR_ID) } catch { }
 }
 
-switch ($Verb) {
+# A coordinator's every call reports its context; only start is ever refused on it.
+if ($env:DT_BUILD_COORDINATOR_ID) {
+    if ($Verb -ne 'mark-bootstrap') { $script:DtJobContext = Get-DtJobContextReport -RunFolder $RunFolder -CoordinatorId $env:DT_BUILD_COORDINATOR_ID -RequestedHost $CoordinatorHost }
+    $script:DtJobEnvelopeMaxBytes -= $script:DtJobContextReserveBytes
+}
+
+$verbOutput = switch ($Verb) {
     'start' { Invoke-DtJobStart }
     'status' { Invoke-DtJobStatus }
     'wait' { Invoke-DtJobWait }
@@ -1293,4 +1447,8 @@ switch ($Verb) {
     'approve' { Invoke-DtJobApprove }
     'resume' { Invoke-DtJobResume }
     'finish' { Invoke-DtJobFinish }
+    'mark-bootstrap' { Invoke-DtJobMarkBootstrap }
+    'irreversible' { Invoke-DtJobIrreversible }
 }
+$verbOutput
+if ($null -ne $script:DtJobContext -and -not $Json) { $script:DtJobContext.line }

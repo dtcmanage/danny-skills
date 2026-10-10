@@ -21,6 +21,8 @@ $script:WatcherMaxAttempts = $script:WatcherRetryDelaysMin.Count + 1
 # Whatever the trigger, a run gets at most this many launches in any rolling window before it stops for Danny.
 $script:WatcherRunLaunchCap = 6
 $script:WatcherRunLaunchWindowMin = 60
+# One retry of a failed registry read, this long after the first attempt, before it counts as an error.
+$script:WatcherRegistryRetryMs = 500
 
 function Get-WatcherNow {
     if ($env:DT_BUILD_WATCHER_NOW_UTC) { return (ConvertTo-DtJobUtc $env:DT_BUILD_WATCHER_NOW_UTC) }
@@ -107,9 +109,10 @@ function Get-WatcherDecision {
     if ($deferred.Count -gt 0 -and $deferred[0].resume_after_utc -and $NowUtc -lt (ConvertTo-DtJobUtc $deferred[0].resume_after_utc)) {
         return [pscustomobject]@{ action = 'none'; detail = "both vendors blocked until $((ConvertTo-DtJobUtc $deferred[0].resume_after_utc).ToString('o'))" }
     }
-    # Run-wide cap, counted from the last stop so that resume re-arms the run.
+    # Run-wide cap, counted from the last stop (or the re-arm a resume left when it beat a cap stop),
+    # so that resume re-arms the run.
     $lastStop = -1
-    for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].type -eq 'stopped') { $lastStop = $i } }
+    for ($i = 0; $i -lt $rows.Count; $i++) { if (@('stopped', 'rearmed') -contains $rows[$i].type) { $lastStop = $i } }
     $windowStart = $NowUtc.AddMinutes(-$script:WatcherRunLaunchWindowMin)
     $recent = @($rows | Select-Object -Skip ($lastStop + 1) | Where-Object { $_.type -eq 'launch' -and (ConvertTo-DtJobUtc $_.launched_utc) -gt $windowStart })
     if ($recent.Count -ge $script:WatcherRunLaunchCap) {
@@ -179,7 +182,14 @@ function Invoke-WatcherStop {
         $state = Get-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path)
         if ($state.run_status -ne 'runnable') { return "run_status $($state.run_status)" }
         $last = Get-DtJobLastEventSeq -RunFolder $folder
-        if ($last -ne $Decision.trigger_seq -or $state.last_consumed_event_seq -ge $Decision.trigger_seq) { return "event $last, cursor $($state.last_consumed_event_seq)" }
+        if ($last -ne $Decision.trigger_seq -or $state.last_consumed_event_seq -ge $Decision.trigger_seq) {
+            # Danny's resume beat a cap stop: restart the cap window so the next tick does not stop the run again.
+            $resumed = @(Get-DtJobEvents -RunFolder $folder | Where-Object { [int64]$_.seq -gt [int64]$Decision.trigger_seq -and $_.type -eq 'continuation_requested' -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'resume' })
+            if ($Decision.stop_kind -eq 'cap' -and $resumed.Count -gt 0) {
+                Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'rearmed'; trigger_seq = $Decision.trigger_seq; rearmed_utc = $NowUtc.ToString('o'); reason = "resume at event $($resumed[-1].seq) beat the cap stop" })
+            }
+            return "event $last, cursor $($state.last_consumed_event_seq)"
+        }
         Set-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path) -RunStatus 'awaiting_danny'
         return $null
     }
@@ -199,7 +209,62 @@ function Invoke-WatcherStop {
     return "stopped ($($Decision.stop_kind)); alert $alert"
 }
 
+function Invoke-WatcherContextRotation {
+    # Codex runs no hooks, so a managed Codex coordinator past its hard limit is ended here, within one
+    # tick: kill its process tree, release its lease, and request a continuation so the relaunch rules
+    # start a fresh one. Its jobs are detached and keep running. Claude coordinators are left to their
+    # hooks, and an open irreversible step defers the kill. Returns a detail string, or $null when idle.
+    param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)][DateTime]$NowUtc)
+    $folder = [string]$Entry.run_folder
+    $lease = Get-DtJobLease -RunFolder $folder
+    if ($null -eq $lease -or $lease.launched_by -ne 'watcher' -or -not $lease.PSObject.Properties['host'] -or $lease.host -ne 'codex') { return $null }
+    if ($lease.PSObject.Properties['released_utc'] -and $lease.released_utc) { return $null }
+    $pidStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
+    if (-not (Test-DtJobProcessIdentity $lease.pid $pidStart)) { return $null }
+    $coordinatorId = [string]$lease.coordinator_id
+    $entryBaseline = Get-DtJobContextBaseline -RunFolder $folder -CoordinatorId $coordinatorId
+    if ($null -eq $entryBaseline) { return $null }
+    try { $tokens = Get-DtCtxTokens -TranscriptHost 'codex' -TranscriptPath ([string]$entryBaseline.transcript_path) }
+    catch { return "context unreadable for $coordinatorId" }
+    $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entryBaseline.baseline_tokens)
+    if ($report.state -ne 'rotate') { return $null }
+    $open = @(Get-DtJobIrreversibleOpen -RunFolder $folder)
+    if ($open.Count -gt 0) { return "rotation deferred: $coordinatorId at $tokens past hard $($report.hard), irreversible $($open[0].operation) open" }
+    try {
+        $process = Get-Process -Id ([int]$lease.pid) -ErrorAction Stop
+        $process.Kill($true)
+        [void]$process.WaitForExit(10000)
+    }
+    catch { }
+    Invoke-DtJobLocked -RunFolder $folder -Action {
+        $current = Get-DtJobLease -RunFolder $folder
+        if ($null -ne $current -and $current.coordinator_id -eq $coordinatorId) {
+            if (-not $current.PSObject.Properties['released_utc']) { $current | Add-Member -NotePropertyName released_utc -NotePropertyValue $null }
+            $current.expires_utc = $NowUtc.ToString('o')
+            $current.released_utc = $NowUtc.ToString('o')
+            Save-DtJobLease -RunFolder $folder -Lease $current
+        }
+        $state = Get-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path)
+        Add-DtJobEvent -RunFolder $folder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason 'context_rotation'
+    }
+    $row = [ordered]@{ coordinator_id = $coordinatorId; tokens_at_kill = [long]$tokens; hard_limit = [long]$report.hard; overshoot = ([long]$tokens - [long]$report.hard); killed_utc = $NowUtc.ToString('o') }
+    [System.IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $folder).Rotations, (($row | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
+    return "rotated $coordinatorId at $tokens (hard $($report.hard), overshoot $($row.overshoot))"
+}
+
 function Invoke-WatcherRun {
+    param([Parameter(Mandatory)]$Entry)
+    $folder = [string]$Entry.run_folder
+    if (Test-Path -LiteralPath $folder) {
+        $rotation = Invoke-WatcherContextRotation -Entry $Entry -NowUtc (Get-WatcherNow)
+        $result = Invoke-WatcherRunTick -Entry $Entry
+        if ($null -ne $rotation) { $result | Add-Member -NotePropertyName rotation -NotePropertyValue $rotation -Force }
+        return $result
+    }
+    return (Invoke-WatcherRunTick -Entry $Entry)
+}
+
+function Invoke-WatcherRunTick {
     param([Parameter(Mandatory)]$Entry)
     $folder = [string]$Entry.run_folder
     $runId = [string]$Entry.run_id
@@ -263,10 +328,20 @@ function Send-WatcherRegistryAlert {
     return 'failed'
 }
 
+function Read-WatcherRegistry {
+    # A failed registry read (a writer mid-replace, a transient lock) is retried once within the tick
+    # before it counts as an error.
+    try { return @(Get-DtJobRegistryRuns) }
+    catch {
+        Start-Sleep -Milliseconds $script:WatcherRegistryRetryMs
+        return @(Get-DtJobRegistryRuns)
+    }
+}
+
 # Dot-sourcing (the tests do) loads the functions only.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
-try { $runs = @(Get-DtJobRegistryRuns) }
+try { $runs = @(Read-WatcherRegistry) }
 catch {
     $registryError = [string]$_.Exception.Message
     $alert = Send-WatcherRegistryAlert -ErrorText $registryError -NowUtc (Get-WatcherNow)

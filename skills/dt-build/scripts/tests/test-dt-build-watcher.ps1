@@ -26,12 +26,15 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-watcher-tests-{0}" 
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 $savedEnv = @{}
-foreach ($name in @('DT_BUILD_STATE_DIR', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALERT_TRANSPORT', 'DT_BUILD_COORDINATOR_LAUNCHER', 'DT_BUILD_VENDOR_LIMITS_SCRIPT', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_ID', 'DT_TEST_DM_LOG', 'DT_TEST_LAUNCH_LOG', 'DT_TEST_DEAD_PID', 'DT_TEST_BLOCKED', 'DT_TEST_RESET_CLAUDE', 'DT_TEST_RESET_CODEX', 'DT_TEST_DTJOB', 'DT_TEST_LIVE_CHILD', 'DT_TEST_LAUNCH_SLEEP_MS', 'DT_TEST_LAUNCH_FAIL', 'DT_TEST_DM_FAIL', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID', 'DT_TEST_TREE_FAIL')) {
+foreach ($name in @('DT_BUILD_STATE_DIR', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALERT_TRANSPORT', 'DT_BUILD_COORDINATOR_LAUNCHER', 'DT_BUILD_VENDOR_LIMITS_SCRIPT', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_ID', 'DT_TEST_DM_LOG', 'DT_TEST_LAUNCH_LOG', 'DT_TEST_DEAD_PID', 'DT_TEST_BLOCKED', 'DT_TEST_RESET_CLAUDE', 'DT_TEST_RESET_CODEX', 'DT_TEST_DTJOB', 'DT_TEST_LIVE_CHILD', 'DT_TEST_LAUNCH_SLEEP_MS', 'DT_TEST_LAUNCH_FAIL', 'DT_TEST_DM_FAIL', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID', 'DT_TEST_TREE_FAIL', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME')) {
     $savedEnv[$name] = [System.Environment]::GetEnvironmentVariable($name)
 }
 
-# Isolation: temp registry, temp router state, fake alert transport, fake launcher, fake vendor limits.
+# Isolation: temp registry, temp router state, fake alert transport, fake launcher, fake vendor limits,
+# and empty transcript roots so a coordinator's context lookup never reads a real session.
 $env:DT_MODEL_ROUTER_STATE = Join-Path $tempRoot 'router-state'
+$env:CLAUDE_CONFIG_DIR = Join-Path $tempRoot 'claude-config'
+$env:CODEX_HOME = Join-Path $tempRoot 'codex-home'
 $env:DT_TEST_DM_LOG = Join-Path $tempRoot 'dms.jsonl'
 $env:DT_TEST_LAUNCH_LOG = Join-Path $tempRoot 'launches-fake.jsonl'
 $fakeTransport = Join-Path $tempRoot 'fake-alert-transport.ps1'
@@ -874,6 +877,75 @@ Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
     # ---- wait renews at least every min(60 s, ttl/2).
     $renewSec = @(& pwsh -NoProfile -Command ". '$dtJob'; foreach (`$t in 600, 7200, 100, 4, 1) { Get-DtJobWaitRenewSec ([pscustomobject]@{ ttl_sec = `$t }) }")
     Assert-True (($renewSec -join ',') -eq '60,60,50,2,1') "wait renewal interval is min(60 s, ttl/2) ($($renewSec -join ','))"
+
+    # ---- a resume that beats a cap stop re-arms the cap window, so the next tick launches instead of stopping.
+    Use-Scenario 'cap-rearm'
+    $run = New-Run -Name 'cap-rearm'
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    $rearmProbe = Join-Path $tempRoot 'cap-rearm.ps1'
+    Write-Utf8 -Path $rearmProbe -Content @'
+param([string]$WatcherScript, [string]$DtJobScript)
+. $WatcherScript
+$entry = @(Get-DtJobRegistryRuns)[0]
+# Six recent launches for earlier triggers fill the run-wide cap, so this tick decides a cap stop.
+for ($i = 1; $i -le $script:WatcherRunLaunchCap; $i++) {
+    Add-WatcherLaunch -RunFolder $entry.run_folder -Record ([ordered]@{ type = 'launch'; trigger_seq = 1000 + $i; host = 'claude'; attempt = 1; launched_utc = [DateTime]::UtcNow.AddMinutes(-5).ToString('o'); pid = $null; coordinator_id = "cap-$i"; launcher_exit = 0 })
+}
+$script:decisionCalls = 0
+$original = ${function:Get-WatcherDecision}
+function Get-WatcherDecision {
+    param($Entry, $NowUtc)
+    $script:decisionCalls++
+    $result = & $original -Entry $Entry -NowUtc $NowUtc
+    if ($script:decisionCalls -eq 2) { & pwsh -NoProfile -File $DtJobScript resume -RunFolder $Entry.run_folder *> $null }
+    $result
+}
+$first = Invoke-WatcherRun -Entry $entry
+[pscustomobject]@{ first_detail = $first.detail; decision = (& $original -Entry $entry -NowUtc ([DateTime]::UtcNow)).action } | ConvertTo-Json -Compress
+'@
+    $rearm = (& pwsh -NoProfile -File $rearmProbe -WatcherScript $watcher -DtJobScript $dtJob | Select-Object -Last 1) | ConvertFrom-Json
+    $rearmRows = @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'rearmed' })
+    Assert-True ($rearm.first_detail -like 'changed under run lock*' -and $rearmRows.Count -eq 1 -and @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'stopped' }).Count -eq 0) "a cap stop beaten by resume writes one re-arm marker and no stop ($($rearm.first_detail))"
+    Assert-True ($rearm.decision -eq 'launch') "after the re-arm the next decision is a launch, not another cap stop ($($rearm.decision))"
+    $rearmTick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'cap-rearm' })[0]
+    Assert-True ($rearmTick.action -eq 'launch' -and (Get-RunState $run.state).run_status -eq 'runnable' -and (Get-DmCount 'cap-rearm') -eq 0) "the next tick launches and the run stays runnable ($($rearmTick.action): $($rearmTick.detail))"
+
+    # ---- a holder re-acquire keeps launched_by, pid, and pid_start_utc only while its lease is unreleased.
+    Use-Scenario 'reacquire-released'
+    $rf = Join-Path $tempRoot 'runs/reacquire-released'
+    New-Item -ItemType Directory -Path $rf -Force | Out-Null
+    $holderProc = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        Invoke-DtJob @('lease', '-RunFolder', $rf, '-Action', 'acquire', '-CoordinatorId', 'mc-hold', '-Host', 'codex', '-LaunchedBy', 'watcher', '-Pid', [string]$holderProc.Id) | Out-Null
+        $kept = Invoke-DtJob @('lease', '-RunFolder', $rf, '-Action', 'acquire', '-CoordinatorId', 'mc-hold', '-Host', 'codex')
+        Assert-True ($kept.launched_by -eq 'watcher' -and [int]$kept.pid -eq $holderProc.Id -and $kept.pid_start_utc) 'an unreleased holder re-acquire keeps launched_by, pid, and pid_start_utc'
+        Invoke-DtJob @('lease', '-RunFolder', $rf, '-Action', 'release', '-CoordinatorId', 'mc-hold') | Out-Null
+        $fresh = Invoke-DtJob @('lease', '-RunFolder', $rf, '-Action', 'acquire', '-CoordinatorId', 'mc-hold', '-Host', 'codex')
+        Assert-True ($fresh.launched_by -eq 'interactive' -and $null -eq $fresh.pid -and $null -eq $fresh.pid_start_utc -and $null -eq $fresh.released_utc) "a re-acquire after release keeps none of the old identity ($($fresh.launched_by), pid $($fresh.pid))"
+    }
+    finally { if (-not $holderProc.HasExited) { $holderProc.Kill() } }
+
+    # ---- one failed registry read is retried within the tick before it counts as an error.
+    $registryProbe = Join-Path $tempRoot 'registry-retry.ps1'
+    Write-Utf8 -Path $registryProbe -Content @'
+param([string]$WatcherScript, [int]$Failures)
+. $WatcherScript
+$script:WatcherRegistryRetryMs = 1
+$script:registryCalls = 0
+function Get-DtJobRegistryRuns {
+    $script:registryCalls++
+    if ($script:registryCalls -le $Failures) { throw "registry read failure $script:registryCalls" }
+    return @([pscustomobject]@{ run_id = 'from-retry' })
+}
+try { $runs = @(Read-WatcherRegistry); $outcome = "ok:$($runs[0].run_id)" } catch { $outcome = "error:$($_.Exception.Message)" }
+[pscustomobject]@{ outcome = $outcome; calls = $script:registryCalls } | ConvertTo-Json -Compress
+'@
+    $once = (& pwsh -NoProfile -File $registryProbe -WatcherScript $watcher -Failures 1 | Select-Object -Last 1) | ConvertFrom-Json
+    Assert-True ($once.outcome -eq 'ok:from-retry' -and $once.calls -eq 2) "a single failed registry read is retried and succeeds ($($once.outcome), $($once.calls) calls)"
+    $twice = (& pwsh -NoProfile -File $registryProbe -WatcherScript $watcher -Failures 2 | Select-Object -Last 1) | ConvertFrom-Json
+    Assert-True ($twice.outcome -eq 'error:registry read failure 2' -and $twice.calls -eq 2) "two failed reads surface the error after exactly one retry ($($twice.outcome), $($twice.calls) calls)"
+    $watcherText = Get-Content -Raw -LiteralPath $watcher
+    Assert-True ($watcherText.Contains('try { $runs = @(Read-WatcherRegistry) }')) 'the watcher reads the registry through the retrying reader'
 
     # ---- static: the default launcher and the task registration parse, and the task uses the shim.
     foreach ($file in @('launch-managed-coordinator.ps1', 'register-dt-build-watcher.ps1', 'dt-build-watcher.ps1')) {

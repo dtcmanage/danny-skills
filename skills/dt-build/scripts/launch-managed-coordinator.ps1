@@ -46,8 +46,23 @@ foreach ($name in @('DT_BUILD_STATE_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME')) {
     if ($value) { $lines.Add("`$env:$name = $(ConvertTo-SingleQuoted $value)") }
 }
 $lines.Add("Set-Location -LiteralPath $(ConvertTo-SingleQuoted $workDir)")
-if ($CoordinatorHost -eq 'codex') { $lines.Add("& codex exec $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)") }
-else { $lines.Add("& claude -p $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)") }
+if ($CoordinatorHost -eq 'codex') {
+    # The permission flags invoke-codex-chunk.ps1 uses for a substantive chunk: no approval prompts, and on
+    # Windows (where Codex removed its sandbox) explicit full access instead of a sandbox that fails closed.
+    $permission = if ($env:OS -eq 'Windows_NT') { "-c $(ConvertTo-SingleQuoted 'default_permissions=":danger-full-access"')" } else { '--sandbox workspace-write' }
+    $lines.Add("& codex --ask-for-approval never exec $permission $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
+}
+else {
+    # Minimal tool set: no MCP servers, and the coordinator hooks from a run-folder copy of the snippet
+    # with the real hooks path. Danny runs bypass deliberately; the hooks still deny at the call.
+    $mcpConfig = Join-Path $runRoot 'coordinator-mcp.json'
+    $settings = Join-Path $runRoot 'coordinator-settings.json'
+    $hooksDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\hooks')).Replace('\', '/')
+    $snippet = [System.IO.File]::ReadAllText((Join-Path $hooksDir 'settings-snippet.json'))
+    [System.IO.File]::WriteAllText($mcpConfig, '{ "mcpServers": {} }', [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($settings, $snippet.Replace('__DT_BUILD_HOOKS_DIR__', $hooksDir), [System.Text.UTF8Encoding]::new($false))
+    $lines.Add("& claude -p --strict-mcp-config --mcp-config $(ConvertTo-SingleQuoted $mcpConfig) --settings $(ConvertTo-SingleQuoted $settings) --permission-mode bypassPermissions $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
+}
 $lines.Add('exit $LASTEXITCODE')
 $encoded = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(($lines -join "`n")))
 

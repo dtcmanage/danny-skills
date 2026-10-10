@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -NonInteractive -File \"__DT_BUILD_HOOKS_DIR__/coordinator-pretooluse.ps1\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -NonInteractive -File \"__DT_BUILD_HOOKS_DIR__/coordinator-posttooluse.ps1\""
+          }
+        ]
+      }
+    ]
+  }
+}
