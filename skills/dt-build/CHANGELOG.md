@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.3
+
+- Live test harness checks the real model router first and skips any vendor the router says to wait on, so live tests never run past the usage guard.
+
 ## 2.21.2
 
 - Shared model router: DT_ROUTER_GUARD_OVERRIDE lifts the 95% quota guard for named vendors in one process, only on Danny explicit permission.

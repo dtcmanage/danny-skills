@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.22.1 dt-build 2.21.3: live test harness respects the real usage guard.",
       "0.22.0 dt-ship 0.3.0: hang-proof gate/deploy execution, measured per-step timeouts with alerting, per-step timings in the ship summary.",
       "0.21.0 Model router: DT_ROUTER_GUARD_OVERRIDE lifts the 95% quota guard for named vendors in one process, only on Danny explicit permission; dt-build 2.21.2, dt-review 1.16.15, dt-image-gen 0.3.15, dt-writing-draft 0.2.15, dt-writing-edit 0.3.15.",
       "0.20.1 dt-build 2.21.1: final-integration fixes to the orchestration hardening (hook install, managed start, actionable triggers, hook binding order).",
