@@ -137,10 +137,79 @@ function Test-DtCtxSamePath {
     catch { return $false }
 }
 
+function Test-DtCtxTailContains {
+    # True when the last block of the file contains $Text: a session that just ran mark-bootstrap has the
+    # call among its newest lines.
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Text)
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    try {
+        $size = [int][Math]::Min([long]$script:DtCtxBlockBytes, $stream.Length)
+        [void]$stream.Seek(-$size, [System.IO.SeekOrigin]::End)
+        $buffer = [byte[]]::new($size)
+        $read = 0
+        while ($read -lt $size) {
+            $n = $stream.Read($buffer, $read, $size - $read)
+            if ($n -le 0) { break }
+            $read += $n
+        }
+        return [System.Text.Encoding]::UTF8.GetString($buffer, 0, $read).Contains($Text)
+    }
+    finally { $stream.Dispose() }
+}
+
+function Test-DtCtxCodexChunkPrompt {
+    # A dt-build chunk wrapper's prompt opens with RUN_ID and chunk_id header lines (invoke-codex-chunk.ps1
+    # refuses a prompt without them); in its rollout that prompt is the first user message, a few lines in.
+    param($Row)
+    if ($null -eq $Row -or -not $Row.PSObject.Properties['type'] -or $Row.type -ne 'response_item') { return $false }
+    if (-not $Row.PSObject.Properties['payload'] -or $null -eq $Row.payload) { return $false }
+    $payload = $Row.payload
+    if (-not $payload.PSObject.Properties['role'] -or $payload.role -ne 'user' -or -not $payload.PSObject.Properties['content']) { return $false }
+    $text = (@($payload.content) | Where-Object { $null -ne $_ -and $_.PSObject.Properties['text'] } | ForEach-Object { [string]$_.text }) -join "`n"
+    return ($text -match '(?m)^RUN_ID:[ \t]*\S' -and $text -match '(?m)^chunk_id:[ \t]*\S')
+}
+
+function Test-DtCtxCandidate {
+    # Whether one transcript can be this cwd's coordinator session. Claude: started in $Cwd and not a
+    # subagent (no subagents folder in its path, no isSidechain lines). Codex: session_meta cwd matches,
+    # not a subagent thread, and not a rollout a dt-build chunk wrapper started.
+    param([Parameter(Mandatory)][string]$TranscriptHost, [Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Cwd)
+    if ($TranscriptHost -eq 'claude') {
+        if ($Path -match '[\\/]subagents[\\/]') { return $false }
+        foreach ($line in (Read-DtCtxHeadLines -Path $Path)) {
+            if (-not $line.Contains('"cwd"')) { continue }
+            try { $row = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+            if ($null -eq $row -or -not $row.PSObject.Properties['cwd']) { continue }
+            if ($row.PSObject.Properties['isSidechain'] -and $row.isSidechain) { return $false }
+            return (Test-DtCtxSamePath ([string]$row.cwd) $Cwd)
+        }
+        return $false
+    }
+    $metaMatched = $false
+    foreach ($line in (Read-DtCtxHeadLines -Path $Path)) {
+        if (-not $metaMatched) {
+            if (-not $line.Contains('session_meta')) { continue }
+            try { $row = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+            if ($null -eq $row -or -not $row.PSObject.Properties['type'] -or $row.type -ne 'session_meta' -or -not $row.PSObject.Properties['payload'] -or $null -eq $row.payload) { continue }
+            $meta = $row.payload
+            if (-not $meta.PSObject.Properties['cwd'] -or -not (Test-DtCtxSamePath ([string]$meta.cwd) $Cwd)) { return $false }
+            if ($meta.PSObject.Properties['thread_source'] -and $meta.thread_source -eq 'subagent') { return $false }
+            $metaMatched = $true
+            continue
+        }
+        if (-not $line.Contains('RUN_ID:') -or -not $line.Contains('chunk_id:')) { continue }
+        try { $row = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        if (Test-DtCtxCodexChunkPrompt $row) { return $false }
+    }
+    return $metaMatched
+}
+
 function Find-DtCtxTranscript {
-    # The newest transcript of a session started in $Cwd. Claude: *.jsonl under
-    # $CLAUDE_CONFIG_DIR\projects (default ~\.claude\projects) whose first lines carry that cwd.
-    # Codex: a rollout under $CODEX_HOME\sessions (default ~\.codex\sessions) whose session_meta cwd matches.
+    # The transcript of the coordinator session started in $Cwd, used only when the caller names none.
+    # Claude: *.jsonl under $CLAUDE_CONFIG_DIR\projects (default ~\.claude\projects). Codex: a rollout under
+    # $CODEX_HOME\sessions (default ~\.codex\sessions). Among the candidates Test-DtCtxCandidate accepts,
+    # the newest one whose latest lines carry a mark-bootstrap call wins, else the newest. A discovered
+    # transcript is a guess: its session is never recorded as a coordinator session for the hooks.
     param([Parameter(Mandatory)][string]$TranscriptHost, [string]$Cwd = (Get-Location).ProviderPath)
     if ($TranscriptHost -eq 'claude') {
         $base = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
@@ -156,23 +225,13 @@ function Find-DtCtxTranscript {
     if (-not (Test-Path -LiteralPath $searchRoot -PathType Container)) { throw "CONTEXT_GUARD_NO_TRANSCRIPT: no $TranscriptHost transcript folder at $searchRoot" }
     $filter = if ($TranscriptHost -eq 'claude') { '*.jsonl' } else { 'rollout-*.jsonl' }
     $candidates = @(Get-ChildItem -LiteralPath $searchRoot -Recurse -File -Filter $filter -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First $script:DtCtxDiscoveryCandidates)
+    $newest = $null
     foreach ($file in $candidates) {
-        foreach ($line in (Read-DtCtxHeadLines -Path $file.FullName)) {
-            if (-not $line.Contains('"cwd"')) { continue }
-            try { $row = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
-            if ($null -eq $row) { continue }
-            $rowCwd = $null
-            if ($TranscriptHost -eq 'claude') {
-                if ($row.PSObject.Properties['cwd']) { $rowCwd = [string]$row.cwd }
-            }
-            elseif ($row.PSObject.Properties['type'] -and $row.type -eq 'session_meta' -and $row.PSObject.Properties['payload'] -and $null -ne $row.payload -and $row.payload.PSObject.Properties['cwd']) {
-                $rowCwd = [string]$row.payload.cwd
-            }
-            if ($null -eq $rowCwd) { continue }
-            if (Test-DtCtxSamePath $rowCwd $Cwd) { return $file.FullName }
-            break
-        }
+        if (-not (Test-DtCtxCandidate -TranscriptHost $TranscriptHost -Path $file.FullName -Cwd $Cwd)) { continue }
+        if (Test-DtCtxTailContains -Path $file.FullName -Text 'mark-bootstrap') { return $file.FullName }
+        if ($null -eq $newest) { $newest = $file.FullName }
     }
+    if ($null -ne $newest) { return $newest }
     throw "CONTEXT_GUARD_NO_TRANSCRIPT: no $TranscriptHost transcript under $searchRoot was started in $Cwd"
 }
 
@@ -206,6 +265,22 @@ function Get-DtCtxState {
     $fmt = { param($v) if ($null -eq $v) { 'none' } else { [string]$v } }
     $line = "context: $(& $fmt $Tokens) $state (baseline $(& $fmt $Baseline), soft $(& $fmt $soft), hard $hard)"
     return [pscustomobject][ordered]@{ tokens = $Tokens; state = $state; baseline = $Baseline; soft = $soft; hard = $hard; line = $line }
+}
+
+function Split-DtCtxIrreversibleSteps {
+    # Open irreversible steps split by who opened them. Only steps opened by the current lease holder (an
+    # unreleased lease) defer rotation; a step whose coordinator no longer holds the lease is stale and
+    # defers nothing.
+    param([AllowEmptyCollection()][object[]]$Open = @(), $Lease)
+    $holder = $null
+    if ($null -ne $Lease -and $Lease.PSObject.Properties['coordinator_id'] -and -not ($Lease.PSObject.Properties['released_utc'] -and $Lease.released_utc)) { $holder = [string]$Lease.coordinator_id }
+    $deferring = [System.Collections.Generic.List[object]]::new()
+    $stale = [System.Collections.Generic.List[object]]::new()
+    foreach ($step in @($Open | Where-Object { $null -ne $_ })) {
+        $owner = if ($step.PSObject.Properties['coordinator_id'] -and $step.coordinator_id) { [string]$step.coordinator_id } else { $null }
+        if ($null -ne $holder -and $owner -ceq $holder) { $deferring.Add($step) } else { $stale.Add($step) }
+    }
+    return [pscustomobject]@{ deferring = @($deferring); stale = @($stale) }
 }
 
 # Dot-sourcing loads the functions only.

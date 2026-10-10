@@ -159,10 +159,10 @@ function Write-Lease {
 }
 
 function Write-Baseline {
-    param([string]$RunFolder, [string]$CoordinatorId, [string]$BaselineHost, [string]$TranscriptPath, [long]$Baseline, [string]$SessionId = $null)
+    param([string]$RunFolder, [string]$CoordinatorId, [string]$BaselineHost, [string]$TranscriptPath, [long]$Baseline, [string]$SessionId = $null, [string]$Source = 'explicit')
     $path = Join-Path $RunFolder 'context-baseline.json'
     $all = if (Test-Path -LiteralPath $path) { Get-Content -Raw -LiteralPath $path | ConvertFrom-Json } else { [pscustomobject]@{ coordinators = [pscustomobject]@{} } }
-    $all.coordinators | Add-Member -NotePropertyName $CoordinatorId -NotePropertyValue ([pscustomobject][ordered]@{ coordinator_id = $CoordinatorId; host = $BaselineHost; transcript_path = $TranscriptPath; session_id = $SessionId; baseline_tokens = $Baseline; marked_utc = [DateTime]::UtcNow.ToString('o') }) -Force
+    $all.coordinators | Add-Member -NotePropertyName $CoordinatorId -NotePropertyValue ([pscustomobject][ordered]@{ coordinator_id = $CoordinatorId; host = $BaselineHost; transcript_path = $TranscriptPath; session_id = $(if ($SessionId) { $SessionId } else { $null }); transcript_source = $Source; baseline_tokens = $Baseline; marked_utc = [DateTime]::UtcNow.ToString('o') }) -Force
     Write-Utf8 -Path $path -Content ($all | ConvertTo-Json -Depth 6)
 }
 
@@ -289,10 +289,46 @@ try {
     $mineClaude = Join-Path $env:CLAUDE_CONFIG_DIR "projects/$slug/sess-disc.jsonl"
     New-ClaudeTranscript -Path $mineClaude -Totals @(88000) -Cwd $work
     (Get-Item -LiteralPath $otherClaude).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(1)
+    # The caller's session has its mark-bootstrap call among its newest lines.
+    Add-Line $mineClaude ([ordered]@{ type = 'assistant'; cwd = $work; isSidechain = $false; message = [ordered]@{ role = 'assistant'; content = @([ordered]@{ type = 'tool_use'; name = 'Bash'; input = [ordered]@{ command = "pwsh -NoProfile -File dt-job.ps1 mark-bootstrap -RunFolder x -CoordinatorId disc-claude -Host claude" } }) } })
+    # Newer than it, all in the same cwd: a second interactive session, a subagent transcript, and a
+    # sidechain-only file outside a subagents folder.
+    $secondClaude = Join-Path $env:CLAUDE_CONFIG_DIR "projects/$slug/second-session.jsonl"
+    New-ClaudeTranscript -Path $secondClaude -Totals @(22222) -Cwd $work
+    $subagentClaude = Join-Path $env:CLAUDE_CONFIG_DIR "projects/$slug/sess-disc/subagents/agent-1.jsonl"
+    # The subagent file carries no isSidechain flag here, so only its folder rules it out.
+    Add-Line $subagentClaude ([ordered]@{ type = 'user'; cwd = $work; message = [ordered]@{ role = 'user'; content = 'mark-bootstrap the run' } })
+    Add-ClaudeUsage -Path $subagentClaude -Total 33333 -Cwd $work
+    $sidechainClaude = Join-Path $env:CLAUDE_CONFIG_DIR "projects/$slug/sidechain-only.jsonl"
+    Add-Line $sidechainClaude ([ordered]@{ type = 'user'; cwd = $work; isSidechain = $true; message = [ordered]@{ role = 'user'; content = 'mark-bootstrap the run' } })
+    Add-ClaudeUsage -Path $sidechainClaude -Total 44444 -Cwd $work
+    $stamp = [DateTime]::UtcNow
+    (Get-Item -LiteralPath $mineClaude).LastWriteTimeUtc = $stamp.AddSeconds(10)
+    (Get-Item -LiteralPath $secondClaude).LastWriteTimeUtc = $stamp.AddSeconds(20)
+    (Get-Item -LiteralPath $subagentClaude).LastWriteTimeUtc = $stamp.AddSeconds(30)
+    (Get-Item -LiteralPath $sidechainClaude).LastWriteTimeUtc = $stamp.AddSeconds(40)
+    (Get-Item -LiteralPath $otherClaude).LastWriteTimeUtc = $stamp.AddSeconds(50)
     $mineCodex = Join-Path $env:CODEX_HOME 'sessions/2026/10/10/rollout-2026-10-10T01-00-00-mine.jsonl'
     New-CodexRollout -Path $mineCodex -Inputs @(42000) -Cwd $work -SessionId 'codex-sess-1'
     $otherCodex = Join-Path $env:CODEX_HOME 'sessions/2026/10/10/rollout-2026-10-10T02-00-00-other.jsonl'
     New-CodexRollout -Path $otherCodex -Inputs @(1000) -Cwd 'C:\elsewhere'
+    # Newer, same cwd: a rollout a dt-build chunk wrapper started (its prompt opens with RUN_ID and
+    # chunk_id headers, as in a real rollout), and a Codex subagent thread.
+    $chunkCodex = Join-Path $env:CODEX_HOME 'sessions/2026/10/10/rollout-2026-10-10T03-00-00-chunk.jsonl'
+    Add-Line $chunkCodex ([ordered]@{ timestamp = [DateTime]::UtcNow.ToString('o'); type = 'session_meta'; payload = [ordered]@{ id = 'codex-chunk'; cwd = $work; originator = 'codex_exec'; source = 'exec'; thread_source = 'user'; cli_version = '0.0.0' } })
+    Add-Line $chunkCodex ([ordered]@{ type = 'event_msg'; payload = [ordered]@{ type = 'task_started' } })
+    Add-Line $chunkCodex ([ordered]@{ type = 'response_item'; payload = [ordered]@{ type = 'message'; role = 'developer'; content = @([ordered]@{ type = 'input_text'; text = 'instructions' }) } })
+    Add-Line $chunkCodex ([ordered]@{ type = 'response_item'; payload = [ordered]@{ type = 'message'; role = 'user'; content = @([ordered]@{ type = 'input_text'; text = "<environment_context>cwd</environment_context>" }) } })
+    Add-Line $chunkCodex ([ordered]@{ type = 'turn_context'; payload = [ordered]@{ cwd = $work } })
+    Add-Line $chunkCodex ([ordered]@{ type = 'response_item'; payload = [ordered]@{ type = 'message'; role = 'user'; content = @([ordered]@{ type = 'input_text'; text = "RUN_ID: run-x`r`nchunk_id: M01-chunk-a`r`nattempt: 1`r`n`r`nRun dt-job.ps1 mark-bootstrap when told." }) } })
+    Add-CodexTokens -Path $chunkCodex -InputTokens 55555
+    $subCodex = Join-Path $env:CODEX_HOME 'sessions/2026/10/10/rollout-2026-10-10T04-00-00-sub.jsonl'
+    Add-Line $subCodex ([ordered]@{ timestamp = [DateTime]::UtcNow.ToString('o'); type = 'session_meta'; payload = [ordered]@{ id = 'codex-sub'; cwd = $work; originator = 'codex_exec'; source = [ordered]@{ subagent = [ordered]@{ thread_spawn = [ordered]@{ parent_thread_id = 'codex-sess-1' } } }; thread_source = 'subagent' } })
+    Add-CodexTokens -Path $subCodex -InputTokens 66666
+    (Get-Item -LiteralPath $mineCodex).LastWriteTimeUtc = $stamp.AddSeconds(10)
+    (Get-Item -LiteralPath $chunkCodex).LastWriteTimeUtc = $stamp.AddSeconds(20)
+    (Get-Item -LiteralPath $subCodex).LastWriteTimeUtc = $stamp.AddSeconds(30)
+    (Get-Item -LiteralPath $otherCodex).LastWriteTimeUtc = $stamp.AddSeconds(40)
     Push-Location -LiteralPath $work
     try {
         $dc = Invoke-DtJob @('mark-bootstrap', '-RunFolder', $run.folder, '-CoordinatorId', 'disc-claude', '-Host', 'claude')
@@ -300,8 +336,13 @@ try {
     }
     finally { Pop-Location }
     $stored = Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json
-    Assert-True ($dc.transcript_path -eq $mineClaude -and [long]$dc.baseline_tokens -eq 88000 -and $stored.coordinators.'disc-claude'.session_id -eq 'sess-disc') "claude discovery picks the newest transcript started in this cwd ($($dc.transcript_path))"
-    Assert-True ($dx.transcript_path -eq $mineCodex -and [long]$dx.baseline_tokens -eq 42000 -and $stored.coordinators.'disc-codex'.session_id -eq 'codex-sess-1') "codex discovery matches session_meta cwd ($($dx.transcript_path))"
+    Assert-True ($dc.transcript_path -eq $mineClaude -and [long]$dc.baseline_tokens -eq 88000) "claude discovery picks the caller's session over a newer same-cwd session, a subagent transcript, and a sidechain file ($($dc.transcript_path))"
+    Assert-True ($null -eq $stored.coordinators.'disc-claude'.session_id -and $stored.coordinators.'disc-claude'.transcript_source -eq 'discovered') 'a discovered transcript records no session id and is marked discovered'
+    Assert-True ($dx.transcript_path -eq $mineCodex -and [long]$dx.baseline_tokens -eq 42000 -and $null -eq $stored.coordinators.'disc-codex'.session_id -and $stored.coordinators.'disc-codex'.transcript_source -eq 'discovered') "codex discovery matches session_meta cwd and skips chunk-wrapper and subagent rollouts ($($dx.transcript_path))"
+    Assert-True ($stored.coordinators.c1.transcript_source -eq 'explicit') 'a named transcript is marked explicit'
+    # With no session carrying the call, the newest qualifying one is used; subagent and sidechain files never are.
+    $guessed = & pwsh -NoProfile -Command ". '$guard'; Find-DtCtxTranscript -TranscriptHost claude -Cwd '$work'; Remove-Item -LiteralPath '$mineClaude'; Find-DtCtxTranscript -TranscriptHost claude -Cwd '$work'"
+    Assert-True (@($guessed)[0] -eq $mineClaude -and @($guessed)[1] -eq $secondClaude) "without the call in any tail, the newest non-subagent same-cwd session is the guess ($(@($guessed) -join ', '))"
     $lost = Join-Path $tempRoot 'lost'
     New-Item -ItemType Directory -Path $lost -Force | Out-Null
     Push-Location -LiteralPath $lost
@@ -356,16 +397,37 @@ try {
         $fin = Invoke-DtJobRaw @('finish', '-RunFolder', $run.folder)
         Assert-True ($fin.exit -eq 0 -and $fin.text -match 'context: 170000 rotate') 'finish still runs past the hard limit'
 
-        # An open irreversible step defers the refusal; ending it restores it.
+        # An irreversible step the lease holder opened defers the refusal; ending it restores it.
+        Invoke-DtJob @('lease', '-RunFolder', $run.folder, '-Action', 'acquire', '-CoordinatorId', 'cv', '-Host', 'claude') | Out-Null
         Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'begin', '-Operation', 'merge') | Out-Null
         $deferred = Invoke-DtJob @('start', '-RunFolder', $run.folder, '-Command', 'Write-Output during-merge')
         Assert-True ($deferred.job_id -eq 'j-0002' -and $deferred.context -match 'rotation deferred: irreversible merge open') "an open irreversible step defers ROTATE_REQUIRED ($($deferred.context))"
         $ir = Get-Content -Raw -LiteralPath (Join-Path $run.folder 'irreversible.json') | ConvertFrom-Json
         Assert-True (@($ir.open).Count -eq 1 -and $ir.open[0].operation -eq 'merge' -and $ir.open[0].coordinator_id -eq 'cv') 'irreversible.json records the open step'
+        # Once cv no longer holds the lease its step is stale and defers nothing.
+        Write-Lease -RunFolder $run.folder -CoordinatorId 'cv-next' -LeaseHost 'claude'
+        $staleStart = Invoke-DtJobRaw @('start', '-RunFolder', $run.folder, '-Command', 'Write-Output stale')
+        Assert-True ($staleStart.exit -ne 0 -and $staleStart.text -match 'ROTATE_REQUIRED' -and $staleStart.text -notmatch 'rotation deferred') "a step whose coordinator no longer holds the lease does not defer ROTATE_REQUIRED ($($staleStart.text))"
+        Write-Lease -RunFolder $run.folder -CoordinatorId 'cv' -LeaseHost 'claude'
+        Invoke-DtJob @('lease', '-RunFolder', $run.folder, '-Action', 'release', '-CoordinatorId', 'cv') | Out-Null
+        $releasedStart = Invoke-DtJobRaw @('start', '-RunFolder', $run.folder, '-Command', 'Write-Output released')
+        Assert-True ($releasedStart.exit -ne 0 -and $releasedStart.text -match 'ROTATE_REQUIRED') 'a released lease has no holder, so no step defers'
         Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'end', '-Operation', 'merge') | Out-Null
         $again = Invoke-DtJobRaw @('start', '-RunFolder', $run.folder, '-Command', 'Write-Output after-merge')
         Assert-True ($again.exit -ne 0 -and $again.text -match 'ROTATE_REQUIRED') 'ending the step restores the refusal'
         Invoke-DtJob @('wait', '-RunFolder', $run.folder, '-JobId', 'j-0002', '-All', '-TimeoutSec', '60') | Out-Null
+
+        # The text-mode context line fits the bytes reserved for it, so wait output stays inside the envelope cap.
+        $longMissing = Join-Path $tempRoot (('deep-folder-name-' * 25) + 'transcript.jsonl')
+        Write-Baseline -RunFolder $run.folder -CoordinatorId 'clong' -BaselineHost 'claude' -TranscriptPath $longMissing -Baseline 100000
+        $env:DT_BUILD_COORDINATOR_ID = 'clong'
+        $longWait = Invoke-DtJobRaw @('wait', '-RunFolder', $run.folder, '-JobId', 'j-0001', '-All', '-TimeoutSec', '5') -Text
+        $utf8 = [System.Text.Encoding]::UTF8
+        $ctxLine = $longWait.lines[-1]
+        $waitBytes = $utf8.GetByteCount(($longWait.lines -join "`r`n") + "`r`n")
+        Assert-True ($longWait.exit -eq 0 -and $ctxLine -like 'context: unavailable (*' -and $ctxLine.EndsWith('...[truncated]') -and $utf8.GetByteCount($ctxLine) + 2 -le 256 -and $waitBytes -le 8192) "an overlong context line is capped to its 256-byte reserve ($($utf8.GetByteCount($ctxLine)) bytes, wait output $waitBytes bytes)"
+        $wide = & pwsh -NoProfile -Command ". '$dtJob'; `$l = Limit-DtJobContextLine ('context: ' + ([string][char]0x00E9 * 200) + ([char]::ConvertFromUtf32(0x1F600) * 40)); [System.Text.Encoding]::UTF8.GetByteCount(`$l); `$l.EndsWith('...[truncated]')"
+        Assert-True ([int]@($wide)[0] -le 254 -and @($wide)[1] -eq 'True') "multi-byte context lines are capped by bytes ($(@($wide)[0]))"
     }
     finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
 
@@ -400,13 +462,18 @@ try {
     $tick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'codex-rot' })[0]
     Assert-True ((Test-Alive $tree.child) -and -not $tick.PSObject.Properties['rotation'] -and -not (Test-Path -LiteralPath (Join-Path $run.folder 'rotations.jsonl'))) 'below the hard limit the Codex coordinator is left alone'
     Add-CodexTokens -Path $rotT -InputTokens 130000
-    Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'begin', '-Operation', 'push') | Out-Null
+    Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'begin', '-Operation', 'push', '-CoordinatorId', 'mc-codex') | Out-Null
     $tick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'codex-rot' })[0]
-    Assert-True ((Test-Alive $tree.child) -and (Test-Alive $tree.grandchild) -and [string]$tick.rotation -match 'rotation deferred' -and -not (Test-Path -LiteralPath (Join-Path $run.folder 'rotations.jsonl'))) "an open irreversible step defers the watcher kill ($($tick.rotation))"
+    Assert-True ((Test-Alive $tree.child) -and (Test-Alive $tree.grandchild) -and [string]$tick.rotation -match 'rotation deferred' -and -not (Test-Path -LiteralPath (Join-Path $run.folder 'rotations.jsonl'))) "an irreversible step the lease holder opened defers the watcher kill ($($tick.rotation))"
     Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'end', '-Operation', 'push') | Out-Null
+    # A step left open by an earlier coordinator is stale: it defers nothing, and Danny gets one DM for it.
+    Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'begin', '-Operation', 'old-merge', '-CoordinatorId', 'mc-old') | Out-Null
     $tick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'codex-rot' })[0]
     Start-Sleep -Milliseconds 500
-    Assert-True (-not (Test-Alive $tree.child) -and -not (Test-Alive $tree.grandchild)) 'past the hard limit the watcher kills the coordinator and its child process'
+    Assert-True (-not (Test-Alive $tree.child) -and -not (Test-Alive $tree.grandchild)) 'past the hard limit the watcher kills the coordinator and its child process, despite a stale irreversible step'
+    $staleDms = @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | Where-Object { $_ -match 'old-merge' })
+    $staleKey = @(Get-Content -LiteralPath (Join-Path $run.folder 'notifications.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { [string]$_.key -like 'dt-build:codex-rot:stale-irreversible:old-merge:*' })
+    Assert-True ($staleDms.Count -eq 1 -and $staleDms[0] -match 'mc-old' -and $staleDms[0] -match 'irreversible -RunFolder' -and $staleKey.Count -eq 1 -and @($tick.stale_irreversible)[0].alert -eq 'sent') "a stale irreversible step sends one DM keyed by operation and opened time ($($staleKey | ConvertTo-Json -Compress))"
     $rot = @(Get-Content -LiteralPath (Join-Path $run.folder 'rotations.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True ($rot.Count -eq 1 -and $rot[0].coordinator_id -eq 'mc-codex' -and [long]$rot[0].tokens_at_kill -eq 130000 -and [long]$rot[0].hard_limit -eq 120000 -and [long]$rot[0].overshoot -eq 10000) "rotations.jsonl records tokens, hard limit, and overshoot ($($rot | ConvertTo-Json -Compress))"
     $events = @(Get-Content -LiteralPath (Join-Path $run.folder 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
@@ -416,6 +483,33 @@ try {
     Assert-True ($lease.coordinator_id -eq 'mc-codex' -and $lease.released_utc -and $tick.action -eq 'launch' -and $launched.Count -eq 1 -and $launched[0].host -eq 'codex') "the lease is released and the relaunch rules start a fresh coordinator ($($tick.action))"
     $tick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'codex-rot' })[0]
     Assert-True (@(Get-Content -LiteralPath (Join-Path $run.folder 'rotations.jsonl')).Count -eq 1 -and -not $tick.PSObject.Properties['rotation']) 'a released lease is not rotated again'
+    Assert-True (@(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | Where-Object { $_ -match 'old-merge' }).Count -eq 1 -and @($tick.stale_irreversible)[0].alert -eq 'already_sent') 'the stale step is not reported twice'
+    # A second stale step opened at another time is its own DM.
+    $irPath = Join-Path $run.folder 'irreversible.json'
+    $irDoc = Get-Content -Raw -LiteralPath $irPath | ConvertFrom-Json
+    $irDoc.open = @($irDoc.open) + @([pscustomobject][ordered]@{ operation = 'old-merge'; coordinator_id = 'mc-older'; began_utc = '2026-10-09T12:00:00.0000000Z' })
+    Write-Utf8 -Path $irPath -Content ($irDoc | ConvertTo-Json -Depth 4)
+    Invoke-Tick | Out-Null
+    Assert-True (@(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | Where-Object { $_ -match 'old-merge' }).Count -eq 2) 'each stale step, by operation and opened time, gets its own DM'
+    Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'end', '-Operation', 'old-merge') | Out-Null
+
+    # ---- watcher: a kill that leaves the coordinator running changes nothing and tells Danny once.
+    $run = New-Run -Name 'kill-fail' -PinnedHost 'codex' -Managed
+    $kfT = Join-Path $fixtures 'codex-kill-fail.jsonl'
+    New-CodexRollout -Path $kfT -Inputs @(50000, 130000)
+    $kfTree = Start-FakeTree -Name 'kill-fail'
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'mc-stuck' -LeaseHost 'codex' -LaunchedBy 'watcher' -LeasePid $kfTree.child -PidStartUtc $kfTree.start_utc
+    Write-Baseline -RunFolder $run.folder -CoordinatorId 'mc-stuck' -BaselineHost 'codex' -TranscriptPath $kfT -Baseline 50000
+    $leaseBefore = Get-Content -Raw -LiteralPath (Join-Path $run.folder 'coordinator.lease')
+    $eventsPath = Join-Path $run.folder 'jobs/events.jsonl'
+    $eventsBefore = if (Test-Path -LiteralPath $eventsPath) { Get-Content -Raw -LiteralPath $eventsPath } else { '' }
+    $stubbed = & pwsh -NoProfile -Command ". '$watcher'; function Stop-WatcherProcessTree { param([int]`$ProcessId) throw 'Access is denied' }; `$entry = Get-DtJobRegistryEntry -RunFolder '$($run.folder)'; Invoke-WatcherContextRotation -Entry `$entry -NowUtc ([DateTime]::UtcNow); Invoke-WatcherContextRotation -Entry `$entry -NowUtc ([DateTime]::UtcNow)"
+    $eventsAfter = if (Test-Path -LiteralPath $eventsPath) { Get-Content -Raw -LiteralPath $eventsPath } else { '' }
+    Assert-True ([string]@($stubbed)[0] -match '^rotation kill failed: mc-stuck' -and [string]@($stubbed)[0] -match 'Access is denied' -and (Test-Alive $kfTree.child)) "a kill that throws is reported as rotation kill failed ($(@($stubbed) -join ' | '))"
+    Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $run.folder 'coordinator.lease')) -eq $leaseBefore -and $eventsAfter -eq $eventsBefore -and -not (Test-Path -LiteralPath (Join-Path $run.folder 'rotations.jsonl'))) 'a failed kill leaves the lease, the events, and rotations.jsonl untouched'
+    $kfDms = @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | Where-Object { $_ -match 'kill-fail' -and $_ -match 'could not stop it' })
+    Assert-True ($kfDms.Count -eq 1 -and $kfDms[0] -match "Stop-Process -Id $($kfTree.child)" -and [string]@($stubbed)[0] -match 'alert sent' -and [string]@($stubbed)[1] -match 'alert already_sent') "a failed kill sends one DM with the stop command ($($kfDms.Count))"
+    Get-Process -Id $kfTree.child, $kfTree.grandchild -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
     # ---- watcher: a Claude coordinator past hard is never killed by the watcher.
     $run = New-Run -Name 'claude-rot' -PinnedHost 'claude' -Managed
@@ -478,7 +572,8 @@ try {
     Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'PowerShell' @{ command = "cat '$bigFile'; pwsh -File dt-job.ps1 status -RunFolder x" }))) 'past hard, a shell read chained before a dt-job call is denied'
     $allowedCommands = @(
         "pwsh -NoProfile -File `"$dtJob`" request-continuation -RunFolder `"$($run.folder)`" -Reason context_rotation",
-        "cd `"$tempRoot`"; pwsh -NoProfile -File `"$dtJob`" lease -RunFolder x -Action release -CoordinatorId hc1",
+        "git status; pwsh -NoProfile -File `"$dtJob`" lease -RunFolder x -Action release -CoordinatorId hc1",
+        "& `"$dtJob`" status -RunFolder x 2>&1",
         'pwsh -NoProfile -File scripts/write-build-state.ps1 -Path x',
         'pwsh -NoProfile -File scripts/read-evidence.ps1 -Path x -Lines 20',
         'git status --short',
@@ -490,9 +585,47 @@ try {
     }
     $script:passed++
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Write' @{ file_path = 'x'; content = 'state' }))) 'past hard, writing state is still allowed'
-    Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'begin', '-Operation', 'merge') | Out-Null
-    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'an open irreversible step defers the hard-limit denials'
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'hc1' -LeaseHost 'claude'
+    Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'begin', '-Operation', 'merge', '-CoordinatorId', 'hc1') | Out-Null
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'an irreversible step the lease holder opened defers the hard-limit denials'
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'hc-other' -LeaseHost 'claude'
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'once hc1 no longer holds the lease its step defers nothing'
     Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'end', '-Operation', 'merge') | Out-Null
+    # Past-hard shell allowlist, segment by segment.
+    $deniedProbe = @(
+        'Get-Content skills/dt-build/scripts/dt-job.ps1',
+        'cat big.log | pwsh -File dt-job.ps1 status',
+        'pwsh -File dt-job.ps1 status & cat big.log',
+        'cat big.log # dt-job.ps1',
+        'cat big.log | head -5000 # dt-job.ps1',
+        'pwsh -Command Get-Content big.log -File dt-job.ps1',
+        'pwsh -File my-dt-job.ps1 status',
+        '& cat dt-job.ps1',
+        'type dt-job.ps1',
+        'git status && cat big.log',
+        'git status || Get-Content big.log',
+        "pwsh -File dt-job.ps1 status`ncat big.log",
+        'git show HEAD:skills/dt-build/scripts/dt-job.ps1'
+    )
+    $allowedProbe = @(
+        'pwsh -File dt-job.ps1 status',
+        'pwsh -NoProfile -NonInteractive -File "D:/x y/scripts/dt-job.ps1" wait -RunFolder x -JobId j-0001 -All -TimeoutSec 5',
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'C:\s\read-evidence.ps1' -Path x",
+        '& "D:/x/scripts/dt-job.ps1" status -RunFolder x',
+        '. ./scripts/write-build-state.ps1 -Path x',
+        'pwsh -File dt-job.ps1 status 2>&1',
+        'git status --short',
+        'git -C "D:/repo" log --oneline -3',
+        'git rev-parse HEAD',
+        'git status; pwsh -File dt-job.ps1 status',
+        "pwsh -NoProfile -File `"$dtJob`" request-continuation -RunFolder `"$($run.folder)`" -Reason context_rotation"
+    )
+    $probeFile = Join-Path $tempRoot 'shell-probe.json'
+    Write-Utf8 -Path $probeFile -Content (([ordered]@{ denied = $deniedProbe; allowed = $allowedProbe }) | ConvertTo-Json)
+    $probe = (& pwsh -NoProfile -Command ". '$preHook'; `$p = Get-Content -Raw -LiteralPath '$probeFile' | ConvertFrom-Json; [ordered]@{ denied = @(`$p.denied | Where-Object { Test-HookShellAllowed `$_ }); allowed = @(`$p.allowed | Where-Object { -not (Test-HookShellAllowed `$_) }) } | ConvertTo-Json -Compress") | ConvertFrom-Json
+    Assert-True (@($probe.denied).Count -eq 0) "script names as arguments or comments, and pipes or & after an allowed call, are denied (wrongly allowed: $(@($probe.denied) -join ' || '))"
+    Assert-True (@($probe.allowed).Count -eq 0) "pwsh -File, & and . calls of the state scripts and git status/log/rev-parse are allowed (wrongly denied: $(@($probe.allowed) -join ' || '))"
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Bash' @{ command = 'Get-Content skills/dt-build/scripts/dt-job.ps1' }))) 'past hard, reading dt-job.ps1 through the shell is denied end to end'
     # Coordinator by env var only, no registered run: the ceiling applies and the fixed denials hold.
     $env:DT_BUILD_COORDINATOR_ID = 'hc-env'
     try {
@@ -510,6 +643,53 @@ try {
     $r = Invoke-Hook $postHook (& $mk 'sess-hook' $hookHard 'Bash' @{ command = 'git status' } 'PostToolUse')
     Assert-True ($null -ne $r -and $r.hookSpecificOutput.additionalContext -like 'context: 175000 rotate*' -and $r.hookSpecificOutput.additionalContext -match 'request-continuation') 'PostToolUse surfaces the line and next step at rotate'
     Assert-True ($null -eq (Invoke-Hook $postHook (& $mk 'other-session' $hookHard 'Bash' @{ command = 'git status' } 'PostToolUse'))) 'PostToolUse is silent for a non-coordinator session'
+
+    # ---- coordinator identity: a discovered guess never marks a session; the PostToolUse capture is authoritative.
+    $run = New-Run -Name 'capture'
+    $wrongT = Join-Path $fixtures 'capture-wrong-session.jsonl'
+    New-ClaudeTranscript -Path $wrongT -Totals @(50000)
+    $capT = Join-Path $fixtures 'capture-own-session.jsonl'
+    New-ClaudeTranscript -Path $capT -Totals @(60000, 90000)
+    Write-Baseline -RunFolder $run.folder -CoordinatorId 'cap1' -BaselineHost 'claude' -TranscriptPath $wrongT -Baseline 50000 -Source 'discovered'
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'capture-wrong-session' $wrongT 'CronCreate' @{ cron = '*' }))) 'the session whose transcript discovery guessed is not treated as a coordinator'
+    $mkBoot = { param([string]$Command) @{ session_id = 'capture-own-session'; transcript_path = $capT; cwd = $tempRoot; hook_event_name = 'PostToolUse'; tool_name = 'Bash'; tool_input = @{ command = $Command }; tool_response = @{ stdout = 'ok' } } }
+    Invoke-Hook $postHook (& $mkBoot "Get-Content `"$dtJob`" # mark-bootstrap -RunFolder `"$($run.folder)`" -CoordinatorId cap1") | Out-Null
+    $stored = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators.cap1
+    Assert-True ($stored.transcript_source -eq 'discovered' -and $stored.transcript_path -eq $wrongT) 'a shell call that only mentions mark-bootstrap captures nothing'
+    Invoke-Hook $postHook (& $mkBoot "pwsh -NoProfile -File `"$dtJob`" mark-bootstrap -RunFolder `"$($run.folder)`" -CoordinatorId cap1 -Host claude") | Out-Null
+    $stored = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators.cap1
+    Assert-True ($stored.transcript_source -eq 'hook' -and $stored.session_id -eq 'capture-own-session' -and $stored.transcript_path -eq [System.IO.Path]::GetFullPath($capT) -and [long]$stored.baseline_tokens -eq 90000) "the PostToolUse hook replaces a discovered transcript with its own session and re-reads the baseline ($($stored | ConvertTo-Json -Compress))"
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'capture-own-session' $capT 'CronCreate' @{ cron = '*' }))) 'after the capture the calling session is a coordinator session'
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'capture-wrong-session' $wrongT 'CronCreate' @{ cron = '*' }))) 'after the capture the guessed session is still left alone'
+    # The coordinator id may come from the env var, and a repeat capture changes nothing.
+    Write-Baseline -RunFolder $run.folder -CoordinatorId 'cap2' -BaselineHost 'claude' -TranscriptPath $wrongT -Baseline 50000 -Source 'discovered'
+    $env:DT_BUILD_COORDINATOR_ID = 'cap2'
+    try { Invoke-Hook $postHook (& $mkBoot "& `"$dtJob`" mark-bootstrap -RunFolder `"$($run.folder)`" -Host claude") | Out-Null }
+    finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
+    $all = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators
+    Assert-True ($all.cap2.transcript_source -eq 'hook' -and $all.cap2.transcript_path -eq [System.IO.Path]::GetFullPath($capT) -and $all.cap1.captured_utc) 'the capture takes the coordinator id from DT_BUILD_COORDINATOR_ID when the command does not name it'
+    $capturedAt = [string]$all.cap1.captured_utc
+    Invoke-Hook $postHook (& $mkBoot "pwsh -NoProfile -File `"$dtJob`" mark-bootstrap -RunFolder `"$($run.folder)`" -CoordinatorId cap1 -Host claude") | Out-Null
+    Assert-True ([string]((Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators.cap1.captured_utc) -eq $capturedAt) 'a repeat capture for the same session writes nothing'
+
+    # ---- hook cost: with the env var unset and no registered run, both hooks exit before loading any dt-build script.
+    $savedState = $env:DT_BUILD_STATE_DIR
+    $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'empty-state'
+    try {
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'capture-own-session' $capT 'CronCreate' @{ cron = '*' }))) 'with no registered run a recorded session is not looked up'
+        Assert-True ($null -eq (Invoke-Hook $postHook (& $mk 'capture-own-session' $capT 'Bash' @{ command = 'git status' } 'PostToolUse'))) 'PostToolUse exits the same way'
+        Write-Utf8 -Path (Join-Path $env:DT_BUILD_STATE_DIR 'active-runs.json') -Content '{ "runs": [] }'
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'capture-own-session' $capT 'CronCreate' @{ cron = '*' }))) 'a registry that lists no runs is idle too'
+    }
+    finally { $env:DT_BUILD_STATE_DIR = $savedState }
+    $preText = Get-Content -Raw -LiteralPath $preHook
+    $postText = Get-Content -Raw -LiteralPath $postHook
+    $idleMark = '(Test-HookIdle)) { exit 0 }'
+    $guardLoad = ". (Join-Path `$PSScriptRoot '..\scripts\context-guard.ps1')"
+    $dtJobLoad = ". (Join-Path `$PSScriptRoot '..\scripts\dt-job.ps1')"
+    $idleAt = $preText.IndexOf($idleMark)
+    $postIdleAt = $postText.IndexOf($idleMark)
+    Assert-True ($idleAt -gt 0 -and $idleAt -lt $preText.IndexOf($guardLoad) -and -not $preText.Contains($dtJobLoad) -and $postIdleAt -gt 0 -and $postIdleAt -lt $postText.IndexOf($guardLoad) -and $postIdleAt -lt $postText.IndexOf($dtJobLoad)) 'in both hooks the idle exit comes before context-guard.ps1 or dt-job.ps1 loads, and PreToolUse never loads dt-job.ps1'
 
     # ---- static: hook files and launcher flags.
     foreach ($file in @($preHook, $postHook, $guard, (Join-Path $scriptDir 'launch-managed-coordinator.ps1'))) {

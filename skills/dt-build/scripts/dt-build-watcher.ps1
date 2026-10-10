@@ -213,7 +213,8 @@ function Invoke-WatcherContextRotation {
     # Codex runs no hooks, so a managed Codex coordinator past its hard limit is ended here, within one
     # tick: kill its process tree, release its lease, and request a continuation so the relaunch rules
     # start a fresh one. Its jobs are detached and keep running. Claude coordinators are left to their
-    # hooks, and an open irreversible step defers the kill. Returns a detail string, or $null when idle.
+    # hooks, and an irreversible step this coordinator opened defers the kill. A kill that leaves the
+    # process running changes nothing and tells Danny once. Returns a detail string, or $null when idle.
     param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)][DateTime]$NowUtc)
     $folder = [string]$Entry.run_folder
     $lease = Get-DtJobLease -RunFolder $folder
@@ -228,14 +229,20 @@ function Invoke-WatcherContextRotation {
     catch { return "context unreadable for $coordinatorId" }
     $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entryBaseline.baseline_tokens)
     if ($report.state -ne 'rotate') { return $null }
-    $open = @(Get-DtJobIrreversibleOpen -RunFolder $folder)
+    $open = @((Split-DtCtxIrreversibleSteps -Open @(Get-DtJobIrreversibleOpen -RunFolder $folder) -Lease $lease).deferring)
     if ($open.Count -gt 0) { return "rotation deferred: $coordinatorId at $tokens past hard $($report.hard), irreversible $($open[0].operation) open" }
-    try {
-        $process = Get-Process -Id ([int]$lease.pid) -ErrorAction Stop
-        $process.Kill($true)
-        [void]$process.WaitForExit(10000)
+    $killError = $null
+    try { Stop-WatcherProcessTree -ProcessId ([int]$lease.pid) }
+    catch { $killError = [string]$_.Exception.Message }
+    # The lease is released only once the old coordinator is provably gone; otherwise the relaunch rules
+    # would start a second coordinator beside it.
+    if (Test-DtJobProcessIdentity $lease.pid $pidStart) {
+        $runId = [string]$Entry.run_id
+        $why = if ($killError) { " ($killError)" } else { '' }
+        $text = "dt-build run $runId could not be handed to a fresh coordinator: its coordinator reached its context limit and the watcher could not stop it$why. It is still running as process $($lease.pid), and the run stays with it so no second coordinator starts. Stop it with: Stop-Process -Id $($lease.pid) -Force"
+        $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:rotation-kill-failed:$coordinatorId" -Message $text
+        return "rotation kill failed: $coordinatorId pid $($lease.pid) still running$why; alert $alert"
     }
-    catch { }
     Invoke-DtJobLocked -RunFolder $folder -Action {
         $current = Get-DtJobLease -RunFolder $folder
         if ($null -ne $current -and $current.coordinator_id -eq $coordinatorId) {
@@ -252,13 +259,44 @@ function Invoke-WatcherContextRotation {
     return "rotated $coordinatorId at $tokens (hard $($report.hard), overshoot $($row.overshoot))"
 }
 
+function Stop-WatcherProcessTree {
+    # Kills the process and its children and waits briefly for the exit; throws when the kill fails.
+    param([Parameter(Mandatory)][int]$ProcessId)
+    $process = Get-Process -Id $ProcessId -ErrorAction Stop
+    $process.Kill($true)
+    [void]$process.WaitForExit(10000)
+}
+
+function Send-WatcherStaleIrreversibleAlerts {
+    # One DM per stale irreversible step: a step left open by a coordinator that no longer holds the lease
+    # defers nothing, so Danny is told once to confirm the step and clear it.
+    param([Parameter(Mandatory)]$Entry)
+    $folder = [string]$Entry.run_folder
+    $runId = [string]$Entry.run_id
+    $split = Split-DtCtxIrreversibleSteps -Open @(Get-DtJobIrreversibleOpen -RunFolder $folder) -Lease (Get-DtJobLease -RunFolder $folder)
+    $results = [System.Collections.Generic.List[object]]::new()
+    foreach ($step in $split.stale) {
+        $operation = [string]$step.operation
+        $openedUtc = if ($step.PSObject.Properties['began_utc'] -and $step.began_utc) { ConvertTo-DtJobUtc $step.began_utc } else { $null }
+        $openedKey = if ($null -ne $openedUtc) { $openedUtc.ToString('o') } else { 'unknown' }
+        $openedText = if ($null -ne $openedUtc) { ' opened ' + [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId($openedUtc, 'Eastern Standard Time').ToString('yyyy-MM-dd HH:mm') + ' ET' } else { '' }
+        $owner = if ($step.PSObject.Properties['coordinator_id'] -and $step.coordinator_id) { "coordinator $($step.coordinator_id)" } else { 'an unnamed coordinator' }
+        $text = "dt-build run $runId has an irreversible step `"$operation`"$openedText by $owner, which no longer holds the run. It is still marked open but no longer holds off context limits. Check whether `"$operation`" finished, then clear it with: pwsh -NoProfile -File `"$($script:WatcherDtJob)`" irreversible -RunFolder `"$folder`" -Action end -Operation `"$operation`""
+        $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:stale-irreversible:${operation}:$openedKey" -Message $text
+        $results.Add([pscustomobject][ordered]@{ operation = $operation; opened_utc = $openedKey; alert = $alert })
+    }
+    return @($results)
+}
+
 function Invoke-WatcherRun {
     param([Parameter(Mandatory)]$Entry)
     $folder = [string]$Entry.run_folder
     if (Test-Path -LiteralPath $folder) {
+        $stale = @(Send-WatcherStaleIrreversibleAlerts -Entry $Entry)
         $rotation = Invoke-WatcherContextRotation -Entry $Entry -NowUtc (Get-WatcherNow)
         $result = Invoke-WatcherRunTick -Entry $Entry
         if ($null -ne $rotation) { $result | Add-Member -NotePropertyName rotation -NotePropertyValue $rotation -Force }
+        if ($stale.Count -gt 0) { $result | Add-Member -NotePropertyName stale_irreversible -NotePropertyValue $stale -Force }
         return $result
     }
     return (Invoke-WatcherRunTick -Entry $Entry)

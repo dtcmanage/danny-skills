@@ -2,11 +2,11 @@
 
 Claude Code hooks that enforce the dt-build context limit at the tool call. They ship as files only and are installed at adoption, never before.
 
-- `coordinator-pretooluse.ps1` denies, in a dt-build coordinator session only: a Read of a file over 400 lines without `offset`/`limit`, image Reads (png, jpg, jpeg, gif, bmp, webp), and CronCreate. Past the hard context limit it also denies Read, Grep, Glob, WebFetch, WebSearch, Agent, Task, NotebookEdit, and any Bash/PowerShell command that does not run `dt-job.ps1`, `read-evidence.ps1`, `write-build-state.ps1`, or `git status|log|rev-parse`. An open irreversible step (`dt-job irreversible -Action begin`) defers the hard-limit denials. The deny reason names the next step.
-- `coordinator-posttooluse.ps1` adds the context line as additional context when the state is `checkpoint` or `rotate`, and stays silent when it is `ok`.
+- `coordinator-pretooluse.ps1` denies, in a dt-build coordinator session only: a Read of a file over 400 lines without `offset`/`limit`, image Reads (png, jpg, jpeg, gif, bmp, webp), and CronCreate. Past the hard context limit it also denies Read, Grep, Glob, WebFetch, WebSearch, Agent, Task, NotebookEdit, and any Bash/PowerShell command with a segment (split on newlines, `;`, `&&`, `||`, `|`, `&`) that is not `pwsh`/`powershell -File`, or a `&`/`.` call, of `dt-job.ps1`, `read-evidence.ps1`, or `write-build-state.ps1`, or `git status|log|rev-parse`. A script name used as an argument or in a comment does not count. An irreversible step (`dt-job irreversible -Action begin`) defers the hard-limit denials only while the coordinator that opened it holds the lease. The deny reason names the next step.
+- `coordinator-posttooluse.ps1` adds the context line as additional context when the state is `checkpoint` or `rotate`, and stays silent when it is `ok`. After a shell call that ran `dt-job mark-bootstrap`, it records this session's own `session_id` and transcript in `context-baseline.json` for that coordinator, replacing any transcript `mark-bootstrap` discovered.
 - `settings-snippet.json` is the `hooks` block to merge into a Claude settings file.
 
-A session counts as a coordinator when `DT_BUILD_COORDINATOR_ID` is set, or when its `session_id` matches a session recorded in a registered run's `coordinator.lease` or `context-baseline.json`. Every other session is left alone, and any error inside a hook allows the call.
+A session counts as a coordinator when `DT_BUILD_COORDINATOR_ID` is set, or when its `session_id` matches a session recorded in a registered run's `coordinator.lease` or `context-baseline.json`. A transcript `mark-bootstrap` discovered by cwd never identifies a coordinator session. Every other session is left alone, and any error inside a hook allows the call. With `DT_BUILD_COORDINATOR_ID` unset and no registered run, both hooks exit before loading any dt-build script.
 
 ## Placeholder
 

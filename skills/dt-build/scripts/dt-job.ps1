@@ -1320,9 +1320,8 @@ function Get-DtJobContextReport {
     # The coordinator's context state: with a bootstrap marker, its recorded transcript and baseline;
     # before one, the transcript discovered for this cwd against the absolute ceiling.
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$CoordinatorId, [string]$RequestedHost)
-    $ignored = $false
     try {
-        $open = @(Get-DtJobIrreversibleOpen -RunFolder $RunFolder)
+        $open = @((Split-DtCtxIrreversibleSteps -Open @(Get-DtJobIrreversibleOpen -RunFolder $RunFolder) -Lease (Get-DtJobLease -RunFolder $RunFolder)).deferring)
         $entry = Get-DtJobContextBaseline -RunFolder $RunFolder -CoordinatorId $CoordinatorId
         if ($null -ne $entry) {
             $tokens = Get-DtCtxTokens -TranscriptHost ([string]$entry.host) -TranscriptPath ([string]$entry.transcript_path)
@@ -1337,15 +1336,31 @@ function Get-DtJobContextReport {
     }
     catch {
         # An unreadable context never breaks a verb; it is reported, and nothing is refused on it.
-        $line = Limit-DtJobLine "context: unavailable ($([string]$_.Exception.Message))" ([ref]$ignored)
+        $line = Limit-DtJobContextLine "context: unavailable ($([string]$_.Exception.Message))"
         return [pscustomobject][ordered]@{ tokens = $null; state = 'unknown'; deferred = $false; line = $line }
     }
+    # Only a step the current lease holder opened defers rotation; a stale one is the watcher's to report.
     $deferred = ($report.state -eq 'rotate' -and $open.Count -gt 0)
     $line = $report.line
     if ($deferred) { $line = "$line; rotation deferred: irreversible $($open[0].operation) open" }
     $report | Add-Member -NotePropertyName deferred -NotePropertyValue $deferred
-    $report.line = Limit-DtJobLine $line ([ref]$ignored)
+    $report.line = Limit-DtJobContextLine $line
     return $report
+}
+
+function Limit-DtJobContextLine {
+    # The context line fits the bytes reserved for it inside the envelope cap, newline included.
+    param([AllowNull()][string]$Text)
+    if ($null -eq $Text) { return $null }
+    $max = $script:DtJobContextReserveBytes - 2
+    $utf8 = [System.Text.Encoding]::UTF8
+    if ($utf8.GetByteCount($Text) -le $max) { return $Text }
+    $marker = ' ...[truncated]'
+    $keep = [Math]::Min($Text.Length, $max - $marker.Length)
+    while ($keep -gt 0 -and $utf8.GetByteCount($Text.Substring(0, $keep)) -gt $max - $marker.Length) { $keep-- }
+    # Never end on half a surrogate pair.
+    if ($keep -gt 0 -and [char]::IsHighSurrogate($Text[$keep - 1])) { $keep-- }
+    return $Text.Substring(0, $keep) + $marker
 }
 
 function Invoke-DtJobMarkBootstrap {
@@ -1358,6 +1373,9 @@ function Invoke-DtJobMarkBootstrap {
         if ($null -ne $existing) { return [pscustomobject]@{ entry = $existing; marked = $false } }
         $ctxHost = Resolve-DtJobContextHost -RunFolder $RunFolder -CoordinatorId $coordinator -RequestedHost $CoordinatorHost
         if (-not $ctxHost) { throw 'DT_JOB_USAGE: mark-bootstrap requires -Host claude|codex.' }
+        # A discovered transcript is a guess: its session is not recorded, so the hooks never treat that
+        # session as this coordinator. The Claude PostToolUse hook later records the caller's own session.
+        $source = if ($TranscriptPath) { 'explicit' } else { 'discovered' }
         $transcript = if ($TranscriptPath) { [System.IO.Path]::GetFullPath($TranscriptPath) } else { Find-DtCtxTranscript -TranscriptHost $ctxHost }
         $tokens = Get-DtCtxTokens -TranscriptHost $ctxHost -TranscriptPath $transcript
         if ($null -eq $tokens) { throw "DT_JOB_CONTEXT_UNREADABLE: no $ctxHost token usage in $transcript yet; nothing marked" }
@@ -1365,7 +1383,8 @@ function Invoke-DtJobMarkBootstrap {
             coordinator_id  = $coordinator
             host            = $ctxHost
             transcript_path = $transcript
-            session_id      = (Get-DtCtxSessionId -TranscriptHost $ctxHost -TranscriptPath $transcript)
+            session_id      = $(if ($source -eq 'explicit') { Get-DtCtxSessionId -TranscriptHost $ctxHost -TranscriptPath $transcript } else { $null })
+            transcript_source = $source
             baseline_tokens = [long]$tokens
             marked_utc      = [DateTime]::UtcNow.ToString('o')
         }
