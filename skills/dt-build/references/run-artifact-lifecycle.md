@@ -7,9 +7,10 @@ Artifact classes:
   and prompt/reference hashes. Full assembled prompts remain ephemeral.
 - Retained decision record: `build-plan.md`, `build-state.md`, `build-decision-log.md`.
 - Orchestration state (written only by `scripts/dt-job.ps1`, the watcher, and the launcher): `jobs/` (one
-  `<job_id>.json` per job, `events.jsonl`, `reads.jsonl`, `locks/`), `coordinator.lease`, `coordinator.lock`,
+  `<job_id>.json` per job, a per-job `jobs/<job_id>/` folder holding `spec.json`, `stdout.log`, `stderr.log`,
+  and `summary.json`, plus `events.jsonl`, `reads.jsonl`, `locks/`), `coordinator.lease`, `coordinator.lock`,
   `context-baseline.json`, `irreversible.json`, `approvals.json`, `launches.jsonl`, `notifications.jsonl`,
-  and `rotations.jsonl`. Never hand-edit them.
+  `rotations.jsonl`, `kill-failed.json`, and `step-errors.json`. Never hand-edit them.
 
 Lifecycle controls:
 - Retained artifacts live under `.dt-build/<RUN_ID>/`.

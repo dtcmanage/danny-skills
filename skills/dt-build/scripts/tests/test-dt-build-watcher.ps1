@@ -327,6 +327,20 @@ try {
     Remove-Item Env:DT_BUILD_COORDINATOR_ID
     $unchanged = (Get-Content -Raw -LiteralPath (Join-Path $rf 'coordinator.lease') | ConvertFrom-Json).expires_utc
     Assert-True ($unchanged -eq $after) 'a non-holder verb leaves the lease alone'
+    # An interactive coordinator's shell keeps no env: -CoordinatorId on each call renews its lease, so calls
+    # spaced inside the TTL keep it live well past its first window.
+    $rf = Join-Path $tempRoot 'runs/lease-interactive'
+    New-Item -ItemType Directory -Path $rf -Force | Out-Null
+    Invoke-DtJob @('lease', '-RunFolder', $rf, '-Action', 'acquire', '-CoordinatorId', 'coord-i', '-Host', 'claude', '-TtlSec', '8') | Out-Null
+    $firstExpiry = ConvertTo-TestUtc (Get-Content -Raw -LiteralPath (Join-Path $rf 'coordinator.lease') | ConvertFrom-Json).expires_utc
+    $lapses = 0
+    foreach ($i in 1..4) {
+        Start-Sleep -Seconds 3
+        Invoke-DtJob @('status', '-RunFolder', $rf, '-CoordinatorId', 'coord-i') | Out-Null
+        $l = Get-Content -Raw -LiteralPath (Join-Path $rf 'coordinator.lease') | ConvertFrom-Json
+        if ((ConvertTo-TestUtc $l.expires_utc) -le [DateTime]::UtcNow -or $l.released_utc -or $l.coordinator_id -ne 'coord-i') { $lapses++ }
+    }
+    Assert-True ($lapses -eq 0 -and [DateTime]::UtcNow -gt $firstExpiry) "repeated -CoordinatorId calls spaced inside the TTL keep an interactive lease live past its first window ($lapses lapses)"
 
     # ---- registry: register, re-register replaces, unregister; DT_BUILD_STATE_DIR honored.
     Use-Scenario 'registry'
@@ -471,6 +485,32 @@ try {
     Invoke-Tick | Out-Null
     Assert-True ((Get-DmCount 'interactive') -eq 2) 'once the cursor passes the event behind the last DM, the next wait gets one more DM'
     Assert-True ((Get-LaunchCount 'interactive') -eq 0 -and @(Get-LaunchRecords $run.folder).Count -eq 0) 'an interactive coordinator is never replaced'
+
+    # ---- a managed coordinator that consumes per the adapter is not relaunched; one that does not, is.
+    Use-Scenario 'consume-adapter'
+    $consumer = New-Run -Name 'consume-adapter'
+    $control = New-Run -Name 'consume-control'
+    foreach ($r in @($consumer, $control)) {
+        $j = Invoke-DtJob @('start', '-RunFolder', $r.folder, '-Command', 'Write-Output done')
+        $r | Add-Member -NotePropertyName job_id -NotePropertyValue $j.job_id
+        $r | Add-Member -NotePropertyName waited -NotePropertyValue (Invoke-DtJob @('wait', '-RunFolder', $r.folder, '-JobId', $j.job_id, '-All', '-TimeoutSec', '60'))
+    }
+    $waited = $consumer.waited
+    $fileSeq = (Get-Content -LiteralPath (Join-Path $consumer.folder 'jobs/events.jsonl') | Select-Object -Last 1 | ConvertFrom-Json).seq
+    Assert-True ($waited.result -eq 'finished' -and $waited.last_event_seq -eq $fileSeq -and $fileSeq -gt 0 -and $waited.last_consumed_event_seq -eq 0) "the wait envelope carries last_event_seq ($($waited.last_event_seq) of $fileSeq) and last_consumed_event_seq"
+    $jobStatus = Invoke-DtJob @('status', '-RunFolder', $consumer.folder, '-JobId', $consumer.job_id)
+    $runStatus = Invoke-DtJob @('status', '-RunFolder', $consumer.folder)
+    Assert-True ($jobStatus.last_event_seq -eq $fileSeq -and $jobStatus.last_consumed_event_seq -eq 0 -and $runStatus.last_event_seq -eq $fileSeq -and $runStatus.last_consumed_event_seq -eq 0) 'job and run status envelopes carry both values'
+    $unregistered = Join-Path $tempRoot 'runs/consume-unregistered'
+    New-Item -ItemType Directory -Path $unregistered -Force | Out-Null
+    $bare = Invoke-DtJob @('status', '-RunFolder', $unregistered)
+    Assert-True ($bare.PSObject.Properties['last_event_seq'] -and $bare.last_event_seq -eq 0 -and $bare.PSObject.Properties['last_consumed_event_seq'] -and $null -eq $bare.last_consumed_event_seq) 'an unregistered run reports last_event_seq 0 and a null consumed cursor'
+    # Per the adapter: handle the events, then consume up to the envelope's last_event_seq.
+    $after = Invoke-DtJob @('consume', '-RunFolder', $consumer.folder, '-Seq', [string]$waited.last_event_seq)
+    Assert-True ($after.last_consumed_event_seq -eq $fileSeq -and (Get-RunState $consumer.state).cursor -eq $fileSeq) 'consume moves the cursor to the envelope seq'
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-LaunchCount 'consume-adapter') -eq 0 -and @(Get-LaunchRecords $consumer.folder).Count -eq 0) 'a managed run whose coordinator consumed per the adapter is not relaunched on the next tick'
+    Assert-True ((Get-LaunchCount 'consume-control') -eq 1) 'the same run without the consume is relaunched on that tick'
 
     # ---- scenario 10a: consumed event and finished run produce nothing across ticks.
     Use-Scenario 'quiet'

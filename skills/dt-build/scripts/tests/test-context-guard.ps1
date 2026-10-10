@@ -431,6 +431,29 @@ try {
     }
     finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
 
+    # ---- an interactive coordinator names itself with -CoordinatorId (no env var): same context line,
+    # refusal, and lease renewal, but never the operator-only refusal of approve.
+    $run = New-Run -Name 'interactive-id'
+    $iT = Join-Path $fixtures 'claude-interactive-id.jsonl'
+    New-ClaudeTranscript -Path $iT -Totals @(100000)
+    Invoke-DtJob @('mark-bootstrap', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Host', 'claude', '-TranscriptPath', $iT) | Out-Null
+    Invoke-DtJob @('lease', '-RunFolder', $run.folder, '-Action', 'acquire', '-CoordinatorId', 'ci', '-Host', 'claude') | Out-Null
+    Add-ClaudeUsage -Path $iT -Total 170000
+    $leasePath = Join-Path $run.folder 'coordinator.lease'
+    $aged = Get-Content -Raw -LiteralPath $leasePath | ConvertFrom-Json
+    $aged.expires_utc = [DateTime]::UtcNow.AddSeconds(30).ToString('o')
+    Write-Utf8 -Path $leasePath -Content ($aged | ConvertTo-Json)
+    $iStart = Invoke-DtJobRaw @('start', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Command', 'Write-Output nope')
+    Assert-True ($iStart.exit -ne 0 -and $iStart.text -match 'ROTATE_REQUIRED' -and -not (Test-Path -LiteralPath (Join-Path $run.folder 'jobs/j-0001.json'))) "an interactive start with -CoordinatorId past hard is refused with ROTATE_REQUIRED ($($iStart.text))"
+    $renewedAt = [DateTime]::Parse([string](Get-Content -Raw -LiteralPath $leasePath | ConvertFrom-Json -AsHashtable).expires_utc, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+    Assert-True ($renewedAt -gt [DateTime]::UtcNow.AddSeconds(500)) "the -CoordinatorId call renews the interactive lease (expires $($renewedAt.ToString('o')))"
+    $iStatus = Invoke-DtJob @('status', '-RunFolder', $run.folder, '-CoordinatorId', 'ci')
+    Assert-True ($iStatus.context -like 'context: 170000 rotate *') "a -CoordinatorId call carries the context line ($($iStatus.context))"
+    Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Operation', 'merge', '-Message', 'test boundary.') | Out-Null
+    $iApprove = Invoke-DtJobRaw @('approve', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Operation', 'merge')
+    $iState = Get-Content -Raw -LiteralPath $run.state
+    Assert-True ($iApprove.exit -eq 0 -and $iApprove.text -notmatch 'DT_JOB_OPERATOR_ONLY' -and $iState -match '(?m)^run_status: runnable') "approve with only -CoordinatorId (no env var) is not refused ($($iApprove.text))"
+
     # ---- before a marker, only the 200k ceiling applies (transcript discovered by cwd, host from the lease).
     $run = New-Run -Name 'ceiling'
     $ceilWork = Join-Path $tempRoot 'ceiling-work'
@@ -615,6 +638,31 @@ try {
         if ($null -ne (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Bash' @{ command = $cmd }))) { throw "ASSERT_FAIL: allowed command was denied past hard: $cmd" }
     }
     $script:passed++
+    # Past hard, a dt-job start is denied however its verb is written; the other dt-job verbs stay allowed.
+    $startCommands = @(
+        "pwsh -NoProfile -File `"$dtJob`" start -RunFolder x -CoordinatorId hc1 -Command y",
+        "pwsh -NoProfile -File `"$dtJob`" -Verb start -RunFolder x -Command y",
+        'pwsh -File dt-job.ps1 -RunFolder x -Verb:start -Command y',
+        'pwsh -File dt-job.ps1 -verb "START" -RunFolder x -Command y',
+        "& `"$dtJob`" 'start' -RunFolder x -Command y",
+        'git status; pwsh -File scripts/dt-job.ps1 -RunFolder x -Ver start -Command y'
+    )
+    foreach ($cmd in $startCommands) {
+        $r = Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Bash' @{ command = $cmd })
+        if (-not (Test-Denied $r) -or $r.hookSpecificOutput.permissionDecisionReason -notmatch 'dt-job start is blocked' -or $r.hookSpecificOutput.permissionDecisionReason -notmatch 'request-continuation') { throw "ASSERT_FAIL: dt-job start was not denied past hard: $cmd" }
+    }
+    $script:passed++
+    $otherVerbs = @(
+        'pwsh -File dt-job.ps1 -Verb status -RunFolder x -CoordinatorId hc1 -Json',
+        'pwsh -File dt-job.ps1 consume -RunFolder x -Seq 3 -CoordinatorId hc1',
+        'pwsh -File dt-job.ps1 -Verb irreversible -RunFolder x -Action begin -Operation merge -CoordinatorId hc1',
+        'pwsh -File dt-job.ps1 wait -RunFolder x -JobId j-0001 -All -TimeoutSec 5 -CoordinatorId hc1'
+    )
+    foreach ($cmd in $otherVerbs) {
+        if ($null -ne (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Bash' @{ command = $cmd }))) { throw "ASSERT_FAIL: a non-start dt-job verb was denied past hard: $cmd" }
+    }
+    $script:passed++
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookOk 'Bash' @{ command = "pwsh -NoProfile -File `"$dtJob`" start -RunFolder x -Command y" }))) 'below the hard limit the hook allows dt-job start'
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Write' @{ file_path = 'x'; content = 'state' }))) 'past hard, writing state is still allowed'
     Write-Lease -RunFolder $run.folder -CoordinatorId 'hc1' -LeaseHost 'claude'
     Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'begin', '-Operation', 'merge', '-CoordinatorId', 'hc1') | Out-Null

@@ -239,6 +239,26 @@ function Test-HookShellAllowed {
     return $true
 }
 
+function Test-HookShellStartsJob {
+    # True when a segment runs dt-job.ps1 with the start verb, positional or as -Verb (quoted, -Verb:start,
+    # or an abbreviation). Any argument that is exactly start counts: no call a past-hard coordinator still
+    # needs carries one.
+    param([string]$CommandText)
+    if (-not $CommandText) { return $false }
+    foreach ($segment in (Split-HookShellSegments $CommandText)) {
+        foreach ($pattern in $script:HookShellAllowed) {
+            $call = [regex]::Match($segment, $pattern)
+            if (-not $call.Success) { continue }
+            if ($call.Value -notmatch "(?i)dt-job\.ps1['`"]?$") { break }
+            foreach ($arg in [regex]::Matches($segment.Substring($call.Index + $call.Length), "`"[^`"]*`"|'[^']*'|\S+")) {
+                if ($arg.Value -match "(?i)^(?:-v\w*:)?['`"]?start['`"]?$") { return $true }
+            }
+            break
+        }
+    }
+    return $false
+}
+
 function Get-HookDenyReason {
     # The deny reason for this call, or $null to allow it.
     param([Parameter(Mandatory)]$HookInput, [Parameter(Mandatory)]$Coordinator, [Parameter(Mandatory)]$Context)
@@ -248,7 +268,13 @@ function Get-HookDenyReason {
     if ($Context.state -eq 'rotate' -and -not $Context.deferred) {
         $hard = $false
         if ($script:HookDiscretionaryTools -contains $tool) { $hard = $true }
-        elseif ($script:HookShellTools -contains $tool -and -not (Test-HookShellAllowed ([string](Get-HookProperty $toolInput 'command')))) { $hard = $true }
+        elseif ($script:HookShellTools -contains $tool) {
+            $shellCommand = [string](Get-HookProperty $toolInput 'command')
+            if (-not (Test-HookShellAllowed $shellCommand)) { $hard = $true }
+            elseif (Test-HookShellStartsJob $shellCommand) {
+                return "dt-build context guard: $($Context.line). This coordinator is past its hard context limit, so dt-job start is blocked: no new dispatch. Next step: write _build-state.md and the coordinator handoff, run pwsh -NoProfile -File `"$($script:HookDtJob)`" request-continuation -RunFolder `"$runFolder`" -Reason context_rotation, release the lease, and end the turn."
+            }
+        }
         if ($hard) {
             return "dt-build context guard: $($Context.line). This coordinator is past its hard context limit, so $tool is blocked. Next step: write _build-state.md and the coordinator handoff, run pwsh -NoProfile -File `"$($script:HookDtJob)`" request-continuation -RunFolder `"$runFolder`" -Reason context_rotation, release the lease, and end the turn."
         }

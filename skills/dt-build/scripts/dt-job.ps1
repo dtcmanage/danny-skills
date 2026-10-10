@@ -106,7 +106,9 @@ $script:DtJobLeaseRenewMaxSec = 60
 $script:DtJobWaitPollMs = 500
 $script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
 $script:DtJobAlertScript = Join-Path $PSScriptRoot '..\..\..\scripts\model-router\send-router-alert.ps1'
-# The coordinator's context report for this call; set only when DT_BUILD_COORDINATOR_ID is.
+# The calling coordinator: -CoordinatorId, else DT_BUILD_COORDINATOR_ID; $null for anyone else.
+$script:DtJobCoordinator = $null
+# The coordinator's context report for this call; set only when the call has a coordinator.
 $script:DtJobContext = $null
 # Room the context line takes inside the envelope cap.
 $script:DtJobContextReserveBytes = 256
@@ -459,7 +461,7 @@ function Get-DtJobEnvelopeBytes {
 function New-DtJobEnvelope {
     # Bounded result: at most 8 KB in total, every line at most 400 characters, and a
     # truncation marker plus the full-file evidence path whenever anything is cut.
-    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Record)
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Record, $Cursor = $null)
     $paths = Get-DtJobPaths -RunFolder $RunFolder
     $jobDir = Join-Path $paths.Jobs $Record.job_id
     $stdout = Join-Path $jobDir 'stdout.log'
@@ -514,6 +516,7 @@ function New-DtJobEnvelope {
         truncated     = $false
         truncated_evidence = $cutPaths
     }
+    if ($null -ne $Cursor) { $envelope.last_event_seq = $Cursor.last_event_seq; $envelope.last_consumed_event_seq = $Cursor.last_consumed_event_seq }
     if ($excerptCut) { $cutPaths.Add($stdout) }
     if ($stderrCut) { $cutPaths.Add($stderr) }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $excerpt.Count -gt 0) {
@@ -537,14 +540,16 @@ function New-DtJobEnvelope {
 }
 
 function New-DtJobRunEnvelope {
-    param([Parameter(Mandatory)][string]$RunFolder)
+    param([Parameter(Mandatory)][string]$RunFolder, $Cursor = $null, $Records = $null)
     $paths = Get-DtJobPaths -RunFolder $RunFolder
     $cut = $false
     $jobs = [System.Collections.Generic.List[object]]::new()
-    foreach ($r in (Get-DtJobRecords -RunFolder $RunFolder)) {
+    $source = if ($null -ne $Records) { @($Records) } else { @(Get-DtJobRecords -RunFolder $RunFolder) }
+    foreach ($r in $source) {
         $jobs.Add([ordered]@{ job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)) })
     }
     $envelope = [ordered]@{ run_folder = $paths.Root; job_count = $jobs.Count; jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
+    if ($null -ne $Cursor) { $envelope.last_event_seq = $Cursor.last_event_seq; $envelope.last_consumed_event_seq = $Cursor.last_consumed_event_seq }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
         $cut = $true
@@ -654,14 +659,35 @@ function Invoke-DtJobStart {
     Write-DtJobOutput -Object ([pscustomobject][ordered]@{ job_id = $id; status = $record.status; status_reason = $record.status_reason; job_file = (Join-Path $paths.Jobs "$id.json") }) -AsJson:$Json
 }
 
+function Get-DtJobConsumedSeq {
+    # The run's consumed-event cursor, or $null when neither the registry nor -BuildStatePath names its state file.
+    param([Parameter(Mandatory)][string]$RunFolder)
+    try { $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId } catch { return $null }
+    return (Get-DtJobRunState -BuildStatePath $ctx.build_state_path).last_consumed_event_seq
+}
+
+function Get-DtJobSnapshot {
+    # Records and the last event seq read together under the run lock, so the seq a coordinator consumes
+    # covers exactly the events behind the states it was shown.
+    param([Parameter(Mandatory)][string]$RunFolder, [string[]]$Ids = $null)
+    $snap = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $records = if ($null -ne $Ids) { @($Ids | ForEach-Object { Get-DtJobRecord -RunFolder $RunFolder -JobId $_ }) } else { @(Get-DtJobRecords -RunFolder $RunFolder) }
+        [pscustomobject]@{ records = $records; last_event_seq = (Get-DtJobLastEventSeq -RunFolder $RunFolder) }
+    }
+    $snap | Add-Member -NotePropertyName last_consumed_event_seq -NotePropertyValue (Get-DtJobConsumedSeq -RunFolder $RunFolder)
+    return $snap
+}
+
 function Invoke-DtJobStatus {
     if ($JobId) {
-        $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId
+        $snap = Get-DtJobSnapshot -RunFolder $RunFolder -Ids @($JobId)
+        $record = @($snap.records)[0]
         if ($null -eq $record) { throw "DT_JOB_UNKNOWN: $JobId" }
-        Write-DtJobOutput -Object (New-DtJobEnvelope -RunFolder $RunFolder -Record $record) -AsJson:$Json
+        Write-DtJobOutput -Object (New-DtJobEnvelope -RunFolder $RunFolder -Record $record -Cursor $snap) -AsJson:$Json
     }
     else {
-        Write-DtJobOutput -Object (New-DtJobRunEnvelope -RunFolder $RunFolder) -AsJson:$Json
+        $snap = Get-DtJobSnapshot -RunFolder $RunFolder
+        Write-DtJobOutput -Object (New-DtJobRunEnvelope -RunFolder $RunFolder -Cursor $snap -Records $snap.records) -AsJson:$Json
     }
 }
 
@@ -1000,7 +1026,7 @@ function Invoke-DtJobWait {
     if ($Any -eq $All) { throw 'DT_JOB_USAGE: wait takes exactly one of -Any or -All.' }
     if ($TimeoutSec -le 0) { throw 'DT_JOB_USAGE: wait requires -TimeoutSec greater than 0.' }
     foreach ($id in $ids) { if ($null -eq (Get-DtJobRecord -RunFolder $RunFolder -JobId $id)) { throw "DT_JOB_UNKNOWN: $id" } }
-    $coordinator = $env:DT_BUILD_COORDINATOR_ID
+    $coordinator = $script:DtJobCoordinator
     $renewEverySec = Get-DtJobWaitRenewSec (Get-DtJobLease -RunFolder $RunFolder)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
     $lastRenew = [DateTime]::UtcNow
@@ -1015,6 +1041,10 @@ function Invoke-DtJobWait {
         }
         Start-Sleep -Milliseconds $script:DtJobWaitPollMs
     }
+    # Terminal states never revert, so the locked re-read only adds finished jobs.
+    $snap = Get-DtJobSnapshot -RunFolder $RunFolder -Ids $ids
+    $records = @($snap.records)
+    $done = @($records | Where-Object { Test-DtJobTerminal $_.status })
     $cut = $false
     $lines = [System.Collections.Generic.List[string]]::new()
     $jobs = [System.Collections.Generic.List[object]]::new()
@@ -1024,7 +1054,7 @@ function Invoke-DtJobWait {
         $lines.Add((Limit-DtJobLine "$($r.job_id) $($r.status) exit=$($r.exit_code) evidence=$($r.output_path)" ([ref]$cut)))
     }
     $running = @($records | Where-Object { -not (Test-DtJobTerminal $_.status) } | ForEach-Object { $_.job_id })
-    $envelope = [ordered]@{ result = $result; jobs = $jobs; still_running = @($running); omitted = 0; truncated = $false }
+    $envelope = [ordered]@{ result = $result; jobs = $jobs; still_running = @($running); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
     if ($Json -and $null -ne $script:DtJobContext) { $envelope.context = $script:DtJobContext.line }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -1400,7 +1430,7 @@ function Invoke-DtJobMarkBootstrap {
         Write-DtJobAtomic -Path $paths.ContextBaseline -Content ($all | ConvertTo-Json -Depth 6)
         return [pscustomobject]@{ entry = $new; marked = $true }
     }
-    if ($env:DT_BUILD_COORDINATOR_ID) { $script:DtJobContext = Get-DtJobContextReport -RunFolder $RunFolder -CoordinatorId $env:DT_BUILD_COORDINATOR_ID }
+    $script:DtJobContext = Get-DtJobContextReport -RunFolder $RunFolder -CoordinatorId $coordinator
     $out = [pscustomobject][ordered]@{
         coordinator_id  = $result.entry.coordinator_id
         host            = $result.entry.host
@@ -1534,14 +1564,18 @@ $PassEnv = Split-DtJobList $PassEnv
 # -JobId stays a string for the single-job verbs; wait reads a comma- or space-separated list from it.
 $script:DtJobIds = @(([string]$JobId) -split '[,\s]+' | Where-Object { $_ })
 
+# An interactive coordinator's shell keeps no env, so -CoordinatorId identifies it on every call. It counts
+# like DT_BUILD_COORDINATOR_ID for renewal and context, never for the operator-only refusal.
+$script:DtJobCoordinator = if ($CoordinatorId) { $CoordinatorId } elseif ($env:DT_BUILD_COORDINATOR_ID) { $env:DT_BUILD_COORDINATOR_ID } else { $null }
+
 # Every verb except lease itself renews the caller's lease when it holds it.
-if ($env:DT_BUILD_COORDINATOR_ID -and $Verb -ne 'lease') {
-    try { [void](Update-DtJobLeaseIfHolder -RunFolder $RunFolder -CoordinatorId $env:DT_BUILD_COORDINATOR_ID) } catch { }
+if ($script:DtJobCoordinator -and $Verb -ne 'lease') {
+    try { [void](Update-DtJobLeaseIfHolder -RunFolder $RunFolder -CoordinatorId $script:DtJobCoordinator) } catch { }
 }
 
 # A coordinator's every call reports its context; only start is ever refused on it.
-if ($env:DT_BUILD_COORDINATOR_ID) {
-    if ($Verb -ne 'mark-bootstrap') { $script:DtJobContext = Get-DtJobContextReport -RunFolder $RunFolder -CoordinatorId $env:DT_BUILD_COORDINATOR_ID -RequestedHost $CoordinatorHost }
+if ($script:DtJobCoordinator) {
+    if ($Verb -ne 'mark-bootstrap') { $script:DtJobContext = Get-DtJobContextReport -RunFolder $RunFolder -CoordinatorId $script:DtJobCoordinator -RequestedHost $CoordinatorHost }
     $script:DtJobEnvelopeMaxBytes -= $script:DtJobContextReserveBytes
 }
 

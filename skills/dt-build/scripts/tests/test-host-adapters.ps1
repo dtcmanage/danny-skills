@@ -39,7 +39,7 @@ foreach ($name in @('CODEX_HOME', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALER
 
 # 4090 words at dt-build 2.20.6, plus the 400 words this change may add.
 $skillWordCap = 4490
-$adapterWordCap = 900
+$adapterWordCap = 1000
 $sections = @('Dispatch', 'Waiting and completion', 'Bootstrap and context', 'Hooks', 'Managed mode and relaunch', 'Evidence')
 
 $exitCode = 0
@@ -63,11 +63,29 @@ try {
         Assert-True ($text.Contains('read-evidence.ps1') -and $text.Contains('invoke-claude-chunk.ps1') -and $text.Contains('invoke-codex-chunk.ps1')) "$name names read-evidence and both wrappers"
         Assert-True ($text -match 'Never export it in an interactive shell') "$name keeps DT_BUILD_COORDINATOR_ID out of interactive shells"
         Assert-True ($text -match 'keep the `run_status` and `last_consumed_event_seq` lines') "$name preserves the run-state lines on rotation"
+        # Coordinators consume their triggers: both the waiting and the managed-mode sections say so.
+        $consume = 'dt-job consume -CoordinatorId <id> -Seq <last_event_seq>'
+        foreach ($section in @('Waiting and completion', 'Managed mode and relaunch')) {
+            $body = [regex]::Match($text, "(?s)## $section\s*(.*?)(?=\r?\n## |\z)").Groups[1].Value
+            Assert-True ($body.Contains($consume) -and $body.Contains('last_event_seq')) "$name $section tells the coordinator to run $consume"
+        }
+        Assert-True ($text.Contains('`last_event_seq` and `last_consumed_event_seq`')) "$name says wait and status envelopes carry both seq values"
+        # Every dt-job example with arguments carries the coordinator id, except Danny's approve and resume.
+        Assert-True ($text -match 'Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`') "$name tells the coordinator to pass -CoordinatorId on every dt-job call"
+        $examples = @([regex]::Matches($text, '`(dt-job ([^\s`]+)(?: [^`]*)?)`') | Where-Object { $_.Groups[1].Value -match '^dt-job \S+ ' })
+        Assert-True ($examples.Count -ge 12) "$name has dt-job command examples to check ($($examples.Count))"
+        foreach ($example in $examples) {
+            if (@('approve', 'resume') -contains $example.Groups[2].Value) { continue }
+            Assert-True ($example.Groups[1].Value.Contains('-CoordinatorId <id>')) "$name dt-job example carries -CoordinatorId <id>: $($example.Groups[1].Value)"
+        }
+        Assert-True ($text.Contains('`dt-job irreversible -CoordinatorId <id> -Action begin -Operation <op>`')) "$name irreversible command passes -CoordinatorId"
+        Assert-True ($text -match 'Never export it in an interactive shell; pass `-CoordinatorId <id>` instead' -and $text -match 'renews it through long waits') "$name keeps interactive leases live through -CoordinatorId"
     }
     $claudeText = Get-Content -Raw -LiteralPath (Join-Path $refDir 'adapter-claude.md')
     $codexText = Get-Content -Raw -LiteralPath (Join-Path $refDir 'adapter-codex.md')
     Assert-True ($claudeText -match 'run_in_background: true' -and $claudeText -match 'Monitor heartbeats') 'Claude waits through one background Bash call and bans Monitor heartbeats'
     Assert-True ($claudeText -match 'Agent tool') 'Claude adapter keeps the Agent tool path'
+    Assert-True ($claudeText -match 'the PreToolUse hook denies it' -and $claudeText -match 'Agent, `dt-job start`, and every shell command') 'Claude adapter names the hook denial of dt-job start past the hard limit'
     Assert-True ($codexText -match 'in the foreground' -and $codexText -match 'call `dt-job wait` again') 'Codex waits in the foreground and re-calls on wait_timeout'
     Assert-True (-not $codexText.Contains('CronCreate')) 'Codex adapter does not mention CronCreate'
     $codexHooks = [regex]::Match($codexText, '(?s)## Hooks\s*(.*?)(?=\r?\n## )').Groups[1].Value
@@ -124,7 +142,7 @@ try {
 
     # run-artifact-lifecycle.md: the orchestration files, kept out of milestone commits.
     $lifecycle = Get-Content -Raw -LiteralPath (Join-Path $refDir 'run-artifact-lifecycle.md')
-    foreach ($file in @('jobs/', 'coordinator.lease', 'coordinator.lock', 'context-baseline.json', 'irreversible.json', 'approvals.json', 'launches.jsonl', 'notifications.jsonl', 'rotations.jsonl')) {
+    foreach ($file in @('jobs/', 'coordinator.lease', 'coordinator.lock', 'context-baseline.json', 'irreversible.json', 'approvals.json', 'launches.jsonl', 'notifications.jsonl', 'rotations.jsonl', 'kill-failed.json', 'step-errors.json', 'jobs/<job_id>/', 'spec.json', 'stdout.log', 'stderr.log', 'summary.json')) {
         Assert-True ($lifecycle.Contains("``$file``")) "run-artifact-lifecycle.md lists $file"
     }
     Assert-True ($lifecycle -match 'out of milestone commits') 'orchestration files stay out of milestone commits'
