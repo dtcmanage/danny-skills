@@ -191,9 +191,10 @@ function Get-LiveReadEvidence([string]$Path, [string]$Vendor) {
                 }
             }
         }
-        if ($Vendor -eq 'codex' -and $row.type -eq 'response_item' -and $row.payload.type -eq 'function_call') {
+        # Codex logs a shell call as function_call (arguments) or, from 0.162, custom_tool_call (input).
+        if ($Vendor -eq 'codex' -and $row.type -eq 'response_item' -and $row.payload.type -in @('function_call','custom_tool_call')) {
             $call = $row.payload
-            $arguments = [string]$call.arguments
+            $arguments = if ($call.ContainsKey('arguments')) { [string]$call.arguments } else { [string]$call.input }
             if ($arguments -match 'large\.log') {
                 if ($arguments -match 'LIVE_DIRECT_READ' -and $arguments -match 'Get-Content') { $direct[$call.call_id] = $true }
                 if ($arguments -match 'LIVE_SHELL_READ' -and $arguments -match 'cmd /c type') { $shell[$call.call_id] = $true }
@@ -253,7 +254,9 @@ Run only this one-line task in the temporary repo: Write-Output echo. Do not edi
 Return exactly a dt-build v3 report: DT_BUILD_REPORT_VERSION: 3, RUN_ID: $($r.id), chunk_id: echo, attempt: 1, VERDICT: PASS, CHANGED_FILES: NONE, COMMANDS_AND_RESULTS: the echo command and result, EVIDENCE_PATHS: NONE, UNRESOLVED_BLOCKERS: NONE, DISCOVERED_ENHANCEMENTS: NONE, CONTINUATION_STATE: NONE. Put each header and its value on separate lines except the first four identity fields.
 "@
                 $wrapper = Join-Path $scripts "invoke-$vendor-chunk.ps1"
-                $command = "& $(Quote $wrapper) -ProjectPath $(Quote $work) -PromptPath $(Quote $prompt) -OutputPath $(Quote $output) -Category mechanical -TimeoutMs 120000 -Json"
+                $routed = (& pwsh -NoProfile -File (Join-Path $scripts '../../../scripts/model-router/resolve-model.ps1') -Category mechanical -Lane $vendor -Json | Select-Object -Last 1) | ConvertFrom-Json
+                Assert ($routed.status -eq 'ok' -and $routed.effort) "router gave no $vendor mechanical pick ($($routed.status))"
+                $command = "& $(Quote $wrapper) -ProjectPath $(Quote $work) -PromptPath $(Quote $prompt) -OutputPath $(Quote $output) -Category mechanical -Effort $($routed.effort) -SelectionReason 'live scenario echo worker' -TimeoutMs 120000 -Json"
                 $j = Job @('start','-RunFolder',$r.folder,'-Kind','worker','-Vendor',$vendor,'-Category','mechanical','-Command',$command,'-PassEnv','DT_MODEL_ROUTER_STATE','-TimeoutSec','150')
                 $deadline = [DateTime]::UtcNow.AddSeconds(160)
                 do { Wait-Result $r $j.job_id | Out-Null; $row = Record $r $j.job_id } while ($row.status -in @('running','queued') -and [DateTime]::UtcNow -lt $deadline)
@@ -506,7 +509,8 @@ if (`$script:alive) { throw 'coordinator survived one tick' }
         $reads = Get-LiveReadEvidence $liveFixture codex
         Assert (-not $reads.direct_attempt -and -not $reads.shell_attempt) 'model claim counted as Codex read attempts'
         foreach ($cmd in @('Get-Content large.log # LIVE_DIRECT_READ','cmd /c type large.log # LIVE_SHELL_READ')) {
-            $call = @{type='response_item';payload=@{type='function_call';name='exec_command';call_id=$cmd;arguments=(@{cmd=$cmd} | ConvertTo-Json -Compress)}}
+            $call = if ($cmd -like '*LIVE_DIRECT_READ') { @{type='response_item';payload=@{type='function_call';name='exec_command';call_id=$cmd;arguments=(@{cmd=$cmd} | ConvertTo-Json -Compress)}} }
+                     else { @{type='response_item';payload=@{type='custom_tool_call';name='exec';call_id=$cmd;input="text(await tools.exec_command({cmd:'$cmd'}));"}} }
             [IO.File]::AppendAllText($liveFixture,"`n" + ($call | ConvertTo-Json -Compress -Depth 8))
         }
         $writer = [IO.File]::Open($liveFixture,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
