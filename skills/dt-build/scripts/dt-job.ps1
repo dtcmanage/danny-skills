@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'status', 'cancel', 'reconcile')]
+    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'resume', 'finish')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -32,6 +32,45 @@ param(
 
     [string[]]$PassEnv = @(),
 
+    [switch]$Any,
+
+    [switch]$All,
+
+    [ValidateSet('acquire', 'renew', 'release')]
+    [string]$Action,
+
+    [string]$CoordinatorId,
+
+    # $Host and $PID are automatic variables, so these bind through aliases.
+    [Alias('Host')]
+    [ValidateSet('claude', 'codex')]
+    [string]$CoordinatorHost,
+
+    [string]$SessionId,
+
+    [Alias('Pid')]
+    [int]$CoordinatorPid = 0,
+
+    [ValidateSet('watcher', 'interactive')]
+    [string]$LaunchedBy = 'interactive',
+
+    [int]$TtlSec = 0,
+
+    [string]$BuildStatePath,
+
+    [ValidateSet('claude', 'codex')]
+    [string]$PinnedHost,
+
+    [switch]$Managed,
+
+    [long]$Seq = -1,
+
+    [string]$Reason,
+
+    [string]$Operation,
+
+    [string]$Message,
+
     [switch]$Json
 )
 
@@ -52,6 +91,11 @@ $script:DtJobEnvSensitive = @('*TOKEN*', '*SECRET*', '*KEY*', '*PASSWORD*')
 $script:DtJobLockDepth = 0
 $script:DtJobLockStream = $null
 $script:DtJobRunnerPath = Join-Path $PSScriptRoot 'dt-job-runner.ps1'
+$script:DtJobLeaseDefaultTtlSec = 600
+$script:DtJobLeaseRenewMaxSec = 60
+$script:DtJobWaitPollMs = 500
+$script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
+$script:DtJobAlertScript = Join-Path $PSScriptRoot '..\..\..\scripts\model-router\send-router-alert.ps1'
 
 function Get-DtJobPaths {
     param([Parameter(Mandatory)][string]$RunFolder)
@@ -63,6 +107,11 @@ function Get-DtJobPaths {
         Locks  = Join-Path $jobs 'locks'
         Events = Join-Path $jobs 'events.jsonl'
         RunLock = Join-Path (Join-Path $jobs 'locks') 'run.lock'
+        Lease  = Join-Path $root 'coordinator.lease'
+        CoordinatorLock = Join-Path $root 'coordinator.lock'
+        Approvals = Join-Path $root 'approvals.json'
+        Launches = Join-Path $root 'launches.jsonl'
+        Notifications = Join-Path $root 'notifications.jsonl'
     }
 }
 
@@ -642,20 +691,455 @@ function Invoke-DtJobReconcile {
     Write-DtJobOutput -Object $summary -AsJson:$Json
 }
 
+function Get-DtJobEvents {
+    # Parsed events in file order; a partial or unparsable line is skipped.
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $eventsPath = (Get-DtJobPaths -RunFolder $RunFolder).Events
+    if (-not (Test-Path -LiteralPath $eventsPath)) { return @() }
+    $events = [System.Collections.Generic.List[object]]::new()
+    foreach ($line in ((Read-DtJobText -Path $eventsPath) -split "\r?\n")) {
+        if (-not $line.Trim()) { continue }
+        try { $parsed = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        if ($null -ne $parsed -and $parsed.PSObject.Properties['seq']) { $events.Add($parsed) }
+    }
+    return @($events)
+}
+
+function Get-DtJobLastEventSeq {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $max = [int64]0
+    foreach ($evt in (Get-DtJobEvents -RunFolder $RunFolder)) { if ([int64]$evt.seq -gt $max) { $max = [int64]$evt.seq } }
+    return $max
+}
+
+function Get-DtJobLease {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $path = (Get-DtJobPaths -RunFolder $RunFolder).Lease
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try { return (Read-DtJobText -Path $path | ConvertFrom-Json -ErrorAction Stop) } catch { return $null }
+}
+
+function Save-DtJobLease {
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Lease)
+    Write-DtJobAtomic -Path (Get-DtJobPaths -RunFolder $RunFolder).Lease -Content ($Lease | ConvertTo-Json -Depth 4)
+}
+
+function Test-DtJobLeaseExpired {
+    param($Lease, [DateTime]$NowUtc = [DateTime]::UtcNow)
+    if ($null -eq $Lease -or -not $Lease.expires_utc) { return $true }
+    return ((ConvertTo-DtJobUtc $Lease.expires_utc) -le $NowUtc)
+}
+
+function Get-DtJobLeaseTtl {
+    param($Lease)
+    if ($null -ne $Lease -and $Lease.PSObject.Properties['ttl_sec'] -and [int]$Lease.ttl_sec -gt 0) { return [int]$Lease.ttl_sec }
+    return $script:DtJobLeaseDefaultTtlSec
+}
+
+function Update-DtJobLeaseIfHolder {
+    # Renews only the holder's own, unreleased lease; anyone else's lease is left alone.
+    param([Parameter(Mandatory)][string]$RunFolder, [string]$CoordinatorId)
+    if (-not $CoordinatorId) { return $false }
+    if (-not (Test-Path -LiteralPath (Get-DtJobPaths -RunFolder $RunFolder).Lease)) { return $false }
+    return (Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $lease = Get-DtJobLease -RunFolder $RunFolder
+        if ($null -eq $lease -or $lease.coordinator_id -ne $CoordinatorId) { return $false }
+        if ($lease.PSObject.Properties['released_utc'] -and $lease.released_utc) { return $false }
+        $lease.expires_utc = [DateTime]::UtcNow.AddSeconds((Get-DtJobLeaseTtl $lease)).ToString('o')
+        Save-DtJobLease -RunFolder $RunFolder -Lease $lease
+        return $true
+    })
+}
+
+function Get-DtJobRunState {
+    # Missing or placeholder values read as runnable with cursor 0.
+    param([Parameter(Mandatory)][string]$BuildStatePath)
+    $status = 'runnable'
+    $cursor = [int64]0
+    foreach ($line in ((Read-DtJobText -Path $BuildStatePath) -split "\r?\n")) {
+        if ($line -match '^run_status:\s*(\S+)\s*$' -and $script:DtJobRunStatuses -contains $Matches[1]) { $status = $Matches[1] }
+        elseif ($line -match '^last_consumed_event_seq:\s*(\d+)\s*$') { $cursor = [int64]$Matches[1] }
+    }
+    return [pscustomobject]@{ run_status = $status; last_consumed_event_seq = $cursor }
+}
+
+function Set-DtJobRunState {
+    # Atomic full-file rewrite that changes only the run_status and last_consumed_event_seq lines,
+    # inserting them directly under updated_utc when absent. Callers hold the run lock.
+    param([Parameter(Mandatory)][string]$BuildStatePath, [string]$RunStatus, [Nullable[long]]$Cursor)
+    $bytes = [System.IO.File]::ReadAllBytes($BuildStatePath)
+    $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $text = Read-DtJobText -Path $BuildStatePath
+    $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $current = Get-DtJobRunState -BuildStatePath $BuildStatePath
+    $status = if ($RunStatus) { $RunStatus } else { $current.run_status }
+    $seq = if ($null -ne $Cursor) { [int64]$Cursor } else { $current.last_consumed_event_seq }
+    $statusLine = "run_status: $status"
+    $cursorLine = "last_consumed_event_seq: $seq"
+    $lines = [System.Collections.Generic.List[string]]::new([string[]]($text -split "\r?\n"))
+    $statusIndex = -1; $cursorIndex = -1; $updatedIndex = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($statusIndex -lt 0 -and $lines[$i] -match '^run_status:') { $statusIndex = $i }
+        elseif ($cursorIndex -lt 0 -and $lines[$i] -match '^last_consumed_event_seq:') { $cursorIndex = $i }
+        elseif ($updatedIndex -lt 0 -and $lines[$i] -match '^updated_utc:') { $updatedIndex = $i }
+    }
+    if ($statusIndex -ge 0 -and $cursorIndex -ge 0) {
+        $lines[$statusIndex] = $statusLine
+        $lines[$cursorIndex] = $cursorLine
+    }
+    elseif ($statusIndex -ge 0) {
+        $lines[$statusIndex] = $statusLine
+        $lines.Insert($statusIndex + 1, $cursorLine)
+    }
+    elseif ($cursorIndex -ge 0) {
+        $lines[$cursorIndex] = $cursorLine
+        $lines.Insert($cursorIndex, $statusLine)
+    }
+    else {
+        if ($updatedIndex -lt 0) { throw "DT_JOB_BUILD_STATE_SHAPE: no updated_utc line in $BuildStatePath" }
+        $lines.Insert($updatedIndex + 1, $statusLine)
+        $lines.Insert($updatedIndex + 2, $cursorLine)
+    }
+    $newText = $lines -join $newline
+    if ($newText -ceq $text) { return }
+    if ($hasBom) { $newText = [string][char]0xFEFF + $newText }
+    Write-DtJobAtomic -Path $BuildStatePath -Content $newText
+}
+
+function Get-DtJobRegistryPath {
+    $dir = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'dt-build' }
+    return (Join-Path ([System.IO.Path]::GetFullPath($dir)) 'active-runs.json')
+}
+
+function Invoke-DtJobRegistryLocked {
+    param([Parameter(Mandatory)][scriptblock]$Body, [int]$LockTimeoutSec = 60)
+    $registry = Get-DtJobRegistryPath
+    New-Item -ItemType Directory -Path (Split-Path -Parent $registry) -Force | Out-Null
+    $deadline = [DateTime]::UtcNow.AddSeconds($LockTimeoutSec)
+    while ($true) {
+        try {
+            $stream = [System.IO.File]::Open("$registry.lock", [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            break
+        }
+        catch [System.IO.IOException] {
+            if ([DateTime]::UtcNow -gt $deadline) { throw "DT_JOB_LOCK_TIMEOUT: $registry.lock" }
+            Start-Sleep -Milliseconds (Get-Random -Minimum 20 -Maximum 80)
+        }
+    }
+    try { & $Body }
+    finally { $stream.Dispose() }
+}
+
+function Get-DtJobRegistryRuns {
+    $registry = Get-DtJobRegistryPath
+    if (-not (Test-Path -LiteralPath $registry)) { return @() }
+    $parsed = Read-DtJobText -Path $registry | ConvertFrom-Json
+    if ($null -eq $parsed -or -not $parsed.PSObject.Properties['runs']) { return @() }
+    return @($parsed.runs | Where-Object { $null -ne $_ })
+}
+
+function Save-DtJobRegistryRuns {
+    param([AllowEmptyCollection()][object[]]$Runs = @())
+    Write-DtJobAtomic -Path (Get-DtJobRegistryPath) -Content ([ordered]@{ runs = @($Runs) } | ConvertTo-Json -Depth 6)
+}
+
+function Get-DtJobRegistryEntry {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
+    return (Get-DtJobRegistryRuns | Where-Object { [string]$_.run_folder -ieq $root } | Select-Object -First 1)
+}
+
+function Resolve-DtJobRunContext {
+    param([Parameter(Mandatory)][string]$RunFolder, [string]$BuildStatePath, [string]$RunId)
+    $entry = Get-DtJobRegistryEntry -RunFolder $RunFolder
+    $statePath = if ($BuildStatePath) { $BuildStatePath } elseif ($null -ne $entry) { [string]$entry.build_state_path } else { $null }
+    if (-not $statePath) { throw 'DT_JOB_USAGE: the run is not registered; pass -BuildStatePath.' }
+    $statePath = [System.IO.Path]::GetFullPath($statePath)
+    if (-not (Test-Path -LiteralPath $statePath)) { throw "DT_JOB_BUILD_STATE_MISSING: $statePath" }
+    $resolvedRunId = if ($RunId) { $RunId } elseif ($null -ne $entry) { [string]$entry.run_id } else { Split-Path -Leaf (Get-DtJobPaths -RunFolder $RunFolder).Root }
+    return [pscustomobject]@{ run_id = $resolvedRunId; build_state_path = $statePath; entry = $entry }
+}
+
+function Get-DtJobApprovals {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $path = (Get-DtJobPaths -RunFolder $RunFolder).Approvals
+    if (Test-Path -LiteralPath $path) {
+        $parsed = Read-DtJobText -Path $path | ConvertFrom-Json
+        return [pscustomobject]@{ awaiting = $parsed.awaiting; approvals = @($parsed.approvals | Where-Object { $null -ne $_ }) }
+    }
+    return [pscustomobject]@{ awaiting = $null; approvals = @() }
+}
+
+function Save-DtJobApprovals {
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Approvals)
+    $content = [ordered]@{ awaiting = $Approvals.awaiting; approvals = @($Approvals.approvals) } | ConvertTo-Json -Depth 5
+    Write-DtJobAtomic -Path (Get-DtJobPaths -RunFolder $RunFolder).Approvals -Content $content
+}
+
+function Send-DtJobRunAlert {
+    # One DM per key per run: a key already sent from this run folder is never sent again.
+    # Delivery and cross-process dedupe belong to send-router-alert.ps1.
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][string]$Message)
+    $log = (Get-DtJobPaths -RunFolder $RunFolder).Notifications
+    if (Test-Path -LiteralPath $log) {
+        foreach ($line in ((Read-DtJobText -Path $log) -split "\r?\n")) {
+            if (-not $line.Trim()) { continue }
+            try { if (($line | ConvertFrom-Json -ErrorAction Stop).key -ceq $Key) { return 'already_sent' } } catch { }
+        }
+    }
+    try {
+        $raw = & pwsh -NoProfile -NonInteractive -File $script:DtJobAlertScript -Key $Key -Message $Message -Json 2>$null
+        $result = (@($raw) | Where-Object { $_ } | Select-Object -Last 1) | ConvertFrom-Json
+    }
+    catch { return 'failed' }
+    if ($null -eq $result -or -not $result.sent) { return 'failed' }
+    [System.IO.File]::AppendAllText($log, (([ordered]@{ key = $Key; channel = $result.channel; sent_utc = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
+    return 'sent'
+}
+
+function Invoke-DtJobWait {
+    $ids = @($script:DtJobIds)
+    if ($ids.Count -eq 0) { throw 'DT_JOB_USAGE: wait requires -JobId.' }
+    if ($Any -eq $All) { throw 'DT_JOB_USAGE: wait takes exactly one of -Any or -All.' }
+    if ($TimeoutSec -le 0) { throw 'DT_JOB_USAGE: wait requires -TimeoutSec greater than 0.' }
+    foreach ($id in $ids) { if ($null -eq (Get-DtJobRecord -RunFolder $RunFolder -JobId $id)) { throw "DT_JOB_UNKNOWN: $id" } }
+    $coordinator = $env:DT_BUILD_COORDINATOR_ID
+    $renewEverySec = [Math]::Max(1, [Math]::Min($script:DtJobLeaseRenewMaxSec, [Math]::Floor((Get-DtJobLeaseTtl (Get-DtJobLease -RunFolder $RunFolder)) / 2)))
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    $lastRenew = [DateTime]::UtcNow
+    while ($true) {
+        $records = @($ids | ForEach-Object { Get-DtJobRecord -RunFolder $RunFolder -JobId $_ })
+        $done = @($records | Where-Object { Test-DtJobTerminal $_.status })
+        if (($Any -and $done.Count -gt 0) -or ($All -and $done.Count -eq $ids.Count)) { $result = 'finished'; break }
+        if ([DateTime]::UtcNow -ge $deadline) { $result = 'wait_timeout'; break }
+        if ($coordinator -and ([DateTime]::UtcNow - $lastRenew).TotalSeconds -ge $renewEverySec) {
+            try { [void](Update-DtJobLeaseIfHolder -RunFolder $RunFolder -CoordinatorId $coordinator) } catch { }
+            $lastRenew = [DateTime]::UtcNow
+        }
+        Start-Sleep -Milliseconds $script:DtJobWaitPollMs
+    }
+    $cut = $false
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $jobs = [System.Collections.Generic.List[object]]::new()
+    foreach ($r in $done) {
+        $evidence = Limit-DtJobLine ([string]$r.output_path) ([ref]$cut)
+        $jobs.Add([ordered]@{ job_id = $r.job_id; status = $r.status; exit_code = $r.exit_code; evidence = $evidence })
+        $lines.Add((Limit-DtJobLine "$($r.job_id) $($r.status) exit=$($r.exit_code) evidence=$($r.output_path)" ([ref]$cut)))
+    }
+    $running = @($records | Where-Object { -not (Test-DtJobTerminal $_.status) } | ForEach-Object { $_.job_id })
+    $envelope = [ordered]@{ result = $result; jobs = $jobs; still_running = @($running); omitted = 0; truncated = $false }
+    while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
+        $jobs.RemoveAt($jobs.Count - 1)
+        $lines.RemoveAt($lines.Count - 1)
+        $envelope.omitted++
+        $cut = $true
+    }
+    $envelope.truncated = $cut
+    if ($Json) { return ($envelope | ConvertTo-Json -Depth 6 -Compress) }
+    if ($envelope.omitted -gt 0) { $lines.Add("...[truncated] $($envelope.omitted) finished job(s) omitted; dt-job status -RunFolder lists all") }
+    if ($result -eq 'wait_timeout') { $lines.Add((Limit-DtJobLine "wait_timeout still_running=$($running -join ',')" ([ref]$cut))) }
+    return $lines
+}
+
+function Invoke-DtJobLease {
+    if (-not $Action) { throw 'DT_JOB_USAGE: lease requires -Action acquire|renew|release.' }
+    if (-not $CoordinatorId) { throw 'DT_JOB_USAGE: lease requires -CoordinatorId.' }
+    $leaseAction = $Action
+    $lease = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $now = [DateTime]::UtcNow
+        $current = Get-DtJobLease -RunFolder $RunFolder
+        $isHolder = ($null -ne $current -and $current.coordinator_id -eq $CoordinatorId)
+        if ($leaseAction -eq 'acquire') {
+            if ($null -ne $current -and -not $isHolder -and -not (Test-DtJobLeaseExpired $current $now)) {
+                throw "DT_JOB_LEASE_HELD: $($current.coordinator_id) holds the lease until $((ConvertTo-DtJobUtc $current.expires_utc).ToString('o'))"
+            }
+            $ttl = if ($TtlSec -gt 0) { $TtlSec } else { $script:DtJobLeaseDefaultTtlSec }
+            $leasePid = if ($CoordinatorPid -gt 0) { $CoordinatorPid } else { $null }
+            $next = [pscustomobject][ordered]@{
+                coordinator_id = $CoordinatorId
+                host           = $(if ($CoordinatorHost) { $CoordinatorHost } else { $null })
+                session_id     = $(if ($SessionId) { $SessionId } else { $null })
+                pid            = $leasePid
+                pid_start_utc  = $(if ($leasePid) { Get-DtJobProcessStartUtc -ProcessId $leasePid } else { $null })
+                launched_by    = $LaunchedBy
+                ttl_sec        = $ttl
+                acquired_utc   = $now.ToString('o')
+                expires_utc    = $now.AddSeconds($ttl).ToString('o')
+                released_utc   = $null
+            }
+        }
+        else {
+            if (-not $isHolder) { throw "DT_JOB_LEASE_NOT_HOLDER: $CoordinatorId does not hold the lease" }
+            $next = $current
+            if (-not $next.PSObject.Properties['released_utc']) { $next | Add-Member -NotePropertyName released_utc -NotePropertyValue $null }
+            if ($leaseAction -eq 'renew') {
+                if ($TtlSec -gt 0) { $next.ttl_sec = $TtlSec }
+                $next.expires_utc = $now.AddSeconds((Get-DtJobLeaseTtl $next)).ToString('o')
+                $next.released_utc = $null
+            }
+            else {
+                # Release expires the lease but keeps its identity, so the watcher can still tell who held it.
+                $next.expires_utc = $now.ToString('o')
+                $next.released_utc = $now.ToString('o')
+            }
+        }
+        Save-DtJobLease -RunFolder $RunFolder -Lease $next
+        $next
+    }
+    Write-DtJobOutput -Object $lease -AsJson:$Json
+}
+
+function Invoke-DtJobRegisterRun {
+    if (-not $BuildStatePath -or -not $RunId -or -not $PinnedHost) { throw 'DT_JOB_USAGE: register-run requires -BuildStatePath, -RunId, and -PinnedHost.' }
+    $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
+    $entry = [ordered]@{
+        run_id           = $RunId
+        run_folder       = $root
+        build_state_path = [System.IO.Path]::GetFullPath($BuildStatePath)
+        pinned_host      = $PinnedHost
+        managed          = [bool]$Managed
+        registered_utc   = [DateTime]::UtcNow.ToString('o')
+    }
+    Invoke-DtJobRegistryLocked -Body {
+        $runs = @(Get-DtJobRegistryRuns | Where-Object { [string]$_.run_folder -ine $root -and [string]$_.run_id -cne $RunId })
+        Save-DtJobRegistryRuns -Runs (@($runs) + @([pscustomobject]$entry))
+    }
+    Write-DtJobOutput -Object ([pscustomobject]$entry) -AsJson:$Json
+}
+
+function Remove-DtJobRegistryEntry {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
+    return (Invoke-DtJobRegistryLocked -Body {
+        $runs = @(Get-DtJobRegistryRuns)
+        $kept = @($runs | Where-Object { [string]$_.run_folder -ine $root })
+        if ($kept.Count -ne $runs.Count) { Save-DtJobRegistryRuns -Runs $kept }
+        ($runs.Count - $kept.Count)
+    })
+}
+
+function Invoke-DtJobUnregisterRun {
+    $removed = Remove-DtJobRegistryEntry -RunFolder $RunFolder
+    Write-DtJobOutput -Object ([pscustomobject][ordered]@{ run_folder = (Get-DtJobPaths -RunFolder $RunFolder).Root; removed = [int]$removed }) -AsJson:$Json
+}
+
+function Get-DtJobRunSummary {
+    param([Parameter(Mandatory)]$Context, [hashtable]$Extra = @{})
+    $state = Get-DtJobRunState -BuildStatePath $Context.build_state_path
+    $summary = [ordered]@{ run_id = $Context.run_id; run_status = $state.run_status; last_consumed_event_seq = $state.last_consumed_event_seq; last_event_seq = (Get-DtJobLastEventSeq -RunFolder $RunFolder) }
+    foreach ($key in $Extra.Keys) { $summary[$key] = $Extra[$key] }
+    return [pscustomobject]$summary
+}
+
+function Invoke-DtJobConsume {
+    if ($Seq -lt 0) { throw 'DT_JOB_USAGE: consume requires -Seq <n>.' }
+    $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $last = Get-DtJobLastEventSeq -RunFolder $RunFolder
+        if ($Seq -gt $last) { throw "DT_JOB_CONSUME_AHEAD: seq $Seq is past the last event $last" }
+        # The cursor never moves backwards; an older seq is a no-op.
+        if ($Seq -gt (Get-DtJobRunState -BuildStatePath $ctx.build_state_path).last_consumed_event_seq) {
+            Set-DtJobRunState -BuildStatePath $ctx.build_state_path -Cursor $Seq
+        }
+    }
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx) -AsJson:$Json
+}
+
+function Invoke-DtJobRequestContinuation {
+    $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $state = Get-DtJobRunState -BuildStatePath $ctx.build_state_path
+        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason $(if ($Reason) { $Reason } else { 'continuation requested' })
+    }
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx) -AsJson:$Json
+}
+
+function Invoke-DtJobAwaitDanny {
+    if (-not $Operation -or -not $Message) { throw 'DT_JOB_USAGE: await-danny requires -Operation and -Message.' }
+    $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+        $approvals.awaiting = [ordered]@{ operation = $Operation; message = $Message; since_utc = [DateTime]::UtcNow.ToString('o') }
+        Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+        Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'awaiting_danny'
+        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'awaiting_danny' -Status 'awaiting_danny' -Reason "operation $Operation"
+    }
+    $text = "dt-build run $($ctx.run_id) is paused for your approval before: $Operation. $Message To approve, run: /dt-build approve $($ctx.run_id) $Operation"
+    $alert = Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:$($ctx.run_id):awaiting:$Operation" -Message $text
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ operation = $Operation; alert = $alert }) -AsJson:$Json
+}
+
+function Invoke-DtJobApprove {
+    if (-not $Operation) { throw 'DT_JOB_USAGE: approve requires -Operation.' }
+    $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+        if ($null -eq $approvals.awaiting) { throw "DT_JOB_NOT_AWAITING: run $($ctx.run_id) is not waiting on an approval" }
+        if ([string]$approvals.awaiting.operation -cne $Operation) {
+            throw "DT_JOB_APPROVE_MISMATCH: run $($ctx.run_id) waits on '$($approvals.awaiting.operation)', not '$Operation'; nothing recorded"
+        }
+        $approvals.approvals = @($approvals.approvals) + @([pscustomobject][ordered]@{ operation = $Operation; approved_utc = [DateTime]::UtcNow.ToString('o') })
+        $approvals.awaiting = $null
+        Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+        Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'runnable'
+        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status 'runnable' -Reason "approved $Operation"
+    }
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ approved = $Operation }) -AsJson:$Json
+}
+
+function Invoke-DtJobResume {
+    $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $pending = (Get-DtJobApprovals -RunFolder $RunFolder).awaiting
+        if ($null -ne $pending) { throw "DT_JOB_RESUME_AWAITING_APPROVAL: run $($ctx.run_id) waits on '$($pending.operation)'; use approve" }
+        if ((Get-DtJobRunState -BuildStatePath $ctx.build_state_path).run_status -eq 'finished') { throw "DT_JOB_RUN_FINISHED: run $($ctx.run_id) is finished" }
+        Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'runnable'
+        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status 'runnable' -Reason 'resume'
+    }
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx) -AsJson:$Json
+}
+
+function Invoke-DtJobFinish {
+    $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'finished'
+        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'finished' -Status 'finished'
+    }
+    $removed = Remove-DtJobRegistryEntry -RunFolder $RunFolder
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ unregistered = [int]$removed }) -AsJson:$Json
+}
+
 # Dot-sourcing (the runner does) loads the functions only.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
-if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb start|status|cancel|reconcile is required.' }
+if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb is required (start, status, wait, cancel, reconcile, lease, register-run, unregister-run, consume, request-continuation, await-danny, approve, resume, finish).' }
 if (-not $RunFolder) { throw 'DT_JOB_USAGE: -RunFolder is required.' }
 
 # Under `pwsh -File`, `-Mutates a,b` arrives as the single string 'a,b'; split every list on commas.
 $DependsOn = Split-DtJobList $DependsOn
 $Mutates = Split-DtJobList $Mutates
 $PassEnv = Split-DtJobList $PassEnv
+# -JobId stays a string for the single-job verbs; wait reads a comma- or space-separated list from it.
+$script:DtJobIds = @(([string]$JobId) -split '[,\s]+' | Where-Object { $_ })
+
+# Every verb except lease itself renews the caller's lease when it holds it.
+if ($env:DT_BUILD_COORDINATOR_ID -and $Verb -ne 'lease') {
+    try { [void](Update-DtJobLeaseIfHolder -RunFolder $RunFolder -CoordinatorId $env:DT_BUILD_COORDINATOR_ID) } catch { }
+}
 
 switch ($Verb) {
     'start' { Invoke-DtJobStart }
     'status' { Invoke-DtJobStatus }
+    'wait' { Invoke-DtJobWait }
     'cancel' { Invoke-DtJobCancel }
     'reconcile' { Invoke-DtJobReconcile }
+    'lease' { Invoke-DtJobLease }
+    'register-run' { Invoke-DtJobRegisterRun }
+    'unregister-run' { Invoke-DtJobUnregisterRun }
+    'consume' { Invoke-DtJobConsume }
+    'request-continuation' { Invoke-DtJobRequestContinuation }
+    'await-danny' { Invoke-DtJobAwaitDanny }
+    'approve' { Invoke-DtJobApprove }
+    'resume' { Invoke-DtJobResume }
+    'finish' { Invoke-DtJobFinish }
 }

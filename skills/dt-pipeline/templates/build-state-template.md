@@ -15,6 +15,10 @@ phase: __PHASE__
 project: __PROJECT_NAME__
 planning_folder: __PLANNING_FOLDER__
 updated_utc: __UPDATED_UTC__
+run_status: __RUN_STATUS__
+last_consumed_event_seq: __LAST_CONSUMED_EVENT_SEQ__
+<!-- run_status: runnable | awaiting_danny | finished. last_consumed_event_seq: integer, 0 when none.
+     dt-job owns both lines and rewrites only them (atomic full-file rewrite). -->
 
 ## Artifacts
 plan_path: __PLAN_PATH__
