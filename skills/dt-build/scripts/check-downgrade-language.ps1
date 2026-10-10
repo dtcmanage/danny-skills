@@ -71,7 +71,7 @@ function Get-InputFiles {
     } else {
         throw "INPUT_PATH_NOT_FOUND: $Path"
     }
-    return $files
+    return @($files | Where-Object { $_ -notlike '*.stream.log' })
 }
 
 function Get-ApprovedRanges {

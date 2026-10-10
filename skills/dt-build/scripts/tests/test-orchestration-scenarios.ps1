@@ -361,6 +361,42 @@ After both attempts call pwsh -NoProfile -File $(Quote $jobScript) status -RunFo
 }
 
 try {
+    Scenario 11 'Documented adoption settings install and rollback' {
+        $doc = Get-Content -Raw (Join-Path $repoRoot 'skills/dt-build/references/adoption-procedure.md')
+        $blocks = @([regex]::Matches($doc, '(?s)```powershell\r?\n(.*?)```') | ForEach-Object { $_.Groups[1].Value })
+        $install = @($blocks | Where-Object { $_.Contains('Copy-Item -LiteralPath $target') })[0]
+        $rollback = @($blocks | Where-Object { $_.Contains('$settings.hooks.Remove($event)') })[0]
+        $dir = (Resolve-Path (Join-Path $repoRoot 'skills/dt-build/hooks')).Path.Replace('\','/')
+        $snippet = (Get-Content -Raw (Join-Path $repoRoot 'skills/dt-build/hooks/settings-snippet.json')).Replace('__DT_BUILD_HOOKS_DIR__',$dir) | ConvertFrom-Json -AsHashtable
+        $unrelated = @{ matcher='Read'; hooks=@(@{type='command';command='echo unrelated'}) }
+        foreach ($fixture in @('no-hooks','unrelated','already-present')) {
+            $initial = @{ theme='fixture' }
+            if ($fixture -eq 'unrelated') { $initial.hooks = @{ PreToolUse=@($unrelated); SessionStart=@($unrelated) } }
+            if ($fixture -eq 'already-present') { $initial.hooks = $snippet.hooks }
+            $targetPath = Join-Path $root "$fixture-settings.json"
+            Write-Text $targetPath ($initial | ConvertTo-Json -Depth 30)
+            $expected = if ($fixture -eq 'already-present') { @{theme='fixture'} } else { $initial }
+            foreach ($pass in @(1,2)) {
+                $code = ($install -split '\r?\n' | Where-Object { $_ -notmatch '^cd ' }) -join "`n"
+                $code = $code.Replace("'D:\Claude\settings.json'", (Quote $targetPath))
+                Push-Location $repoRoot
+                try { & ([scriptblock]::Create($code)) } finally { Pop-Location }
+                $live = Get-Content -Raw $targetPath | ConvertFrom-Json -AsHashtable
+                foreach ($event in @('PreToolUse','PostToolUse')) {
+                    $commands = @($live.hooks[$event] | ForEach-Object { $_.hooks } | ForEach-Object { $_.command } | Where-Object { $_ -like "*$dir/coordinator-*tooluse.ps1*" })
+                    Assert ($commands.Count -eq 1) "$fixture install $pass has exactly one $event hook"
+                }
+                if ($fixture -eq 'unrelated') { Assert ($live.hooks.SessionStart[0].hooks[0].command -eq 'echo unrelated' -and $live.hooks.PreToolUse[0].hooks[0].command -eq 'echo unrelated') 'install preserves unrelated hooks' }
+            }
+            $code = ($rollback -split '\r?\n' | Where-Object { $_ -notmatch '^cd ' }) -join "`n"
+            $code = $code.Replace("'D:\Claude\settings.json'", (Quote $targetPath))
+            Push-Location $repoRoot
+            try { & ([scriptblock]::Create($code)) } finally { Pop-Location }
+            $restored = Get-Content -Raw $targetPath | ConvertFrom-Json -AsHashtable
+            Assert (($restored | ConvertTo-Json -Depth 30 -Compress) -ceq ($expected | ConvertTo-Json -Depth 30 -Compress)) "$fixture rollback restores original unrelated settings without empty keys"
+        }
+        Assert ($doc.Contains('unpatched production launcher') -and $doc.Contains('/dt-build resume <RUN_ID>') -and $doc.Contains('$dt-build resume <RUN_ID>') -and $doc.Contains('about 0.5 s per tool call on every session')) 'adoption requires production receipts and hook cost decision'
+    }
     Scenario 1 'Claude coordinator dispatches a Codex worker' { Dispatch-Stub s01 claude codex }
     Scenario 2 'Codex coordinator dispatches a Claude worker' { Dispatch-Stub s02 codex claude }
     Scenario 3 'Missed notification' {
@@ -634,7 +670,7 @@ if (`$script:alive) { throw 'coordinator survived one tick' }
             $settings = [IO.File]::ReadAllText($settingsPath) | ConvertFrom-Json -AsHashtable
             Assert ($settings.theme -eq 'light') 'rollback lost unrelated settings'
             if ($settings.ContainsKey('hooks')) {
-                Assert ($settings.hooks.PreToolUse.Count -eq 1 -and $settings.hooks.PreToolUse[0].hooks.Count -eq 1 -and $settings.hooks.PreToolUse[0].hooks[0].command -eq 'unrelated-hook' -and $settings.hooks.PostToolUse.Count -eq 0) 'rollback removed unrelated hook or retained feature hooks'
+                Assert ($settings.hooks.PreToolUse.Count -eq 1 -and $settings.hooks.PreToolUse[0].hooks.Count -eq 1 -and $settings.hooks.PreToolUse[0].hooks[0].command -eq 'unrelated-hook' -and -not $settings.hooks.ContainsKey('PostToolUse')) 'rollback removed unrelated hook or retained feature hooks/empty arrays'
             }
         }
         # Canned collect-usage rows for the same toy two-milestone build, each host/style.

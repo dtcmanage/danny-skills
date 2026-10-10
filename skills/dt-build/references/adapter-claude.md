@@ -1,6 +1,6 @@
 # dt-build host adapter: Claude Code
 
-Load this file only when the coordinator runs in Claude Code (interactive CLI, Cowork, or `claude -p`). It covers host mechanics only; everything else is in `SKILL.md`. `dt-job` below means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`; the shell keeps no environment, so the id is what checks your context and renews your lease.
+Load this file only when the coordinator runs in Claude Code (interactive CLI, Cowork, or `claude -p`). Other rules live in `SKILL.md`. `dt-job` below means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`; the id checks context and renews the lease.
 
 ## Dispatch
 
@@ -14,17 +14,18 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 - Wait with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, run through the Bash tool with `run_in_background: true` and a Bash `timeout` longer than `-TimeoutSec`. Claude Code notifies once when it exits, whatever the outcome. End the turn after starting it.
 - Never use CronCreate (forbidden in a dt-build coordinator), Monitor heartbeats, `sleep` loops, repeated `status` calls, or any self-scheduled check.
 - The ledger is the truth, not the notification: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and on `wait_timeout`, then start one new background wait for the jobs still running.
-- Every `wait` and `status` envelope carries `last_event_seq` and `last_consumed_event_seq`. Once you have handled the events up to `last_event_seq`, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.
+- `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.
 
 ## Bootstrap and context
 
 - Do the mandatory reads (CLAUDE.md chain, MEMORY.md, governing references) first, in full.
-- Then, once and before any dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host claude`. Pick `<id>` once per session, for example `<RUN_ID>-claude-<yyyyMMddHHmm>`, and reuse it. Run it from the session's starting directory, or add `-TranscriptPath <this session's transcript>`.
-- An interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host claude`. Each later call with your id, a running wait included, renews it through long waits. A managed coordinator already holds it.
+- Register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested.
+- Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host claude`. Use one session id, e.g. `<RUN_ID>-claude-<yyyyMMddHHmm>`. Use the starting directory or add `-TranscriptPath <this session's transcript>`.
+- An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host claude`. Each later call with your id, a running wait included, renews it through long waits. A watcher-launched coordinator already holds it.
 - Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` finish the current decision and rewrite `_build-state.md`; `rotate` rotate now.
 - Past the hard limit `dt-job start` refuses with `ROTATE_REQUIRED` and the PreToolUse hook denies it: rotate now; do not retry the dispatch.
 - Rotation steps, in order: rewrite `_build-state.md` (keep the `run_status` and `last_consumed_event_seq` lines as they are), write a coordinator handoff note in the run folder, `dt-job request-continuation -CoordinatorId <id> -Reason context_rotation`, `dt-job lease -Action release -CoordinatorId <id>`, then end. Interactive: tell Danny the one command to continue in a fresh session, `/dt-build <RUN_ID>`.
-- Jobs keep running across rotation. Before an irreversible step run `dt-job irreversible -CoordinatorId <id> -Action begin -Operation <op>`, and `-Action end` after it; rotation waits while it is open.
+- Jobs survive rotation. Before an irreversible step run `dt-job irreversible -CoordinatorId <id> -Action begin -Operation <op>`, and `-Action end` after it; rotation waits while it is open.
 
 ## Hooks
 
@@ -35,16 +36,19 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 
 ## Managed mode and relaunch
 
-- Register every run at start: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`, adding `-Managed` only when Danny asked for a managed run. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters it.
-- In managed mode the watcher (`scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles jobs, starts queued ones, and relaunches a headless coordinator it launched once that one is gone and an unconsumed event waits. A launch that leaves its trigger unconsumed is retried at 2, 10, and 30 minutes, then the run stops with one DM.
-- A managed coordinator's prompt reads `/dt-build resume <RUN_ID> (managed coordinator <id>)`. It means: continue the run as coordinator `<id>` (reconcile, read `_build-state.md`, carry on), never run `dt-job resume`.
-- Before each managed turn ends, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, taking the seq from your last `wait` envelope or `dt-job status -CoordinatorId <id> -Json`. An unconsumed trigger counts as a failed launch.
-- Only the launcher sets `DT_BUILD_COORDINATOR_ID`, for managed coordinators. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
-- At an approval boundary (merge, push, deploy, prod write, irreversible step): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end. Never run `dt-job approve` or `dt-job resume`; they are Danny's alone.
+- For managed starts, the interactive session registers with `-Managed`, runs `dt-job request-continuation -CoordinatorId <id> -Reason managed_start`, takes no lease, and ends; the watcher continues.
+
+- On starts and relaunches: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters it.
+- The watcher (`scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts queued jobs, and launches a headless coordinator when no lease exists, a managed lease is released, or its watcher-launched coordinator is gone and an unconsumed event waits. Unconsumed triggers retry at 2, 10, and 30 minutes, then stop with one DM.
+- A managed coordinator's prompt reads `/dt-build resume <RUN_ID> (managed coordinator <id>)`. Continue as `<id>` (reconcile, read `_build-state.md`, carry on); never run `dt-job resume`.
+- Before ending each headless turn, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state it shows. An unconsumed trigger counts as a failed launch.
+- The launcher alone sets `DT_BUILD_COORDINATOR_ID`, for managed coordinators. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
+- At approval boundaries (merge, push, deploy, prod write, irreversible step): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end. Never run `dt-job approve` or `dt-job resume`; they are Danny's alone.
+- Interactive approve/resume refusal is instruction-only (no env var), a known residual.
 - Danny's commands: `/dt-build approve <RUN_ID> <operation>` records his approval and makes the run runnable; `/dt-build resume <RUN_ID>` re-arms a stopped run. When Danny types either, run the matching `dt-job approve -Operation <operation>` or `dt-job resume`.
 
 ## Evidence
 
-- Read job results only from `dt-job status` and `dt-job wait` envelopes (`-Json`). They are capped and name their evidence paths.
-- For a deeper look use `pwsh -NoProfile -File scripts/read-evidence.ps1 -RunFolder <run-folder> -Path <file> -Lines a-b` or `-Grep <pattern>`. Each call is capped at 16 KB and logged.
-- Never Read, tail, or cat a job's output or stream log directly. Load a screenshot only when you deliberately need it.
+- Read job results only from `dt-job status` and `dt-job wait` envelopes (`-Json`). They cap output and name evidence paths.
+- For a deeper look use `pwsh -NoProfile -File scripts/read-evidence.ps1 -RunFolder <run-folder> -Path <file> -Lines a-b` or `-Grep <pattern>`. Calls cap at 16 KB and are logged.
+- Never Read/tail/cat a job's output or stream log directly. Load screenshots deliberately.

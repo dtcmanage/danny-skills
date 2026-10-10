@@ -2,7 +2,7 @@
 # Model-free dt-build watcher. The dt-build-watcher scheduled task runs it every 2 minutes through
 # run-hidden.vbs. For each registered run it reconciles the ledger, retries undelivered stop and approval
 # DMs, then relaunches a managed coordinator only when the run is runnable, has an event past its cursor,
-# and has no coordinator: none ever started, or its watcher-launched coordinator is provably gone. It never
+# and has no coordinator: none ever started, a managed lease is released, or its watcher-launched coordinator is provably gone. It never
 # grants approvals and never changes run_status except to awaiting_danny after repeated failed launches.
 param()
 
@@ -74,12 +74,12 @@ function Get-WatcherDecision {
     if (Test-Path -LiteralPath (Get-DtJobPaths -RunFolder $folder).KillFailed) { return [pscustomobject]@{ action = 'none'; detail = 'rotation kill failed; a survivor still holds the run' } }
     $state = Get-DtJobRunState -BuildStatePath $statePath
     if ($state.run_status -ne 'runnable') { return [pscustomobject]@{ action = 'none'; detail = "run_status $($state.run_status)" } }
-    $trigger = Get-DtJobLastEventSeq -RunFolder $folder
+    $trigger = Get-WatcherTriggerSeq -RunFolder $folder
     if ($trigger -le $state.last_consumed_event_seq) { return [pscustomobject]@{ action = 'none'; detail = 'no unconsumed event' } }
     $managed = [bool]$Entry.managed
     $lease = Get-DtJobLease -RunFolder $folder
-    if ($null -eq $lease) {
-        # A managed run with no lease file has no coordinator at all, so it goes on to a launch.
+    if ($null -eq $lease -or ($managed -and $lease.PSObject.Properties['released_utc'] -and $lease.released_utc)) {
+        # A missing or released managed lease has no live coordinator, so normal launch rules apply.
         if (-not $managed) { return [pscustomobject]@{ action = 'none'; detail = 'no coordinator lease' } }
     }
     elseif ($lease.launched_by -eq 'interactive') {
@@ -124,6 +124,17 @@ function Get-WatcherDecision {
         return [pscustomobject]@{ action = 'stop'; stop_kind = 'cap'; trigger_seq = $trigger; detail = "$($recent.Count) launches in the last $($script:WatcherRunLaunchWindowMin) minutes" }
     }
     return [pscustomobject]@{ action = 'launch'; trigger_seq = $trigger; attempt = $attempts.Count + 1; detail = "trigger $trigger" }
+}
+
+function Get-WatcherTriggerSeq {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $max = [int64]0
+    foreach ($event in (Get-DtJobEvents -RunFolder $RunFolder)) {
+        $actionable = if ($event.job_id -eq 'run') { $event.type -in @('continuation_requested', 'awaiting_danny', 'finished') }
+        else { $event.status -in @('succeeded', 'failed', 'timeout', 'orphaned', 'cancelled', 'blocked') }
+        if ($actionable -and [int64]$event.seq -gt $max) { $max = [int64]$event.seq }
+    }
+    return $max
 }
 
 function Get-WatcherVendorState {
@@ -186,7 +197,7 @@ function Invoke-WatcherStop {
     $blocker = Invoke-DtJobLocked -RunFolder $folder -Action {
         $state = Get-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path)
         if ($state.run_status -ne 'runnable') { return "run_status $($state.run_status)" }
-        $last = Get-DtJobLastEventSeq -RunFolder $folder
+        $last = Get-WatcherTriggerSeq -RunFolder $folder
         if ($last -ne $Decision.trigger_seq -or $state.last_consumed_event_seq -ge $Decision.trigger_seq) {
             # Danny's resume beat a cap stop: restart the cap window so the next tick does not stop the run again.
             $resumed = @(Get-DtJobEvents -RunFolder $folder | Where-Object { [int64]$_.seq -gt [int64]$Decision.trigger_seq -and $_.type -eq 'continuation_requested' -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'resume' })

@@ -461,11 +461,50 @@ try {
     $run = New-Run -Name 'adopt'
     $job = Invoke-DtJob @('start', '-RunFolder', $run.folder, '-Command', 'Start-Sleep 60')
     $beforeJob = Wait-JobRunning -RunFolder $run.folder -JobId $job.job_id
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
     Invoke-Tick | Out-Null
     $afterJob = Get-JobRecord -RunFolder $run.folder -JobId $job.job_id
     Assert-True ((Get-LaunchCount 'adopt') -eq 1) 'the dead coordinator is relaunched'
     Assert-True ($afterJob.status -eq 'running' -and $afterJob.pid -eq $beforeJob.pid -and $afterJob.process_start_utc -eq $beforeJob.process_start_utc -and $afterJob.runner_pid -eq $beforeJob.runner_pid) 'the running job keeps the same pid and start time'
     Stop-Job -RunFolder $run.folder -JobId $job.job_id
+
+    # Managed interactive starts hand over without a lease; a released interactive lease also hands over.
+    Use-Scenario 'managed-start'
+    foreach ($hostName in @('claude','codex')) {
+        $startName = "managed-start-$hostName"
+        $startRun = New-Run -Name $startName -PinnedHost $hostName -NoLease
+        Invoke-DtJob @('request-continuation','-RunFolder',$startRun.folder,'-CoordinatorId',"start-$hostName",'-Reason','managed_start') | Out-Null
+        Assert-True (-not (Test-Path (Join-Path $startRun.folder 'coordinator.lease'))) 'documented interactive managed start acquires no lease'
+        Invoke-Tick | Out-Null
+        Invoke-Tick | Out-Null
+        Assert-True ((Get-LaunchCount $startName) -eq 1) "$hostName adapter managed start launches once"
+    }
+    Use-Scenario 'managed-release'
+    $released = New-Run -Name 'managed-release' -LaunchedBy interactive
+    Invoke-DtJob @('request-continuation','-RunFolder',$released.folder) | Out-Null
+    Invoke-DtJob @('lease','-RunFolder',$released.folder,'-Action','release','-CoordinatorId','old-coordinator') | Out-Null
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-LaunchCount 'managed-release') -eq 1 -and (Get-DmCount 'managed-release') -eq 0) 'released interactive lease on a managed run relaunches next tick'
+
+    # Non-terminal job events after consume cannot launch or notify; terminal completion can.
+    foreach ($unmanaged in @($false,$true)) {
+        $name = if ($unmanaged) { 'event-filter-interactive' } else { 'event-filter-managed' }
+        Use-Scenario $name
+        $filtered = New-Run -Name $name -Unmanaged:$unmanaged -LaunchedBy $(if ($unmanaged) { 'interactive' } else { 'watcher' })
+        Invoke-DtJob @('request-continuation','-RunFolder',$filtered.folder) | Out-Null
+        Invoke-DtJob @('consume','-RunFolder',$filtered.folder,'-Seq','1') | Out-Null
+        $eventsPath = Join-Path $filtered.folder 'jobs/events.jsonl'
+        foreach ($item in @(@{seq=2;type='process_started';status='running'},@{seq=3;type='recorded';status='queued'})) {
+            $item.job_id = 'j-filter-fixture'
+            [IO.File]::AppendAllText($eventsPath, (($item | ConvertTo-Json -Compress) + "`n"))
+        }
+        Invoke-Tick | Out-Null
+        Assert-True ((Get-LaunchCount $name) -eq 0 -and (Get-DmCount $name) -eq 0) 'process_started and recorded/queued after consume neither relaunch nor DM'
+        [IO.File]::AppendAllText($eventsPath, ((@{seq=4;job_id='j-filter-fixture';type='succeeded';status='succeeded'} | ConvertTo-Json -Compress) + "`n"))
+        Invoke-Tick | Out-Null
+        if ($unmanaged) { Assert-True ((Get-DmCount $name) -eq 1) 'terminal completion after consume notifies interactive coordinator' }
+        else { Assert-True ((Get-LaunchCount $name) -eq 1) 'terminal completion after consume relaunches managed coordinator' }
+    }
 
     # ---- interactive coordinator: one DM per waiting period, never a launch.
     Use-Scenario 'interactive'
@@ -506,12 +545,12 @@ try {
     $bare = Invoke-DtJob @('status', '-RunFolder', $unregistered)
     Assert-True ($bare.PSObject.Properties['last_event_seq'] -and $bare.last_event_seq -eq 0 -and $bare.PSObject.Properties['last_consumed_event_seq'] -and $null -eq $bare.last_consumed_event_seq) 'an unregistered run reports last_event_seq 0 and a null consumed cursor'
     # Per the adapter: handle the events, then consume up to the envelope's last_event_seq.
-    $after = Invoke-DtJob @('consume', '-RunFolder', $consumer.folder, '-Seq', [string]$waited.last_event_seq)
+    $after = Invoke-DtJob @('consume', '-RunFolder', $consumer.folder, '-Seq', [string]$runStatus.last_event_seq)
     Assert-True ($after.last_consumed_event_seq -eq $fileSeq -and (Get-RunState $consumer.state).cursor -eq $fileSeq) 'consume moves the cursor to the envelope seq'
     Invoke-Tick | Out-Null
     Assert-True ((Get-LaunchCount 'consume-adapter') -eq 0 -and @(Get-LaunchRecords $consumer.folder).Count -eq 0) 'a managed run whose coordinator consumed per the adapter is not relaunched on the next tick'
     Assert-True ((Get-LaunchCount 'consume-control') -eq 1) 'the same run without the consume is relaunched on that tick'
-    # A job-scoped envelope never covers another job's unconsumed event, so consuming it leaves that event pending.
+    # Two jobs and a wait on one: handle both from run-level status before consuming.
     Use-Scenario 'consume-scoped'
     $scoped = New-Run -Name 'consume-scoped'
     $other = Invoke-DtJob @('start', '-RunFolder', $scoped.folder, '-Command', 'Write-Output a')
@@ -522,9 +561,10 @@ try {
     $runWide = Invoke-DtJob @('status', '-RunFolder', $scoped.folder)
     $firstOther = (Get-Content -LiteralPath (Join-Path $scoped.folder 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.job_id -eq $other.job_id } | Select-Object -First 1).seq
     Assert-True ($scopedWait.last_event_seq -eq ($firstOther - 1) -and $scopedStatus.last_event_seq -eq ($firstOther - 1) -and $runWide.last_event_seq -gt $scopedWait.last_event_seq) "a job-scoped wait and status stop before another job's first unconsumed event ($($scopedWait.last_event_seq), $($scopedStatus.last_event_seq) vs run $($runWide.last_event_seq))"
-    Invoke-DtJob @('consume', '-RunFolder', $scoped.folder, '-Seq', [string]$scopedWait.last_event_seq) | Out-Null
+    Assert-True (@($runWide.jobs | Where-Object { $_.status -ne 'succeeded' }).Count -eq 0) 'run-level status shows both completions handled'
+    Invoke-DtJob @('consume', '-RunFolder', $scoped.folder, '-CoordinatorId', 'adapter-consumer', '-Seq', [string]$runWide.last_event_seq) | Out-Null
     Invoke-Tick | Out-Null
-    Assert-True ((Get-LaunchCount 'consume-scoped') -eq 1) "consuming a job-scoped seq leaves the other job's completion pending, so the next tick relaunches"
+    Assert-True ((Get-LaunchCount 'consume-scoped') -eq 0) 'run-level consume after handling both completions leaves nothing to relaunch'
 
     # ---- scenario 10a: consumed event and finished run produce nothing across ticks.
     Use-Scenario 'quiet'

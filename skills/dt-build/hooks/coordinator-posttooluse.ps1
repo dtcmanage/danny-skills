@@ -5,7 +5,7 @@
 # discovered guess, creates the entry when mark-bootstrap found no transcript, and never moves a
 # hook-recorded entry to a different session. Surfaces the context line as additional context when the coordinator reaches
 # checkpoint or rotate; silent when the state is ok and for every non-coordinator session. With the env
-# var unset and no registered run it exits before loading anything. Any error is silent.
+# var unset and no registered run it exits before loading anything except for a mark-bootstrap capture. Any error is silent.
 param()
 
 Set-StrictMode -Version Latest
@@ -39,6 +39,12 @@ function Get-HookBootstrapCapture {
         if (-not $id) { $id = $env:DT_BUILD_COORDINATOR_ID }
         if (-not $id) { continue }
         $named = Get-HookArgument -Segment $segment -Name 'RunFolder'
+        # A named run need not be registered yet, but mark-bootstrap must have written its baseline.
+        if ($named -and [IO.File]::Exists([IO.Path]::Combine($named, $script:HookBaselineFile))) {
+            $files = Get-HookRunFiles -Folder $named
+            $entry = $files.baselines | Where-Object { [string]$_.coordinator_id -ceq $id } | Select-Object -First 1
+            if ($null -ne $entry -and [string]$entry.host -eq 'claude') { return [pscustomobject]@{ run_folder = $named; coordinator_id = $id } }
+        }
         foreach ($run in @(Get-HookRegistryRuns)) {
             $folder = [string]$run.run_folder
             if (-not $folder -or -not (Test-Path -LiteralPath $folder)) { continue }
@@ -97,7 +103,8 @@ function Save-HookBootstrapCapture {
 
 try {
     $rawText = Read-HookStdin
-    if (-not $rawText.Trim() -or (Test-HookIdle)) { exit 0 }
+    if (-not $rawText.Trim()) { exit 0 }
+    if ((Test-HookIdle) -and -not $rawText.Contains('mark-bootstrap')) { exit 0 }
     . (Join-Path $PSScriptRoot '..\scripts\context-guard.ps1')
     $hookInput = $rawText | ConvertFrom-Json
     # Only this rare call loads dt-job.ps1, for its run lock and atomic write.

@@ -741,6 +741,29 @@ try {
     Assert-True ($null -ne $r -and $r.hookSpecificOutput.additionalContext -like 'context: 175000 rotate*' -and $r.hookSpecificOutput.additionalContext -match 'request-continuation') 'PostToolUse surfaces the line and next step at rotate'
     Assert-True ($null -eq (Invoke-Hook $postHook (& $mk 'other-session' $hookHard 'Bash' @{ command = 'git status' } 'PostToolUse'))) 'PostToolUse is silent for a non-coordinator session'
 
+    # Mark before registration still binds the calling session through PostToolUse.
+    $earlyFolder = Join-Path $tempRoot 'runs/capture-before-register'
+    New-Item -ItemType Directory -Path $earlyFolder -Force | Out-Null
+    $earlyT = Join-Path $fixtures 'capture-before-register.jsonl'
+    New-ClaudeTranscript -Path $earlyT -Totals @(60000)
+    Invoke-DtJob @('mark-bootstrap','-RunFolder',$earlyFolder,'-CoordinatorId','early1','-Host','claude','-TranscriptPath',$earlyT) | Out-Null
+    $emptyRegistry = Join-Path $tempRoot 'early-empty-registry'
+    $previousRegistry = $env:DT_BUILD_STATE_DIR
+    $env:DT_BUILD_STATE_DIR = $emptyRegistry
+    try {
+        $bootInput = @{ session_id='early-session'; transcript_path=$earlyT; tool_name='Bash'; tool_input=@{ command="pwsh -NoProfile -File `"$dtJob`" mark-bootstrap -RunFolder `"$earlyFolder`" -CoordinatorId early1 -Host claude" } }
+        Invoke-Hook $postHook $bootInput | Out-Null
+        $storedEarly = (Get-Content -Raw (Join-Path $earlyFolder 'context-baseline.json') | ConvertFrom-Json).coordinators.early1
+        Assert-True ($storedEarly.transcript_source -eq 'hook' -and $storedEarly.session_id -eq 'early-session') 'unregistered named baseline becomes hook-bound even with an empty registry'
+        $earlyState = Join-Path $earlyFolder '_build-state.md'
+        New-BuildState -Path $earlyState
+        Invoke-DtJob @('register-run','-RunFolder',$earlyFolder,'-BuildStatePath',$earlyState,'-RunId','early','-PinnedHost','claude') | Out-Null
+        Invoke-DtJob @('lease','-RunFolder',$earlyFolder,'-Action','acquire','-CoordinatorId','early1','-Host','claude') | Out-Null
+        Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'early-session' $earlyT 'CronCreate' @{cron='*'}))) 'hooks enforce on a session marked before registration'
+        New-ClaudeTranscript -Path $earlyT -Totals @(140000)
+        Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'early-session' $earlyT 'Read' @{file_path=$earlyT}))) 'past-hard reads are denied on the out-of-order session'
+    } finally { $env:DT_BUILD_STATE_DIR = $previousRegistry }
+
     # ---- coordinator identity: a discovered guess never marks a session; the PostToolUse capture is authoritative.
     $run = New-Run -Name 'capture'
     $wrongT = Join-Path $fixtures 'capture-wrong-session.jsonl'
@@ -807,7 +830,7 @@ try {
     $guardLoad = ". (Join-Path `$PSScriptRoot '..\scripts\context-guard.ps1')"
     $dtJobLoad = ". (Join-Path `$PSScriptRoot '..\scripts\dt-job.ps1')"
     $idleAt = $preText.IndexOf($idleMark)
-    $postIdleAt = $postText.IndexOf($idleMark)
+    $postIdleAt = $postText.IndexOf("if ((Test-HookIdle) -and -not `$rawText.Contains('mark-bootstrap')) { exit 0 }")
     Assert-True ($idleAt -gt 0 -and $idleAt -lt $preText.IndexOf($guardLoad) -and -not $preText.Contains($dtJobLoad) -and $postIdleAt -gt 0 -and $postIdleAt -lt $postText.IndexOf($guardLoad) -and $postIdleAt -lt $postText.IndexOf($dtJobLoad)) 'in both hooks the idle exit comes before context-guard.ps1 or dt-job.ps1 loads, and PreToolUse never loads dt-job.ps1'
 
     # ---- static: hook files and launcher flags.

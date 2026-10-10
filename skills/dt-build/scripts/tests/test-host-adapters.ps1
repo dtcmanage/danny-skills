@@ -53,6 +53,9 @@ try {
         Assert-True (($headings -join '|') -ceq ($sections -join '|')) "$name has exactly the required sections in order (found: $($headings -join ', '))"
         $words = Get-WordCount $text
         Assert-True ($words -le $adapterWordCap) "$name is $words words, over $adapterWordCap"
+        $bootstrap = [regex]::Match($text, '(?s)## Bootstrap and context\s*(.*?)(?=\r?\n## )').Groups[1].Value
+        Assert-True ($bootstrap.IndexOf('register-run') -ge 0 -and $bootstrap.IndexOf('register-run') -lt $bootstrap.IndexOf('mark-bootstrap') -and $bootstrap.IndexOf('mark-bootstrap') -lt $bootstrap.IndexOf('-Action acquire')) "$name registers before marking and lease acquire"
+        Assert-True ($text.Contains('never from job-scoped wait or status envelopes') -and $text.Contains('takes no lease, and ends')) "$name uses run-level consumption and hands managed starts to the watcher"
         # CronCreate appears only as a forbidden or denied tool.
         foreach ($line in @($text -split '\r?\n' | Where-Object { $_ -match 'CronCreate' })) {
             Assert-True ($line -match '(?i)\b(never|forbidden|denies)\b') "$name mentions CronCreate only as forbidden: $line"
@@ -84,6 +87,7 @@ try {
     $claudeText = Get-Content -Raw -LiteralPath (Join-Path $refDir 'adapter-claude.md')
     $codexText = Get-Content -Raw -LiteralPath (Join-Path $refDir 'adapter-codex.md')
     Assert-True ($claudeText -match 'run_in_background: true' -and $claudeText -match 'Monitor heartbeats') 'Claude waits through one background Bash call and bans Monitor heartbeats'
+    Assert-True ($claudeText.Contains('Interactive approve/resume refusal is instruction-only (no env var), a known residual.')) 'Claude documents the interactive approve/resume residual'
     Assert-True ($claudeText -match 'Agent tool') 'Claude adapter keeps the Agent tool path'
     Assert-True ($claudeText -match 'the PreToolUse hook denies it' -and $claudeText -match 'Agent, `dt-job start`, and every shell command') 'Claude adapter names the hook denial of dt-job start past the hard limit'
     Assert-True ($codexText -match 'in the foreground' -and $codexText -match 'call `dt-job wait` again') 'Codex waits in the foreground and re-calls on wait_timeout'

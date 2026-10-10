@@ -34,6 +34,19 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    # Stream logs echo bootstrap memory and are excluded, while ordinary reports remain checked.
+    $downgradeDir = Join-Path $tempRoot 'downgrade-stream'
+    New-Item -ItemType Directory -Path $downgradeDir -Force | Out-Null
+    Write-Utf8 (Join-Path $downgradeDir 'worker.stream.log') 'for now we defer this until later'
+    Write-Utf8 (Join-Path $downgradeDir 'report.md') 'All required behavior is implemented.'
+    foreach ($path in @($downgradeDir, (Join-Path $downgradeDir 'worker.stream.log'))) {
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'check-downgrade-language.ps1') -Path $path -Recurse -Json *> (Join-Path $tempRoot 'downgrade-stream.json')
+        Assert-True ($LASTEXITCODE -eq 0) 'downgrade scan skips stream logs in directory and direct-file inputs'
+    }
+    Write-Utf8 (Join-Path $downgradeDir 'report.md') 'for now we defer this until later'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'check-downgrade-language.ps1') -Path $downgradeDir -Recurse -Json *> (Join-Path $tempRoot 'downgrade-report.json')
+    Assert-True ($LASTEXITCODE -eq 1) 'downgrade scan still rejects ordinary report language'
+
     # Both orchestrator retry passages must consume diagnosis before escalation.
     $skillText = Get-Content -Raw -LiteralPath (Join-Path $skillRoot 'SKILL.md')
     $retryPassages = @(
@@ -571,6 +584,19 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $report += "`n"+$env:DT_FAKE_UNICODE_TEXT
     [Console]::Error.WriteLine($env:DT_FAKE_UNICODE_TEXT)
 }
+if ($mode -in @('late-remark','no-report-messages')) {
+    $usage = @{}; $usage[$ranModel] = @{inputTokens=10;outputTokens=20;costUSD=0.01}
+    $first = if ($mode -eq 'late-remark') { $report + "`nolder-report" } else { 'earlier remark' }
+    $second = if ($mode -eq 'late-remark') { $report } else { 'second remark' }
+    @(
+        @{type='assistant';message=@{content=@(@{type='text';text=$first})}},
+        @{type='assistant';message=@{content=@(@{type='text';text=$second})}},
+        @{type='assistant';message=@{content=@(@{type='text';text='background task finished'})}},
+        @{type='assistant';message=@{content=@(@{type='text';text='late remark'})}},
+        @{type='result';is_error=$false;result='late remark';modelUsage=$usage;total_cost_usd=0.01}
+    ) | ConvertTo-Json -Depth 8 -Compress
+    exit 0
+}
 Write-Envelope $report
 '@
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
@@ -665,6 +691,15 @@ Write-Envelope $report
     $stampedOutput = Join-Path $tempRoot 'claude-stamped-report.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $stampedOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'stamped report regression' -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $stampedOutput) -match '\ADT_BUILD_REPORT_VERSION:') 'timestamp-prefixed Claude structured report parses and is retained without stamp'
+    $env:DT_FAKE_CLAUDE_MODE = 'success'
+
+    $env:DT_FAKE_CLAUDE_MODE = 'late-remark'
+    $lateOutput = Join-Path $tempRoot 'claude-late-remark.md'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lateOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'late report fixture' -Json *> (Join-Path $tempRoot 'late-remark.log')
+    Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $lateOutput) -match '\ADT_BUILD_REPORT_VERSION: 3' -and (Get-Content -Raw $lateOutput) -notmatch 'late remark|older-report') 'last report-bearing assistant message survives background notice and late remark'
+    $env:DT_FAKE_CLAUDE_MODE = 'no-report-messages'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lateOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'last message fallback fixture' -Json *> (Join-Path $tempRoot 'last-message.log')
+    Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw $lateOutput) -eq 'late remark') 'without a report the wrapper retains the last assistant message'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
 
     # Peers rely on inherited console defaults, just like installed PS1 shims.
