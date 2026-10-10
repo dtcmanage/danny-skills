@@ -9,16 +9,16 @@ cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
 $registry = Join-Path $(if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'dt-build' }) 'active-runs.json'; $runs = if (Test-Path -LiteralPath $registry) { @((Get-Content -Raw -LiteralPath $registry | ConvertFrom-Json).runs) } else { @() }; $runs | ForEach-Object { $lease = Join-Path $_.run_folder 'coordinator.lease'; if (Test-Path -LiteralPath $lease) { Get-Content -Raw -LiteralPath $lease } }; if ($runs.Count) { throw 'Active dt-build registry: finish the owning runs, including File Sorter, first.' }
 ```
 
-2. Merge through `/git-merge-feature`. Record the pre-merge commit and merged range for rollback. The merge machinery uses fast-forward merges; there is no separate merge commit. Push only on Danny's "ship it".
+2. Merge through `/git-merge-feature`. Save its JSON receipt at merge time and use only its `commit_range` for rollback. That range starts after the merge machinery pulls main, so unrelated pulled commits are excluded. The merge machinery uses fast-forward merges; there is no separate merge commit. Push only on Danny's "ship it".
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$env:DT_ADOPTION_BEFORE = (git rev-parse main).Trim(); pwsh -NoProfile -File skills/git-merge-feature/scripts/merge-feature.ps1 -Branch '<accepted-build-branch>' -Json
+$receiptPath = Join-Path $env:TEMP 'dt-build-adoption-merge.json'; $receipt = pwsh -NoProfile -File skills/git-merge-feature/scripts/merge-feature.ps1 -Branch '<accepted-build-branch>' -Json; $mergeExit = $LASTEXITCODE; $receipt | Set-Content -LiteralPath $receiptPath; if ($mergeExit -ne 0) { throw "Merge failed; inspect $receiptPath" }; $merge = $receipt | ConvertFrom-Json; if (-not $merge.commit_range) { throw 'Merge receipt lacks commit_range' }
 ```
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$env:DT_ADOPTION_AFTER = (git rev-parse main).Trim(); "$env:DT_ADOPTION_BEFORE..$env:DT_ADOPTION_AFTER" | Set-Content -LiteralPath (Join-Path $env:TEMP 'dt-build-adoption-range.txt'); git push origin main
+git push origin main
 ```
 
 3. Junctions pick up the repository change. Verify them and the CLI plugin inventory; open a fresh CLI and Cowork session and confirm dt-build 2.21.0 / plugin 0.20.0 loads before proceeding. Cowork confirmation is a manual UI check, not a claim made by the CLI inventory.
@@ -83,10 +83,10 @@ pwsh -NoProfile -File skills/dt-build/scripts/register-dt-build-watcher.ps1 -Unr
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$target = 'D:\Claude\settings.json'; $settings = Get-Content -Raw -LiteralPath $target | ConvertFrom-Json -AsHashtable; $dir = (Resolve-Path 'skills/dt-build/hooks').Path.Replace('\','/'); foreach ($event in @('PreToolUse','PostToolUse')) { if ($settings.hooks.ContainsKey($event)) { $entries = foreach ($entry in @($settings.hooks[$event])) { $entry.hooks = @($entry.hooks | Where-Object { $_.command -notlike "*$dir/coordinator-pretooluse.ps1*" -and $_.command -notlike "*$dir/coordinator-posttooluse.ps1*" }); if ($entry.hooks.Count) { $entry } }; $settings.hooks[$event] = @($entries) } }; [IO.File]::WriteAllText($target,($settings | ConvertTo-Json -Depth 30))
+$target = 'D:\Claude\settings.json'; $settings = Get-Content -Raw -LiteralPath $target | ConvertFrom-Json -AsHashtable; $dir = (Resolve-Path 'skills/dt-build/hooks').Path.Replace('\','/'); if ($settings.ContainsKey('hooks') -and $null -ne $settings.hooks) { foreach ($event in @('PreToolUse','PostToolUse')) { if ($settings.hooks.ContainsKey($event)) { $entries = foreach ($entry in @($settings.hooks[$event])) { $entry.hooks = @($entry.hooks | Where-Object { $_.command -notlike "*$dir/coordinator-pretooluse.ps1*" -and $_.command -notlike "*$dir/coordinator-posttooluse.ps1*" }); if ($entry.hooks.Count) { $entry } }; $settings.hooks[$event] = @($entries) } } }; [IO.File]::WriteAllText($target,($settings | ConvertTo-Json -Depth 30))
 ```
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$range = (Get-Content -Raw -LiteralPath (Join-Path $env:TEMP 'dt-build-adoption-range.txt')).Trim(); git revert --no-commit $range
+$merge = Get-Content -Raw -LiteralPath (Join-Path $env:TEMP 'dt-build-adoption-merge.json') | ConvertFrom-Json; $range = [string]$merge.commit_range; if ($range -notmatch '^[0-9a-f]{7,40}\.\.[0-9a-f]{7,40}$') { throw 'Invalid merge receipt commit_range' }; git revert --no-commit $range
 ```
