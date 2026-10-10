@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.2
+
+- Shared model router: DT_ROUTER_GUARD_OVERRIDE lifts the 95% quota guard for named vendors in one process, only on Danny explicit permission.
+
 ## 2.21.1
 
 - Final-integration fixes: safe hook install on a settings file with no hooks key, managed start reachable from an interactive session, watcher triggers only on actionable events, hook binding independent of bootstrap order, live harness fixes for Codex 0.162 rollouts.
