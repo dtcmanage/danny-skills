@@ -11,7 +11,7 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 
 ## Waiting and completion
 
-- Wait with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids> -Any|-All -TimeoutSec <n> -Json`, run through the Bash tool with `run_in_background: true` and a Bash `timeout` longer than `-TimeoutSec`. Claude Code notifies once when it exits, whatever the outcome. End the turn after starting it.
+- Wait with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, run through the Bash tool with `run_in_background: true` and a Bash `timeout` longer than `-TimeoutSec`. Claude Code notifies once when it exits, whatever the outcome. End the turn after starting it.
 - Never use CronCreate (forbidden in a dt-build coordinator), Monitor heartbeats, `sleep` loops, repeated `status` calls, or any self-scheduled check.
 - The ledger is the truth, not the notification: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and on `wait_timeout`, then start one new background wait for the jobs still running.
 - Every `wait` and `status` envelope carries `last_event_seq` and `last_consumed_event_seq`. Once you have handled the events up to `last_event_seq`, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.

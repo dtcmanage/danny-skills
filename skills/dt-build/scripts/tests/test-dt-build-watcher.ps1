@@ -511,6 +511,20 @@ try {
     Invoke-Tick | Out-Null
     Assert-True ((Get-LaunchCount 'consume-adapter') -eq 0 -and @(Get-LaunchRecords $consumer.folder).Count -eq 0) 'a managed run whose coordinator consumed per the adapter is not relaunched on the next tick'
     Assert-True ((Get-LaunchCount 'consume-control') -eq 1) 'the same run without the consume is relaunched on that tick'
+    # A job-scoped envelope never covers another job's unconsumed event, so consuming it leaves that event pending.
+    Use-Scenario 'consume-scoped'
+    $scoped = New-Run -Name 'consume-scoped'
+    $other = Invoke-DtJob @('start', '-RunFolder', $scoped.folder, '-Command', 'Write-Output a')
+    $mine = Invoke-DtJob @('start', '-RunFolder', $scoped.folder, '-Command', 'Write-Output b')
+    Invoke-DtJob @('wait', '-RunFolder', $scoped.folder, '-JobId', "$($other.job_id),$($mine.job_id)", '-All', '-TimeoutSec', '60') | Out-Null
+    $scopedWait = Invoke-DtJob @('wait', '-RunFolder', $scoped.folder, '-JobId', $mine.job_id, '-All', '-TimeoutSec', '60')
+    $scopedStatus = Invoke-DtJob @('status', '-RunFolder', $scoped.folder, '-JobId', $mine.job_id)
+    $runWide = Invoke-DtJob @('status', '-RunFolder', $scoped.folder)
+    $firstOther = (Get-Content -LiteralPath (Join-Path $scoped.folder 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.job_id -eq $other.job_id } | Select-Object -First 1).seq
+    Assert-True ($scopedWait.last_event_seq -eq ($firstOther - 1) -and $scopedStatus.last_event_seq -eq ($firstOther - 1) -and $runWide.last_event_seq -gt $scopedWait.last_event_seq) "a job-scoped wait and status stop before another job's first unconsumed event ($($scopedWait.last_event_seq), $($scopedStatus.last_event_seq) vs run $($runWide.last_event_seq))"
+    Invoke-DtJob @('consume', '-RunFolder', $scoped.folder, '-Seq', [string]$scopedWait.last_event_seq) | Out-Null
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-LaunchCount 'consume-scoped') -eq 1) "consuming a job-scoped seq leaves the other job's completion pending, so the next tick relaunches"
 
     # ---- scenario 10a: consumed event and finished run produce nothing across ticks.
     Use-Scenario 'quiet'

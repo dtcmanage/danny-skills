@@ -670,11 +670,22 @@ function Get-DtJobSnapshot {
     # Records and the last event seq read together under the run lock, so the seq a coordinator consumes
     # covers exactly the events behind the states it was shown.
     param([Parameter(Mandatory)][string]$RunFolder, [string[]]$Ids = $null)
+    # A job-scoped snapshot's seq stops before the first unconsumed event of a job (or the run) it does not
+    # show, so consuming it never swallows an event the coordinator was not shown.
+    $consumed = Get-DtJobConsumedSeq -RunFolder $RunFolder
     $snap = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $records = if ($null -ne $Ids) { @($Ids | ForEach-Object { Get-DtJobRecord -RunFolder $RunFolder -JobId $_ }) } else { @(Get-DtJobRecords -RunFolder $RunFolder) }
-        [pscustomobject]@{ records = $records; last_event_seq = (Get-DtJobLastEventSeq -RunFolder $RunFolder) }
+        $seq = Get-DtJobLastEventSeq -RunFolder $RunFolder
+        if ($null -ne $Ids) {
+            $floor = if ($null -ne $consumed) { [int64]$consumed } else { [int64]0 }
+            foreach ($evt in @(Get-DtJobEvents -RunFolder $RunFolder | Sort-Object { [int64]$_.seq })) {
+                if ([int64]$evt.seq -le $floor) { continue }
+                if ($Ids -notcontains [string]$evt.job_id) { $seq = [Math]::Max($floor, [int64]$evt.seq - 1); break }
+            }
+        }
+        [pscustomobject]@{ records = $records; last_event_seq = $seq }
     }
-    $snap | Add-Member -NotePropertyName last_consumed_event_seq -NotePropertyValue (Get-DtJobConsumedSeq -RunFolder $RunFolder)
+    $snap | Add-Member -NotePropertyName last_consumed_event_seq -NotePropertyValue $consumed
     return $snap
 }
 

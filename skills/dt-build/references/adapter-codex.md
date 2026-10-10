@@ -11,7 +11,7 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 
 ## Waiting and completion
 
-- Codex has no in-session completion notice. Wait in the foreground with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` below the shell command timeout (for example 540 under a 600-second limit).
+- Codex has no in-session completion notice. Wait in the foreground with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` below the shell command timeout (for example 540 under a 600-second limit).
 - On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again for the jobs still running. Do no other work between waits.
 - Never poll with repeated `status` calls, `sleep` loops, or log tails.
 - A run that will wait for hours uses managed mode (below) rather than a long interactive wait.
