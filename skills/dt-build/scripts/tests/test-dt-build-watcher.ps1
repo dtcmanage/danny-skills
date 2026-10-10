@@ -709,6 +709,45 @@ try {
     $sfNext = Invoke-StubbedRun -RunFolder $sf.folder -Stubs $snapshotStub
     Assert-True ([string]$sfNext.rotation -match '^rotation kill confirmed' -and $sfNext.action -eq 'launch' -and (Get-LaunchCount 'snapshot-fail') -eq 1 -and -not (Test-Path -LiteralPath (Join-Path $sf.folder 'kill-failed.json'))) "the next tick finds the root gone and hands the run to exactly one new coordinator ($($sfNext | ConvertTo-Json -Compress -Depth 5))"
 
+    # ---- a descendant missed by the first snapshot that survives the kill is found by the second and holds the run.
+    Use-Scenario 'late-descendant'
+    $ld = Start-RotationFixture -Name 'late-descendant'
+    $env:DT_TEST_KILLABLE = [string]$ld.child
+    $lateStub = $rootOnlyStub + '; $script:snapshotCalls = 0; $script:realDescendants = ${function:Get-WatcherDescendantProcesses}; function Get-WatcherDescendantProcesses { param([int]$ProcessId, $StartUtc) if (-not $script:snapshotCalls) { $script:snapshotCalls = 1; return @() } & $script:realDescendants @PSBoundParameters }'
+    $ldFirst = Invoke-StubbedRun -RunFolder $ld.folder -Stubs $lateStub
+    $ldEpisodePath = Join-Path $ld.folder 'kill-failed.json'
+    $ldEpisode = if (Test-Path -LiteralPath $ldEpisodePath) { Get-Content -Raw -LiteralPath $ldEpisodePath | ConvertFrom-Json } else { $null }
+    Assert-True (-not (Test-Alive $ld.child) -and (Test-Alive $ld.grandchild) -and $null -ne $ldEpisode -and @(@($ldEpisode.survivors) | Where-Object { [int]$_.pid -eq $ld.grandchild }).Count -eq 1 -and $ldFirst.action -eq 'none' -and (Get-LaunchCount 'late-descendant') -eq 0) "a survivor missing from the first snapshot is added to the episode by the snapshot after the kill ($($ldFirst | ConvertTo-Json -Compress -Depth 5))"
+    Stop-Process -Id $ld.grandchild -Force -ErrorAction SilentlyContinue
+
+    # ---- a corrupt kill-failed.json: the repeated-error DM names the file and says relaunch is held.
+    Use-Scenario 'kill-failed-corrupt'
+    $kc = New-Run -Name 'kf-corrupt' -PinnedHost 'codex' -NoLease
+    Invoke-DtJob @('request-continuation', '-RunFolder', $kc.folder) | Out-Null
+    $kcPath = Join-Path $kc.folder 'kill-failed.json'
+    Write-Utf8 -Path $kcPath -Content '{ broken'
+    $kcTicks = @(foreach ($n in 1..3) { @(Invoke-Tick | Where-Object { $_.run_id -eq 'kf-corrupt' })[0] })
+    $kcDms = @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { [string]($_ | ConvertFrom-Json).content } | Where-Object { $_.Contains('run kf-corrupt ') })
+    Assert-True (@($kcTicks[0].step_errors | Where-Object { $_.Contains("kill-failed.json ($kcPath)") }).Count -eq 1 -and (Get-LaunchCount 'kf-corrupt') -eq 0) "a corrupt kill-failed.json is reported as that file's step error and launches nothing ($($kcTicks[0] | ConvertTo-Json -Compress -Depth 5))"
+    Assert-True ($kcDms.Count -eq 1 -and $kcDms[0].Contains($kcPath) -and $kcDms[0].Contains('Relaunch is held for this run while kill-failed.json exists') -and -not $kcDms[0].Contains('relaunch and stop checks still run')) "the repeated-error DM names kill-failed.json and says relaunch is held ($($kcDms -join ' | '))"
+
+    # ---- ending a kill-failed episode is idempotent: a failed removal or a repeated completion appends nothing.
+    Use-Scenario 'complete-idempotent'
+    $ci = New-Run -Name 'complete-idem' -PinnedHost 'codex'
+    $ciPath = Join-Path $ci.folder 'kill-failed.json'
+    Write-Utf8 -Path $ciPath -Content '{ "coordinator_id": "old-coordinator", "survivors": [] }'
+    $ciEvents = Join-Path $ci.folder 'jobs/events.jsonl'
+    $countRotations = { if (Test-Path -LiteralPath $ciEvents) { @(Get-Content -LiteralPath $ciEvents | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.type -eq 'continuation_requested' -and $_.reason -eq 'context_rotation' }).Count } else { 0 } }
+    $complete = ". '$watcher'; try { Complete-WatcherRotation -Entry (Get-DtJobRegistryEntry -RunFolder '$($ci.folder)') -CoordinatorId 'old-coordinator' -NowUtc ([DateTime]::UtcNow) -KillFailedPath '$ciPath'; 'ok' } catch { 'threw' }"
+    $held = [System.IO.File]::Open($ciPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+    try { $blocked = @(& pwsh -NoProfile -Command $complete)[-1] }
+    finally { $held.Dispose() }
+    $ciLease = Get-Content -Raw -LiteralPath (Join-Path $ci.folder 'coordinator.lease') | ConvertFrom-Json
+    Assert-True ($blocked -eq 'threw' -and (& $countRotations) -eq 0 -and (Test-Path -LiteralPath $ciPath) -and -not $ciLease.released_utc) "a kill-failed.json that cannot be removed leaves the lease held and appends nothing ($blocked)"
+    $done = @(foreach ($n in 1..2) { @(& pwsh -NoProfile -Command $complete)[-1] })
+    $ciLease = Get-Content -Raw -LiteralPath (Join-Path $ci.folder 'coordinator.lease') | ConvertFrom-Json
+    Assert-True (($done -join ',') -eq 'ok,ok' -and (& $countRotations) -eq 1 -and -not (Test-Path -LiteralPath $ciPath) -and $ciLease.released_utc) "the first completion removes the file, releases the lease, and appends one continuation; a repeat appends nothing ($($done -join ','), $(& $countRotations))"
+
     # ---- a live watcher-launched pid is not replaced, even with its lease expired.
     Use-Scenario 'live-pid'
     $run = New-Run -Name 'live-pid'

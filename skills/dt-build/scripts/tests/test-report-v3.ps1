@@ -133,6 +133,42 @@ try {
     $r = & $check (New-Report -Continuation "$goodRecord`n`n$goodRecord")
     Assert-True (@($r.errors | Where-Object { $_ -match '^CONTINUATION_STATE must hold one entry' }).Count -eq 1) 'a second CONTINUATION_STATE entry after a blank line is rejected'
 
+    # ---- text after an unfenced report ends the last field; a second path before that boundary does not.
+    foreach ($continuation in @('NONE', $goodRecord)) {
+        $base = New-Report -Evidence @($evidence) -Continuation $continuation
+        $trailers = [ordered]@{
+            'a closing fence' = "Summary prose.`n```````n$base`n```````n"
+            'a blank line and a sentence' = "$base`n`nAll checks pass; ready for review."
+            'a --- line and prose' = "$base`n---`nAll checks pass; ready for review."
+            'a sentence on the next line' = "$base`nAll checks pass; ready for review."
+        }
+        foreach ($label in $trailers.Keys) {
+            $r = & $check $trailers[$label]
+            if (@($r.errors).Count -ne 0) { throw "ASSERT_FAIL: a valid report ($continuation) ending with $label was rejected: $(@($r.errors) -join '; ')" }
+        }
+    }
+    $script:passed++
+    $r = & $check ((New-Report -Continuation "$goodRecord`n$goodRecord") + "`n`nAll checks pass.")
+    Assert-True (@($r.errors | Where-Object { $_ -eq 'CONTINUATION_STATE must hold one entry, NONE or one path; found 2' }).Count -eq 1) "two CONTINUATION_STATE paths before any boundary are rejected even with trailing prose ($(@($r.errors) -join '; '))"
+    $r = & $check (New-Report -Continuation "$goodRecord`n$missingEvidence")
+    Assert-True (@($r.errors | Where-Object { $_ -match '^CONTINUATION_STATE must hold one entry' }).Count -eq 1) 'a second CONTINUATION_STATE path on the next line is rejected'
+    $r = & $check ((New-Report -Evidence @($evidence, $missingEvidence)) + "`n---`nTrailing prose.")
+    Assert-True (@($r.errors | Where-Object { $_ -match 'EVIDENCE_PATHS entry does not exist' -and $_ -match 'missing\.txt' }).Count -eq 1) 'a missing evidence path is still rejected when prose follows the report'
+    $r = & $check ((New-Report -Version 2) + "`n`nAll checks pass.")
+    Assert-True (@($r.errors).Count -eq 0 -and $r.warning -eq 'v2') 'a v2 report followed by a sentence is still accepted with the v2 warning'
+
+    # ---- path entries may be bulleted or backticked; the path rules apply to the stripped value.
+    $r = & $check (New-Report -Evidence @("- $evidence", "* ``$evidence2``", "``$evidence``") -Continuation "- ``$goodRecord``")
+    Assert-True (@($r.errors).Count -eq 0) "bulleted and backticked evidence and continuation paths validate ($(@($r.errors) -join '; '))"
+    $r = & $check (New-Report -Evidence @("- $evidence", "- ``$missingEvidence``"))
+    Assert-True (@($r.errors | Where-Object { $_ -eq "EVIDENCE_PATHS entry does not exist as an absolute path: $missingEvidence" }).Count -eq 1) 'a bulleted, backticked evidence path that does not exist is rejected'
+    $r = & $check (New-Report -Evidence @('- `evidence\suite.txt`'))
+    Assert-True (@($r.errors | Where-Object { $_ -eq 'EVIDENCE_PATHS entry is not an absolute local path: evidence\suite.txt' }).Count -eq 1) 'a bulleted, backticked relative evidence path is rejected as not absolute'
+    $r = & $check (New-Report -Continuation '* `\\fixture-server\share\state.md`')
+    Assert-True (@($r.errors | Where-Object { $_ -eq 'CONTINUATION_STATE is not an absolute local path: \\fixture-server\share\state.md' }).Count -eq 1) 'a bulleted, backticked UNC continuation path is rejected'
+    $r = & $check (New-Report -Continuation "- ``$(Join-Path $tempRoot 'records\absent.md')``")
+    Assert-True (@($r.errors | Where-Object { $_ -match '^CONTINUATION_STATE does not exist' }).Count -eq 1) 'a bulleted continuation path that does not exist is rejected'
+
     # ---- a missing or malformed tree_hash names the field and the command that computes it.
     $hintPattern = 'compute it with: pwsh -NoProfile -File "(?<path>[^"]+dt-job\.ps1)" tree-hash -WorkingTree "<worktree>"'
     $noHash = New-ContinuationRecord -Path (Join-Path $tempRoot 'records\no-hash.md') -Tests @([ordered]@{ command = 'x'; exit_code = 0; evidence_path = $evidence; recorded_utc = '2026-10-10T08:00:00Z' })

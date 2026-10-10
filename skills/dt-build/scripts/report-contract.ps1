@@ -105,22 +105,36 @@ function Get-DtContinuationRecord {
     return [pscustomobject]@{ record = $record; errors = @($errors) }
 }
 
+function Test-DtReportPathShaped {
+    # NONE, or a single token that looks like a path: a drive or root prefix, or a slash with no spaces.
+    param([string]$Entry)
+    return ($Entry -ceq 'NONE' -or $Entry -match '^(?:[A-Za-z]:[\\/]|[\\/])' -or ($Entry -notmatch '\s' -and $Entry -match '[\\/]'))
+}
+
 function Get-DtReportSection {
     # A report field's entries: an inline value after the colon, then every non-blank line up to the next
     # field header or a code fence. $null when the header is absent.
-    param([Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string]$Name)
+    # -PathField also ends the field at a '---' line and, after its first entry, at the first non-blank line
+    # that is not path-shaped, so prose after an unfenced report is not read as an entry while a second
+    # path, even after a blank line, still is. Each entry drops a leading '- ' or '* ' bullet and
+    # surrounding backticks.
+    param([Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string]$Name, [switch]$PathField)
     $lines = $Text -split '\r?\n'
     $headerPattern = '^\s*(?:' + (($script:DtReportHeaders | ForEach-Object { [regex]::Escape($_) }) -join '|') + '):'
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $m = [regex]::Match($lines[$i], '^\s*' + [regex]::Escape($Name) + ':(.*)$')
         if (-not $m.Success) { continue }
         $entries = New-Object System.Collections.Generic.List[string]
-        if ($m.Groups[1].Value.Trim()) { $entries.Add($m.Groups[1].Value.Trim()) | Out-Null }
-        for ($j = $i + 1; $j -lt $lines.Count; $j++) {
-            $line = $lines[$j]
-            if ($line -cmatch $headerPattern -or $line -match '^\s*```') { break }
-            if (-not $line.Trim()) { continue }
-            $entries.Add($line.Trim()) | Out-Null
+        $rawEntries = @($m.Groups[1].Value) + @($lines | Select-Object -Skip ($i + 1))
+        for ($j = 0; $j -lt $rawEntries.Count; $j++) {
+            $line = [string]$rawEntries[$j]
+            if ($j -gt 0 -and ($line -cmatch $headerPattern -or $line -match '^\s*```')) { break }
+            if ($PathField -and $line -match '^\s*---\s*$') { break }
+            $entry = $line.Trim()
+            if ($PathField) { $entry = ($entry -replace '^[-*]\s+', '') -replace '^`(.*)`$', '$1' }
+            if (-not $entry) { continue }
+            if ($PathField -and $entries.Count -gt 0 -and -not (Test-DtReportPathShaped $entry)) { break }
+            $entries.Add($entry) | Out-Null
         }
         return , @($entries)
     }
@@ -154,7 +168,7 @@ function Get-ReportShapeResult {
         if ($null -eq $verdict -or @($verdict).Count -eq 0) { $errors.Add('missing VERDICT') | Out-Null }
         elseif ($script:DtReportVerdicts -cnotcontains $verdict[0]) { $errors.Add("VERDICT '$($verdict[0])' is not one of $($script:DtReportVerdicts -join ', ')") | Out-Null }
 
-        $evidence = Get-DtReportSection -Text $Text -Name 'EVIDENCE_PATHS'
+        $evidence = Get-DtReportSection -Text $Text -Name 'EVIDENCE_PATHS' -PathField
         if ($null -eq $evidence -or @($evidence).Count -eq 0) { $errors.Add('missing EVIDENCE_PATHS') | Out-Null }
         elseif (-not (@($evidence).Count -eq 1 -and $evidence[0] -ceq 'NONE')) {
             foreach ($path in $evidence) {
@@ -163,7 +177,7 @@ function Get-ReportShapeResult {
             }
         }
 
-        $continuation = Get-DtReportSection -Text $Text -Name 'CONTINUATION_STATE'
+        $continuation = Get-DtReportSection -Text $Text -Name 'CONTINUATION_STATE' -PathField
         if ($null -eq $continuation -or @($continuation).Count -eq 0) { $errors.Add('missing CONTINUATION_STATE') | Out-Null }
         elseif (@($continuation).Count -gt 1) { $errors.Add("CONTINUATION_STATE must hold one entry, NONE or one path; found $(@($continuation).Count)") | Out-Null }
         elseif ($continuation[0] -cne 'NONE') {
