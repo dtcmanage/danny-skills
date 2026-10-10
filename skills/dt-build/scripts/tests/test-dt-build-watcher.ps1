@@ -493,8 +493,8 @@ try {
         $tailStart = (Get-Process -Id $tail.Id).StartTime.ToUniversalTime().ToString('o')
         $lease = [ordered]@{ coordinator_id = 'mc-tail'; host = 'claude'; session_id = $null; pid = $tail.Id; pid_start_utc = $tailStart; launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.ToString('o'); released_utc = [DateTime]::UtcNow.ToString('o') }
         Write-Utf8 -Path (Join-Path $finalTurn.folder 'coordinator.lease') -Content ($lease | ConvertTo-Json)
-        Invoke-Tick | Out-Null
-        Assert-True ((Get-LaunchCount 'released-alive') -eq 0) 'a released watcher lease whose process is still alive does not relaunch'
+        $aliveTick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'released-alive' })[0]
+        Assert-True ((Get-LaunchCount 'released-alive') -eq 0 -and $aliveTick.action -eq 'none' -and $aliveTick.detail -eq 'released coordinator process still alive') "a released watcher lease whose process is still alive does not relaunch ($($aliveTick | ConvertTo-Json -Compress))"
         $tail.Kill(); [void]$tail.WaitForExit(10000)
         Invoke-Tick | Out-Null
         Assert-True ((Get-LaunchCount 'released-alive') -eq 1) 'once that process is gone the next tick relaunches'
