@@ -100,6 +100,18 @@ try {
     Assert-True ($record.status -eq 'failed' -and $record.exit_code -eq 3) "failure recorded exit 3 (status $($record.status), exit $($record.exit_code))"
     $envelope = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $job.job_id)
     Assert-True ($envelope.verdict -eq 'fail' -and @($envelope.blockers).Count -ge 1) 'failed envelope names a blocker'
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "[Console]::Error.WriteLine('boom on stderr'); exit 2")
+    Wait-JobTerminal -RunFolder $rf -JobId $job.job_id | Out-Null
+    $envelope = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $job.job_id)
+    Assert-True ($envelope.exit_code -eq 2 -and (@($envelope.stderr_excerpt) -contains 'boom on stderr')) 'failed envelope carries a stderr tail'
+
+    # Exit semantics: the final statement decides, as with pwsh -Command.
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "cmd /c exit 3; 'done'")
+    $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
+    Assert-True ($record.status -eq 'succeeded' -and $record.exit_code -eq 0) "earlier native failure with a succeeding final statement exits 0 ($($record.status), $($record.exit_code))"
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'first'; cmd /c exit 4")
+    $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
+    Assert-True ($record.status -eq 'failed' -and $record.exit_code -eq 4) "failing final native command keeps its exit code ($($record.status), $($record.exit_code))"
 
     # Timeout.
     $rf = New-RunFolder 'timeout'
@@ -215,6 +227,18 @@ try {
     Assert-True (@($envelope.excerpt).Count -ge 1 -and $envelope.excerpt[-1].StartsWith('zzz')) 'excerpt keeps the stdout tail'
     $summary = Get-Content -Raw -LiteralPath (Get-JobRecord -RunFolder $rf -JobId $job.job_id).summary_path | ConvertFrom-Json
     Assert-True ($summary.status -eq 'succeeded') 'runner wrote the bounded summary'
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "1..3000 | ForEach-Object { 'y' * 300 }; 1..200 | ForEach-Object { [Console]::Error.WriteLine('e' * 600) }; exit 1")
+    Wait-JobTerminal -RunFolder $rf -JobId $job.job_id | Out-Null
+    $raw = (& pwsh -NoProfile -File $dtJob status -RunFolder $rf -JobId $job.job_id -Json) -join "`n"
+    $envelope = $raw | ConvertFrom-Json
+    Assert-True ([System.Text.Encoding]::UTF8.GetByteCount($raw) -le 8192) "failed envelope with stderr within 8 KB ($([System.Text.Encoding]::UTF8.GetByteCount($raw)) bytes)"
+    Assert-True (@($envelope.stderr_excerpt).Count -ge 1 -and (@($envelope.stderr_excerpt | Where-Object { $_.Length -gt 400 })).Count -eq 0) 'stderr tail present and line-capped'
+    Assert-True (@($envelope.truncated_evidence) -contains $envelope.evidence.stderr) 'stderr truncation names the full stderr evidence path'
+    $long = [ordered]@{ job_id = 'j-0099'; status = 'failed'; status_reason = ('r' * 1000); exit_code = 1 }
+    Write-Utf8 (Join-Path $rf 'jobs/j-0099.json') ($long | ConvertTo-Json)
+    $envelope = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', 'j-0099')
+    Assert-True ($envelope.truncated -eq $true -and $envelope.status_reason.Length -le 400) 'cut status_reason marks truncation'
+    Assert-True (@($envelope.truncated_evidence) -contains $envelope.evidence.job_file) 'cut status_reason names the job file as evidence'
 
     # read-evidence: cap, log entry, repeat-read warning.
     $rf = New-RunFolder 'evidence'
@@ -241,6 +265,97 @@ try {
     Assert-True ($log.Count -eq 5) "reads.jsonl has one entry per call ($($log.Count))"
     Assert-True ((@($log | Where-Object { -not ($_.path -and $_.sha256 -and $null -ne $_.bytes_returned -and $_.selector) })).Count -eq 0) 'each read log entry has path, selector, sha256, bytes'
     Assert-True ($log[1].selector.mode -eq 'grep' -and $log[1].selector.pattern -eq '^LONG' -and $log[3].repeat_read -eq $true) 'read log records pattern and repeat flag'
+    # Text mode: the warning and the truncation marker count against the 16 KB cap.
+    $rf = New-RunFolder 'evidence-text'
+    & pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '1-5000' | Out-Null
+    $text = @(& pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '1-5000')
+    $textBytes = ($text | ForEach-Object { [System.Text.Encoding]::UTF8.GetByteCount($_) + 1 } | Measure-Object -Sum).Sum
+    Assert-True ($textBytes -le 16384) "text-mode read with warning and marker within 16 KB ($textBytes bytes)"
+    Assert-True ($text[0].StartsWith('WARNING repeat_read') -and $text[-1].StartsWith('[truncated: true')) 'text-mode read shows the warning and the truncation marker'
+
+    # Concurrent readers: a tight status loop never turns a finishing job into a failure.
+    $rf = New-RunFolder 'contention'
+    $stopFile = Join-Path $rf 'stop.txt'
+    $loopScript = Join-Path $tempRoot 'status-loop.ps1'
+    Write-Utf8 $loopScript @'
+param([string]$DtJob, [string]$RunFolder, [string]$Stop)
+. $DtJob -RunFolder $RunFolder
+$jobsDir = Join-Path $RunFolder 'jobs'
+while (-not (Test-Path -LiteralPath $Stop)) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $jobsDir -Filter 'j-*.json' -File -ErrorAction SilentlyContinue)) {
+        # A slow foreign reader (Get-Content's share mode) holding the record open blocks a replace.
+        try { $held = [System.IO.File]::Open($f.FullName, 'Open', 'Read', 'ReadWrite'); Start-Sleep -Milliseconds 20; $held.Dispose() } catch { }
+        try { New-DtJobEnvelope -RunFolder $RunFolder -Record (Read-DtJobText -Path $f.FullName | ConvertFrom-Json) | Out-Null } catch { }
+    }
+}
+'@
+    New-Item -ItemType Directory -Path (Join-Path $rf 'jobs') -Force | Out-Null
+    $loop = Start-Process -FilePath ([System.Environment]::ProcessPath) -ArgumentList @('-NoProfile', '-File', "`"$loopScript`"", '-DtJob', "`"$dtJob`"", '-RunFolder', "`"$rf`"", '-Stop', "`"$stopFile`"") -PassThru -WindowStyle Hidden
+    try {
+        $ids = @(1..8 | ForEach-Object { (Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "Start-Sleep -Milliseconds 300; 'ok $_'")).job_id })
+        $states = @($ids | ForEach-Object { (Wait-JobTerminal -RunFolder $rf -JobId $_).status })
+    }
+    finally {
+        Write-Utf8 $stopFile 'stop'
+        if (-not $loop.WaitForExit(10000)) { $loop.Kill() }
+    }
+    Assert-True ((@($states | Where-Object { $_ -ne 'succeeded' })).Count -eq 0) "every job under a tight status loop succeeded ($($states -join ','))"
+    Assert-True ((@(Get-ChildItem -LiteralPath (Join-Path $rf 'jobs') -Recurse -File -Filter '*.tmp')).Count -eq 0) 'no stray temp files after contended writes'
+
+    # Lists under pwsh -File: comma-separated keys and dependencies split.
+    $rf = New-RunFolder 'lists'
+    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 3', '-Mutates', 'a,b')
+    $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'b'", '-Mutates', 'a')
+    Assert-True ((@((Get-JobRecord -RunFolder $rf -JobId $a.job_id).mutates) -join '|') -eq 'a|b') 'comma-separated -Mutates splits into two keys'
+    Assert-True ($a.status -eq 'running' -and $b.status -eq 'queued') 'one-key job queues behind the two-key job sharing a key'
+    $c = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'c'", '-DependsOn', "$($a.job_id), $($b.job_id)")
+    Assert-True ((@((Get-JobRecord -RunFolder $rf -JobId $c.job_id).depends_on) -join '|') -eq "$($a.job_id)|$($b.job_id)") 'comma-separated -DependsOn resolves both jobs'
+    Assert-True ((Wait-JobTerminal -RunFolder $rf -JobId $c.job_id).status -eq 'succeeded') 'job with two dependencies runs after both succeed'
+
+    # Environment pass-through: allow-listed caller variables reach the job; secrets only when named.
+    $rf = New-RunFolder 'env'
+    $env:DT_PROBE_VAR = 'hello'; $env:PROBE_PASS = 'passed'; $env:DT_PROBE_TOKEN = 'unnamed-secret'; $env:PROBE_API_KEY = 'named-secret'
+    try {
+        $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-PassEnv', 'PROBE_PASS,PROBE_API_KEY', '-Command', "'env=[{0}][{1}][{2}][{3}]' -f `$env:DT_PROBE_VAR, `$env:PROBE_PASS, `$env:DT_PROBE_TOKEN, `$env:PROBE_API_KEY")
+    }
+    finally {
+        Remove-Item Env:DT_PROBE_VAR, Env:PROBE_PASS, Env:DT_PROBE_TOKEN, Env:PROBE_API_KEY -ErrorAction SilentlyContinue
+    }
+    Wait-JobTerminal -RunFolder $rf -JobId $job.job_id | Out-Null
+    $stdout = Get-Content -Raw -LiteralPath (Join-Path $rf "jobs/$($job.job_id)/stdout.log")
+    Assert-True ($stdout.Trim() -eq 'env=[hello][passed][][named-secret]') "caller environment reaches the job ($($stdout.Trim()))"
+    Assert-True (-not ((Get-Content -Raw -LiteralPath (Join-Path $rf "jobs/$($job.job_id)/spec.json")) -match 'unnamed-secret')) 'unnamed secret-looking variable never written to the spec'
+
+    # Runner died but child lives: reconcile expires it past timeout plus grace.
+    $rf = New-RunFolder 'expire'
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 120', '-TimeoutSec', '20', '-Mutates', 'exp')
+    $record = Wait-JobState -RunFolder $rf -JobId $job.job_id -Until { param($r) [bool]$r.pid }
+    Stop-Process -Id ([int]$record.runner_pid) -Force
+    Start-Sleep -Milliseconds 500
+    Invoke-DtJob @('reconcile', '-RunFolder', $rf) | Out-Null
+    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).status -eq 'running') 'live child within its timeout stays running'
+    $record = Get-JobRecord -RunFolder $rf -JobId $job.job_id
+    $record.started = [DateTime]::UtcNow.AddSeconds(-60).ToString('o')
+    Write-Utf8 (Join-Path $rf "jobs/$($job.job_id).json") ($record | ConvertTo-Json -Depth 8)
+    Invoke-DtJob @('reconcile', '-RunFolder', $rf) | Out-Null
+    $after = Get-JobRecord -RunFolder $rf -JobId $job.job_id
+    Assert-True ($after.status -eq 'timeout' -and $after.status_reason -match 'expired') "expired job marked timeout ($($after.status): $($after.status_reason))"
+    Start-Sleep -Milliseconds 500
+    Assert-True (Test-ProcessGone $record.pid) 'expired child process killed'
+    Assert-True (-not (Test-Path -Path (Join-Path $rf 'jobs/locks/key-exp-*.lock'))) 'expired job frees its key'
+
+    # A partial last line in events.jsonl does not wedge later transitions.
+    $rf = New-RunFolder 'partial-event'
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'one'")
+    Wait-JobTerminal -RunFolder $rf -JobId $job.job_id | Out-Null
+    $eventsPath = Join-Path $rf 'jobs/events.jsonl'
+    $lastSeq = [int](@(Get-Content -LiteralPath $eventsPath | ForEach-Object { $_ | ConvertFrom-Json })[-1].seq)
+    [System.IO.File]::AppendAllText($eventsPath, '{"seq":99,"job_')
+    $job2 = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'two'")
+    Assert-True ((Wait-JobTerminal -RunFolder $rf -JobId $job2.job_id).status -eq 'succeeded') 'transition succeeds after a partial event line'
+    $parsed = @(Get-Content -LiteralPath $eventsPath | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { } })
+    $after = @($parsed | Where-Object { $_.job_id -eq $job2.job_id } | ForEach-Object { [int]$_.seq })
+    Assert-True ($after.Count -ge 1 -and $after[0] -eq $lastSeq + 1 -and (($after -join ',') -eq (($lastSeq + 1)..($lastSeq + $after.Count) -join ','))) "events continue at the next seq ($lastSeq -> $($after -join ','))"
 
     Write-Output 'PASS: dt-job suite'
 }

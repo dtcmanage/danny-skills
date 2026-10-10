@@ -37,19 +37,40 @@ function Complete-DtJobRun {
     }
 }
 
+function Get-DtJobCommandScript {
+    # Exit like `pwsh -Command`: the outcome of the final statement decides. LASTEXITCODE is reset just
+    # before that statement, so an earlier handled native failure does not leak into the exit code, while
+    # a failing final native command keeps its real exit code instead of pwsh's flattened 1.
+    param([Parameter(Mandatory)][string]$Command)
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Command, [ref]$tokens, [ref]$errors)
+    $body = "`$global:LASTEXITCODE = 0`n$Command"
+    if (@($errors).Count -eq 0 -and $null -ne $ast.EndBlock -and @($ast.EndBlock.Statements).Count -gt 0) {
+        $offset = @($ast.EndBlock.Statements)[-1].Extent.StartOffset
+        $body = $Command.Substring(0, $offset) + "`$global:LASTEXITCODE = 0; " + $Command.Substring($offset)
+    }
+    return "$body`n`$dtJobOk = `$?`nif (`$global:LASTEXITCODE -ne 0) { exit `$global:LASTEXITCODE }`nif (-not `$dtJobOk) { exit 1 }`nexit 0`n"
+}
+
+# Set once the child's result is known, so a failed ledger save cannot turn it into a runner error.
+$outcome = $null
+
 try {
-    $spec = Get-Content -Raw -LiteralPath (Join-Path $jobDir 'spec.json') | ConvertFrom-Json
+    $spec = Read-DtJobText -Path (Join-Path $jobDir 'spec.json') | ConvertFrom-Json
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.WorkingDirectory = (Get-Location).ProviderPath
+    # This runner was started from the registry profile; restore the caller's allow-listed environment.
+    if ($spec.PSObject.Properties['environment'] -and $null -ne $spec.environment) {
+        foreach ($property in $spec.environment.PSObject.Properties) { $psi.Environment[$property.Name] = [string]$property.Value }
+    }
     $psi.Environment['DT_JOB_ID'] = $JobId
     $psi.Environment['DT_JOB_DIR'] = $jobDir
     if ($spec.command) {
-        # pwsh -Command reports 1 for any failing native command; this tail keeps the real exit code.
-        $script = "`$global:LASTEXITCODE = 0`n$($spec.command)`n`$dtJobOk = `$?`nif (`$global:LASTEXITCODE -ne 0) { exit `$global:LASTEXITCODE }`nif (-not `$dtJobOk) { exit 1 }`nexit 0`n"
+        $script = Get-DtJobCommandScript -Command ([string]$spec.command)
         $psi.FileName = [System.Environment]::ProcessPath
         foreach ($a in @('-NoProfile', '-NonInteractive', '-EncodedCommand', [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script)))) { $psi.ArgumentList.Add($a) }
     }
@@ -102,16 +123,17 @@ try {
             $process.WaitForExit()
             [void]$copyOut.Wait(5000); [void]$copyErr.Wait(5000)
             $stdoutFile.Flush(); $stderrFile.Flush()
-            Complete-DtJobRun -Status 'timeout' -ExitCode $null -Reason "timed out after $timeoutSec s"
+            $outcome = @{ Status = 'timeout'; ExitCode = $null; Reason = "timed out after $timeoutSec s" }
         }
         else {
             $process.WaitForExit()
             [void]$copyOut.Wait(5000); [void]$copyErr.Wait(5000)
             $stdoutFile.Flush(); $stderrFile.Flush()
             $exitCode = $process.ExitCode
-            if ($exitCode -eq 0) { Complete-DtJobRun -Status 'succeeded' -ExitCode 0 }
-            else { Complete-DtJobRun -Status 'failed' -ExitCode $exitCode -Reason "exit code $exitCode" }
+            if ($exitCode -eq 0) { $outcome = @{ Status = 'succeeded'; ExitCode = 0; Reason = $null } }
+            else { $outcome = @{ Status = 'failed'; ExitCode = $exitCode; Reason = "exit code $exitCode" } }
         }
+        Complete-DtJobRun @outcome
     }
     finally {
         $stdoutFile.Dispose()
@@ -121,6 +143,12 @@ try {
 catch {
     $message = [string]$_.Exception.Message
     try { [System.IO.File]::AppendAllText($runnerLog, "$([DateTime]::UtcNow.ToString('o')) $message`n") } catch { }
+    if ($null -ne $outcome) {
+        # The child finished; only recording it failed. Record the real result, not a runner error.
+        Start-Sleep -Milliseconds 200
+        Complete-DtJobRun @outcome
+        exit 0
+    }
     if ($null -ne $process -and -not $process.HasExited) { try { $process.Kill($true) } catch { } }
     Complete-DtJobRun -Status 'failed' -ExitCode $null -Reason "runner error: $message"
     exit 1

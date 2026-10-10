@@ -30,6 +30,8 @@ param(
 
     [string]$RunId,
 
+    [string[]]$PassEnv = @(),
+
     [switch]$Json
 )
 
@@ -42,6 +44,11 @@ $script:DtJobEnvelopeMaxBytes = 8192
 $script:DtJobLineMaxChars = 400
 $script:DtJobExcerptLines = 40
 $script:DtJobLaunchGraceSec = 60
+$script:DtJobExpiryGraceSec = 30
+$script:DtJobMoveRetryMs = 2000
+$script:DtJobStderrExcerptLines = 10
+$script:DtJobEnvAllow = @('CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PATH')
+$script:DtJobEnvSensitive = @('*TOKEN*', '*SECRET*', '*KEY*', '*PASSWORD*')
 $script:DtJobLockDepth = 0
 $script:DtJobLockStream = $null
 $script:DtJobRunnerPath = Join-Path $PSScriptRoot 'dt-job-runner.ps1'
@@ -69,8 +76,37 @@ function Write-DtJobAtomic {
     $directory = Split-Path -Parent $Path
     if ($directory) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
     $tempPath = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
-    [System.IO.File]::WriteAllText($tempPath, $Content, [System.Text.UTF8Encoding]::new($false))
-    [System.IO.File]::Move($tempPath, $Path, $true)
+    try {
+        [System.IO.File]::WriteAllText($tempPath, $Content, [System.Text.UTF8Encoding]::new($false))
+        # The replace fails while any reader holds the target open; retry briefly, bounded at about 2 s.
+        $deadline = [DateTime]::UtcNow.AddMilliseconds($script:DtJobMoveRetryMs)
+        $delayMs = 10
+        while ($true) {
+            try {
+                [System.IO.File]::Move($tempPath, $Path, $true)
+                break
+            }
+            catch [System.IO.IOException], [System.UnauthorizedAccessException] {
+                if ([DateTime]::UtcNow -gt $deadline) { throw }
+                Start-Sleep -Milliseconds $delayMs
+                $delayMs = [Math]::Min(100, $delayMs * 2)
+            }
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempPath) { Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Read-DtJobText {
+    # Unlocked readers share read, write, and delete so they never block a writer's replace.
+    param([Parameter(Mandatory)][string]$Path)
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    try {
+        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8)
+        return $reader.ReadToEnd()
+    }
+    finally { $stream.Dispose() }
 }
 
 function Invoke-DtJobLocked {
@@ -109,7 +145,7 @@ function Get-DtJobRecord {
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId)
     $path = Join-Path (Get-DtJobPaths -RunFolder $RunFolder).Jobs "$JobId.json"
     if (-not (Test-Path -LiteralPath $path)) { return $null }
-    return (Get-Content -Raw -LiteralPath $path | ConvertFrom-Json)
+    return (Read-DtJobText -Path $path | ConvertFrom-Json)
 }
 
 function Get-DtJobRecords {
@@ -117,7 +153,7 @@ function Get-DtJobRecords {
     $jobsDir = (Get-DtJobPaths -RunFolder $RunFolder).Jobs
     if (-not (Test-Path -LiteralPath $jobsDir)) { return @() }
     return @(Get-ChildItem -LiteralPath $jobsDir -File -Filter 'j-*.json' | Sort-Object Name | ForEach-Object {
-        Get-Content -Raw -LiteralPath $_.FullName | ConvertFrom-Json
+        Read-DtJobText -Path $_.FullName | ConvertFrom-Json
     })
 }
 
@@ -131,13 +167,20 @@ function Add-DtJobEvent {
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId, [Parameter(Mandatory)][string]$Type, [Parameter(Mandatory)][string]$Status, [string]$Reason)
     $eventsPath = (Get-DtJobPaths -RunFolder $RunFolder).Events
     $seq = 1
+    $prefix = ''
     if (Test-Path -LiteralPath $eventsPath) {
-        $last = @([System.IO.File]::ReadAllLines($eventsPath) | Where-Object { $_.Trim() }) | Select-Object -Last 1
-        if ($last) { $seq = [int64](($last | ConvertFrom-Json).seq) + 1 }
+        $text = Read-DtJobText -Path $eventsPath
+        # A partial last line (a writer killed mid-append) is skipped, and the next event starts on a fresh line.
+        if ($text.Length -gt 0 -and -not $text.EndsWith("`n")) { $prefix = "`n" }
+        $lines = @($text -split "\r?\n" | Where-Object { $_.Trim() })
+        for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+            try { $parsed = $lines[$i] | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+            if ($null -ne $parsed -and $parsed.PSObject.Properties['seq']) { $seq = [int64]$parsed.seq + 1; break }
+        }
     }
     $evt = [ordered]@{ seq = $seq; job_id = $JobId; ts_utc = [DateTime]::UtcNow.ToString('o'); type = $Type; status = $Status }
     if ($Reason) { $evt.reason = $Reason }
-    [System.IO.File]::AppendAllText($eventsPath, (($evt | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::AppendAllText($eventsPath, ($prefix + ($evt | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
 }
 
 function Set-DtJobState {
@@ -161,7 +204,7 @@ function Get-DtJobKeyHolder {
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$Key)
     $path = Get-DtJobKeyLockPath -RunFolder $RunFolder -Key $Key
     if (-not (Test-Path -LiteralPath $path)) { return $null }
-    return (Get-Content -Raw -LiteralPath $path | ConvertFrom-Json).job_id
+    return (Read-DtJobText -Path $path | ConvertFrom-Json).job_id
 }
 
 function Remove-DtJobKeyLocks {
@@ -207,6 +250,13 @@ function Test-DtJobAlive {
         return ($age -lt $script:DtJobLaunchGraceSec)
     }
     return $false
+}
+
+function Test-DtJobExpired {
+    param([Parameter(Mandatory)]$Record)
+    if ([int]$Record.timeout_sec -le 0 -or -not $Record.started) { return $false }
+    $age = ([DateTime]::UtcNow - (ConvertTo-DtJobUtc $Record.started)).TotalSeconds
+    return ($age -gt ([int]$Record.timeout_sec + $script:DtJobExpiryGraceSec))
 }
 
 function Stop-DtJobProcesses {
@@ -284,14 +334,16 @@ function Invoke-DtJobSchedule {
             $r.last_progress = $r.started
             try {
                 $runner = Start-DtJobRunner -RunFolder $RunFolder -Record $r
-                $r.runner_pid = $runner.pid
-                $r.runner_start_utc = $runner.start_utc
-                Set-DtJobState -RunFolder $RunFolder -Record $r -Status 'running' -EventType 'launched'
             }
             catch {
                 Remove-DtJobKeyLocks -RunFolder $RunFolder -Record $r
                 Set-DtJobState -RunFolder $RunFolder -Record $r -Status 'failed' -EventType 'launch_failed' -Reason ([string]$_.Exception.Message)
+                continue
             }
+            # The runner waits on this lock and proceeds only if it then reads 'running'.
+            $r.runner_pid = $runner.pid
+            $r.runner_start_utc = $runner.start_utc
+            Set-DtJobState -RunFolder $RunFolder -Record $r -Status 'running' -EventType 'launched'
         }
     }
 }
@@ -325,7 +377,7 @@ function Read-DtJobTail {
 function Read-DtJobListFile {
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return @() }
-    return @([System.IO.File]::ReadAllLines($Path) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    return @((Read-DtJobText -Path $Path) -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
 function Get-DtJobEnvelopeBytes {
@@ -346,9 +398,13 @@ function New-DtJobEnvelope {
     $cut = $false
     $cutPaths = [System.Collections.Generic.List[string]]::new()
 
+    $jobFile = Join-Path $paths.Jobs "$($Record.job_id).json"
     $verdict = switch ($Record.status) { 'succeeded' { 'pass' } 'queued' { 'pending' } 'running' { 'pending' } default { 'fail' } }
+    $reasonCut = $false
+    $reason = Limit-DtJobLine ([string]$Record.status_reason) ([ref]$reasonCut)
+    if ($reasonCut) { $cut = $true; $cutPaths.Add($jobFile) }
     $blockers = [System.Collections.Generic.List[string]]::new()
-    if ($Record.status_reason -and $verdict -eq 'fail') { $blockers.Add((Limit-DtJobLine ([string]$Record.status_reason) ([ref]$cut))) }
+    if ($Record.status_reason -and $verdict -eq 'fail') { $blockers.Add($reason) }
     foreach ($line in (Read-DtJobListFile $blockersPath)) {
         $before = $cut; $blockers.Add((Limit-DtJobLine $line ([ref]$cut))); if ($cut -and -not $before) { $cutPaths.Add($blockersPath) }
     }
@@ -360,8 +416,16 @@ function New-DtJobEnvelope {
     $excerpt = [System.Collections.Generic.List[string]]::new()
     $excerptCut = [bool]$tail.more
     foreach ($line in $tail.lines) { $excerpt.Add((Limit-DtJobLine $line ([ref]$excerptCut))) }
+    # Failed jobs often explain themselves on stderr; carry a short tail of it too.
+    $stderrExcerpt = [System.Collections.Generic.List[string]]::new()
+    $stderrCut = $false
+    if ($verdict -eq 'fail') {
+        $errTail = Read-DtJobTail -Path $stderr -MaxLines $script:DtJobStderrExcerptLines
+        $stderrCut = [bool]$errTail.more
+        foreach ($line in $errTail.lines) { $stderrExcerpt.Add((Limit-DtJobLine $line ([ref]$stderrCut))) }
+    }
 
-    $evidence = [ordered]@{ job_file = (Join-Path $paths.Jobs "$($Record.job_id).json"); stdout = $stdout; stderr = $stderr }
+    $evidence = [ordered]@{ job_file = $jobFile; stdout = $stdout; stderr = $stderr }
     if (Test-Path -LiteralPath $changedPath) { $evidence.changed_files = $changedPath }
     if (Test-Path -LiteralPath $blockersPath) { $evidence.blockers = $blockersPath }
 
@@ -370,18 +434,24 @@ function New-DtJobEnvelope {
         status        = $Record.status
         verdict       = $verdict
         exit_code     = $Record.exit_code
-        status_reason = (Limit-DtJobLine ([string]$Record.status_reason) ([ref]$cut))
+        status_reason = $reason
         changed_files = $changed
         blockers      = $blockers
         evidence      = $evidence
         excerpt       = $excerpt
+        stderr_excerpt = $stderrExcerpt
         truncated     = $false
         truncated_evidence = $cutPaths
     }
     if ($excerptCut) { $cutPaths.Add($stdout) }
+    if ($stderrCut) { $cutPaths.Add($stderr) }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $excerpt.Count -gt 0) {
         $excerpt.RemoveAt(0)
         if (-not $cutPaths.Contains($stdout)) { $cutPaths.Add($stdout) }
+    }
+    while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $stderrExcerpt.Count -gt 0) {
+        $stderrExcerpt.RemoveAt(0)
+        if (-not $cutPaths.Contains($stderr)) { $cutPaths.Add($stderr) }
     }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $changed.Count -gt 0) {
         $changed.RemoveAt($changed.Count - 1)
@@ -412,6 +482,28 @@ function New-DtJobRunEnvelope {
     return [pscustomobject]$envelope
 }
 
+function Split-DtJobList {
+    param([AllowNull()][string[]]$Values)
+    return @(@($Values) | ForEach-Object { ([string]$_) -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Get-DtJobEnvironment {
+    # Allow-listed caller environment for the job: DT_*, CODEX_HOME, CLAUDE_CONFIG_DIR, PATH, and -PassEnv names.
+    # Secret-looking names are skipped silently unless named in -PassEnv; values are never logged.
+    param([string[]]$Extra = @())
+    $snapshot = [ordered]@{}
+    foreach ($item in Get-ChildItem Env: | Sort-Object Name) {
+        $name = [string]$item.Name
+        $named = @($Extra | Where-Object { $_ -ieq $name }).Count -gt 0
+        $allowed = $named -or $name -like 'DT_*' -or @($script:DtJobEnvAllow | Where-Object { $_ -ieq $name }).Count -gt 0
+        if (-not $allowed) { continue }
+        $sensitive = @($script:DtJobEnvSensitive | Where-Object { $name -like $_ }).Count -gt 0
+        if ($sensitive -and -not $named) { continue }
+        $snapshot[$name] = [string]$item.Value
+    }
+    return $snapshot
+}
+
 function Write-DtJobOutput {
     param($Object, [switch]$AsJson)
     if ($AsJson) { $Object | ConvertTo-Json -Depth 8 -Compress }
@@ -423,7 +515,7 @@ function Invoke-DtJobStart {
     if ([string]::IsNullOrWhiteSpace($Command) -eq [string]::IsNullOrWhiteSpace($ScriptPath)) {
         throw 'DT_JOB_USAGE: start takes exactly one of -Command or -ScriptPath.'
     }
-    $spec = [ordered]@{ command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec }
+    $spec = [ordered]@{ command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec; environment = (Get-DtJobEnvironment -Extra $PassEnv) }
     if ($Command) { $spec.command = $Command; $identity = $Command }
     else {
         $spec.script_path = [System.IO.Path]::GetFullPath($ScriptPath)
@@ -518,6 +610,13 @@ function Invoke-DtJobReconcile {
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         foreach ($r in (Get-DtJobRecords -RunFolder $RunFolder)) {
             if ($r.status -ne 'running') { continue }
+            if (Test-DtJobExpired -Record $r) {
+                # Past its timeout plus grace: the runner that enforces it is gone or stuck.
+                Stop-DtJobProcesses -Record $r
+                Remove-DtJobKeyLocks -RunFolder $RunFolder -Record $r
+                Set-DtJobState -RunFolder $RunFolder -Record $r -Status 'timeout' -EventType 'expired' -Reason "expired: running past timeout $($r.timeout_sec) s plus $($script:DtJobExpiryGraceSec) s grace"
+                continue
+            }
             if (Test-DtJobAlive -Record $r) { continue }
             # Re-read under the lock: a terminal record written by the runner always wins.
             $fresh = Get-DtJobRecord -RunFolder $RunFolder -JobId $r.job_id
@@ -527,7 +626,7 @@ function Invoke-DtJobReconcile {
         }
         if (Test-Path -LiteralPath $paths.Locks) {
             foreach ($lock in Get-ChildItem -LiteralPath $paths.Locks -File -Filter 'key-*.lock') {
-                $holderId = (Get-Content -Raw -LiteralPath $lock.FullName | ConvertFrom-Json).job_id
+                $holderId = (Read-DtJobText -Path $lock.FullName | ConvertFrom-Json).job_id
                 $holder = Get-DtJobRecord -RunFolder $RunFolder -JobId $holderId
                 if ($null -eq $holder -or (Test-DtJobTerminal $holder.status)) {
                     Remove-Item -LiteralPath $lock.FullName -Force
@@ -548,6 +647,11 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 
 if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb start|status|cancel|reconcile is required.' }
 if (-not $RunFolder) { throw 'DT_JOB_USAGE: -RunFolder is required.' }
+
+# Under `pwsh -File`, `-Mutates a,b` arrives as the single string 'a,b'; split every list on commas.
+$DependsOn = Split-DtJobList $DependsOn
+$Mutates = Split-DtJobList $Mutates
+$PassEnv = Split-DtJobList $PassEnv
 
 switch ($Verb) {
     'start' { Invoke-DtJobStart }

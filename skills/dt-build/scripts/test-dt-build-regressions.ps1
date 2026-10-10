@@ -25,6 +25,9 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-regressions-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $originalCodexHome = $env:CODEX_HOME
+# Isolate from this machine's live Codex session usage until a test sets its own fixture home.
+$env:CODEX_HOME = Join-Path $tempRoot 'empty-codex-home'
+New-Item -ItemType Directory -Path $env:CODEX_HOME -Force | Out-Null
 $originalClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $tempRoot 'missing-claude-credentials.json'
 $originalRouterState = $env:DT_MODEL_ROUTER_STATE
