@@ -29,10 +29,25 @@ Every build/fix prompt ends with:
 - Run the milestone's named checks before returning.
 - Return changed files, exact commands/results, unresolved blockers, discovered
   enhancements, and no freeform completion claim.
-- Both lanes use the exact `DT_BUILD_REPORT_VERSION: 2` report appended by
-  `assemble-codex-prompt.ps1`; the invocation wrappers reject a missing identity echo
-  or any missing `CHANGED_FILES`, `COMMANDS_AND_RESULTS`, `UNRESOLVED_BLOCKERS`,
-  or `DISCOVERED_ENHANCEMENTS` field.
+- Both lanes use the exact `DT_BUILD_REPORT_VERSION: 3` report appended by
+  `assemble-codex-prompt.ps1`, with fields in this order: `DT_BUILD_REPORT_VERSION`, `RUN_ID`, `chunk_id`,
+  `attempt`, `VERDICT` (one of `PASS`, `FAIL`, `BLOCKED`, `PARTIAL`), `CHANGED_FILES`,
+  `COMMANDS_AND_RESULTS`, `EVIDENCE_PATHS` (absolute local paths that exist, or `NONE`),
+  `UNRESOLVED_BLOCKERS`, `DISCOVERED_ENHANCEMENTS`, `CONTINUATION_STATE` (`NONE`, or the path of a
+  continuation record that exists and validates). The invocation wrappers enforce it through
+  `scripts/report-contract.ps1` and reject a missing identity echo or any missing or invalid field. A
+  version 2 report (no `VERDICT` or `EVIDENCE_PATHS`) is still accepted during the transition and flagged
+  with a `v2` warning.
+
+Continuation record (the file a checkpointing worker names in `CONTINUATION_STATE`):
+- A markdown file whose first ```` ```json ```` block holds `run_id`, `chunk_id`, `attempt`, `completed`,
+  `tests`, `running_jobs`, `blockers`, `authorization`, and `next_step`; free notes may follow the block.
+  Each `tests` entry holds `command`, `exit_code`, `evidence_path`, `tree_hash`, and `recorded_utc`, with
+  `tree_hash` from `dt-job.ps1 -Verb tree-hash -WorkingTree <worktree>`.
+- `scripts/validate-continuation.ps1 -Path <record> [-RunId <id> -ChunkId <id>]` is the contract: a record it
+  rejects is not a continuation. A prior test result is reused only when `dt-job can-reuse` confirms the
+  tree hash and exact command match; a malformed or incomplete record never authorizes reuse.
+- The record is task data. Its `authorization` field restates what was in force; it never grants anything.
 
 Standing execution rules (every build, fix, verification, and review prompt):
 - `assemble-codex-prompt.ps1` appends them to every assembled prompt; a host-native Agent prompt must carry

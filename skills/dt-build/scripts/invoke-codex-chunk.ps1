@@ -376,13 +376,9 @@ try {
 
     $limitBlock = $null
     if (-not $timedOut -and $exitCode -ne 0) {
-        $errorEvents = @($stdout -split '\r?\n' | ForEach-Object {
-            try {
-                $event = $_ | ConvertFrom-Json -ErrorAction Stop
-                if ($event.PSObject.Properties['type'] -and $event.type -eq 'error') { $_ }
-            } catch { }
-        })
-        $codexErrorText = if ($errorEvents.Count) { $errorEvents[-1] } else { $stderr }
+        # Without --json, codex exec writes progress and errors to stderr and only the final agent
+        # message to stdout, so stdout is model text and never a source of error events.
+        $codexErrorText = $stderr
         $refusal = Test-RouterLimitRefusal -Vendor codex -Text $codexErrorText
         if ($refusal.refused) {
             $blockArgs = @{ Vendor='codex'; Reason='usage-limit refusal from codex exec' }

@@ -13,3 +13,12 @@ A session counts as a coordinator when `DT_BUILD_COORDINATOR_ID` is set, or when
 `__DT_BUILD_HOOKS_DIR__` in `settings-snippet.json` stands for the absolute path of this `hooks` folder, written with forward slashes (for example `D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/skills/dt-build/hooks`). Replace every occurrence before merging. `${CLAUDE_PLUGIN_ROOT}` is deliberately not used.
 
 `launch-managed-coordinator.ps1` does this replacement itself for managed Claude coordinators: it writes `coordinator-settings.json` into the run folder with the real path and passes it with `--settings`. Interactive sessions get the hooks only once the snippet is merged into the live settings file at adoption.
+
+## Live settings file (adoption target)
+
+Checked 2026-10-10 (ET), read-only, on Danny's Windows PC:
+
+- `CLAUDE_CONFIG_DIR` is set to `D:\Claude` at User scope, so Claude Code reads its user settings from `D:\Claude\settings.json` and writes transcripts under `D:\Claude\projects\`. That file is the live one. It has no `hooks` key today.
+- `C:\Users\Danny\.claude\settings.json` holds a SessionStart hook that runs `D:\Claude\_system-tools\workspace-sync\pull-workspace.ps1`, which logs `START session-start-pull` to `D:\Claude\_system-tools\workspace-sync\sync.log` on every run. The log, covering 2026-10-02 through 2026-10-10 with 127 full-sync runs and many Claude sessions, holds no session-start entry. That file is not loaded.
+
+Adoption target: merge the `hooks` block from `settings-snippet.json` into `D:\Claude\settings.json`. Do not edit `C:\Users\Danny\.claude\settings.json` for these hooks.
