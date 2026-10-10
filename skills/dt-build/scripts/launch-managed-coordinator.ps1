@@ -68,8 +68,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DT_BUILD_LEASE_FAILED: recording pid $childPid for $CoordinatorId exited $LASTEXITCODE" }
 }
 catch {
-    # A child the lease does not name would be a second coordinator: stop it, then give the lease back.
-    if ($childPid) { Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue }
+    # A child the lease does not name would be a second coordinator: stop it and the claude/codex process
+    # under it, then give the lease back.
+    if ($childPid) { try { [System.Diagnostics.Process]::GetProcessById($childPid).Kill($true) } catch { } }
     & pwsh -NoProfile -NonInteractive -File $dtJob lease -RunFolder $runRoot -Action release -CoordinatorId $CoordinatorId -Json *> $null
     throw
 }

@@ -174,9 +174,16 @@ function Invoke-WatcherLaunch {
 function Invoke-WatcherStop {
     param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)]$Decision, [Parameter(Mandatory)][DateTime]$NowUtc)
     $folder = [string]$Entry.run_folder
-    Invoke-DtJobLocked -RunFolder $folder -Action {
+    # Recheck under the run lock: a resume or consume since the coordinator.lock recheck wins over the stop.
+    $blocker = Invoke-DtJobLocked -RunFolder $folder -Action {
+        $state = Get-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path)
+        if ($state.run_status -ne 'runnable') { return "run_status $($state.run_status)" }
+        $last = Get-DtJobLastEventSeq -RunFolder $folder
+        if ($last -ne $Decision.trigger_seq -or $state.last_consumed_event_seq -ge $Decision.trigger_seq) { return "event $last, cursor $($state.last_consumed_event_seq)" }
         Set-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path) -RunStatus 'awaiting_danny'
+        return $null
     }
+    if ($blocker) { return "changed under run lock: $blocker" }
     Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'stopped'; trigger_seq = $Decision.trigger_seq; stopped_utc = $NowUtc.ToString('o'); reason = $Decision.stop_kind })
     $runId = [string]$Entry.run_id
     if ($Decision.stop_kind -eq 'cap') {
@@ -224,16 +231,52 @@ function Invoke-WatcherRun {
             return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = "changed under lock: $($recheck.detail)"; reconcile_exit = $reconcileExit; pending_alerts = $retried }
         }
         $detail = if ($recheck.action -eq 'stop') { Invoke-WatcherStop -Entry $Entry -Decision $recheck -NowUtc $now } else { Invoke-WatcherLaunch -Entry $Entry -Decision $recheck -NowUtc $now }
-        return [pscustomobject]@{ run_id = $runId; action = $recheck.action; detail = $detail; reconcile_exit = $reconcileExit; pending_alerts = $retried }
+        $action = if ($detail -like 'changed under run lock*') { 'none' } else { $recheck.action }
+        return [pscustomobject]@{ run_id = $runId; action = $action; detail = $detail; reconcile_exit = $reconcileExit; pending_alerts = $retried }
     }
     finally { $lock.Dispose() }
+}
+
+function Send-WatcherRegistryAlert {
+    # One DM per registry error until the registry parses again. The marker beside the registry holds the
+    # error's key; a parse that succeeds deletes it, so a later failure is a new episode with a new key.
+    param([Parameter(Mandatory)][string]$ErrorText, [Parameter(Mandatory)][DateTime]$NowUtc)
+    $registry = Get-DtJobRegistryPath
+    $marker = "$registry.error.json"
+    $hash = [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($ErrorText))).Substring(0, 12).ToLowerInvariant()
+    $current = $null
+    if (Test-Path -LiteralPath $marker) { try { $current = Read-DtJobText -Path $marker | ConvertFrom-Json -ErrorAction Stop } catch { $current = $null } }
+    if ($null -eq $current -or [string]$current.error_hash -cne $hash) {
+        $current = [pscustomobject][ordered]@{ key = "dt-build:registry-error:${hash}:$($NowUtc.ToString('yyyyMMddHHmmssfff'))"; error_hash = $hash; delivered = $false }
+    }
+    if ([bool]$current.delivered) { return 'already_sent' }
+    $text = "dt-build watcher cannot read its run registry $registry, so no run is being watched. Error: $ErrorText. Fix or restore the file; the watcher resumes on the next tick after it parses."
+    $sent = $false
+    try {
+        $raw = & pwsh -NoProfile -NonInteractive -File $script:DtJobAlertScript -Key ([string]$current.key) -Message $text -Json 2>$null
+        $sent = [bool]((@($raw) | Where-Object { $_ } | Select-Object -Last 1) | ConvertFrom-Json).sent
+    }
+    catch { $sent = $false }
+    $current.delivered = $sent
+    Write-DtJobAtomic -Path $marker -Content ($current | ConvertTo-Json)
+    if ($sent) { return 'sent' }
+    return 'failed'
 }
 
 # Dot-sourcing (the tests do) loads the functions only.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
+try { $runs = @(Get-DtJobRegistryRuns) }
+catch {
+    $registryError = [string]$_.Exception.Message
+    $alert = Send-WatcherRegistryAlert -ErrorText $registryError -NowUtc (Get-WatcherNow)
+    [pscustomobject]@{ run_id = $null; action = 'error'; detail = "registry unreadable: $registryError"; alert = $alert } | ConvertTo-Json -Compress
+    exit 2
+}
+Remove-Item -LiteralPath "$(Get-DtJobRegistryPath).error.json" -Force -ErrorAction SilentlyContinue
+
 $exitCode = 0
-foreach ($entry in (Get-DtJobRegistryRuns)) {
+foreach ($entry in $runs) {
     try { $result = Invoke-WatcherRun -Entry $entry }
     catch {
         $exitCode = 1

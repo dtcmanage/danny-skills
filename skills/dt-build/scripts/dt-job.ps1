@@ -94,6 +94,8 @@ $script:DtJobLockDepth = 0
 $script:DtJobLockStream = $null
 $script:DtJobRunnerPath = Join-Path $PSScriptRoot 'dt-job-runner.ps1'
 $script:DtJobLeaseDefaultTtlSec = 600
+# Parameters the command line passed explicitly; dot-sourced callers pass none.
+$script:DtJobExplicitParams = @()
 $script:DtJobLeaseRenewMaxSec = 60
 $script:DtJobWaitPollMs = 500
 $script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
@@ -1061,14 +1063,19 @@ function Invoke-DtJobLease {
         }
         if ($leaseAction -eq 'acquire') {
             $ttl = if ($TtlSec -gt 0) { $TtlSec } else { $script:DtJobLeaseDefaultTtlSec }
-            $leasePid = if ($CoordinatorPid -gt 0) { $CoordinatorPid } else { $null }
+            # The holder's own re-acquire keeps who launched it and its process unless the call names new ones,
+            # so a managed coordinator that re-acquires stays watcher-launched and can still be relaunched.
+            $keepLaunchedBy = ($isHolder -and $script:DtJobExplicitParams -notcontains 'LaunchedBy' -and $current.PSObject.Properties['launched_by'] -and $current.launched_by)
+            $keepPid = ($isHolder -and $CoordinatorPid -le 0 -and $current.PSObject.Properties['pid'] -and $current.pid)
+            $leasePid = if ($CoordinatorPid -gt 0) { $CoordinatorPid } elseif ($keepPid) { $current.pid } else { $null }
+            $leasePidStart = if ($keepPid) { $(if ($current.PSObject.Properties['pid_start_utc']) { $current.pid_start_utc } else { $null }) } elseif ($leasePid) { Get-DtJobProcessStartUtc -ProcessId $leasePid } else { $null }
             $next = [pscustomobject][ordered]@{
                 coordinator_id = $CoordinatorId
                 host           = $(if ($CoordinatorHost) { $CoordinatorHost } else { $null })
                 session_id     = $(if ($SessionId) { $SessionId } else { $null })
                 pid            = $leasePid
-                pid_start_utc  = $(if ($leasePid) { Get-DtJobProcessStartUtc -ProcessId $leasePid } else { $null })
-                launched_by    = $LaunchedBy
+                pid_start_utc  = $leasePidStart
+                launched_by    = $(if ($keepLaunchedBy) { [string]$current.launched_by } else { $LaunchedBy })
                 ttl_sec        = $ttl
                 acquired_utc   = $now.ToString('o')
                 expires_utc    = $now.AddSeconds($ttl).ToString('o')
@@ -1199,14 +1206,20 @@ function Invoke-DtJobAwaitDanny {
 
 function Assert-DtJobOperator {
     # approve and resume are Danny's commands: a coordinator or a job can never release its own boundary.
-    param([Parameter(Mandatory)][string]$VerbName)
+    param([Parameter(Mandatory)][string]$VerbName, [Parameter(Mandatory)][string]$RunFolder)
     if ($env:DT_BUILD_COORDINATOR_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; coordinator $env:DT_BUILD_COORDINATOR_ID cannot run it" }
     if ($env:DT_JOB_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; it cannot run inside dt-job job $env:DT_JOB_ID" }
+    # The env checks can be bypassed by clearing a variable; a live watcher-launched coordinator cannot hide its process.
+    $lease = Get-DtJobLease -RunFolder $RunFolder
+    if ($null -ne $lease -and $lease.launched_by -eq 'watcher') {
+        $leaseStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
+        if (Test-DtJobProcessIdentity $lease.pid $leaseStart) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; watcher-launched coordinator $($lease.coordinator_id) is still running as pid $($lease.pid)" }
+    }
 }
 
 function Invoke-DtJobApprove {
     if (-not $Operation) { throw 'DT_JOB_USAGE: approve requires -Operation.' }
-    Assert-DtJobOperator -VerbName 'approve'
+    Assert-DtJobOperator -VerbName 'approve' -RunFolder $RunFolder
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder
@@ -1224,7 +1237,7 @@ function Invoke-DtJobApprove {
 }
 
 function Invoke-DtJobResume {
-    Assert-DtJobOperator -VerbName 'resume'
+    Assert-DtJobOperator -VerbName 'resume' -RunFolder $RunFolder
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $pending = (Get-DtJobApprovals -RunFolder $RunFolder).awaiting
@@ -1251,6 +1264,7 @@ if ($MyInvocation.InvocationName -eq '.') { return }
 
 if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb is required (start, status, wait, cancel, reconcile, lease, register-run, unregister-run, consume, request-continuation, await-danny, approve, resume, finish).' }
 if (-not $RunFolder) { throw 'DT_JOB_USAGE: -RunFolder is required.' }
+$script:DtJobExplicitParams = @($PSBoundParameters.Keys)
 
 # Under `pwsh -File`, `-Mutates a,b` arrives as the single string 'a,b'; split every list on commas.
 $DependsOn = Split-DtJobList $DependsOn

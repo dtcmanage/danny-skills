@@ -26,7 +26,7 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-watcher-tests-{0}" 
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 $savedEnv = @{}
-foreach ($name in @('DT_BUILD_STATE_DIR', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALERT_TRANSPORT', 'DT_BUILD_COORDINATOR_LAUNCHER', 'DT_BUILD_VENDOR_LIMITS_SCRIPT', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_ID', 'DT_TEST_DM_LOG', 'DT_TEST_LAUNCH_LOG', 'DT_TEST_DEAD_PID', 'DT_TEST_BLOCKED', 'DT_TEST_RESET_CLAUDE', 'DT_TEST_RESET_CODEX', 'DT_TEST_DTJOB', 'DT_TEST_LIVE_CHILD', 'DT_TEST_LAUNCH_SLEEP_MS', 'DT_TEST_LAUNCH_FAIL', 'DT_TEST_DM_FAIL', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID')) {
+foreach ($name in @('DT_BUILD_STATE_DIR', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALERT_TRANSPORT', 'DT_BUILD_COORDINATOR_LAUNCHER', 'DT_BUILD_VENDOR_LIMITS_SCRIPT', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_ID', 'DT_TEST_DM_LOG', 'DT_TEST_LAUNCH_LOG', 'DT_TEST_DEAD_PID', 'DT_TEST_BLOCKED', 'DT_TEST_RESET_CLAUDE', 'DT_TEST_RESET_CODEX', 'DT_TEST_DTJOB', 'DT_TEST_LIVE_CHILD', 'DT_TEST_LAUNCH_SLEEP_MS', 'DT_TEST_LAUNCH_FAIL', 'DT_TEST_DM_FAIL', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID', 'DT_TEST_TREE_FAIL')) {
     $savedEnv[$name] = [System.Environment]::GetEnvironmentVariable($name)
 }
 
@@ -55,6 +55,26 @@ param([Alias('Host')][string]$CoordinatorHost, [string]$RunId, [string]$RunFolde
 if ($env:DT_TEST_LAUNCH_SLEEP_MS) { Start-Sleep -Milliseconds ([int]$env:DT_TEST_LAUNCH_SLEEP_MS) }
 & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action acquire -CoordinatorId $CoordinatorId -Host $CoordinatorHost -LaunchedBy watcher -TtlSec 600 -Json *> $null
 if ($LASTEXITCODE -ne 0) { exit 3 }
+if ($env:DT_TEST_TREE_FAIL) {
+    # The child starts a grandchild (standing in for claude/codex), then recording the child's pid fails;
+    # the failure path below is the default launcher's.
+    $childPid = $null
+    $grandFile = "$($env:DT_TEST_TREE_FAIL).grand"
+    try {
+        $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','90','127.0.0.1' -WindowStyle Hidden -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 90"
+        $childPid = (Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript -WindowStyle Hidden -PassThru).Id
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not (Test-Path -LiteralPath $grandFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        $grandPid = [int](Get-Content -Raw -LiteralPath $grandFile)
+        [System.IO.File]::WriteAllText($env:DT_TEST_TREE_FAIL, ([ordered]@{ child = $childPid; grandchild = $grandPid } | ConvertTo-Json -Compress))
+        throw 'DT_BUILD_LEASE_FAILED: fake pid record failure'
+    }
+    catch {
+        if ($childPid) { try { [System.Diagnostics.Process]::GetProcessById($childPid).Kill($true) } catch { } }
+        & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action release -CoordinatorId $CoordinatorId -Json *> $null
+        exit 1
+    }
+}
 if ($env:DT_TEST_LAUNCH_FAIL) {
     & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action release -CoordinatorId $CoordinatorId -Json *> $null
     exit 1
@@ -735,6 +755,121 @@ Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
     $dupLines = @((Get-Content -Raw -LiteralPath $run.state) -split "\r?\n")
     Assert-True ($dupSummary.run_status -eq 'runnable' -and $dupSummary.last_consumed_event_seq -eq 1) 'the reader takes the first field lines, not a later duplicate'
     Assert-True (@($dupLines | Where-Object { $_ -eq 'last_consumed_event_seq: 1' }).Count -eq 1 -and @($dupLines | Where-Object { $_ -eq 'last_consumed_event_seq: 99' }).Count -eq 1 -and @($dupLines | Where-Object { $_ -eq 'run_status: finished' }).Count -eq 1) 'the writer edits the same first lines and leaves the duplicate alone'
+
+    # ---- a managed coordinator that re-acquires its own lease stays watcher-launched and is relaunched after a crash.
+    Use-Scenario 'reacquire'
+    $run = New-Run -Name 'reacquire' -NoLease
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    $env:DT_TEST_LIVE_CHILD = '1'
+    try { Invoke-Tick | Out-Null }
+    finally { Remove-Item Env:DT_TEST_LIVE_CHILD -ErrorAction SilentlyContinue }
+    $managedSpawn = @(Get-Launches 'reacquire')[0]
+    $leaseBefore = Get-Content -Raw -LiteralPath (Join-Path $run.folder 'coordinator.lease') | ConvertFrom-Json
+    $env:DT_BUILD_COORDINATOR_ID = $managedSpawn.coordinator_id
+    try {
+        $reacquired = Invoke-DtJob @('lease', '-RunFolder', $run.folder, '-Action', 'acquire', '-CoordinatorId', $managedSpawn.coordinator_id, '-Host', 'claude')
+        $renewed = Invoke-DtJob @('lease', '-RunFolder', $run.folder, '-Action', 'renew', '-CoordinatorId', $managedSpawn.coordinator_id)
+        # The coordinator handles its trigger and raises the next event, then crashes before handling that one.
+        Invoke-DtJob @('consume', '-RunFolder', $run.folder, '-Seq', [string]@(Get-LaunchRecords $run.folder)[0].trigger_seq) | Out-Null
+        Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    }
+    finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
+    $startTicks = { param($v) ([DateTime]$v).ToUniversalTime().Ticks }
+    Assert-True ($reacquired.launched_by -eq 'watcher' -and $reacquired.pid -eq $managedSpawn.pid -and (& $startTicks $reacquired.pid_start_utc) -eq (& $startTicks $leaseBefore.pid_start_utc)) "a holder re-acquire without -LaunchedBy or -Pid keeps launched_by, pid, and pid_start_utc ($($reacquired.launched_by), $($reacquired.pid))"
+    Assert-True ($renewed.launched_by -eq 'watcher' -and $renewed.pid -eq $managedSpawn.pid -and (& $startTicks $renewed.pid_start_utc) -eq (& $startTicks $leaseBefore.pid_start_utc)) 'a holder renew keeps launched_by, pid, and pid_start_utc'
+    $managedProcess = Get-Process -Id ([int]$managedSpawn.pid) -ErrorAction SilentlyContinue
+    if ($null -ne $managedProcess) { $managedProcess.Kill(); $managedProcess.WaitForExit(10000) | Out-Null }
+    $afterCrash = @(Invoke-Tick | Where-Object { $_.run_id -eq 'reacquire' })
+    Assert-True ((Get-LaunchCount 'reacquire') -eq 2 -and $afterCrash.Count -eq 1 -and $afterCrash[0].action -eq 'launch') "after the re-acquired managed coordinator crashes, the watcher relaunches it ($(@($afterCrash | ForEach-Object { $_.detail }) -join '; '))"
+    $relaunched = @(Get-Launches 'reacquire')[1]
+    $explicit = Invoke-DtJob @('lease', '-RunFolder', $run.folder, '-Action', 'acquire', '-CoordinatorId', $relaunched.coordinator_id, '-LaunchedBy', 'interactive')
+    Assert-True ($explicit.launched_by -eq 'interactive') 'an explicit -LaunchedBy on a holder re-acquire is applied'
+
+    # ---- approve and resume refuse while a watcher-launched coordinator is alive, even with its env cleared.
+    Use-Scenario 'operator-live'
+    $run = New-Run -Name 'operator-live' -NoLease
+    Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'merge', '-Message', 'Ready.') | Out-Null
+    $liveCoordinator = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        Write-Lease -RunFolder $run.folder -LaunchedBy 'watcher' -LeasePid $liveCoordinator.Id -PidStartUtc $liveCoordinator.StartTime.ToUniversalTime().ToString('o') -ExpiresUtc ([DateTime]::UtcNow.AddMinutes(10)) -CoordinatorId 'mc-live'
+        $liveApprove = Invoke-DtJobExpectFail @('approve', '-RunFolder', $run.folder, '-Operation', 'merge')
+        $liveResume = Invoke-DtJobExpectFail @('resume', '-RunFolder', $run.folder)
+    }
+    finally {
+        Stop-Process -Id $liveCoordinator.Id -Force -ErrorAction SilentlyContinue
+        $liveCoordinator.WaitForExit(10000) | Out-Null
+    }
+    $liveApprovals = Get-Content -Raw -LiteralPath (Join-Path $run.folder 'approvals.json') | ConvertFrom-Json
+    Assert-True ($liveApprove.exit -ne 0 -and $liveApprove.text -match 'DT_JOB_OPERATOR_ONLY' -and $liveApprove.text -match 'mc-live' -and @($liveApprovals.approvals).Count -eq 0 -and (Get-RunState $run.state).run_status -eq 'awaiting_danny') "approve is refused while the watcher-launched coordinator lives ($($liveApprove.text))"
+    Assert-True ($liveResume.exit -ne 0 -and $liveResume.text -match 'DT_JOB_OPERATOR_ONLY' -and $liveResume.text -match 'mc-live') 'resume is refused while the watcher-launched coordinator lives'
+    $goneApprove = Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'merge')
+    $goneResume = Invoke-DtJob @('resume', '-RunFolder', $run.folder)
+    Assert-True ($goneApprove.run_status -eq 'runnable' -and $goneResume.run_status -eq 'runnable') 'once that pid is gone the operator can approve and resume'
+
+    # ---- a launcher failure after the child starts kills the child's whole tree.
+    Use-Scenario 'tree-kill'
+    $run = New-Run -Name 'tree-kill' -NoLease
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    $treeFile = Join-Path $tempRoot 'tree-pids.json'
+    $env:DT_TEST_TREE_FAIL = $treeFile
+    try { Invoke-Tick | Out-Null }
+    finally { Remove-Item Env:DT_TEST_TREE_FAIL -ErrorAction SilentlyContinue }
+    $treePids = Get-Content -Raw -LiteralPath $treeFile | ConvertFrom-Json
+    Start-Sleep -Milliseconds 500
+    $survivors = @(@($treePids.child, $treePids.grandchild) | ForEach-Object { Get-Process -Id ([int]$_) -ErrorAction SilentlyContinue } | Where-Object { $_.ProcessName -in @('pwsh', 'PING') })
+    $treeLaunch = @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'launch' })
+    Assert-True ([int]$treePids.grandchild -gt 0 -and $survivors.Count -eq 0) "the failed launch leaves neither the child nor its grandchild running ($($survivors.Count) survivors)"
+    Assert-True ($treeLaunch.Count -eq 1 -and $treeLaunch[0].launcher_exit -eq 1) 'the failed launch is recorded with its exit code'
+    $launcherSource = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'launch-managed-coordinator.ps1')
+    Assert-True ($launcherSource.Contains('[System.Diagnostics.Process]::GetProcessById($childPid).Kill($true)') -and -not $launcherSource.Contains('Stop-Process -Id $childPid')) 'the default launcher kills the child tree on its failure path'
+
+    # ---- a resume between the coordinator.lock recheck and the stop leaves the run runnable and sends no stop DM.
+    Use-Scenario 'stop-race'
+    $run = New-Run -Name 'stop-race'
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    $stopProbe = Join-Path $tempRoot 'stop-race.ps1'
+    Write-Utf8 -Path $stopProbe -Content @'
+param([string]$WatcherScript, [string]$DtJobScript)
+. $WatcherScript
+$entry = @(Get-DtJobRegistryRuns)[0]
+$seq = Get-DtJobLastEventSeq -RunFolder $entry.run_folder
+# Every retry for the trigger is used up, so this tick decides to stop.
+for ($i = 1; $i -le $script:WatcherMaxAttempts; $i++) {
+    Add-WatcherLaunch -RunFolder $entry.run_folder -Record ([ordered]@{ type = 'launch'; trigger_seq = $seq; host = 'claude'; attempt = $i; launched_utc = [DateTime]::UtcNow.AddHours(-2).ToString('o'); pid = $null; coordinator_id = "old-$i"; launcher_exit = 0 })
+}
+$script:decisionCalls = 0
+$original = ${function:Get-WatcherDecision}
+function Get-WatcherDecision {
+    param($Entry, $NowUtc)
+    $script:decisionCalls++
+    $result = & $original -Entry $Entry -NowUtc $NowUtc
+    # Danny resumes right after the coordinator.lock recheck, before the stop is written.
+    if ($script:decisionCalls -eq 2) { & pwsh -NoProfile -File $DtJobScript resume -RunFolder $Entry.run_folder *> $null }
+    $result
+}
+Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
+'@
+    $stopRace = (& pwsh -NoProfile -File $stopProbe -WatcherScript $watcher -DtJobScript $dtJob | Select-Object -Last 1) | ConvertFrom-Json
+    Assert-True ($stopRace.action -eq 'none' -and $stopRace.detail -like 'changed under run lock*') "the stop sees the resume under the run lock ($($stopRace.detail))"
+    Assert-True ((Get-RunState $run.state).run_status -eq 'runnable' -and (Get-DmCount 'stop-race') -eq 0 -and @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'stopped' }).Count -eq 0) 'the run stays runnable, no stop is recorded, and no stop DM is sent'
+
+    # ---- a corrupt registry exits non-zero with one DM per episode until it parses again.
+    Use-Scenario 'registry-corrupt'
+    $registryFile = Join-Path $env:DT_BUILD_STATE_DIR 'active-runs.json'
+    Write-Utf8 -Path $registryFile -Content '{ "runs": [ {'
+    $registryDms = { @(if (Test-Path -LiteralPath $env:DT_TEST_DM_LOG) { Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('cannot read its run registry') } }).Count }
+    $corruptExits = @()
+    foreach ($n in 1..2) {
+        & pwsh -NoProfile -File $watcher *> $null
+        $corruptExits += $LASTEXITCODE
+    }
+    Assert-True (@($corruptExits | Where-Object { $_ -eq 0 }).Count -eq 0 -and (& $registryDms) -eq 1) "a corrupt registry exits non-zero every tick and DMs once (exits $($corruptExits -join ','), DMs $(& $registryDms))"
+    Write-Utf8 -Path $registryFile -Content '{ "runs": [] }'
+    & pwsh -NoProfile -File $watcher *> $null
+    Assert-True ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath "$registryFile.error.json")) 'a registry that parses again clears the error'
+    Write-Utf8 -Path $registryFile -Content '{ "runs": [ {'
+    & pwsh -NoProfile -File $watcher *> $null
+    Assert-True ($LASTEXITCODE -ne 0 -and (& $registryDms) -eq 2) 'a new corruption after a clean parse DMs again'
 
     # ---- wait renews at least every min(60 s, ttl/2).
     $renewSec = @(& pwsh -NoProfile -Command ". '$dtJob'; foreach (`$t in 600, 7200, 100, 4, 1) { Get-DtJobWaitRenewSec ([pscustomobject]@{ ttl_sec = `$t }) }")
