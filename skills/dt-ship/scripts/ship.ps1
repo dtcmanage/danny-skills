@@ -24,7 +24,10 @@
 # failed_step. JSON summary: status (shipped | merged_only | not_shipped |
 # failed), failed_step, branch, resolved_branch, merged, pushed, deployed,
 # hash_match, local_head, prod_commit, probe_attempts, probe_log, smoke [{route, pass}],
-# purged [], skipped [], rerere_enabled, error_message.
+# purged [], skipped [], rerere_enabled, timings {step: seconds}, step_logs, error_message.
+#
+# Gate and deploy run with output on files and an optional per-step hard limit
+# (config stepTimeouts); see references/ship-config.md "Step output and timings".
 
 param(
     [Parameter(Mandatory)]
@@ -62,6 +65,8 @@ $state = [ordered]@{
     purged = @()
     skipped = @()
     rerere_enabled = $null
+    timings = [ordered]@{}
+    step_logs = $null
     error_message = $null
 }
 
@@ -129,6 +134,76 @@ function Get-TailText {
     $split = $Text -split "`r?`n"
     if ($split.Count -le $Lines) { return $Text }
     return (($split | Select-Object -Last $Lines) -join "`n")
+}
+
+# Gate and deploy output goes to files, never a pipe: a long-lived child (a test
+# database server, an ssh control master) inherits pipe handles and keeps a
+# piped capture open after the step itself has exited. That hung a 30-second
+# gate for 30 minutes on 2026-10-10. We wait on the launched process only.
+$StepLogDir = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-ship-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + "-$PID")
+$StepTimeouts = $null
+$TimeoutAlertCommand = $null
+
+# Windows children inherit every inheritable handle, including this script's own
+# stdout. A step's leftover background process would then hold the caller's
+# capture of ship.ps1 open. Clear the inherit flag on our std handles first.
+if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+    if (-not ('DtShip.StdHandles' -as [type])) {
+        Add-Type -Namespace DtShip -Name StdHandles -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)] public static extern System.IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)] public static extern bool SetHandleInformation(System.IntPtr hObject, int dwMask, int dwFlags);
+'@
+    }
+    foreach ($std in @(-10, -11, -12)) {
+        $h = [DtShip.StdHandles]::GetStdHandle($std)
+        if ($h -ne [IntPtr]::Zero -and $h -ne [IntPtr]::new(-1)) {
+            [void][DtShip.StdHandles]::SetHandleInformation($h, 1, 0)
+        }
+    }
+}
+
+function Invoke-ShipStep {
+    param(
+        [string]$Step,
+        [string]$Command,
+        [string]$WorkingDirectory
+    )
+    New-Item -ItemType Directory -Force -Path $StepLogDir | Out-Null
+    $outLog = Join-Path $StepLogDir "$Step.out.log"
+    $errLog = Join-Path $StepLogDir "$Step.err.log"
+    $inFile = Join-Path $StepLogDir 'empty.stdin'
+    if (-not (Test-Path -LiteralPath $inFile)) { New-Item -ItemType File -Path $inFile | Out-Null }
+    $timeoutSec = Get-Prop $StepTimeouts $Step
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Command))
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $proc = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) `
+        -WorkingDirectory $WorkingDirectory -RedirectStandardInput $inFile -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
+        -NoNewWindow -PassThru
+    $null = $proc.Handle  # cache the handle so ExitCode is readable after exit
+    $timedOut = $false
+    if ($timeoutSec) {
+        if (-not $proc.WaitForExit([int]$timeoutSec * 1000)) {
+            $timedOut = $true
+            & taskkill.exe /PID $proc.Id /T /F *> $null
+            $null = $proc.WaitForExit(10000)
+        }
+    } else {
+        $proc.WaitForExit()
+    }
+    $watch.Stop()
+    $seconds = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+    $state.timings[$Step] = $seconds
+    $output = ((Get-Content -Raw -LiteralPath $outLog -ErrorAction SilentlyContinue) + "`n" +
+        (Get-Content -Raw -LiteralPath $errLog -ErrorAction SilentlyContinue))
+    if ($timedOut) {
+        if ($TimeoutAlertCommand) {
+            $alert = $TimeoutAlertCommand.Replace('{STEP}', $Step).Replace('{SECONDS}', [string]$timeoutSec).Replace('{LOG}', $outLog)
+            Push-Location $primary
+            try { & pwsh -NoProfile -NonInteractive -Command $alert *> $null } catch { } finally { Pop-Location }
+        }
+        Fail-Step $Step "Step '$Step' exceeded its ${timeoutSec}s limit and was stopped (process tree killed). Log: $outLog. Output tail: $(Get-TailText $output)"
+    }
+    return [pscustomobject]@{ ExitCode = $proc.ExitCode; Output = $output; Seconds = $seconds; Log = $outLog }
 }
 
 # --- Step: resolve-repo ------------------------------------------------------
@@ -255,7 +330,21 @@ if (Test-Path -LiteralPath $configFile) {
     if (-not $probeCheck -or (-not (Get-Prop $probeCheck 'url') -and -not (Get-Prop $probeCheck 'command'))) {
         Fail-Step 'config' "Ship config '$configFile' needs prodCommitProbe with either 'url' or 'command'."
     }
+    # Limits are opt-in per step and belong only on steps with a measured, steady runtime.
+    $StepTimeouts = Get-Prop $config 'stepTimeouts'
+    if ($StepTimeouts) {
+        foreach ($p in $StepTimeouts.PSObject.Properties) {
+            if ($p.Name -notin @('gate', 'deploy')) {
+                Fail-Step 'config' "stepTimeouts supports only 'gate' and 'deploy'; got '$($p.Name)'."
+            }
+            if (-not ($p.Value -is [int] -or $p.Value -is [long]) -or [int]$p.Value -le 0) {
+                Fail-Step 'config' "stepTimeouts.$($p.Name) must be a positive whole number of seconds; got '$($p.Value)'."
+            }
+        }
+    }
+    $TimeoutAlertCommand = Get-Prop $config 'timeoutAlertCommand'
 }
+$state.step_logs = $StepLogDir
 
 # --- Step: gate --------------------------------------------------------------
 
@@ -265,15 +354,9 @@ if ($gateCommand -and -not $SkipGate) {
     if (-not $branchTree) {
         Fail-Step 'gate' "gateCommand is configured but branch '$resolvedBranch' is not checked out in any worktree, so there is no tree to run the gate in. Run the gate by hand in the right tree, then re-run with -SkipGate."
     }
-    Push-Location $branchTree
-    try {
-        $gateOutput = & pwsh -NoProfile -Command $gateCommand 2>&1
-        $gateExit = $LASTEXITCODE
-    } finally {
-        Pop-Location
-    }
-    if ($gateExit -ne 0) {
-        Fail-Step 'gate' "Gate command failed (exit $gateExit) in '$branchTree'. NOT merged, NOT shipped. Output tail: $(Get-TailText (($gateOutput | Out-String)))"
+    $gateRun = Invoke-ShipStep -Step 'gate' -Command $gateCommand -WorkingDirectory $branchTree
+    if ($gateRun.ExitCode -ne 0) {
+        Fail-Step 'gate' "Gate command failed (exit $($gateRun.ExitCode)) in '$branchTree'. NOT merged, NOT shipped. Log: $($gateRun.Log). Output tail: $(Get-TailText $gateRun.Output)"
     }
 } elseif ($gateCommand -and $SkipGate) {
     $state.skipped += 'gate'
@@ -417,15 +500,9 @@ if ($SkipDeploy) {
     if (-not (Test-Path -LiteralPath $deployCwd)) {
         Fail-Step 'deploy' "deployCwd '$deployCwd' does not exist."
     }
-    Push-Location $deployCwd
-    try {
-        $deployOutput = & pwsh -NoProfile -Command $deployCommand 2>&1
-        $deployExit = $LASTEXITCODE
-    } finally {
-        Pop-Location
-    }
-    if ($deployExit -ne 0) {
-        Fail-Step 'deploy' "Deploy command failed (exit $deployExit). Output tail: $(Get-TailText (($deployOutput | Out-String)))"
+    $deployRun = Invoke-ShipStep -Step 'deploy' -Command $deployCommand -WorkingDirectory $deployCwd
+    if ($deployRun.ExitCode -ne 0) {
+        Fail-Step 'deploy' "Deploy command failed (exit $($deployRun.ExitCode)). Log: $($deployRun.Log). Output tail: $(Get-TailText $deployRun.Output)"
     }
     $state.deployed = $true
 }

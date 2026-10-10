@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.3.0 (2026-10-10): Gate and deploy now run with output on files (never a pipe) and the driver waits only on the launched process, with its own std handles made non-inheritable, so a lingering child (test database, ssh) can no longer hang a ship; optional per-step stepTimeouts (gate/deploy, no defaults, set from measured timings) kill an overrunning step and fail the ship, with an optional timeoutAlertCommand; every run reports timings and step_logs.
+
 - 0.2.1 (2026-09-20): On-main mode ignores uncommitted skill friction logs (_log.md, _log-archive.md), which are version-exempt.
 
 - 0.2.0 (2026-09-20): On-main mode: ship work already committed on main (no feature branch) by gating in the primary tree and skipping merge/purge; explicit -Branch main forces it; no-config outcome is pushed_only. Gate config uses -BaseRef auto.

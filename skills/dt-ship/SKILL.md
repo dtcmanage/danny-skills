@@ -2,7 +2,7 @@
 name: dt-ship
 description: "One-command close-out for a finished feature: run the build/tests gate, rebase + ff-only merge to main via the shared merge machinery, push, deploy per the repo's .ship.json, PROVE the deploy is live (deployed commit hash must equal local main HEAD, plus browser-smoke on the configured routes), then purge the merged worktree and branch. Trigger on /dt-ship, 'ship it', 'push live', or 'ship and clean tree'. Do NOT use to create branches or worktrees (that is start-work), for design review (dt-review), or for build execution (dt-build)."
 metadata:
-  version: 0.2.1
+  version: 0.3.0
   changelog:
     - "0.1.0 - Initial: ship.ps1 drives gate -> merge (reusing git-merge-feature's merge-feature.ps1 with -PurgeWorktree) -> purge sweep -> push -> deploy -> live proof (commit-hash probe + browser-smoke) from a per-repo .ship.json; fail-closed JSON summary; optional chaining into dt-session-audit / dt-handoff."
 ---
@@ -70,3 +70,4 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
 - This skill never creates branches or worktrees (that is `start-work`) and never does design review (that is `dt-review`).
 - Purge is safe-by-construction: worktrees and branches are removed only after a confirmed ff-only merge and only when the tree is clean. Never remove a worktree another live session may still be in.
 - `-SkipDeploy` (deploy already ran externally) still runs the hash probe and smoke — the proof is never optional when a config exists. `-SkipPush` is for deliberately local-only repos only.
+- Shipping must be fast and never hang silently. Set `stepTimeouts` only for steps that run every ship and have a known runtime (from the summary's `timings`), at that runtime plus a few minutes; never a blanket generous default. If a ship runs past its known duration with no limit configured, check on it immediately rather than waiting. After any ship, compare `timings` to the configured limits and propose tightening or adding one when a step's runtime is now well established.

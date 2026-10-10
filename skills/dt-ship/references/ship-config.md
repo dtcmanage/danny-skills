@@ -13,8 +13,18 @@ Lives at the repo's primary-tree root: `<repo>\.ship.json`. Read by `skills/dt-s
 | `hostResolveCommand` | string | no | PowerShell command whose last output line is the current host (IP or DNS name). Its output replaces every `{HOST}` token in `deployCommand`, `prodCommitProbe`, and `smokeRoutes`. This is the fix for stale hardcoded VM IPs: resolve the address live at ship time, never bake it into config. Required if any value uses `{HOST}`. |
 | `gateCommand` | string | no | Build/tests command run inside the feature worktree BEFORE the merge. Nonzero exit = nothing merges. If absent, the model must run the gate by hand before invoking `ship.ps1`. |
 | `smokeHarnessPath` | string | no | Override for the smoke harness. Default: `D:\Claude\_Claude-Workspace\00_Resources\tools\browser-smoke\smoke.mjs`. |
+| `stepTimeouts` | object | no | Hard limits in whole seconds, keys `gate` and/or `deploy` only. A step that runs past its limit has its whole process tree killed and the ship fails at that step. **No defaults.** Set a limit only on a step that runs on every ship and whose runtime is known from the `timings` field of past runs; make it that runtime plus a few minutes (a 50-75 s step gets ~180-240 s, never 10 minutes). Leave unmeasured steps out. |
+| `timeoutAlertCommand` | string | no | PowerShell command run from the primary tree when a step hits its `stepTimeouts` limit, before the ship fails. Tokens: `{STEP}`, `{SECONDS}` (the limit), `{LOG}` (the step's stdout log). Use it to email the operator. Alert failures are ignored so they never mask the timeout. |
 
-All strings use plain ASCII quotes. `{HOST}` is the only substitution token.
+All strings use plain ASCII quotes. `{HOST}` is the only substitution token in deploy/probe/smoke values; `{STEP}`, `{SECONDS}`, and `{LOG}` apply only to `timeoutAlertCommand`.
+
+## Step output and timings
+
+`gateCommand` and `deployCommand` run as their own process with stdin, stdout, and stderr on files under the
+run's `step_logs` directory (reported in the JSON summary), never a pipe. The driver waits on that process alone,
+so a long-lived child such as a test database server or an ssh control master cannot hold the ship open, and
+ship.ps1 clears the inherit flag on its own std handles so such a child cannot hold the caller's capture open
+either. Every run records `timings` (seconds per step); use them to set or tighten `stepTimeouts`.
 
 ## Example 1 — Cloudflare/wrangler-style web deploy (thai-capital-website)
 
