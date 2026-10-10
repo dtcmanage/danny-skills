@@ -141,27 +141,105 @@ function Save-RouterCodexAppServerReading {
     return $value
 }
 
-function Get-RouterCodexUsage {
-    param([string]$SessionsRoot, [switch]$Weekly)
-    $rollout = Get-RouterCodexRolloutUsage -SessionsRoot $SessionsRoot -Weekly:$Weekly
-    if (-not $Weekly) { return $rollout }
-    $saved = $null
+function Get-RouterCodexLiveUsage {
+    # Asks the Codex app server for the account's current limits (account/rateLimits/read). No model
+    # turn runs, so this spends no usage. Session logs only refresh when Codex runs, so a reset (or a
+    # reset credit) stays invisible to them while the guard itself keeps Codex from running.
+    param([int]$TimeoutMs = 20000)
+    $command = if ($env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND) { $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND }
+        else { $found = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\.(cmd|exe)$' } | Select-Object -First 1; if ($found) { $found.Source } else { $null } }
+    if (-not $command) { return $null }
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    if ($command -match '\.py$') { $info.FileName = 'python'; $info.ArgumentList.Add('-I'); $info.ArgumentList.Add($command) }
+    else { $info.FileName = $command }
+    $info.ArgumentList.Add('app-server')
+    $info.RedirectStandardInput = $true; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+    $process = $null
     try {
-        $path = Get-RouterCodexAppServerReadingPath
-        if (Test-Path -LiteralPath $path) {
-            $candidate = Read-RouterJsonObject -Path $path
-            if ($candidate -and $candidate.PSObject.Properties['used_percent'] -and $candidate.PSObject.Properties['observed_at_utc'] -and $candidate.PSObject.Properties['resets_at_utc']) {
-                # Read-RouterJsonObject parses ISO strings into DateTime; restore the router's ISO UTC shape.
-                $saved = [pscustomobject]@{ used_percent=[double]$candidate.used_percent
-                    resets_at_utc=([datetimeoffset]$candidate.resets_at_utc).ToUniversalTime().ToString('o')
-                    observed_at_utc=([datetimeoffset]$candidate.observed_at_utc).ToUniversalTime().ToString('o'); source_file=$path }
-                if ([datetimeoffset]$saved.resets_at_utc -le [datetimeoffset]::UtcNow) { $saved.used_percent = 0.0 }
+        $process = [Diagnostics.Process]::Start($info)
+        $null = $process.StandardError.ReadToEndAsync()
+        $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+        $readReply = {
+            param([int]$Id)
+            while ($true) {
+                $left = [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds
+                if ($left -le 0) { return $null }
+                $task = $process.StandardOutput.ReadLineAsync()
+                if (-not $task.Wait($left)) { return $null }
+                if ($null -eq $task.Result) { return $null }
+                try { $message = $task.Result | ConvertFrom-Json -Depth 20 } catch { continue }
+                if ($message.PSObject.Properties['id'] -and $message.id -eq $Id) { return $message }
             }
         }
-    } catch { $saved = $null }
-    if ($null -eq $saved) { return $rollout }
-    if ($null -eq $rollout) { return $saved }
-    return $(if ([datetimeoffset]$saved.observed_at_utc -gt [datetimeoffset]$rollout.observed_at_utc) { $saved } else { $rollout })
+        $process.StandardInput.WriteLine((@{ id=1; method='initialize'; params=@{ clientInfo=@{ name='dt_router_limits'; version='1' } } } | ConvertTo-Json -Compress -Depth 5))
+        $process.StandardInput.Flush()
+        if ($null -eq (& $readReply 1)) { return $null }
+        $process.StandardInput.WriteLine('{"method":"initialized"}')
+        $process.StandardInput.WriteLine('{"id":2,"method":"account/rateLimits/read","params":{}}')
+        $process.StandardInput.Flush()
+        $reply = & $readReply 2
+        if ($null -eq $reply -or -not $reply.PSObject.Properties['result'] -or $null -eq $reply.result.rateLimits) { return $null }
+        $limits = $reply.result.rateLimits
+        $window = $null; $weekly = $null
+        foreach ($name in @('primary', 'secondary')) {
+            $candidate = $limits.PSObject.Properties[$name]
+            if (-not $candidate -or $null -eq $candidate.Value -or $null -eq $candidate.Value.usedPercent -or $null -eq $candidate.Value.resetsAt) { continue }
+            if ($null -eq $window -or [double]$candidate.Value.usedPercent -gt [double]$window.usedPercent) { $window = $candidate.Value }
+            if ($candidate.Value.PSObject.Properties['windowDurationMins'] -and $candidate.Value.windowDurationMins -eq 10080) { $weekly = $candidate.Value }
+        }
+        if ($null -eq $window) { return $null }
+        if ($null -ne $weekly) { $null = Save-RouterCodexAppServerReading -Reading @{ used_percent=[double]$weekly.usedPercent; resets_at_utc=[datetimeoffset]::FromUnixTimeSeconds([long]$weekly.resetsAt).ToString('o') } }
+        # The fullest window decides blocking for every caller, so it is saved apart from the weekly snapshot.
+        $value = [pscustomobject]@{ used_percent=[double]$window.usedPercent
+            resets_at_utc=[datetimeoffset]::FromUnixTimeSeconds([long]$window.resetsAt).ToString('o')
+            observed_at_utc=([datetimeoffset]::UtcNow).ToString('o'); source='codex-live' }
+        $path = Get-RouterCodexLiveReadingPath
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path)
+        Write-RouterJsonAtomic -Path $path -Value $value
+        return Read-RouterCodexSavedReading -Path $path
+    } catch { return $null }
+    finally { if ($null -ne $process) { try { if (-not $process.HasExited) { $process.Kill($true) } } catch { }; $process.Dispose() } }
+}
+
+function Get-RouterCodexLiveReadingPath {
+    return Join-Path (Join-Path (Get-RouterStateDir) 'readings') 'codex-live.json'
+}
+
+function Read-RouterCodexSavedReading {
+    param([Parameter(Mandatory)][string]$Path)
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { return $null }
+        $candidate = Read-RouterJsonObject -Path $Path
+        if (-not ($candidate -and $candidate.PSObject.Properties['used_percent'] -and $candidate.PSObject.Properties['observed_at_utc'] -and $candidate.PSObject.Properties['resets_at_utc'])) { return $null }
+        # Read-RouterJsonObject parses ISO strings into DateTime; restore the router's ISO UTC shape.
+        $saved = [pscustomobject]@{ used_percent=[double]$candidate.used_percent
+            resets_at_utc=([datetimeoffset]$candidate.resets_at_utc).ToUniversalTime().ToString('o')
+            observed_at_utc=([datetimeoffset]$candidate.observed_at_utc).ToUniversalTime().ToString('o'); source_file=$Path }
+        if ([datetimeoffset]$saved.resets_at_utc -le [datetimeoffset]::UtcNow) { $saved.used_percent = 0.0 }
+        return $saved
+    } catch { return $null }
+}
+
+function Get-RouterCodexUsage {
+    param([string]$SessionsRoot, [switch]$Weekly)
+    # The newest of the rollout reading, the live reading (fullest window, valid for both callers), and,
+    # for weekly callers, the app-server weekly snapshot wins.
+    $readings = @(Get-RouterCodexRolloutUsage -SessionsRoot $SessionsRoot -Weekly:$Weekly
+        Read-RouterCodexSavedReading -Path (Get-RouterCodexLiveReadingPath)
+        if ($Weekly) { Read-RouterCodexSavedReading -Path (Get-RouterCodexAppServerReadingPath) }) | Where-Object { $null -ne $_ }
+    $best = $readings | Sort-Object { [datetimeoffset]$_.observed_at_utc } -Descending | Select-Object -First 1
+    # Session logs refresh only when Codex runs, which the guard prevents, so a blocking reading over five
+    # minutes old is re-checked live. Tests that point at fixture sessions never reach the real account
+    # unless they name a live command.
+    $liveAllowed = $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND -or -not ($SessionsRoot -or $env:DT_MODEL_ROUTER_CODEX_SESSIONS)
+    if ($liveAllowed -and $null -ne $best -and $best.used_percent -ge (Get-RouterGuardPercent -Vendor codex) -and
+        [datetimeoffset]$best.resets_at_utc -gt [datetimeoffset]::UtcNow -and
+        [datetimeoffset]$best.observed_at_utc -lt [datetimeoffset]::UtcNow.AddMinutes(-5)) {
+        $live = Get-RouterCodexLiveUsage
+        if ($null -ne $live) { return $live }
+    }
+    return $best
 }
 
 function Get-RouterCodexRolloutUsage {

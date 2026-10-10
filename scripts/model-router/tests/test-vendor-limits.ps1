@@ -263,6 +263,31 @@ try {
     Assert-True ($null -eq (Get-RouterCodexUsage) -or (Get-RouterCodexUsage).source_file -ne (Get-RouterCodexAppServerReadingPath)) 'the five-hour window never uses the weekly snapshot'
     $parsed = (@{ used_percent=2; resets_at_utc='2026-10-14T00:19:43+00:00' } | ConvertTo-Json | ConvertFrom-Json -AsHashtable)
     Assert-True ((Save-RouterCodexAppServerReading -Reading $parsed).resets_at_utc -eq '2026-10-14T00:19:43.0000000+00:00') 'a reset already parsed to DateTime is saved as ISO UTC'
+    # A blocking rollout reading is re-checked live, at most once per five minutes, and a failed check keeps it.
+    $liveSessions = Join-Path $temp 'live-sessions'
+    $liveFile = Join-Path $liveSessions '2026/10/10/rollout-live.jsonl'
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $liveFile)) | Out-Null
+    $row = @{ timestamp=([datetimeoffset]::UtcNow.AddHours(-3)).ToString('o'); type='event_msg'; payload=@{ type='token_count'
+        rate_limits=@{ primary=@{ used_percent=98; window_minutes=10080; resets_at=[datetimeoffset]::UtcNow.AddDays(3).ToUnixTimeSeconds() } } } }
+    Set-Content -LiteralPath $liveFile -Value ($row | ConvertTo-Json -Compress -Depth 6)
+    Remove-Item -LiteralPath (Get-RouterCodexLiveReadingPath) -ErrorAction SilentlyContinue
+    $probeLog = Join-Path $temp 'probe.log'
+    $env:FAKE_CODEX_LIMITS_LOG = $probeLog
+    $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND = Join-Path $PSScriptRoot 'fixtures/fake-codex-limits.py'
+    Remove-Item Env:FAKE_CODEX_LIMITS_PERCENT -ErrorAction SilentlyContinue
+    $failed = Get-RouterCodexUsage -SessionsRoot $liveSessions
+    Assert-True ($failed.used_percent -eq 98 -and $failed.source_file -eq $liveFile) 'a failed live check keeps the blocking rollout reading'
+    $env:FAKE_CODEX_LIMITS_PERCENT = '2'
+    $live = Get-RouterCodexUsage -SessionsRoot $liveSessions
+    Assert-True ($live.used_percent -eq 2 -and $live.source_file -eq (Get-RouterCodexLiveReadingPath)) 'a stale blocking rollout reading is replaced by the live reading'
+    $env:FAKE_CODEX_LIMITS_PERCENT = '97'
+    $again = Get-RouterCodexUsage -SessionsRoot $liveSessions
+    Assert-True ($again.used_percent -eq 2 -and @(Get-Content -LiteralPath $probeLog).Count -eq 2) 'a fresh live reading is used without another probe'
+    Assert-True ((Get-RouterCodexUsage -SessionsRoot $liveSessions -Weekly).used_percent -eq 2) 'weekly callers see the live reading too'
+    $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND = $null
+    Remove-Item -LiteralPath (Get-RouterCodexLiveReadingPath)
+    Assert-True ((Get-RouterCodexUsage -SessionsRoot $liveSessions).used_percent -eq 98 -and @(Get-Content -LiteralPath $probeLog).Count -eq 2) 'fixture sessions without a live command never probe the real account'
+    $env:FAKE_CODEX_LIMITS_LOG = $null; $env:FAKE_CODEX_LIMITS_PERCENT = $null
     Write-Output "SUMMARY: $script:passed passed"
 } finally { $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials; Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState
