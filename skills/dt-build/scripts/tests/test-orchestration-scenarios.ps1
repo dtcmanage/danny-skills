@@ -203,6 +203,15 @@ function Get-LiveReadEvidence([string]$Path, [string]$Vendor) {
     } finally { $reader.Dispose() }
     [pscustomobject]@{ direct_attempt = $direct.Count -gt 0; shell_attempt = $shell.Count -gt 0; read_denied = $denied.ContainsKey('Read'); shell_denied = $denied.ContainsKey('Bash') -or $denied.ContainsKey('PowerShell') }
 }
+function Wait-LiveTranscript([string]$Vendor, [string]$Cwd, [DateTime]$Deadline) {
+    # A fresh host home has no projects/sessions folder until the host writes its first transcript; keep polling.
+    do {
+        try { $found = Find-DtCtxTranscript -TranscriptHost $Vendor -Cwd $Cwd; if ($found) { return $found } }
+        catch { if ($_.Exception.Message -notlike 'CONTEXT_GUARD_NO_TRANSCRIPT*') { throw } }
+        Start-Sleep -Milliseconds 500
+    } while ([DateTime]::UtcNow -lt $Deadline)
+    return $null
+}
 function Invoke-LiveValidation {
     # Credentials are copied only when the caller explicitly selects -Live. Neither home gets live
     # settings, hooks, or a registry. Remove the credential copies in finally, retaining only evidence.
@@ -282,12 +291,7 @@ After both attempts call pwsh -NoProfile -File $(Quote $jobScript) status -RunFo
                 try {
                     . (Join-Path $scripts 'context-guard.ps1')
                     $deadline = [DateTime]::UtcNow.AddSeconds(300) # independent deadline for each host
-                    $transcript = $null
-                    do {
-                        $transcript = Find-DtCtxTranscript -TranscriptHost $vendor -Cwd $r.folder
-                        if ($transcript) { break }
-                        Start-Sleep -Milliseconds 500
-                    } while ([DateTime]::UtcNow -lt $deadline)
+                    $transcript = Wait-LiveTranscript $vendor $r.folder $deadline
                     Assert ([bool]$transcript) 'managed host produced no discoverable transcript'
                     # Attach the real transcript with low baseline. No synthetic token rows in live mode.
                     Write-Text (Join-Path $r.folder 'context-baseline.json') (@{coordinators=@{$coordinator=@{coordinator_id=$coordinator;host=$vendor;transcript_path=$transcript;baseline_tokens=1;session_id=[IO.Path]::GetFileNameWithoutExtension($transcript);transcript_source='explicit';marked_utc=[DateTime]::UtcNow.ToString('o')}}} | ConvertTo-Json -Depth 6)
@@ -480,6 +484,13 @@ if (`$script:alive) { throw 'coordinator survived one tick' }
             @{type='assistant';message=@{content=@(@{type='text';text='Read and shell were denied by dt-build context guard: past its hard context limit'})}},
             @{type='assistant';message=@{content=@(@{type='tool_use';id='read';name='Read';input=@{file_path=$big}},@{type='tool_use';id='shell';name='Bash';input=@{command="Get-Content $(Quote $big)"}})}}
         )
+        # The live discovery loop survives a host home that has no transcript folder yet.
+        . (Join-Path $scripts 'context-guard.ps1')
+        $savedHomes = @($env:CLAUDE_CONFIG_DIR, $env:CODEX_HOME)
+        try {
+            $env:CLAUDE_CONFIG_DIR = Join-Path $r.folder 'empty-claude-home'; $env:CODEX_HOME = Join-Path $r.folder 'empty-codex-home'
+            foreach ($v in @('claude','codex')) { Assert ($null -eq (Wait-LiveTranscript $v $r.folder ([DateTime]::UtcNow.AddSeconds(1)))) "live transcript wait threw or found a transcript on an empty $v home" }
+        } finally { $env:CLAUDE_CONFIG_DIR = $savedHomes[0]; $env:CODEX_HOME = $savedHomes[1] }
         $liveFixture = Join-Path $r.folder 'live-claude-fixture.jsonl'
         Write-Text $liveFixture (($claudeRows | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 }) -join "`n")
         $reads = Get-LiveReadEvidence $liveFixture claude
@@ -580,11 +591,14 @@ if (`$script:alive) { throw 'coordinator survived one tick' }
         & {
             function pwsh { $global:LASTEXITCODE = 0; @{commit_range=$ownRange;status='success'} | ConvertTo-Json -Compress }
             function git { param($Operation,$Option,$Range) Assert ($Operation -eq 'revert' -and $Option -eq '--no-commit' -and $Range -eq $ownRange) 'rollback included unrelated pulled commits'; 'synthetic revert receipt' }
-            $receiptExpression = "(Join-Path `$env:TEMP 'dt-build-adoption-merge.json')"
-            $mergeText = $mergeCommand[0].Replace("Join-Path `$env:TEMP 'dt-build-adoption-merge.json'",(Quote $receiptPath))
+            $receiptExpression = "(Join-Path '<evidence-dir>' 'adoption-merge.json')"
+            $mergeText = $mergeCommand[0].Replace("Join-Path '<evidence-dir>' 'adoption-merge.json'",(Quote $receiptPath))
+            Assert ($mergeText -ne $mergeCommand[0]) 'adoption merge command no longer names the evidence-dir receipt'
+            $rollbackText = $rollbackCommand[0].Replace($receiptExpression,(Quote $receiptPath))
+            Assert ($rollbackText -ne $rollbackCommand[0]) 'adoption rollback command no longer names the evidence-dir receipt'
             & ([scriptblock]::Create($mergeText))
             Assert (Test-Path -LiteralPath $receiptPath) 'merge receipt not saved at merge time'
-            & ([scriptblock]::Create($rollbackCommand[0].Replace($receiptExpression,(Quote $receiptPath)))) | Out-Null
+            & ([scriptblock]::Create($rollbackText)) | Out-Null
         }
         foreach ($settingsFixture in @('{"theme":"light"}', '{"theme":"light","hooks":{"PreToolUse":[{"hooks":[{"command":"unrelated-hook"},{"command":"__DIR__/coordinator-pretooluse.ps1"}]}],"PostToolUse":[{"hooks":[{"command":"__DIR__/coordinator-posttooluse.ps1"}]}]}}')) {
             $settingsPath = Join-Path $r.folder 'synthetic-settings.json'

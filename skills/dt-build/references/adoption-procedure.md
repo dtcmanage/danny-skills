@@ -13,7 +13,7 @@ $registry = Join-Path $(if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR }
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$receiptPath = Join-Path $env:TEMP 'dt-build-adoption-merge.json'; $receipt = pwsh -NoProfile -File skills/git-merge-feature/scripts/merge-feature.ps1 -Branch '<accepted-build-branch>' -Json; $mergeExit = $LASTEXITCODE; $receipt | Set-Content -LiteralPath $receiptPath; if ($mergeExit -ne 0) { throw "Merge failed; inspect $receiptPath" }; $merge = $receipt | ConvertFrom-Json; if (-not $merge.commit_range) { throw 'Merge receipt lacks commit_range' }
+$receiptPath = Join-Path '<evidence-dir>' 'adoption-merge.json'; New-Item -ItemType Directory -Path (Split-Path $receiptPath) -Force | Out-Null; $receipt = pwsh -NoProfile -File skills/git-merge-feature/scripts/merge-feature.ps1 -Branch '<accepted-build-branch>' -Json; $mergeExit = $LASTEXITCODE; $receipt | Set-Content -LiteralPath $receiptPath; if ($mergeExit -ne 0) { throw "Merge failed; inspect $receiptPath" }; $merge = $receipt | ConvertFrom-Json; if (-not $merge.commit_range) { throw 'Merge receipt lacks commit_range' }
 ```
 
 ```powershell
@@ -88,5 +88,5 @@ $target = 'D:\Claude\settings.json'; $settings = Get-Content -Raw -LiteralPath $
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$merge = Get-Content -Raw -LiteralPath (Join-Path $env:TEMP 'dt-build-adoption-merge.json') | ConvertFrom-Json; $range = [string]$merge.commit_range; if ($range -notmatch '^[0-9a-f]{7,40}\.\.[0-9a-f]{7,40}$') { throw 'Invalid merge receipt commit_range' }; git revert --no-commit $range
+$merge = Get-Content -Raw -LiteralPath (Join-Path '<evidence-dir>' 'adoption-merge.json') | ConvertFrom-Json; $range = [string]$merge.commit_range; if ($range -notmatch '^[0-9a-f]{7,40}\.\.[0-9a-f]{7,40}$') { throw 'Invalid merge receipt commit_range' }; git revert --no-commit $range
 ```
