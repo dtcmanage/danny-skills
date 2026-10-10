@@ -9,6 +9,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 . (Join-Path $PSScriptRoot 'router-credentials.ps1')
+
+# The weekly-usage guard blocks a vendor at 95%. DT_ROUTER_GUARD_OVERRIDE (comma-separated vendor
+# names) raises that vendor's guard to 100% for the current process only, on Danny's explicit
+# instruction; recorded refusal blocks still apply.
+function Get-RouterGuardPercent {
+    param([Parameter(Mandatory)][string]$Vendor)
+    $override = @(([string]$env:DT_ROUTER_GUARD_OVERRIDE).Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() })
+    if ($override -contains $Vendor.ToLowerInvariant()) { return 100 }
+    return 95
+}
 if (-not (Get-Variable RouterClaudeCredentialProvider -Scope Script -ErrorAction SilentlyContinue)) {
     $script:RouterClaudeCredentialProvider = { Get-RouterClaudeCredential }
 }
@@ -78,7 +88,7 @@ function Get-RouterClaudeUsage {
             # Token expiry cannot undo an observed quota ceiling before its reset.
             # Keep the original observation age; this is not a successful refresh.
             if ($credential.status -eq 'expired' -and $null -ne $cached -and
-                $cached.used_percent -ge 95 -and [datetimeoffset]$cached.resets_at_utc -gt $now) {
+                $cached.used_percent -ge (Get-RouterGuardPercent -Vendor claude) -and [datetimeoffset]$cached.resets_at_utc -gt $now) {
                 return $cached
             }
             return $null
@@ -319,7 +329,7 @@ function Get-RouterResumeAfter {
     $times = foreach ($vendor in @($Vendors | Select-Object -Unique)) {
         $at = $null; $source = $null
         $usage = if ($vendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterClaudeUsage }
-        if ($null -ne $usage -and $usage.used_percent -ge 95 -and [datetimeoffset]$usage.resets_at_utc -gt $now) {
+        if ($null -ne $usage -and $usage.used_percent -ge (Get-RouterGuardPercent -Vendor $vendor) -and [datetimeoffset]$usage.resets_at_utc -gt $now) {
             $at = [datetimeoffset]$usage.resets_at_utc; $source = 'usage-reset'
         }
         foreach ($block in $blocks) {
@@ -353,10 +363,10 @@ function Get-RouterVendorBlocked {
         if ($entry.PSObject.Properties['vendor'] -and $entry.PSObject.Properties['reset_at_utc'] -and
             $entry.vendor -eq $Vendor -and [datetimeoffset]$entry.reset_at_utc -gt $now) { return $true }
     }
-    if ($Vendor -eq 'codex') { $usage = Get-RouterCodexUsage; return ($null -ne $usage -and $usage.used_percent -ge 95) }
+    if ($Vendor -eq 'codex') { $usage = Get-RouterCodexUsage; return ($null -ne $usage -and $usage.used_percent -ge (Get-RouterGuardPercent -Vendor codex)) }
     $usage = Get-RouterClaudeUsage
     if ($null -ne $UsageReadings) { $UsageReadings['claude'] = $usage }
-    return ($null -ne $usage -and $usage.used_percent -ge 95)
+    return ($null -ne $usage -and $usage.used_percent -ge (Get-RouterGuardPercent -Vendor claude))
 }
 
 function Test-RouterConnectivity {
@@ -465,7 +475,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     }
     $usage = if ($RouterLimitsCliVendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterClaudeUsage }
     $block = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $RouterLimitsCliVendor -and ($_.reason -eq 'vendor_incident' -or [datetimeoffset]$_.reset_at_utc -gt [datetimeoffset]::UtcNow) } | Select-Object -First 1)
-    $blocked = ($block.Count -gt 0 -or ($null -ne $usage -and $usage.used_percent -ge 95))
+    $blocked = ($block.Count -gt 0 -or ($null -ne $usage -and $usage.used_percent -ge (Get-RouterGuardPercent -Vendor $RouterLimitsCliVendor)))
     $result = [pscustomobject]@{ vendor=$RouterLimitsCliVendor; blocked=$blocked; reason=$(if ($block.Count) { $block[0].reason } elseif ($blocked) { if ($RouterLimitsCliVendor -eq 'claude') { 'Claude weekly usage at or above 95%' } else { 'Codex usage at or above 95%' } } else { $null }); used_percent=$(if ($null -ne $usage) { $usage.used_percent } else { $null }); resets_at_utc=$(if ($null -ne $usage) { $usage.resets_at_utc } else { $null }) }
     if ($RouterLimitsCliVendor -eq 'claude') { $result | Add-Member -NotePropertyName session_percent -NotePropertyValue $(if ($null -ne $usage) { $usage.session_percent } else { $null }) }
     if ($RouterLimitsCliJson) { $result | ConvertTo-Json -Compress -Depth 5 } else { $result }
