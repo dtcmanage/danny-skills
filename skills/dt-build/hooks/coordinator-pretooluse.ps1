@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 # Claude PreToolUse hook for dt-build coordinator sessions; installed only at adoption (see README.md).
 # A session is a coordinator when DT_BUILD_COORDINATOR_ID is set, or when the hook's session_id matches a
-# session recorded in a registered run's lease or context-baseline.json (never a discovered guess). Every
+# session recorded for the current unreleased lease holder of a registered run, in its lease or
+# context-baseline.json (never a discovered guess); a released or superseded coordinator is not one. Every
 # other session passes untouched, and with the env var unset and no registered run the hook exits before
 # loading anything. For a coordinator it denies a Read of a file over 400 lines without offset/limit, image
 # Reads, and CronCreate; past the hard context limit (unless an irreversible step this coordinator opened
@@ -147,7 +148,11 @@ function Find-HookCoordinator {
             if ($null -eq $match -and -not ($null -ne $lease -and [string]$lease.coordinator_id -ceq $envId)) { continue }
         }
         else {
-            $trusted = @($baselines | Where-Object { Test-HookBaselineTrusted $_ })
+            # Without the env var only the current unreleased lease holder is a coordinator: a session that
+            # released the lease, or whose lease another coordinator took, is left alone.
+            $holder = if ($null -ne $lease -and -not (Get-HookProperty $lease 'released_utc')) { [string](Get-HookProperty $lease 'coordinator_id') } else { '' }
+            if (-not $holder) { continue }
+            $trusted = @($baselines | Where-Object { (Test-HookBaselineTrusted $_) -and [string]$_.coordinator_id -ceq $holder })
             if ($sessionId) { $match = $trusted | Where-Object { $_.PSObject.Properties['session_id'] -and [string]$_.session_id -ceq $sessionId } | Select-Object -First 1 }
             if ($null -eq $match -and $transcript) { $match = $trusted | Where-Object { Test-DtCtxSamePath ([string]$_.transcript_path) $transcript } | Select-Object -First 1 }
             $leaseSession = [string](Get-HookProperty $lease 'session_id')

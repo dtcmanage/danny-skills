@@ -231,17 +231,22 @@ function Invoke-WatcherContextRotation {
     if ($report.state -ne 'rotate') { return $null }
     $open = @((Split-DtCtxIrreversibleSteps -Open @(Get-DtJobIrreversibleOpen -RunFolder $folder) -Lease $lease).deferring)
     if ($open.Count -gt 0) { return "rotation deferred: $coordinatorId at $tokens past hard $($report.hard), irreversible $($open[0].operation) open" }
+    # The coordinator's descendants (the codex process under the wrapper), snapshotted before the kill so
+    # each one's exit can be confirmed by pid and start time.
+    $descendants = @(Get-WatcherDescendantProcesses -ProcessId ([int]$lease.pid))
     $killError = $null
     try { Stop-WatcherProcessTree -ProcessId ([int]$lease.pid) }
     catch { $killError = [string]$_.Exception.Message }
-    # The lease is released only once the old coordinator is provably gone; otherwise the relaunch rules
-    # would start a second coordinator beside it.
-    if (Test-DtJobProcessIdentity $lease.pid $pidStart) {
+    # The lease is released only once the old coordinator and every descendant are provably gone;
+    # otherwise the relaunch rules would start a second coordinator beside a survivor.
+    $survivors = @(@(if (Test-DtJobProcessIdentity $lease.pid $pidStart) { [int]$lease.pid }) + @($descendants | Where-Object { Test-DtJobProcessIdentity $_.pid $_.start_utc } | ForEach-Object { [int]$_.pid }))
+    if ($survivors.Count -gt 0) {
         $runId = [string]$Entry.run_id
         $why = if ($killError) { " ($killError)" } else { '' }
-        $text = "dt-build run $runId could not be handed to a fresh coordinator: its coordinator reached its context limit and the watcher could not stop it$why. It is still running as process $($lease.pid), and the run stays with it so no second coordinator starts. Stop it with: Stop-Process -Id $($lease.pid) -Force"
+        $pids = $survivors -join ', '
+        $text = "dt-build run $runId could not be handed to a fresh coordinator: its coordinator reached its context limit and the watcher could not stop it$why. It is still running as process $pids, and the run stays with it so no second coordinator starts. Stop it with: Stop-Process -Id $pids -Force"
         $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:rotation-kill-failed:$coordinatorId" -Message $text
-        return "rotation kill failed: $coordinatorId pid $($lease.pid) still running$why; alert $alert"
+        return "rotation kill failed: $coordinatorId pid $pids still running$why; alert $alert"
     }
     Invoke-DtJobLocked -RunFolder $folder -Action {
         $current = Get-DtJobLease -RunFolder $folder
@@ -257,6 +262,33 @@ function Invoke-WatcherContextRotation {
     $row = [ordered]@{ coordinator_id = $coordinatorId; tokens_at_kill = [long]$tokens; hard_limit = [long]$report.hard; overshoot = ([long]$tokens - [long]$report.hard); killed_utc = $NowUtc.ToString('o') }
     [System.IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $folder).Rotations, (($row | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
     return "rotated $coordinatorId at $tokens (hard $($report.hard), overshoot $($row.overshoot))"
+}
+
+function Get-WatcherDescendantProcesses {
+    # Every live descendant of a process, each with its start time for an identity check later.
+    param([Parameter(Mandatory)][int]$ProcessId)
+    $rootStart = Get-DtJobProcessStartUtc -ProcessId $ProcessId
+    if (-not $rootStart) { return @() }
+    $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId -ErrorAction Stop)
+    $found = [System.Collections.Generic.List[object]]::new()
+    $queue = [System.Collections.Generic.Queue[int]]::new()
+    $queue.Enqueue($ProcessId)
+    $seen = [System.Collections.Generic.HashSet[int]]::new()
+    [void]$seen.Add($ProcessId)
+    while ($queue.Count -gt 0) {
+        $parent = $queue.Dequeue()
+        $parentStart = Get-DtJobProcessStartUtc -ProcessId $parent
+        foreach ($child in @($all | Where-Object { [int]$_.ParentProcessId -eq $parent })) {
+            $childPid = [int]$child.ProcessId
+            if (-not $seen.Add($childPid)) { continue }
+            $start = Get-DtJobProcessStartUtc -ProcessId $childPid
+            # A child older than its parent belongs to an earlier holder of a reused pid.
+            if (-not $start -or ($parentStart -and (ConvertTo-DtJobUtc $start) -lt (ConvertTo-DtJobUtc $parentStart))) { continue }
+            $found.Add([pscustomobject]@{ pid = $childPid; start_utc = $start })
+            $queue.Enqueue($childPid)
+        }
+    }
+    return @($found)
 }
 
 function Stop-WatcherProcessTree {
@@ -292,11 +324,19 @@ function Invoke-WatcherRun {
     param([Parameter(Mandatory)]$Entry)
     $folder = [string]$Entry.run_folder
     if (Test-Path -LiteralPath $folder) {
-        $stale = @(Send-WatcherStaleIrreversibleAlerts -Entry $Entry)
-        $rotation = Invoke-WatcherContextRotation -Entry $Entry -NowUtc (Get-WatcherNow)
+        # A corrupt irreversible.json or context-baseline.json fails only its own step: the run's relaunch,
+        # stop, and DM logic still runs, and the error rides on the result.
+        $stepErrors = [System.Collections.Generic.List[string]]::new()
+        $stale = @()
+        $rotation = $null
+        try { $stale = @(Send-WatcherStaleIrreversibleAlerts -Entry $Entry) }
+        catch { $stepErrors.Add("stale irreversible check failed: $([string]$_.Exception.Message)") }
+        try { $rotation = Invoke-WatcherContextRotation -Entry $Entry -NowUtc (Get-WatcherNow) }
+        catch { $stepErrors.Add("context rotation failed: $([string]$_.Exception.Message)") }
         $result = Invoke-WatcherRunTick -Entry $Entry
         if ($null -ne $rotation) { $result | Add-Member -NotePropertyName rotation -NotePropertyValue $rotation -Force }
         if ($stale.Count -gt 0) { $result | Add-Member -NotePropertyName stale_irreversible -NotePropertyValue $stale -Force }
+        if ($stepErrors.Count -gt 0) { $result | Add-Member -NotePropertyName step_errors -NotePropertyValue @($stepErrors) -Force }
         return $result
     }
     return (Invoke-WatcherRunTick -Entry $Entry)

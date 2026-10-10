@@ -463,6 +463,9 @@ if($env:DT_FAKE_UNICODE_TEXT){
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $wrapperOutput `
         -CodexCliPath $fakeCodex -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Codex success path failed"
+    # The Codex fixture stays at report version 2: the transition path is accepted and flagged.
+    $codexV2Prov = Get-Content -Raw -LiteralPath "$wrapperOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ($codexV2Prov.report_version_warning -eq 'v2') 'Codex v2 report accepted with report_version_warning v2'
 
     $tierOutput = Join-Path $tempRoot 'codex-tier-normalization.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $tierOutput -CodexCliPath $fakeCodex  -Category routine-coding -Effort low -Difficulty HARD -DifficultyReason 'interacting constraints' -SelectionReason 'tier fixture' -Json *> $null
@@ -543,17 +546,23 @@ if ($mode -eq 'preflight') { Write-Envelope 'OK'; exit 0 }
 if ($mode -eq 'stamped-preflight') { Write-Envelope 'OK'; exit 0 }
 if ($mode -eq 'rawtext') { Write-Output 'plain text, no envelope'; exit 0 }
 $report = @"
-DT_BUILD_REPORT_VERSION: 2
+DT_BUILD_REPORT_VERSION: 3
 RUN_ID: fixture-run
 chunk_id: fixture-chunk
 attempt: 1
+VERDICT:
+PASS
 CHANGED_FILES:
 NONE
 COMMANDS_AND_RESULTS:
 NONE
+EVIDENCE_PATHS:
+NONE
 UNRESOLVED_BLOCKERS:
 NONE
 DISCOVERED_ENHANCEMENTS:
+NONE
+CONTINUATION_STATE:
 NONE
 credential: ghp_abcdefghijklmnopqrstuvwxyz123456
 "@
@@ -578,6 +587,8 @@ Write-Envelope $report
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeOutput `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Claude success path failed"
+    $claudeV3Prov = Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ($null -eq $claudeV3Prov.report_version_warning) 'Claude v3 report carries no version warning'
 
     $tierOutput = Join-Path $tempRoot 'claude-tier-normalization.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $tierOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort low -Difficulty HARD -DifficultyReason 'interacting constraints' -SelectionReason 'tier fixture' -Json *> $null

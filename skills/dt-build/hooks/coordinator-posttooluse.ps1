@@ -2,7 +2,8 @@
 # Claude PostToolUse hook for dt-build coordinator sessions; installed only at adoption (see README.md).
 # After a shell call that ran dt-job mark-bootstrap, records this session's own session_id and transcript
 # into context-baseline.json for that coordinator: the hook is the authoritative source and replaces any
-# discovered guess. Surfaces the context line as additional context when the coordinator reaches
+# discovered guess, creates the entry when mark-bootstrap found no transcript, and never moves a
+# hook-recorded entry to a different session. Surfaces the context line as additional context when the coordinator reaches
 # checkpoint or rotate; silent when the state is ok and for every non-coordinator session. With the env
 # var unset and no registered run it exits before loading anything. Any error is silent.
 param()
@@ -42,8 +43,12 @@ function Get-HookBootstrapCapture {
             $folder = [string]$run.run_folder
             if (-not $folder -or -not (Test-Path -LiteralPath $folder)) { continue }
             if ($named -and -not (Test-DtCtxSamePath $named $folder)) { continue }
-            $entry = (Get-HookRunFiles -Folder $folder).baselines | Where-Object { [string]$_.coordinator_id -ceq $id } | Select-Object -First 1
+            $files = Get-HookRunFiles -Folder $folder
+            $entry = $files.baselines | Where-Object { [string]$_.coordinator_id -ceq $id } | Select-Object -First 1
             if ($null -ne $entry -and [string]$entry.host -eq 'claude') { return [pscustomobject]@{ run_folder = $folder; coordinator_id = $id } }
+            # No entry: mark-bootstrap found no transcript (e.g. after a cd). The named run, or the run this
+            # coordinator holds the lease of, gets one from this session.
+            if ($null -eq $entry -and ($named -or [string](Get-HookProperty $files.lease 'coordinator_id') -ceq $id)) { return [pscustomobject]@{ run_folder = $folder; coordinator_id = $id } }
         }
     }
     return $null
@@ -59,12 +64,25 @@ function Save-HookBootstrapCapture {
     Invoke-DtJobLocked -RunFolder $Capture.run_folder -Action {
         $all = Get-DtJobContextBaselines -RunFolder $Capture.run_folder
         $prop = $all.coordinators.PSObject.Properties[$Capture.coordinator_id]
-        if ($null -eq $prop) { return }
+        if ($null -eq $prop) {
+            if (-not (Test-Path -LiteralPath $transcript)) { return }
+            $tokens = Get-DtCtxTokens -TranscriptHost 'claude' -TranscriptPath $transcript
+            if ($null -eq $tokens) { return }
+            $new = [pscustomobject][ordered]@{
+                coordinator_id = $Capture.coordinator_id; host = 'claude'; transcript_path = $transcript; session_id = $sessionId
+                transcript_source = 'hook'; baseline_tokens = [long]$tokens; marked_utc = [DateTime]::UtcNow.ToString('o'); captured_utc = [DateTime]::UtcNow.ToString('o')
+            }
+            $all.coordinators | Add-Member -NotePropertyName $Capture.coordinator_id -NotePropertyValue $new -Force
+            Write-DtJobAtomic -Path $paths.ContextBaseline -Content ($all | ConvertTo-Json -Depth 6)
+            return
+        }
         $entry = $prop.Value
         $samePath = Test-DtCtxSamePath ([string]$entry.transcript_path) $transcript
         $recordedSession = if ($entry.PSObject.Properties['session_id']) { [string]$entry.session_id } else { '' }
         $recordedSource = if ($entry.PSObject.Properties['transcript_source']) { [string]$entry.transcript_source } else { '' }
         if ($samePath -and $recordedSession -ceq $sessionId -and $recordedSource -eq 'hook') { return }
+        # A hook-sourced entry is the coordinator's own session: another session never takes it over.
+        if ($recordedSource -eq 'hook' -and $recordedSession -cne $sessionId) { return }
         if (-not $samePath -and (Test-Path -LiteralPath $transcript)) {
             $tokens = Get-DtCtxTokens -TranscriptHost 'claude' -TranscriptPath $transcript
             if ($null -ne $tokens) { $entry.baseline_tokens = [long]$tokens }

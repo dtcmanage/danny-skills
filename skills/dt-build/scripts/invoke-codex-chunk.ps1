@@ -46,24 +46,8 @@ function Resolve-SkillRepoRoot {
     return (Split-Path -Parent (Split-Path -Parent $skillRoot))
 }
 
-function Get-ReportShapeErrors {
-    param([string]$Text, [string]$RunId, [string]$ChunkId, [int]$ExpectedAttempt)
-    $errors = New-Object System.Collections.Generic.List[string]
-    $required = @(
-        @{ label = 'DT_BUILD_REPORT_VERSION'; pattern = '(?m)^DT_BUILD_REPORT_VERSION:\s*2\s*$' },
-        @{ label = 'RUN_ID'; pattern = '(?m)^RUN_ID:\s*' + [regex]::Escape($RunId) + '\s*$' },
-        @{ label = 'chunk_id'; pattern = '(?m)^chunk_id:\s*' + [regex]::Escape($ChunkId) + '\s*$' },
-        @{ label = 'attempt'; pattern = '(?m)^attempt:\s*' + $ExpectedAttempt + '\s*$' },
-        @{ label = 'CHANGED_FILES'; pattern = '(?m)^CHANGED_FILES:\s*$' },
-        @{ label = 'COMMANDS_AND_RESULTS'; pattern = '(?m)^COMMANDS_AND_RESULTS:\s*$' },
-        @{ label = 'UNRESOLVED_BLOCKERS'; pattern = '(?m)^UNRESOLVED_BLOCKERS:\s*$' },
-        @{ label = 'DISCOVERED_ENHANCEMENTS'; pattern = '(?m)^DISCOVERED_ENHANCEMENTS:\s*$' }
-    )
-    foreach ($entry in $required) {
-        if ($Text -notmatch $entry.pattern) { $errors.Add("missing or mismatched $($entry.label)") | Out-Null }
-    }
-    return @($errors)
-}
+# Report shape (v3, with v2 accepted and flagged) is shared with the other wrapper.
+. (Join-Path $PSScriptRoot 'report-contract.ps1')
 
 function Get-CodexCliPath {
     if (-not [string]::IsNullOrWhiteSpace($CodexCliPath)) {
@@ -362,6 +346,7 @@ try {
     $failureReason = ''
     $failureCategory = $null
     $shapeErrors = @()
+    $reportVersionWarning = $null
     if ($timedOut) {
         $failureReason = "CODEX_INVOKE_TIMEOUT: codex exec exceeded ${TimeoutMs}ms and its process tree was terminated. Redacted stream: $streamPath"
         $failureCategory = 'tooling'
@@ -380,7 +365,9 @@ try {
         $failureCategory = 'model-output'
     }
     elseif (-not $Preflight -and -not $Scrutiny) {
-        $shapeErrors = @(Get-ReportShapeErrors -Text $lastMessage -RunId $promptRunId -ChunkId $promptChunkId -ExpectedAttempt $Attempt)
+        $shape = Get-ReportShapeResult -Text $lastMessage -RunId $promptRunId -ChunkId $promptChunkId -ExpectedAttempt $Attempt
+        $shapeErrors = @($shape.errors)
+        $reportVersionWarning = $shape.warning
         if ($shapeErrors.Count -gt 0) {
             $failureReason = "CODEX_OUTPUT_INVALID: $($shapeErrors -join '; '). Redacted output: $OutputPath"
             $failureCategory = 'model-output'
@@ -542,6 +529,7 @@ try {
         vendor_block           = $limitBlock
         termination_reason     = $failureReason
         output_shape_errors    = @($shapeErrors)
+        report_version_warning = $reportVersionWarning
     }
 
     if (-not $temporaryOutput) {

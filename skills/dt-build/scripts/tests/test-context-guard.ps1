@@ -493,6 +493,18 @@ try {
     Assert-True (@(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | Where-Object { $_ -match 'old-merge' }).Count -eq 2) 'each stale step, by operation and opened time, gets its own DM'
     Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'end', '-Operation', 'old-merge') | Out-Null
 
+    # ---- irreversible begin needs a known coordinator id.
+    $irRun = New-Run -Name 'ir-noid'
+    $noId = Invoke-DtJobRaw @('irreversible', '-RunFolder', $irRun.folder, '-Action', 'begin', '-Operation', 'merge')
+    Assert-True ($noId.exit -ne 0 -and $noId.text -match 'DT_JOB_USAGE' -and -not (Test-Path -LiteralPath (Join-Path $irRun.folder 'irreversible.json'))) "irreversible begin without -CoordinatorId or DT_BUILD_COORDINATOR_ID refuses and writes nothing ($($noId.text))"
+    $env:DT_BUILD_COORDINATOR_ID = 'ir-env'
+    try { $withEnv = Invoke-DtJob @('irreversible', '-RunFolder', $irRun.folder, '-Action', 'begin', '-Operation', 'merge') }
+    finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
+    $irDocEnv = Get-Content -Raw -LiteralPath (Join-Path $irRun.folder 'irreversible.json') | ConvertFrom-Json
+    Assert-True (@($withEnv.open) -contains 'merge' -and @($irDocEnv.open)[0].coordinator_id -eq 'ir-env') 'irreversible begin takes the id from DT_BUILD_COORDINATOR_ID'
+    $endNoId = Invoke-DtJobRaw @('irreversible', '-RunFolder', $irRun.folder, '-Action', 'end', '-Operation', 'merge')
+    Assert-True ($endNoId.exit -eq 0) 'irreversible end needs no coordinator id'
+
     # ---- watcher: a kill that leaves the coordinator running changes nothing and tells Danny once.
     $run = New-Run -Name 'kill-fail' -PinnedHost 'codex' -Managed
     $kfT = Join-Path $fixtures 'codex-kill-fail.jsonl'
@@ -510,6 +522,23 @@ try {
     $kfDms = @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | Where-Object { $_ -match 'kill-fail' -and $_ -match 'could not stop it' })
     Assert-True ($kfDms.Count -eq 1 -and $kfDms[0] -match "Stop-Process -Id $($kfTree.child)" -and [string]@($stubbed)[0] -match 'alert sent' -and [string]@($stubbed)[1] -match 'alert already_sent') "a failed kill sends one DM with the stop command ($($kfDms.Count))"
     Get-Process -Id $kfTree.child, $kfTree.grandchild -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # A kill that ends only the wrapper while the codex descendant survives is a failed kill too.
+    $run = New-Run -Name 'kill-root-only' -PinnedHost 'codex' -Managed
+    $kroT = Join-Path $fixtures 'codex-kill-root-only.jsonl'
+    New-CodexRollout -Path $kroT -Inputs @(50000, 130000)
+    $kroTree = Start-FakeTree -Name 'kill-root-only'
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'mc-rootonly' -LeaseHost 'codex' -LaunchedBy 'watcher' -LeasePid $kroTree.child -PidStartUtc $kroTree.start_utc
+    Write-Baseline -RunFolder $run.folder -CoordinatorId 'mc-rootonly' -BaselineHost 'codex' -TranscriptPath $kroT -Baseline 50000
+    $leaseBefore = Get-Content -Raw -LiteralPath (Join-Path $run.folder 'coordinator.lease')
+    $eventsPath = Join-Path $run.folder 'jobs/events.jsonl'
+    $eventsBefore = if (Test-Path -LiteralPath $eventsPath) { Get-Content -Raw -LiteralPath $eventsPath } else { '' }
+    $rootOnly = & pwsh -NoProfile -Command ". '$watcher'; function Stop-WatcherProcessTree { param([int]`$ProcessId) Stop-Process -Id `$ProcessId -Force; Start-Sleep -Milliseconds 500 }; `$entry = Get-DtJobRegistryEntry -RunFolder '$($run.folder)'; Invoke-WatcherContextRotation -Entry `$entry -NowUtc ([DateTime]::UtcNow)"
+    $eventsAfter = if (Test-Path -LiteralPath $eventsPath) { Get-Content -Raw -LiteralPath $eventsPath } else { '' }
+    Assert-True ((-not (Test-Alive $kroTree.child)) -and (Test-Alive $kroTree.grandchild) -and [string]@($rootOnly)[0] -match "^rotation kill failed: mc-rootonly pid [0-9, ]*(?<![0-9])$($kroTree.grandchild)(?![0-9])[0-9, ]* still running" -and [string]@($rootOnly)[0] -notmatch "(?<![0-9])$($kroTree.child)(?![0-9])") "a kill that leaves a descendant running is reported as rotation kill failed (child $($kroTree.child) grandchild $($kroTree.grandchild): $(@($rootOnly) -join ' | '))"
+    Assert-True ((Get-Content -Raw -LiteralPath (Join-Path $run.folder 'coordinator.lease')) -eq $leaseBefore -and $eventsAfter -eq $eventsBefore -and -not (Test-Path -LiteralPath (Join-Path $run.folder 'rotations.jsonl'))) 'a surviving descendant leaves the lease, the events, and rotations.jsonl untouched'
+    $kroDms = @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | Where-Object { $_ -match 'kill-root-only' -and $_ -match 'could not stop it' })
+    Assert-True ($kroDms.Count -eq 1 -and $kroDms[0] -match "Stop-Process -Id [0-9, ]*(?<![0-9])$($kroTree.grandchild)(?![0-9])" -and [string]@($rootOnly)[0] -match 'alert sent') "a surviving descendant sends one DM ($($kroDms.Count))"
+    Get-Process -Id $kroTree.child, $kroTree.grandchild -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
     # ---- watcher: a Claude coordinator past hard is never killed by the watcher.
     $run = New-Run -Name 'claude-rot' -PinnedHost 'claude' -Managed
@@ -531,6 +560,8 @@ try {
     $hookHard = Join-Path $fixtures 'hook-hard.jsonl'
     New-ClaudeTranscript -Path $hookHard -Totals @(100000, 175000)
     Write-Baseline -RunFolder $run.folder -CoordinatorId 'hc1' -BaselineHost 'claude' -TranscriptPath $hookOk -Baseline 100000 -SessionId 'sess-hook'
+    # Without the env var only the current unreleased lease holder is a coordinator, so hc1 holds the lease.
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'hc1' -LeaseHost 'claude'
     $bigFile = Join-Path $fixtures 'big.log'
     Write-Utf8 -Path $bigFile -Content ((1..500 | ForEach-Object { "line $_" }) -join "`n")
     $smallFile = Join-Path $fixtures 'small.txt'
@@ -589,8 +620,25 @@ try {
     Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'begin', '-Operation', 'merge', '-CoordinatorId', 'hc1') | Out-Null
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'an irreversible step the lease holder opened defers the hard-limit denials'
     Write-Lease -RunFolder $run.folder -CoordinatorId 'hc-other' -LeaseHost 'claude'
-    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'once hc1 no longer holds the lease its step defers nothing'
+    # hc1 still holds its id in the env var, so it stays a coordinator; its step no longer defers anything.
+    $env:DT_BUILD_COORDINATOR_ID = 'hc1'
+    try { Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'once hc1 no longer holds the lease its step defers nothing' }
+    finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
+    # Without the env var a superseded coordinator session is left alone.
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'a superseded coordinator session without DT_BUILD_COORDINATOR_ID is not restricted'
+    Assert-True ($null -eq (Invoke-Hook $postHook (& $mk 'sess-hook' $hookHard 'Bash' @{ command = 'git status' } 'PostToolUse'))) 'PostToolUse is silent for a superseded coordinator session'
     Invoke-DtJob @('irreversible', '-RunFolder', $run.folder, '-Action', 'end', '-Operation', 'merge') | Out-Null
+    # A released lease: the rotated interactive session is no longer restricted.
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'hc1' -LeaseHost 'claude' -SessionId 'sess-hook'
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'the unreleased lease holder past hard is restricted'
+    $released = Get-Content -Raw -LiteralPath (Join-Path $run.folder 'coordinator.lease') | ConvertFrom-Json
+    $released.released_utc = [DateTime]::UtcNow.ToString('o')
+    Write-Utf8 -Path (Join-Path $run.folder 'coordinator.lease') -Content ($released | ConvertTo-Json)
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'after releasing the lease the session is left alone, by baseline and by lease session id'
+    $env:DT_BUILD_COORDINATOR_ID = 'hc1'
+    try { Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'Grep' @{ pattern = 'x' }))) 'a released session that still holds DT_BUILD_COORDINATOR_ID stays a coordinator' }
+    finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'hc1' -LeaseHost 'claude'
     # Past-hard shell allowlist, segment by segment.
     $deniedProbe = @(
         'Get-Content skills/dt-build/scripts/dt-job.ps1',
@@ -636,6 +684,7 @@ try {
     # Coordinator by lease session id.
     Write-Lease -RunFolder $run.folder -CoordinatorId 'hc-lease' -LeaseHost 'claude' -SessionId 'sess-lease'
     Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-lease' $hookOk 'CronCreate' @{ cron = '*' }))) 'a session recorded in the lease is a coordinator session'
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'hc1' -LeaseHost 'claude'
     # PostToolUse.
     Assert-True ($null -eq (Invoke-Hook $postHook (& $mk 'sess-hook' $hookOk 'Bash' @{ command = 'git status' } 'PostToolUse'))) 'PostToolUse is silent when ok'
     $r = Invoke-Hook $postHook (& $mk 'sess-hook' $hookCheck 'Bash' @{ command = 'git status' } 'PostToolUse')
@@ -651,6 +700,7 @@ try {
     $capT = Join-Path $fixtures 'capture-own-session.jsonl'
     New-ClaudeTranscript -Path $capT -Totals @(60000, 90000)
     Write-Baseline -RunFolder $run.folder -CoordinatorId 'cap1' -BaselineHost 'claude' -TranscriptPath $wrongT -Baseline 50000 -Source 'discovered'
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'cap1' -LeaseHost 'claude'
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'capture-wrong-session' $wrongT 'CronCreate' @{ cron = '*' }))) 'the session whose transcript discovery guessed is not treated as a coordinator'
     $mkBoot = { param([string]$Command) @{ session_id = 'capture-own-session'; transcript_path = $capT; cwd = $tempRoot; hook_event_name = 'PostToolUse'; tool_name = 'Bash'; tool_input = @{ command = $Command }; tool_response = @{ stdout = 'ok' } } }
     Invoke-Hook $postHook (& $mkBoot "Get-Content `"$dtJob`" # mark-bootstrap -RunFolder `"$($run.folder)`" -CoordinatorId cap1") | Out-Null
@@ -671,6 +721,27 @@ try {
     $capturedAt = [string]$all.cap1.captured_utc
     Invoke-Hook $postHook (& $mkBoot "pwsh -NoProfile -File `"$dtJob`" mark-bootstrap -RunFolder `"$($run.folder)`" -CoordinatorId cap1 -Host claude") | Out-Null
     Assert-True ([string]((Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators.cap1.captured_utc) -eq $capturedAt) 'a repeat capture for the same session writes nothing'
+    # A second session reusing the id never takes over a hook-recorded entry.
+    $otherCapT = Join-Path $fixtures 'capture-second-session.jsonl'
+    New-ClaudeTranscript -Path $otherCapT -Totals @(70000, 120000)
+    $before = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators.cap1 | ConvertTo-Json -Compress
+    $mkSecond = @{ session_id = 'capture-second-session'; transcript_path = $otherCapT; cwd = $tempRoot; hook_event_name = 'PostToolUse'; tool_name = 'Bash'; tool_input = @{ command = "pwsh -NoProfile -File `"$dtJob`" mark-bootstrap -RunFolder `"$($run.folder)`" -CoordinatorId cap1 -Host claude" }; tool_response = @{ stdout = 'ok' } }
+    Invoke-Hook $postHook $mkSecond | Out-Null
+    $after = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators.cap1 | ConvertTo-Json -Compress
+    Assert-True ($after -eq $before) "a capture from another session leaves a hook-recorded entry unchanged ($after)"
+    # mark-bootstrap found no transcript (the shell had cd'd away): the hook creates the coordinator's entry.
+    $run = New-Run -Name 'capture-missing'
+    Write-Lease -RunFolder $run.folder -CoordinatorId 'cap-cd' -LeaseHost 'claude'
+    $cdT = Join-Path $fixtures 'capture-cd-session.jsonl'
+    New-ClaudeTranscript -Path $cdT -Totals @(80000, 95000)
+    $mkCd = @{ session_id = 'capture-cd-session'; transcript_path = $cdT; cwd = $tempRoot; hook_event_name = 'PostToolUse'; tool_name = 'Bash'; tool_input = @{ command = "pwsh -NoProfile -File `"$dtJob`" mark-bootstrap -CoordinatorId cap-cd -Host claude" }; tool_response = @{ stdout = 'CONTEXT_GUARD_NO_TRANSCRIPT' } }
+    Invoke-Hook $postHook $mkCd | Out-Null
+    $created = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators.'cap-cd'
+    Assert-True ($null -ne $created -and $created.transcript_source -eq 'hook' -and $created.session_id -eq 'capture-cd-session' -and $created.host -eq 'claude' -and [long]$created.baseline_tokens -eq 95000 -and $created.transcript_path -eq [System.IO.Path]::GetFullPath($cdT)) "the PostToolUse hook creates a missing baseline entry from its own session ($($created | ConvertTo-Json -Compress))"
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'capture-cd-session' $cdT 'CronCreate' @{ cron = '*' }))) 'the created entry makes the calling session a coordinator session'
+    $otherRun = New-Run -Name 'capture-unrelated'
+    Invoke-Hook $postHook $mkCd | Out-Null
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $otherRun.folder 'context-baseline.json'))) 'no entry is created in a run the coordinator neither names nor holds'
 
     # ---- hook cost: with the env var unset and no registered run, both hooks exit before loading any dt-build script.
     $savedState = $env:DT_BUILD_STATE_DIR

@@ -561,6 +561,25 @@ try {
     Invoke-Tick | Out-Null
     Assert-True ((Get-LaunchCount 'no-lease-quiet') -eq 0) 'a run with no lease and no unconsumed event launches nothing'
 
+    # ---- a corrupt irreversible.json or context-baseline.json fails only its own step; the run's tick still runs.
+    Use-Scenario 'corrupt-steps'
+    $run = New-Run -Name 'corrupt-ir' -NoLease
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    Write-Utf8 -Path (Join-Path $run.folder 'irreversible.json') -Content '{ not json'
+    $tick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'corrupt-ir' })[0]
+    Assert-True ((Get-LaunchCount 'corrupt-ir') -eq 1 -and $tick.action -eq 'launch' -and @($tick.step_errors | Where-Object { $_ -match '^stale irreversible check failed' }).Count -eq 1) "a corrupt irreversible.json still lets the tick launch, and reports the error ($($tick | ConvertTo-Json -Compress))"
+    $live = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        $run = New-Run -Name 'corrupt-baseline' -PinnedHost 'codex' -NoLease
+        $liveStart = (Get-Process -Id $live.Id).StartTime.ToUniversalTime().ToString('o')
+        $lease = [ordered]@{ coordinator_id = 'mc-live'; host = 'codex'; session_id = $null; pid = $live.Id; pid_start_utc = $liveStart; launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(9).ToString('o'); released_utc = $null }
+        Write-Utf8 -Path (Join-Path $run.folder 'coordinator.lease') -Content ($lease | ConvertTo-Json)
+        Write-Utf8 -Path (Join-Path $run.folder 'context-baseline.json') -Content '{ broken'
+        $tick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'corrupt-baseline' })[0]
+        Assert-True ($tick.action -ne 'error' -and @($tick.step_errors | Where-Object { $_ -match '^context rotation failed' }).Count -eq 1 -and (Get-LaunchCount 'corrupt-baseline') -eq 0 -and -not $live.HasExited) "a corrupt context-baseline.json fails only the rotation step; the tick still decides ($($tick | ConvertTo-Json -Compress))"
+    }
+    finally { if (-not $live.HasExited) { $live.Kill() } }
+
     # ---- a live watcher-launched pid is not replaced, even with its lease expired.
     Use-Scenario 'live-pid'
     $run = New-Run -Name 'live-pid'

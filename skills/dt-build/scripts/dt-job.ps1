@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'resume', 'finish', 'mark-bootstrap', 'irreversible')]
+    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -73,6 +73,10 @@ param(
 
     [string]$TranscriptPath,
 
+    [string]$WorkingTree,
+
+    [string]$Record,
+
     [switch]$Json
 )
 
@@ -108,6 +112,7 @@ $script:DtJobContext = $null
 $script:DtJobContextReserveBytes = 256
 
 . (Join-Path $PSScriptRoot 'context-guard.ps1')
+. (Join-Path $PSScriptRoot 'report-contract.ps1')
 
 function Get-DtJobPaths {
     param([Parameter(Mandatory)][string]$RunFolder)
@@ -1408,6 +1413,8 @@ function Invoke-DtJobMarkBootstrap {
 function Invoke-DtJobIrreversible {
     if (@('begin', 'end') -notcontains $Action) { throw 'DT_JOB_USAGE: irreversible requires -Action begin|end.' }
     if (-not $Operation) { throw 'DT_JOB_USAGE: irreversible requires -Operation.' }
+    # An unowned step would never defer rotation and would draw a false stale alert.
+    if ($Action -eq 'begin' -and -not $CoordinatorId -and -not $env:DT_BUILD_COORDINATOR_ID) { throw 'DT_JOB_USAGE: irreversible -Action begin requires -CoordinatorId or DT_BUILD_COORDINATOR_ID.' }
     $paths = Get-DtJobPaths -RunFolder $RunFolder
     # Invoke-DtJobLocked's own -Action shadows $Action inside the block.
     $stepAction = $Action
@@ -1426,10 +1433,68 @@ function Invoke-DtJobIrreversible {
     Write-DtJobOutput -Object ([pscustomobject][ordered]@{ action = $Action; operation = $Operation; open = @($open) }) -AsJson:$Json
 }
 
+function Get-DtJobTreeHash {
+    # The working-state tree hash: everything, tracked, untracked (respecting .gitignore), and binary,
+    # staged into a temporary index and written as a tree. The real index is never touched.
+    param([Parameter(Mandatory)][string]$WorkingTree)
+    if (-not (Test-Path -LiteralPath $WorkingTree -PathType Container)) { throw "DT_JOB_TREE_HASH: working tree not found: $WorkingTree" }
+    $root = @(& git -C $WorkingTree rev-parse --show-toplevel 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $root) { throw "DT_JOB_TREE_HASH: not a git working tree: $WorkingTree" }
+    $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ('dt-job-tree-hash-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $priorIndex = $env:GIT_INDEX_FILE
+    try {
+        $env:GIT_INDEX_FILE = Join-Path $tempDir 'index'
+        $addOutput = @(& git -C $root[0] add -A 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "DT_JOB_TREE_HASH: git add -A failed: $(($addOutput | Select-Object -Last 3) -join ' ')" }
+        $tree = @(& git -C $root[0] write-tree 2>$null)
+        if ($LASTEXITCODE -ne 0 -or -not $tree -or [string]$tree[0] -notmatch '^[0-9a-f]{40}([0-9a-f]{24})?$') { throw 'DT_JOB_TREE_HASH: git write-tree failed' }
+        return [string]$tree[0]
+    }
+    finally {
+        if ($null -eq $priorIndex) { Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue } else { $env:GIT_INDEX_FILE = $priorIndex }
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-DtJobCanReuse {
+    # Whether a recorded test result may stand in for a rerun: the record validates, holds a test with this
+    # exact command and exit_code 0, and its tree hash equals the current one. Any failure means rerun.
+    param([string]$RecordPath, [string]$TestCommand, [string]$WorkingTree)
+    $no = { param($why) [pscustomobject][ordered]@{ reuse = $false; reason = $why } }
+    if (-not $RecordPath -or -not $TestCommand -or -not $WorkingTree) { return (& $no 'can-reuse requires -Record, -Command, and -WorkingTree') }
+    try {
+        $checked = Get-DtContinuationRecord -Path $RecordPath
+        if (@($checked.errors).Count -gt 0) { return (& $no ("record invalid: " + (@($checked.errors) -join '; '))) }
+        $matching = @($checked.record['tests'] | Where-Object { [string]$_['command'] -ceq $TestCommand })
+        if ($matching.Count -eq 0) { return (& $no 'no recorded test with this exact command') }
+        $passing = @($matching | Where-Object { [long]$_['exit_code'] -eq 0 })
+        if ($passing.Count -eq 0) { return (& $no 'the recorded test did not pass') }
+        $current = Get-DtJobTreeHash -WorkingTree $WorkingTree
+        $hit = @($passing | Where-Object { [string]$_['tree_hash'] -ceq $current }) | Select-Object -First 1
+        if ($null -eq $hit) { return (& $no "tree hash changed: current $current") }
+        return [pscustomobject][ordered]@{ reuse = $true; reason = "tree hash $current matches"; evidence_path = [string]$hit['evidence_path'] }
+    }
+    catch { return (& $no ("cannot decide: " + $_.Exception.Message)) }
+}
+
 # Dot-sourcing (the runner does) loads the functions only.
 if ($MyInvocation.InvocationName -eq '.') { return }
 
-if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb is required (start, status, wait, cancel, reconcile, lease, register-run, unregister-run, consume, request-continuation, await-danny, approve, resume, finish, mark-bootstrap, irreversible).' }
+# Worker-side verbs: no run folder, lease, or context line.
+if ($Verb -eq 'tree-hash') {
+    if (-not $WorkingTree) { throw 'DT_JOB_USAGE: tree-hash requires -WorkingTree.' }
+    $hash = Get-DtJobTreeHash -WorkingTree $WorkingTree
+    if ($Json) { [pscustomobject][ordered]@{ working_tree = $WorkingTree; tree_hash = $hash } | ConvertTo-Json -Compress } else { $hash }
+    exit 0
+}
+if ($Verb -eq 'can-reuse') {
+    $decision = Test-DtJobCanReuse -RecordPath $Record -TestCommand $Command -WorkingTree $WorkingTree
+    if ($Json) { $decision | ConvertTo-Json -Compress } elseif ($decision.reuse) { 'true' } else { "false: $($decision.reason)" }
+    exit 0
+}
+
+if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb is required (start, status, wait, cancel, reconcile, lease, register-run, unregister-run, consume, request-continuation, await-danny, approve, resume, finish, mark-bootstrap, irreversible, tree-hash, can-reuse).' }
 if (-not $RunFolder) { throw 'DT_JOB_USAGE: -RunFolder is required.' }
 $script:DtJobExplicitParams = @($PSBoundParameters.Keys)
 
