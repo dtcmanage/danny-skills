@@ -213,6 +213,18 @@ function Wait-LiveTranscript([string]$Vendor, [string]$Cwd, [DateTime]$Deadline)
     } while ([DateTime]::UtcNow -lt $Deadline)
     return $null
 }
+function Get-LiveGuardWait([string]$Vendor) {
+    # The real router's verdict for this vendor, read with the caller's own homes and router state. Returns
+    # the wait reason, or $null when live work may run.
+    $names = @('CODEX_HOME','CLAUDE_CONFIG_DIR','DT_MODEL_ROUTER_STATE')
+    $current = @{}
+    foreach ($name in $names) { $current[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+    try { $pick = (& pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/model-router/resolve-model.ps1') -Category mechanical -Lane $Vendor -Json | Select-Object -Last 1) | ConvertFrom-Json }
+    catch { return "real router unreadable: $($_.Exception.Message)" }
+    finally { foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $current[$name]) } }
+    if ($pick.status -ne 'ok') { return [string]$pick.reason }
+    return $null
+}
 function Invoke-LiveValidation {
     # Credentials are copied only when the caller explicitly selects -Live. Neither home gets live
     # settings, hooks, or a registry. Remove the credential copies in finally, retaining only evidence.
@@ -237,7 +249,12 @@ function Invoke-LiveValidation {
             $source = Join-Path $sourceRouter $file
             if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination (Join-Path $env:DT_MODEL_ROUTER_STATE $file) }
         }
+        # The isolated homes hide real usage from the router, so ask the real router first: a vendor over
+        # its quota guard runs no live step unless Danny set DT_ROUTER_GUARD_OVERRIDE for this process.
+        $guardWait = @{}
+        foreach ($vendor in @('codex','claude')) { $guardWait[$vendor] = Get-LiveGuardWait $vendor }
         foreach ($vendor in @('codex','claude')) {
+            if ($guardWait[$vendor]) { Write-Output "SKIP $(if ($vendor -eq 'codex') { 1 } else { 2 }) LIVE real $vendor wrapper : $($guardWait[$vendor])"; continue }
             Scenario $(if ($vendor -eq 'codex') { 1 } else { 2 }) "LIVE real $vendor wrapper" {
                 $r = New-Run "live-worker-$vendor" $(if($vendor -eq 'codex'){'claude'}else{'codex'})
                 $work = Join-Path $r.folder 'repo'
@@ -287,6 +304,7 @@ NONE
             }
         }
         foreach ($vendor in @('claude','codex')) {
+            if ($guardWait[$vendor]) { Write-Output "SKIP 8 LIVE managed context guard on $vendor : $($guardWait[$vendor])"; continue }
             Scenario 8 "LIVE managed context guard on $vendor" {
                 $r = New-Run "live-context-$vendor" $vendor
                 $coordinator = "live-$vendor"
