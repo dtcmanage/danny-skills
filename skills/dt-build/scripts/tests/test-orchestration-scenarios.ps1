@@ -251,7 +251,26 @@ RUN_ID: $($r.id)
 chunk_id: echo
 attempt: 1
 Run only this one-line task in the temporary repo: Write-Output echo. Do not edit files or call other agents.
-Return exactly a dt-build v3 report: DT_BUILD_REPORT_VERSION: 3, RUN_ID: $($r.id), chunk_id: echo, attempt: 1, VERDICT: PASS, CHANGED_FILES: NONE, COMMANDS_AND_RESULTS: the echo command and result, EVIDENCE_PATHS: NONE, UNRESOLVED_BLOCKERS: NONE, DISCOVERED_ENHANCEMENTS: NONE, CONTINUATION_STATE: NONE. Put each header and its value on separate lines except the first four identity fields.
+Then reply with exactly the lines between the markers, copied verbatim, each on its own line, with nothing before or after them and without the markers:
+=== BEGIN ===
+DT_BUILD_REPORT_VERSION: 3
+RUN_ID: $($r.id)
+chunk_id: echo
+attempt: 1
+VERDICT: PASS
+CHANGED_FILES:
+NONE
+COMMANDS_AND_RESULTS:
+Write-Output echo -> echo
+EVIDENCE_PATHS:
+NONE
+UNRESOLVED_BLOCKERS:
+NONE
+DISCOVERED_ENHANCEMENTS:
+NONE
+CONTINUATION_STATE:
+NONE
+=== END ===
 "@
                 $wrapper = Join-Path $scripts "invoke-$vendor-chunk.ps1"
                 $routed = (& pwsh -NoProfile -File (Join-Path $scripts '../../../scripts/model-router/resolve-model.ps1') -Category mechanical -Lane $vendor -Json | Select-Object -Last 1) | ConvertFrom-Json
@@ -329,7 +348,9 @@ After both attempts call pwsh -NoProfile -File $(Quote $jobScript) status -RunFo
                 } finally {
                     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
                     if ($process -and $process.StartTime -eq $startTime) { $process.Kill($true); [void]$process.WaitForExit(10000) }
-                    Job @('lease','-RunFolder',$r.folder,'-Action','release','-CoordinatorId',$coordinator) | Out-Null
+                    # A one-tick rotation already released the lease; only release one this coordinator still holds.
+                    $held = Get-Content -Raw -LiteralPath (Join-Path $r.folder 'coordinator.lease') -ErrorAction SilentlyContinue | ConvertFrom-Json -ErrorAction SilentlyContinue
+                    if ($held -and $held.coordinator_id -eq $coordinator -and -not $held.released_utc) { Job @('lease','-RunFolder',$r.folder,'-Action','release','-CoordinatorId',$coordinator) | Out-Null }
                     Remove-Item Env:DT_BUILD_CTX_SOFT_MARGIN,Env:DT_BUILD_CTX_HARD_MARGIN -ErrorAction SilentlyContinue
                 }
             }
