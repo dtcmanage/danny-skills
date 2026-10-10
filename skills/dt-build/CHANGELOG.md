@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.1
+
+- Final-integration fixes: safe hook install on a settings file with no hooks key, managed start reachable from an interactive session, watcher triggers only on actionable events, hook binding independent of bootstrap order, live harness fixes for Codex 0.162 rollouts.
+
 ## 2.21.0
 
 - Orchestration hardening: job ledger and bounded evidence, watcher and managed relaunch, context guard and hooks, report v3 and continuation, host adapters, scenario validation and adoption procedure.
