@@ -485,6 +485,21 @@ try {
     Invoke-DtJob @('lease','-RunFolder',$released.folder,'-Action','release','-CoordinatorId','old-coordinator') | Out-Null
     Invoke-Tick | Out-Null
     Assert-True ((Get-LaunchCount 'managed-release') -eq 1 -and (Get-DmCount 'managed-release') -eq 0) 'released interactive lease on a managed run relaunches next tick'
+    # A watcher-launched coordinator that released its lease but is still in its final turn is not overlapped.
+    $tail = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        $finalTurn = New-Run -Name 'released-alive' -NoLease
+        Invoke-DtJob @('request-continuation','-RunFolder',$finalTurn.folder) | Out-Null
+        $tailStart = (Get-Process -Id $tail.Id).StartTime.ToUniversalTime().ToString('o')
+        $lease = [ordered]@{ coordinator_id = 'mc-tail'; host = 'claude'; session_id = $null; pid = $tail.Id; pid_start_utc = $tailStart; launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.ToString('o'); released_utc = [DateTime]::UtcNow.ToString('o') }
+        Write-Utf8 -Path (Join-Path $finalTurn.folder 'coordinator.lease') -Content ($lease | ConvertTo-Json)
+        Invoke-Tick | Out-Null
+        Assert-True ((Get-LaunchCount 'released-alive') -eq 0) 'a released watcher lease whose process is still alive does not relaunch'
+        $tail.Kill(); [void]$tail.WaitForExit(10000)
+        Invoke-Tick | Out-Null
+        Assert-True ((Get-LaunchCount 'released-alive') -eq 1) 'once that process is gone the next tick relaunches'
+    }
+    finally { if (-not $tail.HasExited) { $tail.Kill() } }
 
     # Non-terminal job events after consume cannot launch or notify; terminal completion can.
     foreach ($unmanaged in @($false,$true)) {

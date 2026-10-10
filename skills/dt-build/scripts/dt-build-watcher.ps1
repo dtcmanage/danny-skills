@@ -81,6 +81,11 @@ function Get-WatcherDecision {
     if ($null -eq $lease -or ($managed -and $lease.PSObject.Properties['released_utc'] -and $lease.released_utc)) {
         # A missing or released managed lease has no live coordinator, so normal launch rules apply.
         if (-not $managed) { return [pscustomobject]@{ action = 'none'; detail = 'no coordinator lease' } }
+        # A watcher-launched coordinator that released its lease may still be in its final turn: relaunch only once its PID is gone.
+        if ($null -ne $lease -and $lease.launched_by -eq 'watcher') {
+            $releasedStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
+            if ($lease.pid -and (Test-DtJobProcessIdentity $lease.pid $releasedStart)) { return [pscustomobject]@{ action = 'none'; detail = 'released coordinator process still alive' } }
+        }
     }
     elseif ($lease.launched_by -eq 'interactive') {
         if (-not (Test-DtJobLeaseExpired $lease $NowUtc)) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator lease live' } }

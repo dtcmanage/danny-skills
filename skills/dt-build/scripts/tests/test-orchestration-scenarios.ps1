@@ -379,6 +379,7 @@ try {
             foreach ($pass in @(1,2)) {
                 $code = ($install -split '\r?\n' | Where-Object { $_ -notmatch '^cd ' }) -join "`n"
                 $code = $code.Replace("'D:\Claude\settings.json'", (Quote $targetPath))
+                Assert (-not $code.Contains('D:\Claude\settings.json')) 'adoption install test would touch the live settings file'
                 Push-Location $repoRoot
                 try { & ([scriptblock]::Create($code)) } finally { Pop-Location }
                 $live = Get-Content -Raw $targetPath | ConvertFrom-Json -AsHashtable
@@ -390,6 +391,7 @@ try {
             }
             $code = ($rollback -split '\r?\n' | Where-Object { $_ -notmatch '^cd ' }) -join "`n"
             $code = $code.Replace("'D:\Claude\settings.json'", (Quote $targetPath))
+            Assert (-not $code.Contains('D:\Claude\settings.json')) 'adoption rollback test would touch the live settings file'
             Push-Location $repoRoot
             try { & ([scriptblock]::Create($code)) } finally { Pop-Location }
             $restored = Get-Content -Raw $targetPath | ConvertFrom-Json -AsHashtable
@@ -666,6 +668,7 @@ if (`$script:alive) { throw 'coordinator survived one tick' }
             $hooksDir = (Resolve-Path (Join-Path $scripts '../hooks')).Path.Replace('\','/')
             Write-Text $settingsPath ($settingsFixture.Replace('__DIR__',$hooksDir))
             $command = $removeHooks[0].Replace("'D:\Claude\settings.json'",(Quote $settingsPath)).Replace("'skills/dt-build/hooks'",(Quote (Join-Path $scripts '../hooks')))
+            Assert (-not $command.Contains('D:\Claude\settings.json')) 'hook removal test would touch the live settings file'
             & ([scriptblock]::Create($command))
             $settings = [IO.File]::ReadAllText($settingsPath) | ConvertFrom-Json -AsHashtable
             Assert ($settings.theme -eq 'light') 'rollback lost unrelated settings'

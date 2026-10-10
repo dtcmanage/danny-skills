@@ -584,19 +584,6 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $report += "`n"+$env:DT_FAKE_UNICODE_TEXT
     [Console]::Error.WriteLine($env:DT_FAKE_UNICODE_TEXT)
 }
-if ($mode -in @('late-remark','no-report-messages')) {
-    $usage = @{}; $usage[$ranModel] = @{inputTokens=10;outputTokens=20;costUSD=0.01}
-    $first = if ($mode -eq 'late-remark') { $report + "`nolder-report" } else { 'earlier remark' }
-    $second = if ($mode -eq 'late-remark') { $report } else { 'second remark' }
-    @(
-        @{type='assistant';message=@{content=@(@{type='text';text=$first})}},
-        @{type='assistant';message=@{content=@(@{type='text';text=$second})}},
-        @{type='assistant';message=@{content=@(@{type='text';text='background task finished'})}},
-        @{type='assistant';message=@{content=@(@{type='text';text='late remark'})}},
-        @{type='result';is_error=$false;result='late remark';modelUsage=$usage;total_cost_usd=0.01}
-    ) | ConvertTo-Json -Depth 8 -Compress
-    exit 0
-}
 Write-Envelope $report
 '@
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
@@ -691,15 +678,6 @@ Write-Envelope $report
     $stampedOutput = Join-Path $tempRoot 'claude-stamped-report.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $stampedOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'stamped report regression' -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $stampedOutput) -match '\ADT_BUILD_REPORT_VERSION:') 'timestamp-prefixed Claude structured report parses and is retained without stamp'
-    $env:DT_FAKE_CLAUDE_MODE = 'success'
-
-    $env:DT_FAKE_CLAUDE_MODE = 'late-remark'
-    $lateOutput = Join-Path $tempRoot 'claude-late-remark.md'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lateOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'late report fixture' -Json *> (Join-Path $tempRoot 'late-remark.log')
-    Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $lateOutput) -match '\ADT_BUILD_REPORT_VERSION: 3' -and (Get-Content -Raw $lateOutput) -notmatch 'late remark|older-report') 'last report-bearing assistant message survives background notice and late remark'
-    $env:DT_FAKE_CLAUDE_MODE = 'no-report-messages'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lateOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'last message fallback fixture' -Json *> (Join-Path $tempRoot 'last-message.log')
-    Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw $lateOutput) -eq 'late remark') 'without a report the wrapper retains the last assistant message'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
 
     # Peers rely on inherited console defaults, just like installed PS1 shims.

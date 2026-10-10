@@ -104,7 +104,13 @@ function Save-HookBootstrapCapture {
 try {
     $rawText = Read-HookStdin
     if (-not $rawText.Trim()) { exit 0 }
-    if ((Test-HookIdle) -and -not $rawText.Contains('mark-bootstrap')) { exit 0 }
+    # Idle sessions skip everything unless this call's own command ran mark-bootstrap, not output that mentions it.
+    if ((Test-HookIdle) -and $rawText.Contains('mark-bootstrap')) {
+        $peekCommand = ''
+        try { $peekCommand = [string](($rawText | ConvertFrom-Json).tool_input.command) } catch { }
+        if (-not $peekCommand.Contains('mark-bootstrap')) { exit 0 }
+    }
+    elseif (Test-HookIdle) { exit 0 }
     . (Join-Path $PSScriptRoot '..\scripts\context-guard.ps1')
     $hookInput = $rawText | ConvertFrom-Json
     # Only this rare call loads dt-job.ps1, for its run lock and atomic write.

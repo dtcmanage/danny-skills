@@ -19,9 +19,10 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 ## Bootstrap and context
 
 - Do the mandatory reads (CLAUDE.md chain, MEMORY.md, governing references) first, in full.
+- No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
 - Register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested.
-- Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host claude`. Use one session id, e.g. `<RUN_ID>-claude-<yyyyMMddHHmm>`. Use the starting directory or add `-TranscriptPath <this session's transcript>`.
-- An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host claude`. Each later call with your id, a running wait included, renews it through long waits. A watcher-launched coordinator already holds it.
+- Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host claude`. Use one id, e.g. `<RUN_ID>-claude-<yyyyMMddHHmm>`, from the starting directory or with `-TranscriptPath <transcript>`.
+- An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host claude`. Any call with your id renews it through long waits. A watcher-launched coordinator already holds it.
 - Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` finish the current decision and rewrite `_build-state.md`; `rotate` rotate now.
 - Past the hard limit `dt-job start` refuses with `ROTATE_REQUIRED` and the PreToolUse hook denies it: rotate now; do not retry the dispatch.
 - Rotation steps, in order: rewrite `_build-state.md` (keep the `run_status` and `last_consumed_event_seq` lines as they are), write a coordinator handoff note in the run folder, `dt-job request-continuation -CoordinatorId <id> -Reason context_rotation`, `dt-job lease -Action release -CoordinatorId <id>`, then end. Interactive: tell Danny the one command to continue in a fresh session, `/dt-build <RUN_ID>`.

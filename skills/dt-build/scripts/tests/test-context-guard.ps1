@@ -830,7 +830,7 @@ try {
     $guardLoad = ". (Join-Path `$PSScriptRoot '..\scripts\context-guard.ps1')"
     $dtJobLoad = ". (Join-Path `$PSScriptRoot '..\scripts\dt-job.ps1')"
     $idleAt = $preText.IndexOf($idleMark)
-    $postIdleAt = $postText.IndexOf("if ((Test-HookIdle) -and -not `$rawText.Contains('mark-bootstrap')) { exit 0 }")
+    $postIdleAt = $postText.IndexOf("elseif (Test-HookIdle) { exit 0 }")
     Assert-True ($idleAt -gt 0 -and $idleAt -lt $preText.IndexOf($guardLoad) -and -not $preText.Contains($dtJobLoad) -and $postIdleAt -gt 0 -and $postIdleAt -lt $postText.IndexOf($guardLoad) -and $postIdleAt -lt $postText.IndexOf($dtJobLoad)) 'in both hooks the idle exit comes before context-guard.ps1 or dt-job.ps1 loads, and PreToolUse never loads dt-job.ps1'
 
     # ---- static: hook files and launcher flags.

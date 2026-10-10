@@ -236,7 +236,6 @@ $args = @(
     '--model', $resolvedModel,
     '--permission-mode', $permissionMode,
     '--output-format', 'json',
-    '--verbose',
     '--strict-mcp-config',
     '--tools', $toolList
 )
@@ -326,22 +325,7 @@ try {
     $cliResult = $null
     $cliResultError = $null
     if (-not $timedOut -and $exitCode -eq 0) {
-        try {
-            $messages = @($stdout | ConvertFrom-Json)
-            $resultEnvelope = $messages | Where-Object { $_.PSObject.Properties['result'] } | Select-Object -Last 1
-            $cliResult = ConvertFrom-ClaudeCliResult -Stdout ($resultEnvelope | ConvertTo-Json -Depth 40 -Compress) -RequestedModel $resolvedModel
-            $assistantTexts = @(
-                foreach ($message in $messages) {
-                    if ($message.PSObject.Properties['type'] -and $message.type -eq 'assistant') {
-                        (@($message.message.content | Where-Object { $_.type -eq 'text' } | ForEach-Object { $_.text }) -join "`n")
-                    }
-                }
-            )
-            if ($assistantTexts.Count) {
-                $reports = @($assistantTexts | Where-Object { $_.Contains('DT_BUILD_REPORT_VERSION:') })
-                $cliResult.result = if ($reports.Count) { $reports[-1] } else { $assistantTexts[-1] }
-            }
-        }
+        try { $cliResult = ConvertFrom-ClaudeCliResult -Stdout $stdout -RequestedModel $resolvedModel }
         catch { $cliResultError = $_.Exception.Message }
     }
     if ($cliResult) { $actualModel = $cliResult.resolved_model }

@@ -21,6 +21,7 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 ## Bootstrap and context
 
 - Do the mandatory reads (CLAUDE.md chain, MEMORY.md, governing references) first, in full.
+- No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
 - Register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost codex`. Add `-Managed` when requested.
 - Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host codex`. Use one session id, e.g. `<RUN_ID>-codex-<yyyyMMddHHmm>`. Use the starting directory or add `-TranscriptPath <this session's rollout file>`.
 - An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host codex`. Each later call with your id, a running wait included, renews it through long waits. A watcher-launched coordinator already holds it.
