@@ -269,6 +269,8 @@ $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
 try {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    # Coordinator-only bootstrap must never propagate to workers, including direct wrapper calls.
+    $startInfo.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
     $cliExtension = [System.IO.Path]::GetExtension($codexCli).ToLowerInvariant()
     $prefixArgs = @()
     if ($cliExtension -in @('.cmd', '.bat')) {

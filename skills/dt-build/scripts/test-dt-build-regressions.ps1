@@ -25,6 +25,7 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-regressions-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $originalCodexHome = $env:CODEX_HOME
+$originalLeanBootstrap = $env:DT_BUILD_LEAN_BOOTSTRAP
 # Isolate from this machine's live Codex session usage until a test sets its own fixture home.
 $env:CODEX_HOME = Join-Path $tempRoot 'empty-codex-home'
 New-Item -ItemType Directory -Path $env:CODEX_HOME -Force | Out-Null
@@ -34,6 +35,9 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    $rulebook = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -CoordinatorHost codex) -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and $rulebook.Contains('## Model routing') -and $rulebook.Contains('## Context discipline') -and $rulebook.Contains('6. Execute milestones') -and $rulebook.Contains('7. Guardrails:')) 'rulebook contains all resume execution sections'
+    Assert-True (-not $rulebook.Contains('1. Intake in one question') -and -not $rulebook.Contains('## Usage telemetry') -and $rulebook.Contains('grants no permission')) 'rulebook omits intake and retains the authority boundary'
     # The resume budget counts the runtime/native floor, all safety reads, and current repo text.
     $measureBootstrap = Join-Path $scriptDir 'measure-resume-bootstrap.py'
     $bootstrapManifest = Join-Path $scriptDir 'tests/fixtures/resume-bootstrap-budget.json'
@@ -483,6 +487,7 @@ rationale: Framework limitation accepted with visible evidence.
 if ($args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if ($args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path $env:CODEX_HOME 'models_cache.json'); exit 0 }
 if ($env:DT_FAKE_CODEX_ARGS) { [IO.File]::WriteAllText($env:DT_FAKE_CODEX_ARGS, ($args -join '|')) }
+if ($env:DT_BUILD_LEAN_BOOTSTRAP) { throw 'worker inherited coordinator lean bootstrap' }
 $outIndex = [Array]::IndexOf([object[]]$args, '--output-last-message')
 $outPath = if ($outIndex -ge 0) { [string]$args[$outIndex + 1] } else { '' }
 $mode = [string]$env:DT_FAKE_CODEX_MODE
@@ -518,6 +523,7 @@ if($env:DT_FAKE_UNICODE_TEXT){
     Write-Utf8 -Path $wrapperPrompt -Content "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nfixture"
     $wrapperOutput = Join-Path $tempRoot 'wrapper-output.md'
     $env:DT_FAKE_CODEX_MODE = 'success'
+    $env:DT_BUILD_LEAN_BOOTSTRAP = '1'
     $missingReasonOutput = Join-Path $tempRoot 'wrapper-missing-reason.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $missingReasonOutput `
@@ -531,6 +537,8 @@ if($env:DT_FAKE_UNICODE_TEXT){
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $wrapperOutput `
         -CodexCliPath $fakeCodex -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Codex success path failed"
+    Assert-True ($env:DT_BUILD_LEAN_BOOTSTRAP -ceq '1') 'worker removal does not alter the coordinator environment'
+    $env:DT_BUILD_LEAN_BOOTSTRAP = $originalLeanBootstrap
     # The Codex fixture stays at report version 2: the transition path is accepted and flagged.
     $codexV2Prov = Get-Content -Raw -LiteralPath "$wrapperOutput.provenance.json" | ConvertFrom-Json
     Assert-True ($codexV2Prov.report_version_warning -eq 'v2') 'Codex v2 report accepted with report_version_warning v2'
@@ -907,6 +915,7 @@ $script:RouterDiagnosisHttp = {
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {
+    $env:DT_BUILD_LEAN_BOOTSTRAP = $originalLeanBootstrap
     if ($null -eq $originalCodexHome) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
     else { $env:CODEX_HOME = $originalCodexHome }
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $originalClaudeCredentials

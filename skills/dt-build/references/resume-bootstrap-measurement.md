@@ -1,5 +1,53 @@
 # Managed resume bootstrap measurement (October 11, 2026)
 
+## Lean bridge follow-up (October 11, 2026)
+
+Measured before implementation against the recent 1:32 AM ET coordinator log
+`coordinator-mc-20261011053212-94f5c9.log` and its referenced rollout. Its successful
+marker was **84,948 actual input tokens**. Twelve executed required-chain reads
+(four files read three times) emitted **32,393 o200k_base text tokens**. Scoped
+memory and build-process emitted another 4,210 and 1,137. These command-output
+counts include observed encoding/tool output; they are not isolated source counts.
+The source-only canonical parent/scoped resume reads sum to **16,367 tokens**.
+Native root CLAUDE.md remains loaded and is included in the runtime reserve.
+
+The post-cap-fix read-plan simulation before this change was **45,339 tokens**.
+The lean simulation is **32,864**, a **12,475-token (27.5%)** reduction. Both retain
+the same 18,000-token runtime/native reserve and 6,000-token authorization reserve.
+Lean removes eager canonical reads and build-process, replaces the separate adapter
+read with a 5,523-token rendered rulebook (adapter plus current Model routing,
+Context discipline, milestone execution and Guardrails sections), updates the resume
+guide, and adds a conservative 150-token hook reserve. The actual lean manifest
+is **118 tokens**. Shared deterministic/conventions reads remain.
+
+`tests/fixtures/lean-bootstrap-comparison.json` records both complete component
+inventories. Reproduce the after simulation with `scripts/measure-resume-bootstrap.py
+--manifest scripts/tests/fixtures/resume-bootstrap-budget.json --repo-root <repo>`.
+The renderer reads authoritative sections instead of maintaining a copied policy.
+The bridge's golden fixture proves ordinary output is byte-identical; jobs and both
+chunk wrappers strip the coordinator-only variable. Authority checks remain before
+mark-bootstrap; existing registration and all approval/boundary sources still control.
+
+This is a simulated text-read budget, not a new live coordinator measurement. No
+coordinator was launched against core-durability-20260922 and no run file was edited.
+Native instruction discovery, tools, model behavior and the size of actual boundary
+records can change the eventual live baseline. Compare its next successful marker
+before claiming a measured live reduction.
+
+### Final merged-baseline remeasurement
+
+Main advanced to d2264cb during verification. Preserve its 45/30-minute chunk
+limits and release this change as dt-build 2.21.15 / plugin 0.24.3. Remeasuring
+main's ordinary plan against current canonical files gives **45,416 tokens**;
+the rebased lean plan gives **32,928**, a **12,488-token (27.5%)** reduction.
+The rendered rulebook is now **5,587 tokens**. Relative to the initial pair,
+upstream 06afc76 added 64 tokens of adapter guidance to both sides. A concurrent
+File Sorter MEMORY.md update added 13 tokens to the ordinary plan only; lean
+never reads that scoped memory during bootstrap. Canonical parent/scoped reads
+now total 16,380. This task made neither concurrent change and edited no run files.
+Both reserves remain unchanged. The comparison fixture retains the initial pair
+as well as this final pair so every count delta is attributable.
+
 Read-only audit of core-durability-20260922. No live run file was changed. All times below are US Eastern.
 
 The 10:54 PM October 10 coordinator marked **92,544 actual input tokens**. The 1:02 AM October 11 coordinator marked **109,770**. These are actual model counts from successful mark-bootstrap outputs. The table attributes executed command output text with the reproducible o200k_base tokenizer; it is a proxy, not a reconciliation of runtime/tool framing or internal model tokenization.

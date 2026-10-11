@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.21.14
+  version: 2.21.15
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -24,6 +24,8 @@ If this skill has stricter domain-specific behavior, keep that stricter behavior
 ## Host adapter
 
 For an existing managed resume, enter through `references/managed-resume.md` instead of repeating intake steps 1–5. Complete its authorization reads, mark bootstrap immediately, then load only the execution references the current step needs. The watcher supplies exact run paths. Keep checkpoint history in the run folder and use `scripts/write-resume-checkpoint.ps1` for a lean atomic checkpoint.
+
+Headless Codex coordinators alone use `DT_BUILD_LEAN_BOOTSTRAP=1` and `scripts/read-coordinator-rulebook.ps1`: one host adapter plus this skill's resume execution sections. Canonical policy is deferred to triggered actions; run records, approvals and boundaries remain mandatory. Jobs and chunk wrappers strip the opt-out, and interactive sessions retain ordinary bootstrap.
 
 For rollout and rollback, follow [the adoption procedure](references/adoption-procedure.md) only on Danny's go-ahead.
 

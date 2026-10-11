@@ -67,6 +67,8 @@ try {
     if ($spec.PSObject.Properties['environment'] -and $null -ne $spec.environment) {
         foreach ($property in $spec.environment.PSObject.Properties) { $psi.Environment[$property.Name] = [string]$property.Value }
     }
+    # Defense against an inherited watcher environment or legacy job spec.
+    $psi.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
     $psi.Environment['DT_JOB_ID'] = $JobId
     $psi.Environment['DT_JOB_DIR'] = $jobDir
     if ($spec.command) {

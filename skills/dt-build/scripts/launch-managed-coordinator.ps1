@@ -33,13 +33,13 @@ $resolvedSkillRoot = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
 if ($resolvedSkillRoot) { $skillRoot = $resolvedSkillRoot.FullName }
 $resumeGuide = Join-Path $skillRoot 'references/managed-resume.md'
 # Use the dedicated resume entry, not a skill invocation that reloads the entire intake skill.
-# The child still receives the canonical bridge; nothing bypasses its safety or approval reads.
+# Only the headless Codex coordinator opts out of eager canonical reads; authority reads remain mandatory.
 $prompt = @"
 Resume existing managed build $RunId as coordinator $CoordinatorId on $CoordinatorHost.
 Run folder: $runRoot
 Checkpoint: $BuildStatePath
 Read and follow $resumeGuide as your entry contract, plus the canonical context bridge.
-Read each required canonical file once, in order, with sufficient output capacity; emit raw content directly, never batch full files into truncated or nested JSON output.
+For a lean bridge, read the compact coordinator rulebook via scripts/read-coordinator-rulebook.ps1 -CoordinatorHost $CoordinatorHost; canonical policy is deferred until its action is triggered.
 Complete required authorization reads, then mark-bootstrap immediately, and continue the checkpoint's next action.
 Do not repeat intake or preload implementation/close-out references. Never run dt-job resume or approve.
 "@
@@ -60,12 +60,14 @@ foreach ($name in @('DT_BUILD_STATE_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME')) {
 }
 $lines.Add("Set-Location -LiteralPath $(ConvertTo-SingleQuoted $workDir)")
 if ($CoordinatorHost -eq 'codex') {
+    $lines.Add("`$env:DT_BUILD_LEAN_BOOTSTRAP = '1'")
     # The permission flags invoke-codex-chunk.ps1 uses for a substantive chunk: no approval prompts, and on
     # Windows (where Codex removed its sandbox) explicit full access instead of a sandbox that fails closed.
     $permission = if ($env:OS -eq 'Windows_NT') { "-c $(ConvertTo-SingleQuoted 'default_permissions=":danger-full-access"')" } else { '--sandbox workspace-write' }
     $lines.Add("& codex --ask-for-approval never exec $permission $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
 }
 else {
+    $lines.Add('Remove-Item Env:DT_BUILD_LEAN_BOOTSTRAP -ErrorAction SilentlyContinue')
     # Minimal tool set: no MCP servers, and the coordinator hooks from a run-folder copy of the snippet
     # with the real hooks path. Danny runs bypass deliberately; the hooks still deny at the call.
     $mcpConfig = Join-Path $runRoot 'coordinator-mcp.json'

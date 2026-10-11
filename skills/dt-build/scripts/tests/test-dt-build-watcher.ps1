@@ -1016,12 +1016,14 @@ Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
 
     # ---- jobs never inherit the coordinator identity.
     $env:DT_BUILD_COORDINATOR_ID = 'mc-parent'
-    try { $envJob = Invoke-DtJob @('start', '-RunFolder', $run.folder, '-Command', "'coord=[{0}] job=[{1}]' -f `$env:DT_BUILD_COORDINATOR_ID, `$env:DT_JOB_ID") }
-    finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
+    $savedLean = $env:DT_BUILD_LEAN_BOOTSTRAP
+    $env:DT_BUILD_LEAN_BOOTSTRAP = '1'
+    try { $envJob = Invoke-DtJob @('start', '-RunFolder', $run.folder, '-PassEnv', 'DT_BUILD_LEAN_BOOTSTRAP', '-Command', "'coord=[{0}] job=[{1}] lean=[{2}]' -f `$env:DT_BUILD_COORDINATOR_ID, `$env:DT_JOB_ID, `$env:DT_BUILD_LEAN_BOOTSTRAP") }
+    finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue; $env:DT_BUILD_LEAN_BOOTSTRAP = $savedLean }
     Invoke-DtJob @('wait', '-RunFolder', $run.folder, '-JobId', $envJob.job_id, '-All', '-TimeoutSec', '60') | Out-Null
     $envOut = (Get-Content -Raw -LiteralPath (Join-Path $run.folder "jobs/$($envJob.job_id)/stdout.log")).Trim()
-    $envSpec = Get-Content -Raw -LiteralPath (Join-Path $run.folder "jobs/$($envJob.job_id)/spec.json")
-    Assert-True ($envOut -eq "coord=[] job=[$($envJob.job_id)]" -and -not $envSpec.Contains('mc-parent')) "DT_BUILD_COORDINATOR_ID is not passed to jobs ($envOut)"
+    $envSpec = Get-Content -Raw -LiteralPath (Join-Path $run.folder "jobs/$($envJob.job_id)/spec.json") | ConvertFrom-Json
+    Assert-True ($envOut -eq "coord=[] job=[$($envJob.job_id)] lean=[]" -and -not $envSpec.environment.PSObject.Properties['DT_BUILD_COORDINATOR_ID'] -and -not $envSpec.environment.PSObject.Properties['DT_BUILD_LEAN_BOOTSTRAP']) "coordinator identity and lean bootstrap are not passed to jobs, even through PassEnv ($envOut)"
 
     # ---- every approval boundary DMs; a repeat of the same boundary does not.
     Use-Scenario 'boundaries'
@@ -1336,6 +1338,17 @@ try { $runs = @(Read-WatcherRegistry); $outcome = "ok:$($runs[0].run_id)" } catc
     $registerText = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'register-dt-build-watcher.ps1')
     Assert-True ($registerText.Contains("-Execute 'wscript.exe'") -and $registerText.Contains('run-hidden.vbs') -and $registerText.Contains('New-TimeSpan -Minutes 2')) 'the scheduled task runs through run-hidden.vbs every 2 minutes'
     $launcherText = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'launch-managed-coordinator.ps1')
+    # Execute the actual prompt/environment assembly, stopping before lease acquisition or process launch.
+    $probeText = $launcherText.Substring(0, $launcherText.IndexOf('# The watcher runs this launcher'))
+    $probeText = $probeText.Replace('$PSScriptRoot', ("'" + $scriptDir.Replace("'", "''") + "'"))
+    $probe = [scriptblock]::Create($probeText + "`n[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(`$encoded))")
+    $parentLean = $env:DT_BUILD_LEAN_BOOTSTRAP
+    foreach ($hostName in @('codex', 'claude')) {
+        $wrapper = & $probe -CoordinatorHost $hostName -RunId fixture -RunFolder $tempRoot -BuildStatePath (Join-Path $tempRoot '_build-state.md') -CoordinatorId fixture
+        Assert-True (($wrapper.Contains("`$env:DT_BUILD_LEAN_BOOTSTRAP = '1'")) -eq ($hostName -eq 'codex')) 'only headless Codex assembly sets the lean bootstrap'
+        Assert-True ($wrapper.Contains('read-coordinator-rulebook.ps1') -and $wrapper.Contains('Complete required authorization reads')) 'managed launch retains rulebook and authorization instructions'
+    }
+    Assert-True ($env:DT_BUILD_LEAN_BOOTSTRAP -ceq $parentLean) 'launcher assembly does not set an interactive/parent environment variable'
     Assert-True ($launcherText.Contains('references/managed-resume.md') -and $launcherText.Contains('Run folder: $runRoot') -and $launcherText.Contains('Checkpoint: $BuildStatePath') -and $launcherText.Contains('canonical context bridge') -and $launcherText.Contains('-LaunchedBy watcher') -and -not $launcherText.Contains('$skillPrefix')) 'the default launcher supplies the bounded resume contract and exact run paths while retaining the watcher lease and canonical bridge'
     $acquireAt = $launcherText.IndexOf('-Action acquire')
     $createAt = $launcherText.IndexOf('-MethodName Create')

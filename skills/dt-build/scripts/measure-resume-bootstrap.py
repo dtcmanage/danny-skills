@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import tiktoken
@@ -28,6 +29,10 @@ def measure_plan(manifest_path: Path, repo_root: Path, canonical_root: Path | No
         source = repo_root / relative
         tokens = len(encoder.encode(source.read_text(encoding="utf-8")))
         components.append({"source": relative, "tokens": tokens, "measurement": "current file, o200k_base"})
+    for item in manifest.get("rendered_reads", []):
+        output = subprocess.run(item["command"], cwd=repo_root, check=True, capture_output=True, text=True).stdout
+        components.append({"source": item["source"], "tokens": len(encoder.encode(output)),
+                           "measurement": "current rendered rulebook, o200k_base"})
     total = sum(item["tokens"] for item in components)
     return {"components": components, "total_tokens": total, "target_tokens": manifest["target_tokens"],
             "pass": total < manifest["target_tokens"], "kind": "resume read-plan budget; not a live model baseline"}

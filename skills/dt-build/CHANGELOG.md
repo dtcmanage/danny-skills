@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.15
+
+- Use a lean bridge and source-rendered coordinator rulebook for managed Codex resumes; preserve authorization reads and strip the opt-out from all workers.
+
 ## 2.21.14
 
 - Chunk wrappers default to 45 minutes for coder work and 30 for deep-thinker work instead of 10, and dt-job start raises a wrapper job's shorter -TimeoutSec, so builders are no longer killed mid-work.

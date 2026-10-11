@@ -95,7 +95,7 @@ $script:DtJobStderrExcerptLines = 10
 $script:DtJobEnvAllow = @('CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PATH')
 $script:DtJobEnvSensitive = @('*TOKEN*', '*SECRET*', '*KEY*', '*PASSWORD*')
 # Coordinator identity never reaches a job: a job's dt-job calls must not renew a dead coordinator's lease.
-$script:DtJobEnvExclude = @('DT_BUILD_COORDINATOR_ID', 'DT_BUILD_COORDINATOR_LOCK_HELD')
+$script:DtJobEnvExclude = @('DT_BUILD_COORDINATOR_ID', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_BUILD_LEAN_BOOTSTRAP')
 $script:DtJobLockDepth = 0
 $script:DtJobLockStream = $null
 $script:DtJobRunnerPath = Join-Path $PSScriptRoot 'dt-job-runner.ps1'

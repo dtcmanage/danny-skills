@@ -261,6 +261,7 @@ $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
 try {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
     $cliExtension = [System.IO.Path]::GetExtension($claudeCli).ToLowerInvariant()
     $prefixArgs = @()
     if ($cliExtension -in @('.cmd', '.bat')) {

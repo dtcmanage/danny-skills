@@ -21,7 +21,7 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 
 ## Bootstrap and context
 
-- For managed resumes follow `managed-resume.md`: required canonical and authorization reads first, in full; mark bootstrap immediately after them. Load other references only at their triggered step. For new starts do the mandatory CLAUDE.md chain, MEMORY.md and governing reads first.
+- For managed resumes follow `managed-resume.md`: read the compact rulebook and complete authorization records first, then mark bootstrap immediately. A `dt-build-lean` bridge defers canonical-chain reads to their triggered actions. Ordinary sessions retain required canonical reads. New starts read the mandatory CLAUDE.md chain, MEMORY.md and governing references first.
 - No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
 - New starts register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost codex`. Add `-Managed` when requested.
 - Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host codex`. Use one session id, e.g. `<RUN_ID>-codex-<yyyyMMddHHmm>`. Use the starting directory or add `-TranscriptPath <this session's rollout file>`.
@@ -33,7 +33,7 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 
 ## Hooks
 
-- None. Codex has no per-tool hooks, and `codex exec` runs no hooks at all.
+- No per-tool coordinator hooks. The Codex SessionStart context bridge runs for headless launches; its lean mode changes eager reads, never authorization.
 - Interactive Codex: the context limit is advisory, except that `dt-job start` refuses with `ROTATE_REQUIRED` past the hard limit. Follow the advisory rules in `SKILL.md` "Context discipline" and rotate yourself.
 - Managed Codex: the limit is enforced by the watcher. Past the hard limit it ends the headless coordinator within one tick, unless an irreversible step is open, and relaunches it per the managed rules. `dt-job start` also refuses new dispatches with `ROTATE_REQUIRED`.
 

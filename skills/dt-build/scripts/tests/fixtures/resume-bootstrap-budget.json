@@ -7,48 +7,6 @@
       "measurement": "reserve; first observed input 28397 less first required-read outputs 11097 = 17300"
     },
     {
-      "source": "MEMORY.md",
-      "tokens": 5340,
-      "measurement": "2026-10-11 canonical file, o200k_base",
-      "sha256": "c889a230106f1c7431482c4f909888bf33ee9218dd59c32af1d63cfa30663931"
-    },
-    {
-      "source": "_Claude-Workspace/CLAUDE.md",
-      "tokens": 3696,
-      "measurement": "2026-10-11 canonical file, o200k_base",
-      "sha256": "779984b38162f1effd6302500ce4cb284e1ebb1ba9188e3f96392762ff6eb205"
-    },
-    {
-      "source": "_Claude-Workspace/OneDrive Migration/CLAUDE.md",
-      "tokens": 668,
-      "measurement": "2026-10-11 canonical file, o200k_base",
-      "sha256": "213da06adb708d6b0245cb14edee9602a24bdb1c594b870faf6238c2a0813c01"
-    },
-    {
-      "source": "_Claude-Workspace/OneDrive Migration/File Sorter/CLAUDE.md",
-      "tokens": 920,
-      "measurement": "2026-10-11 canonical file, o200k_base",
-      "sha256": "94c2d31b7c8879eb37243a8a4e5b868bbe6ff6f2f043f32d8bdefef50137a39f"
-    },
-    {
-      "source": "_Claude-Workspace/OneDrive Migration/File Sorter/MEMORY.md",
-      "tokens": 4209,
-      "measurement": "2026-10-11 canonical file, o200k_base",
-      "sha256": "262a59a2a53263a04666cd23781a4b0d2922d640e9468e0039ecc6d9fbb4d5bc"
-    },
-    {
-      "source": "_Claude-Workspace/OneDrive Migration/File Sorter/db-durability-refresh/CONTEXT.md",
-      "tokens": 398,
-      "measurement": "2026-10-11 canonical file, o200k_base",
-      "sha256": "6acebb151678d42dc2deca8ca814976de11530a1c9a71b3f184a834e870c11b7"
-    },
-    {
-      "source": "_Claude-Workspace/00_Resources/build-process.md",
-      "tokens": 1136,
-      "measurement": "2026-10-11 canonical file, o200k_base",
-      "sha256": "28a928125ea9af2b4d9ac435335d99921bd040185c17a05a9d76d2d1dfc2756d"
-    },
-    {
       "source": "Checkpoint, run records, complete approvals and operative boundary sources",
       "tokens": 6000,
       "measurement": "reserved read budget; 8 KiB checkpoint plus run and safety records; no authorization omission allowed"
@@ -57,12 +15,29 @@
       "source": "Contracts and glossary reference packs",
       "tokens": 0,
       "measurement": "lazy after mark-bootstrap; original authorization sources remain before marker"
+    },
+    {
+      "source": "Lean bridge manifest",
+      "tokens": 150,
+      "measurement": "reserve; measured hook block below 150 o200k_base tokens"
     }
   ],
   "repo_reads": [
     "skills/dt-build/references/managed-resume.md",
-    "skills/dt-build/references/adapter-codex.md",
     "references/deterministic-reference-policy.md",
     "references/conventions.md"
+  ],
+  "rendered_reads": [
+    {
+      "source": "Coordinator rulebook (adapter + selected SKILL.md sections)",
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "skills/dt-build/scripts/read-coordinator-rulebook.ps1",
+        "-CoordinatorHost",
+        "codex"
+      ]
+    }
   ]
 }

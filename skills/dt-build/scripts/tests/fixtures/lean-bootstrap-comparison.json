@@ -1,0 +1,279 @@
+{
+  "tokenizer": "tiktoken 0.12.0 / o200k_base; CRLF normalized to LF",
+  "observed_log": "coordinator-mc-20261011053212-94f5c9.log",
+  "observed_actual_input_tokens": 84948,
+  "observed_required_chain_output_tokens": 32393,
+  "observed_required_chain_read_count": 12,
+  "current_parent_and_scoped_canonical_read_tokens": 16380,
+  "lean_manifest_tokens": 118,
+  "before_simulated_resume": {
+    "components": [
+      {
+        "source": "Native runtime, root CLAUDE.md, tools/catalog and framing",
+        "tokens": 18000,
+        "measurement": "reserve; first observed input 28397 less first required-read outputs 11097 = 17300"
+      },
+      {
+        "source": "MEMORY.md",
+        "tokens": 5340,
+        "measurement": "current canonical file, o200k_base",
+        "original_fixture_sha256": "c889a230106f1c7431482c4f909888bf33ee9218dd59c32af1d63cfa30663931"
+      },
+      {
+        "source": "_Claude-Workspace/CLAUDE.md",
+        "tokens": 3696,
+        "measurement": "current canonical file, o200k_base",
+        "original_fixture_sha256": "779984b38162f1effd6302500ce4cb284e1ebb1ba9188e3f96392762ff6eb205"
+      },
+      {
+        "source": "_Claude-Workspace/OneDrive Migration/CLAUDE.md",
+        "tokens": 668,
+        "measurement": "current canonical file, o200k_base",
+        "original_fixture_sha256": "213da06adb708d6b0245cb14edee9602a24bdb1c594b870faf6238c2a0813c01"
+      },
+      {
+        "source": "_Claude-Workspace/OneDrive Migration/File Sorter/CLAUDE.md",
+        "tokens": 920,
+        "measurement": "current canonical file, o200k_base",
+        "original_fixture_sha256": "94c2d31b7c8879eb37243a8a4e5b868bbe6ff6f2f043f32d8bdefef50137a39f"
+      },
+      {
+        "source": "_Claude-Workspace/OneDrive Migration/File Sorter/MEMORY.md",
+        "tokens": 4222,
+        "measurement": "current canonical file, o200k_base",
+        "original_fixture_sha256": "262a59a2a53263a04666cd23781a4b0d2922d640e9468e0039ecc6d9fbb4d5bc"
+      },
+      {
+        "source": "_Claude-Workspace/OneDrive Migration/File Sorter/db-durability-refresh/CONTEXT.md",
+        "tokens": 398,
+        "measurement": "current canonical file, o200k_base",
+        "original_fixture_sha256": "6acebb151678d42dc2deca8ca814976de11530a1c9a71b3f184a834e870c11b7"
+      },
+      {
+        "source": "_Claude-Workspace/00_Resources/build-process.md",
+        "tokens": 1136,
+        "measurement": "current canonical file, o200k_base",
+        "original_fixture_sha256": "28a928125ea9af2b4d9ac435335d99921bd040185c17a05a9d76d2d1dfc2756d"
+      },
+      {
+        "source": "Checkpoint, run records, complete approvals and operative boundary sources",
+        "tokens": 6000,
+        "measurement": "reserved read budget; 8 KiB checkpoint plus run and safety records; no authorization omission allowed"
+      },
+      {
+        "source": "Contracts and glossary reference packs",
+        "tokens": 0,
+        "measurement": "lazy after mark-bootstrap; original authorization sources remain before marker"
+      },
+      {
+        "source": "skills/dt-build/references/managed-resume.md",
+        "tokens": 1138,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "skills/dt-build/references/adapter-codex.md",
+        "tokens": 1886,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "references/deterministic-reference-policy.md",
+        "tokens": 406,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "references/conventions.md",
+        "tokens": 1606,
+        "measurement": "current file, o200k_base"
+      }
+    ],
+    "total_tokens": 45416,
+    "target_tokens": 50000,
+    "pass": true,
+    "kind": "resume read-plan budget; not a live model baseline"
+  },
+  "after_simulated_resume": {
+    "components": [
+      {
+        "source": "Native runtime, root CLAUDE.md, tools/catalog and framing",
+        "tokens": 18000,
+        "measurement": "reserve; first observed input 28397 less first required-read outputs 11097 = 17300"
+      },
+      {
+        "source": "Checkpoint, run records, complete approvals and operative boundary sources",
+        "tokens": 6000,
+        "measurement": "reserved read budget; 8 KiB checkpoint plus run and safety records; no authorization omission allowed"
+      },
+      {
+        "source": "Contracts and glossary reference packs",
+        "tokens": 0,
+        "measurement": "lazy after mark-bootstrap; original authorization sources remain before marker"
+      },
+      {
+        "source": "Lean bridge manifest",
+        "tokens": 150,
+        "measurement": "reserve; measured hook block below 150 o200k_base tokens"
+      },
+      {
+        "source": "skills/dt-build/references/managed-resume.md",
+        "tokens": 1179,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "references/deterministic-reference-policy.md",
+        "tokens": 406,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "references/conventions.md",
+        "tokens": 1606,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "Coordinator rulebook (adapter + selected SKILL.md sections)",
+        "tokens": 5587,
+        "measurement": "current rendered rulebook, o200k_base"
+      }
+    ],
+    "total_tokens": 32928,
+    "target_tokens": 50000,
+    "pass": true,
+    "kind": "resume read-plan budget; not a live model baseline"
+  },
+  "reduction_tokens": 12488,
+  "limitation": "Read-plan simulation uses unchanged 18,000 runtime/native and 6,000 authorization reserves. Not an actual newly launched coordinator baseline. No live run writes.",
+  "initial_before_simulated_resume": {
+    "components": [
+      {
+        "source": "Native runtime, root CLAUDE.md, tools/catalog and framing",
+        "tokens": 18000,
+        "measurement": "reserve; first observed input 28397 less first required-read outputs 11097 = 17300"
+      },
+      {
+        "source": "MEMORY.md",
+        "tokens": 5340,
+        "measurement": "current canonical file, o200k_base",
+        "sha256": "c889a230106f1c7431482c4f909888bf33ee9218dd59c32af1d63cfa30663931"
+      },
+      {
+        "source": "_Claude-Workspace/CLAUDE.md",
+        "tokens": 3696,
+        "measurement": "current canonical file, o200k_base",
+        "sha256": "779984b38162f1effd6302500ce4cb284e1ebb1ba9188e3f96392762ff6eb205"
+      },
+      {
+        "source": "_Claude-Workspace/OneDrive Migration/CLAUDE.md",
+        "tokens": 668,
+        "measurement": "current canonical file, o200k_base",
+        "sha256": "213da06adb708d6b0245cb14edee9602a24bdb1c594b870faf6238c2a0813c01"
+      },
+      {
+        "source": "_Claude-Workspace/OneDrive Migration/File Sorter/CLAUDE.md",
+        "tokens": 920,
+        "measurement": "current canonical file, o200k_base",
+        "sha256": "94c2d31b7c8879eb37243a8a4e5b868bbe6ff6f2f043f32d8bdefef50137a39f"
+      },
+      {
+        "source": "_Claude-Workspace/OneDrive Migration/File Sorter/MEMORY.md",
+        "tokens": 4209,
+        "measurement": "current canonical file, o200k_base",
+        "sha256": "262a59a2a53263a04666cd23781a4b0d2922d640e9468e0039ecc6d9fbb4d5bc"
+      },
+      {
+        "source": "_Claude-Workspace/OneDrive Migration/File Sorter/db-durability-refresh/CONTEXT.md",
+        "tokens": 398,
+        "measurement": "current canonical file, o200k_base",
+        "sha256": "6acebb151678d42dc2deca8ca814976de11530a1c9a71b3f184a834e870c11b7"
+      },
+      {
+        "source": "_Claude-Workspace/00_Resources/build-process.md",
+        "tokens": 1136,
+        "measurement": "current canonical file, o200k_base",
+        "sha256": "28a928125ea9af2b4d9ac435335d99921bd040185c17a05a9d76d2d1dfc2756d"
+      },
+      {
+        "source": "Checkpoint, run records, complete approvals and operative boundary sources",
+        "tokens": 6000,
+        "measurement": "reserved read budget; 8 KiB checkpoint plus run and safety records; no authorization omission allowed"
+      },
+      {
+        "source": "Contracts and glossary reference packs",
+        "tokens": 0,
+        "measurement": "lazy after mark-bootstrap; original authorization sources remain before marker"
+      },
+      {
+        "source": "skills/dt-build/references/managed-resume.md",
+        "tokens": 1138,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "skills/dt-build/references/adapter-codex.md",
+        "tokens": 1822,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "references/deterministic-reference-policy.md",
+        "tokens": 406,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "references/conventions.md",
+        "tokens": 1606,
+        "measurement": "current file, o200k_base"
+      }
+    ],
+    "total_tokens": 45339,
+    "target_tokens": 50000,
+    "pass": true,
+    "kind": "resume read-plan budget; not a live model baseline"
+  },
+  "initial_after_simulated_resume": {
+    "components": [
+      {
+        "source": "Native runtime, root CLAUDE.md, tools/catalog and framing",
+        "tokens": 18000,
+        "measurement": "reserve; first observed input 28397 less first required-read outputs 11097 = 17300"
+      },
+      {
+        "source": "Checkpoint, run records, complete approvals and operative boundary sources",
+        "tokens": 6000,
+        "measurement": "reserved read budget; 8 KiB checkpoint plus run and safety records; no authorization omission allowed"
+      },
+      {
+        "source": "Contracts and glossary reference packs",
+        "tokens": 0,
+        "measurement": "lazy after mark-bootstrap; original authorization sources remain before marker"
+      },
+      {
+        "source": "Lean bridge manifest",
+        "tokens": 150,
+        "measurement": "reserve; measured hook block below 150 o200k_base tokens"
+      },
+      {
+        "source": "skills/dt-build/references/managed-resume.md",
+        "tokens": 1179,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "references/deterministic-reference-policy.md",
+        "tokens": 406,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "references/conventions.md",
+        "tokens": 1606,
+        "measurement": "current file, o200k_base"
+      },
+      {
+        "source": "Coordinator rulebook (adapter + selected SKILL.md sections)",
+        "tokens": 5523,
+        "measurement": "current rendered rulebook, o200k_base"
+      }
+    ],
+    "total_tokens": 32864,
+    "target_tokens": 50000,
+    "pass": true,
+    "kind": "resume read-plan budget; not a live model baseline"
+  },
+  "concurrent_changes": "Upstream 06afc76 added 64 adapter/rulebook tokens to both sides. A concurrent scoped-memory update added 13 tokens only to the ordinary read plan; lean does not read it. Neither file change was made by this task.",
+  "hash_note": "Final ordinary-plan source counts were reread; original_fixture_sha256 is the cap-fix fixture provenance, not a current-file hash. Initial measurements retain their original snapshot hashes."
+}
