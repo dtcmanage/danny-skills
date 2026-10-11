@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.27.2
+
+- Job envelopes decode a pwsh child's CLIXML stderr and strip ANSI colour codes, so a failed job's real error reaches the coordinator instead of being cut off inside one long XML line.
+
 ## 2.27.1
 
 - hold no longer waits for a live watcher-launched coordinator to exit: it only adds a reason to Danny's DM. approve, resume and delegate still wait.
