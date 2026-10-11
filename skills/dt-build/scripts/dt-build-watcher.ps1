@@ -34,6 +34,8 @@ $script:WatcherStepErrorRepeatTicks = 3
 # A Codex coordinator with trusted context hooks hands off itself; the watcher ends it only this far
 # past its hard limit, or after this long past it.
 $script:WatcherBackstopTokens = 30000
+# The backstop never reaches past this total, so the kill lands before Codex compacts (~258k usable).
+$script:WatcherBackstopCeiling = 252000
 $script:WatcherBackstopMinutes = 10
 
 function Test-WatcherCoordinatorHooks {
@@ -347,8 +349,9 @@ function Invoke-WatcherContextRotation {
         catch { Write-DtJobAtomic -Path $pastHardPath -Content ([ordered]@{ coordinator_id = $coordinatorId; first_seen_utc = $NowUtc.ToString('o'); tokens = [long]$tokens } | ConvertTo-Json) }
         $overBy = [long]$tokens - [long]$report.hard
         $pastMin = ($NowUtc - $since).TotalMinutes
-        if ($overBy -lt $script:WatcherBackstopTokens -and $pastMin -lt $script:WatcherBackstopMinutes) {
-            return "handoff pending: $coordinatorId at $tokens past hard $($report.hard) for $([math]::Round($pastMin, 1)) min; backstop at +$($script:WatcherBackstopTokens) tokens or $($script:WatcherBackstopMinutes) min"
+        $backstop = [math]::Max(5000, [math]::Min($script:WatcherBackstopTokens, $script:WatcherBackstopCeiling - [long]$report.hard))
+        if ($overBy -lt $backstop -and $pastMin -lt $script:WatcherBackstopMinutes) {
+            return "handoff pending: $coordinatorId at $tokens past hard $($report.hard) for $([math]::Round($pastMin, 1)) min; backstop at +$backstop tokens or $($script:WatcherBackstopMinutes) min"
         }
     }
     $open = @((Split-DtCtxIrreversibleSteps -Open @(Get-DtJobIrreversibleOpen -RunFolder $folder) -Lease $lease).deferring)

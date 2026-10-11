@@ -52,6 +52,8 @@ $env:DT_TEST_LAUNCH_LOG = Join-Path $tempRoot 'launches-fake.jsonl'
 foreach ($name in @('DT_BUILD_COORDINATOR_ID', 'DT_BUILD_CTX_SOFT_MARGIN', 'DT_BUILD_CTX_HARD_MARGIN', 'DT_BUILD_CTX_CEILING', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID')) {
     Remove-Item "Env:$name" -ErrorAction SilentlyContinue
 }
+# Most cases below were written against 40k/70k margins; pin them. The limits case checks the defaults.
+$env:DT_BUILD_CTX_SOFT_MARGIN = '40000'; $env:DT_BUILD_CTX_HARD_MARGIN = '70000'
 $fakeTransport = Join-Path $tempRoot 'fake-alert-transport.ps1'
 Write-Utf8 -Path $fakeTransport -Content @'
 param($request)
@@ -261,8 +263,13 @@ try {
     Assert-True (@($states)[7] -eq 'context: 150000 ok (baseline none, soft none, hard 200000)') "before a marker only the ceiling shows ($(@($states)[7]))"
     $env:DT_BUILD_CTX_SOFT_MARGIN = '10'; $env:DT_BUILD_CTX_HARD_MARGIN = '20'; $env:DT_BUILD_CTX_CEILING = '50'
     try { $overrides = & pwsh -NoProfile -Command ". '$guard'; (Get-DtCtxState -Tokens 115 -Baseline 100).state; (Get-DtCtxState -Tokens 120 -Baseline 100).state; (Get-DtCtxState -Tokens 50 -Baseline `$null).state" }
-    finally { Remove-Item Env:DT_BUILD_CTX_SOFT_MARGIN, Env:DT_BUILD_CTX_HARD_MARGIN, Env:DT_BUILD_CTX_CEILING -ErrorAction SilentlyContinue }
+    finally { Remove-Item Env:DT_BUILD_CTX_CEILING -ErrorAction SilentlyContinue; $env:DT_BUILD_CTX_SOFT_MARGIN = '40000'; $env:DT_BUILD_CTX_HARD_MARGIN = '70000' }
     Assert-True ((@($overrides) -join ',') -eq 'checkpoint,rotate,rotate') "env overrides move soft, hard, and ceiling ($(@($overrides) -join ','))"
+    # Shipped defaults: 150k of working room past the startup baseline, handoff-only past 180k, hard limit capped at 240k.
+    $defaults = & pwsh -NoProfile -Command "Remove-Item Env:DT_BUILD_CTX_SOFT_MARGIN, Env:DT_BUILD_CTX_HARD_MARGIN -ErrorAction SilentlyContinue; . '$guard'; foreach (`$t in 204999, 205000, 234999, 235000) { (Get-DtCtxState -Tokens `$t -Baseline 55000).state }; (Get-DtCtxState -Tokens 1 -Baseline 55000).line; (Get-DtCtxState -Tokens 1 -Baseline 100000).line"
+    Assert-True ((@($defaults)[0..3] -join ',') -eq 'ok,checkpoint,checkpoint,rotate') "defaults: wrap-up at baseline+150k, handoff-only at baseline+180k ($(@($defaults)[0..3] -join ','))"
+    Assert-True (@($defaults)[4] -eq 'context: 1 ok (baseline 55000, soft 205000, hard 235000)') "default limits line ($(@($defaults)[4]))"
+    Assert-True (@($defaults)[5] -eq 'context: 1 ok (baseline 100000, soft 210000, hard 240000)') "a large baseline is capped at 240k and keeps 30k of wrap-up room ($(@($defaults)[5]))"
 
     # ---- mark-bootstrap: fixed per coordinator and idempotent.
     $run = New-Run -Name 'boot'

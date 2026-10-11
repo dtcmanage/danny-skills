@@ -16,6 +16,8 @@ New-Item -ItemType Directory -Path $evidence -Force | Out-Null
 $saved = @{}
 $envNames = @('CODEX_HOME','CLAUDE_CONFIG_DIR','DT_BUILD_STATE_DIR','DT_BUILD_COORDINATOR_ID','DT_BUILD_COORDINATOR_LOCK_HELD','DT_JOB_ID','DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_BUILD_COORDINATOR_LAUNCHER','DT_BUILD_VENDOR_LIMITS_SCRIPT','DT_BUILD_WATCHER_NOW_UTC','DT_BUILD_CTX_SOFT_MARGIN','DT_BUILD_CTX_HARD_MARGIN','DT_BUILD_CTX_CEILING','GIT_INDEX_FILE','DT_SCENARIO_ROOT','DT_SCENARIO_BLOCKED','DT_SCENARIO_FAIL')
 foreach ($name in $envNames) { $saved[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, $null) }
+# Scenarios were written against 40k/70k context margins; pin them (restored with the rest at the end).
+$env:DT_BUILD_CTX_SOFT_MARGIN = '40000'; $env:DT_BUILD_CTX_HARD_MARGIN = '70000'
 $env:CODEX_HOME = Join-Path $root 'codex'
 $env:CLAUDE_CONFIG_DIR = Join-Path $root 'claude'
 $env:DT_MODEL_ROUTER_STATE = Join-Path $root 'router'

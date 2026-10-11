@@ -23,8 +23,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:DtCtxBlockBytes = 65536
-$script:DtCtxDefaultSoftMargin = 40000
-$script:DtCtxDefaultHardMargin = 70000
+# Working room after startup: wrap up and hand off past 150k, handoff steps only past 180k. Startup
+# (the bootstrap baseline) never counts. Both stay under the window cap: Codex Sol's default window is
+# 272k with 95% usable (~258k), so a coordinator never grows into automatic compaction.
+$script:DtCtxDefaultSoftMargin = 150000
+$script:DtCtxDefaultHardMargin = 180000
+$script:DtCtxDefaultWindowCap = 240000
 $script:DtCtxDefaultCeiling = 200000
 $script:DtCtxDiscoveryCandidates = 20
 $script:DtCtxDiscoveryHeadLines = 15
@@ -248,13 +252,17 @@ function Get-DtCtxSessionId {
 }
 
 function Get-DtCtxState {
-    # ok / checkpoint / rotate. With a bootstrap baseline: soft = baseline + 40k, hard = baseline + 70k.
+    # ok / checkpoint / rotate. With a bootstrap baseline: soft = baseline + 150k, hard = baseline + 180k,
+    # the hard limit capped at the window cap (the soft limit moves down by the same amount).
     # Before the marker only the 200k ceiling applies, reported as the hard limit.
     param([Nullable[long]]$Tokens, [Nullable[long]]$Baseline)
     $soft = $null
     if ($null -ne $Baseline) {
         $soft = [long]$Baseline + (Get-DtCtxLimitSetting -Name 'DT_BUILD_CTX_SOFT_MARGIN' -Default $script:DtCtxDefaultSoftMargin)
         $hard = [long]$Baseline + (Get-DtCtxLimitSetting -Name 'DT_BUILD_CTX_HARD_MARGIN' -Default $script:DtCtxDefaultHardMargin)
+        $capped = [math]::Min($hard, (Get-DtCtxLimitSetting -Name 'DT_BUILD_CTX_WINDOW_CAP' -Default $script:DtCtxDefaultWindowCap))
+        # A capped hard limit pulls the soft limit down with it, keeping the same wrap-up room.
+        if ($capped -lt $hard) { $soft = [math]::Max([long]$Baseline, $soft - ($hard - $capped)); $hard = $capped }
     }
     else { $hard = Get-DtCtxLimitSetting -Name 'DT_BUILD_CTX_CEILING' -Default $script:DtCtxDefaultCeiling }
     $state = 'ok'

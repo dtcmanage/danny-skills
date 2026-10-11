@@ -99,6 +99,8 @@ $reset = if ($Vendor -eq 'claude') { $env:DT_TEST_RESET_CLAUDE } else { $env:DT_
 '@
 $env:DT_BUILD_VENDOR_LIMITS_SCRIPT = $fakeLimits
 $env:DT_TEST_BLOCKED = ''
+# Cases here were written against 40k/70k context margins; pin them.
+$env:DT_BUILD_CTX_SOFT_MARGIN = '40000'; $env:DT_BUILD_CTX_HARD_MARGIN = '70000'
 $deadProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'exit 0' -WindowStyle Hidden -PassThru -Wait
 $env:DT_TEST_DEAD_PID = [string]$deadProcess.Id
 Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue
