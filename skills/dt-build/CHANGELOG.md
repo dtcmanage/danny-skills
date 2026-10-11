@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.9
+
+- Watcher, chunk wrappers and shared router messages state quota as X% used / Y% left with reset times in US Eastern, so a remaining-percent reading is never mistaken for usage.
+
 ## 2.21.8
 
 - Shared model router: Codex prompts rejected as too large (input_too_large) now fail fast as a tooling failure, with no retry and an alert naming the prompt size and the limit.
