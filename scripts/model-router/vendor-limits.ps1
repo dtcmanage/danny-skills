@@ -141,6 +141,14 @@ function Save-RouterCodexAppServerReading {
     return $value
 }
 
+function Format-RouterUsageText {
+    # "X% used / Y% left" for any usage reading; left never goes below zero.
+    param($Usage)
+    if ($null -eq $Usage -or $null -eq $Usage.used_percent) { return $null }
+    $used = [double][Math]::Round([decimal]$Usage.used_percent, 1, [MidpointRounding]::AwayFromZero)
+    return ('{0:0.#}% used / {1:0.#}% left' -f $used, [Math]::Max(0.0, 100.0 - $used))
+}
+
 function Get-RouterCodexLiveUsage {
     # Asks the Codex app server for the account's current limits (account/rateLimits/read). No model
     # turn runs, so this spends no usage. Session logs only refresh when Codex runs, so a reset (or a
@@ -554,7 +562,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     $usage = if ($RouterLimitsCliVendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterClaudeUsage }
     $block = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $RouterLimitsCliVendor -and ($_.reason -eq 'vendor_incident' -or [datetimeoffset]$_.reset_at_utc -gt [datetimeoffset]::UtcNow) } | Select-Object -First 1)
     $blocked = ($block.Count -gt 0 -or ($null -ne $usage -and $usage.used_percent -ge (Get-RouterGuardPercent -Vendor $RouterLimitsCliVendor)))
-    $result = [pscustomobject]@{ vendor=$RouterLimitsCliVendor; blocked=$blocked; reason=$(if ($block.Count) { $block[0].reason } elseif ($blocked) { if ($RouterLimitsCliVendor -eq 'claude') { 'Claude weekly usage at or above 95%' } else { 'Codex usage at or above 95%' } } else { $null }); used_percent=$(if ($null -ne $usage) { $usage.used_percent } else { $null }); resets_at_utc=$(if ($null -ne $usage) { $usage.resets_at_utc } else { $null }) }
+    $result = [pscustomobject]@{ vendor=$RouterLimitsCliVendor; blocked=$blocked; reason=$(if ($block.Count) { $block[0].reason } elseif ($blocked) { if ($RouterLimitsCliVendor -eq 'claude') { 'Claude weekly usage at or above 95%' } else { 'Codex usage at or above 95%' } } else { $null }); used_percent=$(if ($null -ne $usage) { $usage.used_percent } else { $null }); left_percent=$(if ($null -ne $usage) { [Math]::Max(0.0, 100.0 - [double]$usage.used_percent) } else { $null }); usage=(Format-RouterUsageText -Usage $usage); resets_at_utc=$(if ($null -ne $usage) { $usage.resets_at_utc } else { $null }) }
     if ($RouterLimitsCliVendor -eq 'claude') { $result | Add-Member -NotePropertyName session_percent -NotePropertyValue $(if ($null -ne $usage) { $usage.session_percent } else { $null }) }
     if ($RouterLimitsCliJson) { $result | ConvertTo-Json -Compress -Depth 5 } else { $result }
 }

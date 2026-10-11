@@ -204,6 +204,11 @@ function Resolve-RouterRosterPick {
             $blockedVendor = $chosen.vendor
             $incident = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $blockedVendor -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'vendor_incident' })
             $blockReason = if ($incident.Count) { 'under a vendor incident' } else { 'at its usage limit' }
+            if (-not $incident.Count) {
+                $blockedUsage = if ($blockedVendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterClaudeUsage }
+                $usageText = Format-RouterUsageText -Usage $blockedUsage
+                if ($usageText) { $blockReason += " ($usageText)" }
+            }
             if (-not $Lane -and $other -and -not $otherBlocked) { $chosen = $other; $reason = $(if ($tieReason) { "Selected $($chosen.model): $blockedVendor $blockReason." } else { "Backup used: $blockedVendor $blockReason." }) }
             else { $chosen = $null; $quotaWait = $true; $reason = "Wait: $blockedVendor $blockReason; no available model for $job." }
         }

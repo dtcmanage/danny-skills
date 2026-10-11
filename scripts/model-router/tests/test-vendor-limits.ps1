@@ -288,6 +288,9 @@ try {
     Remove-Item -LiteralPath (Get-RouterCodexLiveReadingPath)
     Assert-True ((Get-RouterCodexUsage -SessionsRoot $liveSessions).used_percent -eq 98 -and @(Get-Content -LiteralPath $probeLog).Count -eq 2) 'fixture sessions without a live command never probe the real account'
     $env:FAKE_CODEX_LIMITS_LOG = $null; $env:FAKE_CODEX_LIMITS_PERCENT = $null
+    Assert-True ((Format-RouterUsageText -Usage ([pscustomobject]@{ used_percent=98 })) -ceq '98% used / 2% left' -and
+        (Format-RouterUsageText -Usage ([pscustomobject]@{ used_percent=104.25 })) -ceq '104.3% used / 0% left' -and
+        $null -eq (Format-RouterUsageText -Usage $null)) 'usage text reads used and left, never negative'
     Write-Output "SUMMARY: $script:passed passed"
 } finally { $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials; Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState

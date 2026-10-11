@@ -632,8 +632,8 @@ def test_claude_latest_usage_rendered_in_markdown_html_and_discord(tmp_path, pre
     assert loaded == (reading if present else None)
     report = _synth_report()
     report["claude_usage"] = loaded
-    expected = ("Claude weekly usage: 67% of the weekly limit at Sep 30, 5:00 PM ET, "
-                "resets Oct 3, 2:00 PM ET; 5-hour window 8%") if present else "no Claude usage reading yet"
+    expected = ("Claude weekly usage: 67% used / 33% left at Sep 30, 5:00 PM ET, "
+                "resets Oct 3, 2:00 PM ET; 5-hour window 8% used / 92% left") if present else "no Claude usage reading yet"
     outputs = [cr.render_markdown(report), cr.render_html(report),
                cr.render_discord_summary([report], date(2026, 9, 28), tmp_path)[1]]
     for output in outputs:
@@ -1162,3 +1162,20 @@ def test_invalid_stored_tokens_do_not_corrupt_unpriced_display(tokens, tmp_path)
     for rendered in (cr.render_markdown(report), cr.render_html(report)):
         assert 'claude-test-model' in rendered
         assert 'nan' not in rendered and 'inf tokens' not in rendered
+
+
+def test_codex_usage_shows_used_and_left(tmp_path):
+    readings = tmp_path / "readings"
+    readings.mkdir()
+    older = {"used_percent": 98.0, "resets_at_utc": "2026-10-14T04:19:43+00:00",
+             "observed_at_utc": "2026-10-09T11:36:36+00:00", "source": "codex-app-server"}
+    newer = {"used_percent": 2.0, "resets_at_utc": "2026-10-17T17:54:02+00:00",
+             "observed_at_utc": "2026-10-10T20:42:50+00:00", "source": "codex-live"}
+    (readings / "codex-appserver.json").write_text(json.dumps(older), encoding="utf-8")
+    (readings / "codex-live.json").write_text(json.dumps(newer), encoding="utf-8")
+    loaded = cr.load_codex_usage(tmp_path)
+    assert loaded == newer
+    assert cr.render_codex_usage(loaded) == ("Codex weekly usage: 2% used / 98% left at Oct 10, 4:42 PM ET, "
+                                             "resets Oct 17, 1:54 PM ET")
+    assert cr.render_codex_usage(None) == "Codex usage: no Codex usage reading yet"
+    assert cr.used_left(104) == "104% used / 0% left"

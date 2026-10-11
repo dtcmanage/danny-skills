@@ -464,15 +464,48 @@ def format_usage_time_et(value: str) -> str:
     return f"{at:%b} {at.day}, {at.hour % 12 or 12}:{at:%M %p} ET"
 
 
+def used_left(percent: float) -> str:
+    """'X% used / Y% left', with left clamped at 0 so an over-limit reading never shows negative."""
+    used = float(percent)
+    return f"{used:g}% used / {max(0.0, 100.0 - used):g}% left"
+
+
 def render_claude_usage(reading: dict | None) -> str:
     if not reading:
         return "Claude usage: no Claude usage reading yet"
-    line = (f"Claude weekly usage: {float(reading['used_percent']):g}% of the weekly limit at "
+    line = (f"Claude weekly usage: {used_left(reading['used_percent'])} at "
             f"{format_usage_time_et(reading['observed_at_utc'])}, resets "
             f"{format_usage_time_et(reading['resets_at_utc'])}")
     if reading.get("session_percent") is not None:
-        line += f"; 5-hour window {float(reading['session_percent']):g}%"
+        line += f"; 5-hour window {used_left(reading['session_percent'])}"
     return line
+
+
+def load_codex_usage(state_dir: Path) -> dict | None:
+    """Newest saved Codex weekly reading: the router's live check or a bench app-server snapshot."""
+    best = None
+    for name in ("codex-live.json", "codex-appserver.json"):
+        reading = _load_json_object(state_dir / "readings" / name)
+        if not isinstance(reading, dict):
+            continue
+        try:
+            float(reading["used_percent"])
+            observed = parse_ts(reading["observed_at_utc"])
+            if not observed or not parse_ts(reading["resets_at_utc"]):
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        if best is None or observed > parse_ts(best["observed_at_utc"]):
+            best = reading
+    return best
+
+
+def render_codex_usage(reading: dict | None) -> str:
+    if not reading:
+        return "Codex usage: no Codex usage reading yet"
+    return (f"Codex weekly usage: {used_left(reading['used_percent'])} at "
+            f"{format_usage_time_et(reading['observed_at_utc'])}, resets "
+            f"{format_usage_time_et(reading['resets_at_utc'])}")
 
 
 CLAUDE_BLOCKED_NOTE = "Claude blocked-minutes are not computed (only the latest reading is kept, not a history)."
@@ -581,6 +614,7 @@ def render_markdown(report: dict) -> str:
                 lines.append("- Blocked time (quota at 100%): no limit data available")
             else:
                 lines.append(f"- Blocked time (quota at 100%): {vw.blocked_minutes:.1f} minutes; no dollar figure is invented for blocked work")
+            lines.append("- " + render_codex_usage(report.get("codex_usage")))
         else:
             lines.append("- " + render_claude_usage(report.get("claude_usage")))
             lines.append("- " + CLAUDE_BLOCKED_NOTE)
@@ -630,6 +664,7 @@ def render_html(report: dict) -> str:
         if host == "codex":
             blocked_html = (f"<p>Blocked time (quota at 100%): {vw.blocked_minutes:.1f} min; no dollar figure invented</p>"
                              if vw.blocked_minutes is not None else "<p>Blocked time: no limit data available</p>")
+            blocked_html += f"<p>{html.escape(render_codex_usage(report.get('codex_usage')))}</p>"
         else:
             blocked_html = (f"<p>{html.escape(render_claude_usage(report.get('claude_usage')))}</p>"
                             f"<p>{CLAUDE_BLOCKED_NOTE}</p>")
@@ -1115,6 +1150,8 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
     codex_line = render_codex_limit_line(report["vendors"])
     if codex_line:
         lines.append(codex_line)
+    if "codex" in report["vendors"]:
+        lines.append(render_codex_usage(report.get("codex_usage")))
     if "claude" in report["vendors"]:
         lines.append(render_claude_usage(report.get("claude_usage")))
         lines.append(CLAUDE_BLOCKED_NOTE)
@@ -1148,8 +1185,10 @@ def main() -> None:
     dispatches = difficulty_dispatches(state_dir)
     reports = build_weekly_reports(usage_rows, rate_rows, prices, routing_rows=routing_rows, dispatch_rows=dispatches)
     claude_usage = load_claude_usage(state_dir)
+    codex_usage = load_codex_usage(state_dir)
     for report in reports:
         report["claude_usage"] = claude_usage
+        report["codex_usage"] = codex_usage
         report['difficulty_dispatches'] = difficulty_split(dispatches, report['iso_year'], report['iso_week'])
 
     if not reports:
