@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
+    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -1410,6 +1410,26 @@ function Invoke-DtJobDelegate {
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ delegate = $(if ($Clear) { $null } else { $Delegate.Trim() }) }) -AsJson:$Json
 }
 
+function Invoke-DtJobHold {
+    # The delegate says why it is holding a stop on purpose, so the escalation DM tells Danny the stop is
+    # handled rather than forgotten. -Clear removes the reason. The DM still goes out on time.
+    if (-not $Operation) { throw 'DT_JOB_USAGE: hold requires -Operation.' }
+    if (-not $Clear -and [string]::IsNullOrWhiteSpace($Reason)) { throw 'DT_JOB_USAGE: hold requires -Reason "<why>" or -Clear.' }
+    Assert-DtJobOperator -VerbName 'hold' -RunFolder $RunFolder
+    $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+        if ($null -eq $approvals.awaiting) { throw "DT_JOB_NOT_AWAITING: run $($ctx.run_id) is not waiting on an approval" }
+        if ([string]$approvals.awaiting.operation -cne $Operation) {
+            throw "DT_JOB_APPROVE_MISMATCH: run $($ctx.run_id) waits on '$($approvals.awaiting.operation)', not '$Operation'; nothing recorded"
+        }
+        $held = if ($Clear) { $null } else { [pscustomobject][ordered]@{ reason = $Reason.Trim(); held_utc = [DateTime]::UtcNow.ToString('o') } }
+        $approvals.awaiting | Add-Member -NotePropertyName held -NotePropertyValue $held -Force
+        Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+    }
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ held = $(if ($Clear) { $null } else { $Reason.Trim() }) }) -AsJson:$Json
+}
+
 function Send-DtJobDelegateEscalation {
     # A delegated stop the delegate has not approved in time DMs Danny, once.
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$RunId)
@@ -1417,7 +1437,12 @@ function Send-DtJobDelegateEscalation {
     if ($null -eq $pending -or -not $pending.PSObject.Properties['delegated_to'] -or -not $pending.delegated_to) { return $null }
     if ([DateTime]::UtcNow -lt (ConvertTo-DtJobUtc $pending.escalate_after_utc)) { return $null }
     $minutes = [int][Math]::Round(([DateTime]::UtcNow - (ConvertTo-DtJobUtc $pending.since_utc)).TotalMinutes)
-    $text = "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation), and $($pending.delegated_to) has not approved it. $($pending.message) To approve, run: /dt-build approve $RunId $($pending.operation)"
+    $held = if ($pending.PSObject.Properties['held'] -and $null -ne $pending.held) { $pending.held } else { $null }
+    $text = if ($held) {
+        $heldEt = [TimeZoneInfo]::ConvertTimeFromUtc((ConvertTo-DtJobUtc $held.held_utc), [TimeZoneInfo]::FindSystemTimeZoneById($(if ($IsWindows) { 'Eastern Standard Time' } else { 'America/New_York' }))).ToString('h:mm tt')
+        "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation). $($pending.delegated_to) is holding it on purpose since $heldEt ET: $($held.reason). Nothing is needed from you unless you want to decide it yourself: /dt-build approve $RunId $($pending.operation)"
+    }
+    else { "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation), and $($pending.delegated_to) has not approved it. $($pending.message) To approve, run: /dt-build approve $RunId $($pending.operation)" }
     return (Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:${RunId}:awaiting:$($pending.operation):$($pending.seq)" -Message $text -RetryUntilDelivered)
 }
 
@@ -1765,6 +1790,7 @@ $verbOutput = switch ($Verb) {
     'await-danny' { Invoke-DtJobAwaitDanny }
     'approve' { Invoke-DtJobApprove }
     'delegate' { Invoke-DtJobDelegate }
+    'hold' { Invoke-DtJobHold }
     'note' { Invoke-DtJobNote }
     'resume' { Invoke-DtJobResume }
     'finish' { Invoke-DtJobFinish }

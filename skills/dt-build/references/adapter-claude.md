@@ -40,13 +40,13 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 - For managed starts, the interactive session registers with `-Managed`, runs `dt-job request-continuation -CoordinatorId <id> -Reason managed_start`, takes no lease, and ends; the watcher continues.
 
 - Managed relaunches verify the existing registration through `read-resume-record.ps1`. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters the run.
-- The watcher (`scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts queued jobs, and launches a headless coordinator when no lease exists, a managed lease is released, or its watcher-launched coordinator is gone and an unconsumed event waits. Unconsumed triggers retry at 2, 10, and 30 minutes, then stop with one DM.
+- The watcher (`scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts queued jobs, and launches a headless coordinator whenever an unconsumed event waits with no live coordinator. Unconsumed triggers retry at 2, 10, and 30 minutes, then stop with one DM.
 - Legacy managed coordinator prompts read `/dt-build resume <RUN_ID> (managed coordinator <id>)`. Continue as `<id>` (reconcile, read `_build-state.md`, carry on); never run `dt-job resume`.
 - Before ending each headless turn, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state it shows. An unconsumed trigger counts as a failed launch.
 - The launcher alone sets `DT_BUILD_COORDINATOR_ID`, for managed coordinators. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
-- At approval boundaries (merge, push, deploy, prod write, irreversible): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end; add `-AlwaysNotify` for production, Azure or irreversible. Never run `dt-job approve`, `resume` or `delegate`; they are Danny's alone.
+- At approval boundaries (merge, push, deploy, prod write, irreversible): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end; add `-AlwaysNotify` for production, Azure or irreversible. Never run `dt-job approve`, `resume`, `delegate` or `hold`; they are Danny's.
 - Interactive approve/resume refusal is instruction-only (no env var), a known residual.
-- Danny's commands: `/dt-build approve <RUN_ID> <operation>` records his approval and makes the run runnable; `/dt-build resume <RUN_ID>` re-arms a stopped run; `/dt-build delegate <RUN_ID> <session>` (`-Clear` undoes) routes routine stops there. When Danny types one, run the matching `dt-job` verb. Follow `operator_notes` in status and wait envelopes; only operators add them (`note` verb).
+- Danny's commands: `/dt-build approve <RUN_ID> <operation>` records his approval; `/dt-build resume <RUN_ID>` re-arms a stopped run; `/dt-build delegate <RUN_ID> <session>` (`-Clear` undoes) routes routine stops there; a delegate deliberately holding one runs the `hold` verb (`-Operation <op> -Reason "<why>"`) so the 15-minute DM says why. Run the matching `dt-job` verb. Follow `operator_notes` in status and wait envelopes; only operators add them (`note` verb).
 
 ## Evidence
 
