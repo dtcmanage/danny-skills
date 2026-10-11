@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.23.0
+
+- Approval delegation: dt-job delegate routes routine await-danny stops to a named session with no DM; the watcher DMs Danny after 15 unapproved minutes; production, install, Azure, irreversible and -AlwaysNotify stops always DM; finish sends a digest of delegated approvals.
+
 ## 2.22.1
 
 - No job is stopped on time: -TimeoutSec is every job's expected duration and reconcile never ends a live job past it; stalls surface at check-ins.
