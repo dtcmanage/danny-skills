@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.22.1
+
+- No job is stopped on time: -TimeoutSec is every job's expected duration and reconcile never ends a live job past it; stalls surface at check-ins.
+
 ## 2.22.0
 
 - model router: chunk wrappers have no time limit under dt-job; activity check-ins flag stalls instead.
