@@ -190,6 +190,7 @@ function Invoke-RouterCadence {
                 }
                 if (-not $interrupted) {
                     if ($item.trigger -eq 'release') {
+                        [void](Set-RouterModelResearched -Model ([string]$item.model) -PassId ([string]$record.pass_id) -Now $Now)
                         try { [void](Invoke-RouterNewModelComparisons -Model ([string]$item.model) -Categories @($item.categories)) }
                         catch { Write-Warning "New-model comparisons for $($item.model) failed: $($_.Exception.Message)" }
                     }

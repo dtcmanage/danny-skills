@@ -150,6 +150,8 @@ function Invoke-RouterModelCheck {
                 if (-not $current.ContainsKey("$($item.vendor)/$($item.id)") -and $item.status -ne 'missing') {
                     $item.status = 'missing'; $result.missing_models += $item.id; $result.alerts += "model-missing:$($item.id)"
                 }
+                # A model back in the catalog is listed again; it never needed research to exist.
+                elseif ($current.ContainsKey("$($item.vendor)/$($item.id)") -and $item.status -eq 'missing') { $item.status = 'known' }
             }
             if ($queued.Count) {
                 if (-not (Get-Command Add-RouterResearchQueueItem -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'run-router-cadence.ps1') }
@@ -169,6 +171,24 @@ function Invoke-RouterModelCheck {
     } finally {
         foreach ($job in $jobs) { if ($job.State -notin @('Completed','Failed','Stopped')) { Stop-Job -Job $job }; Remove-Job -Job $job -Force }
     }
+}
+
+function Set-RouterModelResearched {
+    # A new model is 'unprofiled' until its release research pass completes; afterwards the registry says so.
+    param([Parameter(Mandatory)][string]$Model, [Parameter(Mandatory)][string]$PassId, [datetime]$Now = (Get-Date))
+    $path = Join-Path (Get-RouterStateDir) 'known-models.json'
+    $registry = @(Read-RouterJsonArray -Path $path)
+    $changed = $false
+    foreach ($item in $registry) {
+        if ($item.id -ceq $Model -and $item.status -eq 'unprofiled') {
+            $item.status = 'researched'
+            $item | Add-Member -NotePropertyName researched_at -NotePropertyValue $Now.ToString('o') -Force
+            $item | Add-Member -NotePropertyName research_pass_id -NotePropertyValue $PassId -Force
+            $changed = $true
+        }
+    }
+    if ($changed) { Write-RouterJsonAtomic -Path $path -Value @($registry) }
+    return $changed
 }
 
 function Invoke-RouterNewModelComparisons {

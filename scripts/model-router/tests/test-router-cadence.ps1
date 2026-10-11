@@ -92,6 +92,8 @@ try {
     Assert-True (@($script:researchCalls | Where-Object { $_.models -contains 'gpt-6-new' -and $_.models -contains 'gpt-6-luna' -and $_.models -contains 'claude-haiku-4-5-20251001' -and $_.models -notcontains 'gpt-6.1-sol' }).Count -gt 0) 'research receives candidate and only its categories roster models'
     Assert-True (@($script:researchCalls | Where-Object { $_.trigger -eq 'release' -and $_.new_model -eq 'gpt-6-new' -and $_.models.Count -gt 1 }).Count -gt 0) 'release passes new model separately from roster models'
     Assert-True (@($script:newModelComparisons | Where-Object { $_ -eq 'gpt-6-new' }).Count -eq @($script:researchCalls | Where-Object trigger -eq 'release').Count) 'each written release pass runs the new-model comparisons'
+    $listed = @(@(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'known-models.json')) | Where-Object id -eq 'gpt-6-new')
+    Assert-True ($listed.Count -eq 1 -and $listed[0].status -eq 'researched') 'a written release pass marks the new model researched'
     Assert-True (@($script:researchCalls | Where-Object lane -eq 'claude').Count -eq $script:researchCalls.Count) '51 percent Codex usage chooses Claude'
     $script:usagePercent = 50
     [void](Add-RouterResearchQueueItem -Model 'gpt-6.1-sol' -Trigger release -Categories @('mechanical') -DueAt $now -Reason 'lane-test')

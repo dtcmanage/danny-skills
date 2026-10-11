@@ -74,10 +74,21 @@ try {
     Assert-True ((@($registry | Where-Object id -eq 'gpt-6-new')[0]).status -eq 'unprofiled') 'new model remains unprofiled'
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     Assert-True ($pick.model -ne 'gpt-6-new' -and $pick.ranked -notcontains 'gpt-6-new') 'unprofiled model is not pickable'
+    Assert-True (Set-RouterModelResearched -Model 'gpt-6-new' -PassId 'pass-1' -Now $now) 'completed release research marks the model'
+    $entry = @(@(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json) | Where-Object id -eq 'gpt-6-new')[0]
+    Assert-True ($entry.status -eq 'researched' -and $entry.research_pass_id -eq 'pass-1' -and $entry.researched_at) 'researched model records status, pass and time'
+    Assert-True (-not (Set-RouterModelResearched -Model 'gpt-6-new' -PassId 'pass-2' -Now $now)) 'a researched model is not re-marked'
+    Assert-True (-not (Set-RouterModelResearched -Model 'gpt-6-sol' -PassId 'pass-3' -Now $now)) 'a baseline known model is left alone'
 
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-new' } else { 'claude-sonnet-4-5' } }
     $r = Invoke-RouterModelCheck -BenchInvoker { param($r) $script:canaryLaunchCount++; [pscustomobject]@{gate='pass';raw_gate='pass';effort_down_qualified=$false} } -Now $now.AddHours(26)
     Assert-True ($r.missing_models -contains 'gpt-6-sol' -and $r.alerts -contains 'model-missing:gpt-6-sol') 'missing model alerted'
+    $missingFetcher = $script:RouterModelCheckFetcher
+    $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6-new','gpt-6-sol' } else { 'claude-sonnet-4-5' } }
+    $r = Invoke-RouterModelCheck -BenchInvoker { param($r) $script:canaryLaunchCount++; [pscustomobject]@{gate='pass';raw_gate='pass';effort_down_qualified=$false} } -Force -Now $now.AddHours(27)
+    $back = @(@(Get-Content -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'known-models.json') -Raw | ConvertFrom-Json) | Where-Object id -eq 'gpt-6-sol')
+    Assert-True ($back.Count -eq 1 -and $back[0].status -eq 'known' -and $r.new_models -notcontains 'gpt-6-sol') 'a missing model back in the catalog is known again, not new'
+    $script:RouterModelCheckFetcher = $missingFetcher
     $r = Invoke-RouterModelCheck -BenchInvoker { param($r) $script:canaryLaunchCount++; [pscustomobject]@{gate='pass';raw_gate='pass';effort_down_qualified=$false} } -Now $now.AddHours(39)
     Assert-True ($r.new_models.Count -eq 0 -and $script:launchCount -eq 0) 'model check leaves research to offline cadence'
     $r = Invoke-RouterModelCheck -BenchInvoker { param($r) $script:canaryLaunchCount++; [pscustomobject]@{gate='pass';raw_gate='pass';effort_down_qualified=$false} } -Force -Now $now.AddHours(40)
