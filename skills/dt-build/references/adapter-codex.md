@@ -47,10 +47,10 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 - Before ending each headless turn, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state it shows. An unconsumed trigger counts as a failed launch.
 - The launcher alone sets `DT_BUILD_COORDINATOR_ID`, for managed coordinators. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
 - At approval boundaries (merge, push, deploy, prod write, irreversible): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end; add `-AlwaysNotify` for production, Azure or irreversible. Never run `dt-job approve`, `resume` or `delegate`; they are Danny's alone.
-- Danny's commands: `/dt-build approve <RUN_ID> <operation>` records his approval and makes the run runnable; `/dt-build resume <RUN_ID>` re-arms a stopped run; `/dt-build delegate <RUN_ID> <session>` (`-Clear` undoes) routes routine stops there (`$dt-build` in place of `/dt-build` when typed in Codex). When Danny types one, run the matching `dt-job` verb.
+- Danny's commands: `/dt-build approve <RUN_ID> <operation>` records his approval and makes the run runnable; `/dt-build resume <RUN_ID>` re-arms a stopped run; `/dt-build delegate <RUN_ID> <session>` (`-Clear` undoes) routes routine stops there (`$dt-build` in place of `/dt-build` when typed in Codex). When Danny types one, run the matching `dt-job` verb. Follow `operator_notes` in status and wait envelopes; only operators add them (`note` verb).
 
 ## Evidence
 
-- Read job results only from `dt-job status` and `dt-job wait` envelopes (`-Json`). They cap output and name evidence paths.
-- For a deeper look use `pwsh -NoProfile -File scripts/read-evidence.ps1 -RunFolder <run-folder> -Path <file> -Lines a-b` or `-Grep <pattern>`. Calls cap at 16 KB and are logged.
-- Never read/tail/cat a job's output or stream log directly. Load screenshots deliberately.
+- Read job results only from `status` and `wait` `-Json` envelopes.
+- For a deeper look use `pwsh -NoProfile -File scripts/read-evidence.ps1 -RunFolder <run-folder> -Path <file> -Lines a-b` or `-Grep <pattern>`. Calls cap at 16 KB.
+- Never read/tail/cat job output or stream logs directly. Load screenshots deliberately.

@@ -156,6 +156,30 @@ try {
     }
     finally { Remove-Item Env:DT_JOB_HEARTBEAT_SEC, Env:DT_JOB_STALL_SEC -ErrorAction SilentlyContinue }
 
+    # Operator notes: added and cleared by operators only, shown in every status and wait.
+    $rf = New-RunFolder 'notes'
+    $n1 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'Dispatch the repair worker first.')
+    $n2 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'R3b3 split review is authorized; see approvals/r3b3.md.')
+    Assert-True (@($n2.operator_notes).Count -eq 2 -and @($n2.operator_notes)[1].id -eq 'n-002') "notes get sequential ids ($(@($n2.operator_notes).id -join ','))"
+    $env:DT_BUILD_COORDINATOR_ID = 'mc-notes'
+    try { $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Message 'drop the review' -Json 2>&1; $code = $LASTEXITCODE }
+    finally { $env:DT_BUILD_COORDINATOR_ID = $null }
+    Assert-True ($code -ne 0 -and (($raw | Out-String) -match 'DT_JOB_OPERATOR_ONLY')) 'a coordinator cannot write operator notes'
+    $runStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
+    Assert-True (@($runStatus.operator_notes).Count -eq 2 -and @($runStatus.operator_notes)[0].text -eq 'Dispatch the repair worker first.') 'run status carries the operator notes in full'
+    $noteJob = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 3')
+    $w = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', $noteJob.job_id, '-Any', '-TimeoutSec', '1')
+    Assert-True (@($w.operator_notes).Count -eq 2) 'every wait check-in carries the operator notes'
+    $text = & pwsh -NoProfile -File $dtJob wait -RunFolder $rf -JobId $noteJob.job_id -Any -TimeoutSec 1
+    Assert-True ((@($text) -join "`n") -match 'operator note n-001: Dispatch the repair worker first\.' -and @($text)[-1] -match '^wait_timeout') "text check-ins list notes and keep wait_timeout last ($(@($text) -join ' | '))"
+    Wait-JobTerminal -RunFolder $rf -JobId $noteJob.job_id | Out-Null
+    $cleared = Invoke-DtJob @('note', '-RunFolder', $rf, '-Clear', '-NoteId', 'n-001')
+    Assert-True (@($cleared.operator_notes).Count -eq 1 -and @($cleared.operator_notes)[0].id -eq 'n-002') 'clear -NoteId removes one note'
+    $n3 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'Third.')
+    Assert-True (@($n3.operator_notes)[-1].id -eq 'n-003') 'ids are never reused'
+    $all = Invoke-DtJob @('note', '-RunFolder', $rf, '-Clear')
+    Assert-True (@($all.operator_notes).Count -eq 0) 'clear alone removes every note'
+
     # Dependency chain: a failure blocks two levels downstream.
     $rf = New-RunFolder 'deps'
     $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 1; exit 1')

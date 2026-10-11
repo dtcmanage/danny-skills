@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
+    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -73,6 +73,8 @@ param(
 
     [string]$Delegate,
 
+    [string]$NoteId,
+
     [switch]$Clear,
 
     [switch]$AlwaysNotify,
@@ -141,6 +143,7 @@ function Get-DtJobPaths {
         Lease  = Join-Path $root 'coordinator.lease'
         CoordinatorLock = Join-Path $root 'coordinator.lock'
         Approvals = Join-Path $root 'approvals.json'
+        OperatorNotes = Join-Path $root 'operator-notes.json'
         Launches = Join-Path $root 'launches.jsonl'
         Notifications = Join-Path $root 'notifications.jsonl'
         ContextBaseline = Join-Path $root 'context-baseline.json'
@@ -565,7 +568,9 @@ function New-DtJobRunEnvelope {
         }
         $jobs.Add($entry)
     }
-    $envelope = [ordered]@{ run_folder = $paths.Root; job_count = $jobs.Count; stalled = @($stalled); jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
+    # Operator notes come first and are never trimmed; follow them over anything in _build-state.md.
+    $notes = @(Get-DtJobOperatorNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } })
+    $envelope = [ordered]@{ run_folder = $paths.Root; operator_notes = $notes; job_count = $jobs.Count; stalled = @($stalled); jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
     if ($null -ne $Cursor) { $envelope.last_event_seq = $Cursor.last_event_seq; $envelope.last_consumed_event_seq = $Cursor.last_consumed_event_seq }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -1117,7 +1122,8 @@ function Invoke-DtJobWait {
     $running = @($records | Where-Object { -not (Test-DtJobTerminal $_.status) } | ForEach-Object { $_.job_id })
     # A check-in: every job still running reports its progress, and a stalled one says so.
     $progress = @($records | Where-Object { $_.status -eq 'running' } | ForEach-Object { Get-DtJobActivity -RunFolder $RunFolder -Record $_ })
-    $envelope = [ordered]@{ result = $result; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
+    $notes = @(Get-DtJobOperatorNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } })
+    $envelope = [ordered]@{ result = $result; operator_notes = $notes; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
     if ($Json -and $null -ne $script:DtJobContext) { $envelope.context = $script:DtJobContext.line }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -1128,6 +1134,7 @@ function Invoke-DtJobWait {
     $envelope.truncated = $cut
     if ($Json) { return ($envelope | ConvertTo-Json -Depth 6 -Compress) }
     if ($envelope.omitted -gt 0) { $lines.Add("...[truncated] $($envelope.omitted) finished job(s) omitted; dt-job status -RunFolder lists all") }
+    foreach ($note in $notes) { $lines.Add("operator note $($note.id): $($note.text)") }
     foreach ($entry in $envelope.progress) { $lines.Add([string]$entry.line) }
     if ($result -eq 'wait_timeout') { $lines.Add((Limit-DtJobLine "wait_timeout still_running=$($running -join ',')" ([ref]$cut))) }
     return $lines
@@ -1412,6 +1419,45 @@ function Send-DtJobDelegateEscalation {
     $minutes = [int][Math]::Round(([DateTime]::UtcNow - (ConvertTo-DtJobUtc $pending.since_utc)).TotalMinutes)
     $text = "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation), and $($pending.delegated_to) has not approved it. $($pending.message) To approve, run: /dt-build approve $RunId $($pending.operation)"
     return (Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:${RunId}:awaiting:$($pending.operation):$($pending.seq)" -Message $text -RetryUntilDelivered)
+}
+
+function Get-DtJobOperatorNotes {
+    # Danny's and his operator sessions' standing instructions for the run, kept outside _build-state.md
+    # so no checkpoint rewrite can summarize them away.
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $path = (Get-DtJobPaths -RunFolder $RunFolder).OperatorNotes
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    try { return @((Read-DtJobText -Path $path | ConvertFrom-Json -ErrorAction Stop).notes | Where-Object { $null -ne $_ }) } catch { return @() }
+}
+
+function Invoke-DtJobNote {
+    # Adds an operator note (-Message), removes one (-Clear -NoteId) or all (-Clear). Coordinators and jobs
+    # cannot write notes; an operator may add one while a coordinator runs.
+    if ($env:DT_BUILD_COORDINATOR_ID) { throw "DT_JOB_OPERATOR_ONLY: note is an operator command; coordinator $env:DT_BUILD_COORDINATOR_ID cannot run it" }
+    if ($env:DT_JOB_ID) { throw "DT_JOB_OPERATOR_ONLY: note is an operator command; it cannot run inside dt-job job $env:DT_JOB_ID" }
+    if (-not $Clear -and [string]::IsNullOrWhiteSpace($Message)) { throw 'DT_JOB_USAGE: note requires -Message <text>, or -Clear [-NoteId <id>].' }
+    if (-not $Clear -and $Message.Length -gt 2000) { throw 'DT_JOB_USAGE: an operator note is at most 2000 characters; point to a file for more.' }
+    $paths = Get-DtJobPaths -RunFolder $RunFolder
+    $notes = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $current = [System.Collections.Generic.List[object]]::new()
+        foreach ($n in (Get-DtJobOperatorNotes -RunFolder $RunFolder)) { $current.Add($n) }
+        if ($Clear) {
+            if ($NoteId) {
+                $match = @($current | Where-Object { [string]$_.id -ceq $NoteId })
+                if ($match.Count -eq 0) { throw "DT_JOB_UNKNOWN: operator note $NoteId" }
+                [void]$current.Remove($match[0])
+            }
+            else { $current.Clear() }
+        }
+        else {
+            $max = 0
+            foreach ($n in $current) { if ([string]$n.id -match '^n-(\d+)$') { $max = [Math]::Max($max, [int]$Matches[1]) } }
+            $current.Add([pscustomobject][ordered]@{ id = ('n-{0:D3}' -f ($max + 1)); text = $Message.Trim(); added_utc = [DateTime]::UtcNow.ToString('o') })
+        }
+        Write-DtJobAtomic -Path $paths.OperatorNotes -Content ([ordered]@{ notes = @($current) } | ConvertTo-Json -Depth 4)
+        @($current)
+    }
+    Write-DtJobOutput -Object ([pscustomobject][ordered]@{ run_folder = $paths.Root; operator_notes = @($notes) }) -AsJson:$Json
 }
 
 function Invoke-DtJobResume {
@@ -1719,6 +1765,7 @@ $verbOutput = switch ($Verb) {
     'await-danny' { Invoke-DtJobAwaitDanny }
     'approve' { Invoke-DtJobApprove }
     'delegate' { Invoke-DtJobDelegate }
+    'note' { Invoke-DtJobNote }
     'resume' { Invoke-DtJobResume }
     'finish' { Invoke-DtJobFinish }
     'mark-bootstrap' { Invoke-DtJobMarkBootstrap }

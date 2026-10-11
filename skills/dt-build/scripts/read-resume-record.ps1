@@ -19,4 +19,4 @@ if ($null -eq $lease -or $lease.coordinator_id -cne $ResumeCoordinatorId -or $le
 }
 $state = Get-DtJobRunState -BuildStatePath $ResumeBuildStatePath
 if ($state.run_status -ne 'runnable') { throw "DT_RESUME_STOPPED: run_status $($state.run_status)" }
-[ordered]@{ registration = $entry; lease = $lease; state = $state; approvals = (Get-DtJobApprovals -RunFolder $ResumeRunFolder) } | ConvertTo-Json -Depth 10
+[ordered]@{ registration = $entry; lease = $lease; state = $state; approvals = (Get-DtJobApprovals -RunFolder $ResumeRunFolder); operator_notes = @(Get-DtJobOperatorNotes -RunFolder $ResumeRunFolder) } | ConvertTo-Json -Depth 10
