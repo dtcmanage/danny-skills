@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.25.1
+
+- model router: chunk wrappers refuse prompts over 400,000 characters (PROMPT_TOO_LARGE) and point to path-plus-sha256 references.
+
 ## 2.25.0
 
 - model router: chunk wrappers gain -AdHoc for one-off work outside a dt-build run (routing and accounting kept, dt-build envelope checks skipped).

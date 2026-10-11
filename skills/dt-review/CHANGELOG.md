@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.28 (2026-10-11): model router: chunk wrappers refuse prompts over 400,000 characters (PROMPT_TOO_LARGE) and point to path-plus-sha256 references.
+
 - 1.16.27 (2026-10-11): model router: chunk wrappers gain -AdHoc for one-off work outside a dt-build run (routing and accounting kept, dt-build envelope checks skipped).
 
 - 1.16.26 (2026-10-11): model router: chunk wrappers have no time limit under dt-job; activity check-ins flag stalls instead.
