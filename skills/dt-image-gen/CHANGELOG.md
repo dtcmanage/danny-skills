@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.23 (2026-10-11): Shared model router: ranked judging calls a winner only on a statistically significant lead over 16 rounds; lower-effort and swap proposals are blocked when they trail.
+
 - 0.3.22 (2026-10-11): Shared model router: new models read 'researched' after their release research pass instead of staying 'unprofiled'.
 
 - 0.3.21 (2026-10-11): Shared model router: bench call time limit is now set per job; deep-thinker calls get 15 minutes so hard questions can finish.
