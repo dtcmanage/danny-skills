@@ -28,8 +28,21 @@ $ErrorActionPreference = 'Stop'
 
 $dtJob = Join-Path $PSScriptRoot 'dt-job.ps1'
 $runRoot = [System.IO.Path]::GetFullPath($RunFolder)
-$skillPrefix = if ($CoordinatorHost -eq 'codex') { '$dt-build' } else { '/dt-build' }
-$prompt = "$skillPrefix resume $RunId (managed coordinator $CoordinatorId)"
+$skillRoot = Split-Path -Parent $PSScriptRoot
+$resolvedSkillRoot = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
+if ($resolvedSkillRoot) { $skillRoot = $resolvedSkillRoot.FullName }
+$resumeGuide = Join-Path $skillRoot 'references/managed-resume.md'
+# Use the dedicated resume entry, not a skill invocation that reloads the entire intake skill.
+# The child still receives the canonical bridge; nothing bypasses its safety or approval reads.
+$prompt = @"
+Resume existing managed build $RunId as coordinator $CoordinatorId on $CoordinatorHost.
+Run folder: $runRoot
+Checkpoint: $BuildStatePath
+Read and follow $resumeGuide as your entry contract, plus the canonical context bridge.
+Read each required canonical file once, in order, with sufficient output capacity; emit raw content directly, never batch full files into truncated or nested JSON output.
+Complete required authorization reads, then mark-bootstrap immediately, and continue the checkpoint's next action.
+Do not repeat intake or preload implementation/close-out references. Never run dt-job resume or approve.
+"@
 $log = Join-Path $runRoot "coordinator-$CoordinatorId.log"
 $workDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($BuildStatePath))
 

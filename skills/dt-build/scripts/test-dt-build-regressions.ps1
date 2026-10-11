@@ -34,6 +34,61 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    # The resume budget counts the runtime/native floor, all safety reads, and current repo text.
+    $measureBootstrap = Join-Path $scriptDir 'measure-resume-bootstrap.py'
+    $bootstrapManifest = Join-Path $scriptDir 'tests/fixtures/resume-bootstrap-budget.json'
+    $measureArgs = @($measureBootstrap, '--manifest', $bootstrapManifest, '--repo-root', $repoRoot)
+    if (Test-Path -LiteralPath 'D:\Claude\CLAUDE.md') { $measureArgs += @('--canonical-root', 'D:\Claude') }
+    & python @measureArgs *> (Join-Path $tempRoot 'resume-bootstrap-budget.json')
+    Assert-True ($LASTEXITCODE -eq 0) 'measured resume bootstrap read plan stays below 50,000 tokens'
+    $budget = Get-Content -Raw (Join-Path $tempRoot 'resume-bootstrap-budget.json') | ConvertFrom-Json
+    Assert-True ($budget.total_tokens -lt 50000 -and $budget.pass) "resume budget includes native context and authorization reserve ($($budget.total_tokens))"
+    # Actual model input size is a separate gate; a large observed marker must fail.
+    foreach ($tokens in @(49999, 50000, 109770)) {
+        $rollout = Join-Path $tempRoot "bootstrap-$tokens.jsonl"
+        $usageRow = [ordered]@{ type = 'event_msg'; payload = [ordered]@{ type = 'token_count'; info = [ordered]@{ last_token_usage = [ordered]@{ input_tokens = $tokens } } } }
+        $markRow = [ordered]@{ type = 'event_msg'; payload = [ordered]@{ type = 'item_completed'; item = [ordered]@{ type = 'CommandExecution'; command = @('pwsh', '-Verb mark-bootstrap'); aggregated_output = ('{"baseline_tokens":' + $tokens + ',"newly_marked":true}') } } }
+        Write-Utf8 $rollout (($usageRow | ConvertTo-Json -Compress -Depth 8) + "`n" + ($markRow | ConvertTo-Json -Compress -Depth 8) + "`n")
+        & python $measureBootstrap --transcript $rollout *> (Join-Path $tempRoot "bootstrap-check-$tokens.json")
+        Assert-True ($LASTEXITCODE -eq $(if ($tokens -lt 50000) { 0 } else { 1 })) "actual resume bootstrap $tokens uses the 50,000 token gate"
+    }
+
+    # A managed resume reads existing authority without re-registering or changing the cursor.
+    $savedBuildStateDir = $env:DT_BUILD_STATE_DIR
+    try {
+        $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'resume-registry'
+        $resumeFolder = Join-Path $tempRoot 'resume-run'
+        New-Item -ItemType Directory -Path $resumeFolder -Force | Out-Null
+        $resumeState = Join-Path $tempRoot '_build-state.md'
+        $oldCheckpoint = "status: IN_PROGRESS`nrun_status: runnable`nlast_consumed_event_seq: 7`nBoundary: source only; no deploy.`n" + ('history ' * 1200)
+        Write-Utf8 $resumeState $oldCheckpoint
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'dt-job.ps1') register-run -RunFolder $resumeFolder -BuildStatePath $resumeState -RunId resume-fixture -PinnedHost codex -Managed -Json *> $null
+        Assert-True ($LASTEXITCODE -eq 0) 'resume fixture registration succeeds'
+        Write-Utf8 (Join-Path $resumeFolder 'coordinator.lease') '{"coordinator_id":"fixture","host":"codex","launched_by":"watcher","released_utc":null}'
+        Write-Utf8 (Join-Path $resumeFolder 'approvals.json') '{"awaiting":null,"approvals":[{"operation":"source-only","approved_by":"danny"}]}'
+        $recordScript = Join-Path $scriptDir 'read-resume-record.ps1'
+        $record = & pwsh -NoProfile -File $recordScript -RunFolder $resumeFolder -RunId resume-fixture -BuildStatePath $resumeState -CoordinatorId fixture
+        Assert-True ($LASTEXITCODE -eq 0) 'existing managed record is readable without intake'
+        $record = ($record -join "`n") | ConvertFrom-Json
+        Assert-True ($record.state.last_consumed_event_seq -eq 7 -and $record.approvals.approvals[0].operation -eq 'source-only' -and (Get-Content -Raw $resumeState) -ceq $oldCheckpoint) 'resume preserves cursor/checkpoint and exposes complete approvals'
+        & pwsh -NoProfile -File $recordScript -RunFolder $resumeFolder -RunId wrong-run -BuildStatePath $resumeState -CoordinatorId fixture *> $null
+        Assert-True ($LASTEXITCODE -ne 0) 'resume rejects mismatched run identity'
+        & pwsh -NoProfile -File $recordScript -RunFolder $resumeFolder -RunId resume-fixture -BuildStatePath $resumeState -CoordinatorId intruder *> $null
+        Assert-True ($LASTEXITCODE -ne 0) 'resume rejects a different coordinator holder'
+        $candidate = Join-Path $tempRoot 'checkpoint-candidate.md'
+        Write-Utf8 $candidate "status: IN_PROGRESS`nrun_status: finished`nlast_consumed_event_seq: 0`nBoundary: source only; no deploy.`nHistory: checkpoint-history/`n"
+        $writer = Join-Path $scriptDir 'write-resume-checkpoint.ps1'
+        $written = & pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate
+        Assert-True ($LASTEXITCODE -eq 0) 'lean checkpoint rewrite succeeds for an oversized legacy checkpoint'
+        $written = ($written -join "`n") | ConvertFrom-Json
+        $next = Get-Content -Raw $resumeState
+        Assert-True ($next -match 'run_status: runnable' -and $next -match 'last_consumed_event_seq: 7' -and $next.Contains('source only; no deploy.') -and (Get-Content -Raw $written.history) -ceq $oldCheckpoint) 'writer archives old history and preserves the latest owned fields and candidate boundary'
+        Write-Utf8 $candidate ($next + ('x' * 8192))
+        & pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate *> $null
+        Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw $resumeState) -ceq $next) 'oversized candidate fails without changing the checkpoint'
+    }
+    finally { $env:DT_BUILD_STATE_DIR = $savedBuildStateDir }
+
     # Stream logs echo bootstrap memory and are excluded, while ordinary reports remain checked.
     $downgradeDir = Join-Path $tempRoot 'downgrade-stream'
     New-Item -ItemType Directory -Path $downgradeDir -Force | Out-Null

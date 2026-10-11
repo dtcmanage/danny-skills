@@ -23,8 +23,9 @@ $script:WatcherVendorLimits = if ($env:DT_BUILD_VENDOR_LIMITS_SCRIPT) { $env:DT_
 # previous attempt; when the last retry also fails, the run stops for Danny.
 $script:WatcherRetryDelaysMin = @(2, 10, 30)
 $script:WatcherMaxAttempts = $script:WatcherRetryDelaysMin.Count + 1
-# Whatever the trigger, a run gets at most this many launches in any rolling window before it stops for Danny.
+# Only launches without a ledger-proven productive predecessor spend the thrash budget.
 $script:WatcherRunLaunchCap = 6
+$script:WatcherAbsoluteLaunchCap = 30
 $script:WatcherRunLaunchWindowMin = 60
 # One retry of a failed registry read, this long after the first attempt, before it counts as an error.
 $script:WatcherRegistryRetryMs = 500
@@ -66,6 +67,43 @@ function Get-WatcherInteractiveDmSeq {
         if ([int64]::TryParse($key.Substring($prefix.Length), [ref]$seq) -and ($null -eq $last -or $seq -gt $last)) { $last = $seq }
     }
     return $last
+}
+
+function Test-WatcherProductivePredecessor {
+    # Old launch/event rows remain valid. New continuation rows also snapshot the consumed cursor.
+    # No coordinator claim of progress is trusted: job events must fall inside this launch episode.
+    param($Predecessor, $Successor, [object[]]$Events, [int64]$Cursor)
+    if ($null -eq $Predecessor -or -not $Predecessor.PSObject.Properties['launcher_exit'] -or
+        $null -eq $Predecessor.launcher_exit -or [int]$Predecessor.launcher_exit -ne 0) { return $false }
+    $start = ConvertTo-DtJobUtc $Predecessor.launched_utc
+    $end = ConvertTo-DtJobUtc $Successor.launched_utc
+    $continuations = @($Events | Where-Object {
+        $_.job_id -eq 'run' -and $_.type -eq 'continuation_requested' -and
+        [int64]$_.seq -gt [int64]$Predecessor.trigger_seq -and
+        [int64]$_.seq -le [int64]$Successor.trigger_seq -and
+        (ConvertTo-DtJobUtc $_.ts_utc) -ge $start -and (ConvertTo-DtJobUtc $_.ts_utc) -le $end
+    })
+    if ($continuations.Count -eq 0) { return $false }
+    # A detached job can complete after continuation and become the newer launch trigger.
+    # Judge the predecessor's last continuation, not equality with that newer trigger.
+    $continuation = @($continuations | Sort-Object { [int64]$_.seq })[-1]
+    if (-not $continuation.PSObject.Properties['reason'] -or $continuation.reason -notin @('context_rotation', 'managed_start')) { return $false }
+    $continued = ConvertTo-DtJobUtc $continuation.ts_utc
+    if ($continued -lt $start -or $continued -gt $end -or
+        [int64]$continuation.seq -le [int64]$Predecessor.trigger_seq) { return $false }
+    if ($continuation.PSObject.Properties['requested_by'] -and $continuation.requested_by -and
+        $continuation.requested_by -cne $Predecessor.coordinator_id) { return $false }
+    $consumed = if ($continuation.PSObject.Properties['consumed_event_seq']) { [int64]$continuation.consumed_event_seq } else { $Cursor }
+    if ($consumed -lt [int64]$Predecessor.trigger_seq) { return $false }
+    foreach ($event in $Events) {
+        if ($event.job_id -eq 'run' -or [int64]$event.seq -le [int64]$Predecessor.trigger_seq -or
+            [int64]$event.seq -ge [int64]$continuation.seq) { continue }
+        $at = ConvertTo-DtJobUtc $event.ts_utc
+        if ($at -lt $start -or $at -gt $continued) { continue }
+        if (($event.type -in @('launched', 'process_started', 'started') -and $event.status -eq 'running') -or
+            ($event.type -in @('completed', 'failed', 'launch_failed') -and $event.status -in @('succeeded', 'failed'))) { return $true }
+    }
+    return $false
 }
 
 function Get-WatcherDecision {
@@ -129,9 +167,20 @@ function Get-WatcherDecision {
     $lastStop = -1
     for ($i = 0; $i -lt $rows.Count; $i++) { if (@('stopped', 'rearmed') -contains $rows[$i].type) { $lastStop = $i } }
     $windowStart = $NowUtc.AddMinutes(-$script:WatcherRunLaunchWindowMin)
-    $recent = @($rows | Select-Object -Skip ($lastStop + 1) | Where-Object { $_.type -eq 'launch' -and (ConvertTo-DtJobUtc $_.launched_utc) -gt $windowStart })
-    if ($recent.Count -ge $script:WatcherRunLaunchCap) {
-        return [pscustomobject]@{ action = 'stop'; stop_kind = 'cap'; trigger_seq = $trigger; detail = "$($recent.Count) launches in the last $($script:WatcherRunLaunchWindowMin) minutes" }
+    $launches = @($rows | Select-Object -Skip ($lastStop + 1) | Where-Object { $_.type -eq 'launch' })
+    $recent = @($launches | Where-Object { (ConvertTo-DtJobUtc $_.launched_utc) -gt $windowStart })
+    if ($recent.Count -ge $script:WatcherAbsoluteLaunchCap) {
+        return [pscustomobject]@{ action = 'stop'; stop_kind = 'ceiling'; trigger_seq = $trigger; detail = "absolute safety ceiling: $($recent.Count) launches in the last $($script:WatcherRunLaunchWindowMin) minutes, including productive rotations" }
+    }
+    $events = @(Get-DtJobEvents -RunFolder $folder)
+    $thrash = 0
+    for ($i = 0; $i -lt $launches.Count; $i++) {
+        if ((ConvertTo-DtJobUtc $launches[$i].launched_utc) -le $windowStart) { continue }
+        $predecessor = if ($i -gt 0) { $launches[$i - 1] } else { $null }
+        if (-not (Test-WatcherProductivePredecessor -Predecessor $predecessor -Successor $launches[$i] -Events $events -Cursor $state.last_consumed_event_seq)) { $thrash++ }
+    }
+    if ($thrash -ge $script:WatcherRunLaunchCap) {
+        return [pscustomobject]@{ action = 'stop'; stop_kind = 'cap'; trigger_seq = $trigger; detail = "thrash: $thrash launches without a ledger-proven productive predecessor in the last $($script:WatcherRunLaunchWindowMin) minutes" }
     }
     return [pscustomobject]@{ action = 'launch'; trigger_seq = $trigger; attempt = $attempts.Count + 1; detail = "trigger $trigger" }
 }
@@ -212,7 +261,7 @@ function Invoke-WatcherStop {
         if ($last -ne $Decision.trigger_seq -or $state.last_consumed_event_seq -ge $Decision.trigger_seq) {
             # Danny's resume beat a cap stop: restart the cap window so the next tick does not stop the run again.
             $resumed = @(Get-DtJobEvents -RunFolder $folder | Where-Object { [int64]$_.seq -gt [int64]$Decision.trigger_seq -and $_.type -eq 'continuation_requested' -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'resume' })
-            if ($Decision.stop_kind -eq 'cap' -and $resumed.Count -gt 0) {
+            if ($Decision.stop_kind -in @('cap', 'ceiling') -and $resumed.Count -gt 0) {
                 Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'rearmed'; trigger_seq = $Decision.trigger_seq; rearmed_utc = $NowUtc.ToString('o'); reason = "resume at event $($resumed[-1].seq) beat the cap stop" })
             }
             return "event $last, cursor $($state.last_consumed_event_seq)"
@@ -224,11 +273,15 @@ function Invoke-WatcherStop {
     Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'stopped'; trigger_seq = $Decision.trigger_seq; stopped_utc = $NowUtc.ToString('o'); reason = $Decision.stop_kind })
     $runId = [string]$Entry.run_id
     if ($Decision.stop_kind -eq 'cap') {
-        $text = "dt-build run $runId is paused: the watcher started $($script:WatcherRunLaunchCap) coordinators within $($script:WatcherRunLaunchWindowMin) minutes and the run still has unhandled work. Evidence is in $folder (launches.jsonl). After checking, restart it with: /dt-build resume $runId"
+        $text = "dt-build run $runId is paused for coordinator thrash: $($Decision.detail). Failed bootstraps, crashes, unconsumed triggers, and rotations with no new jobs count; productive rotations do not. Evidence is in $folder (launches.jsonl and jobs/events.jsonl). After checking, restart it with: /dt-build resume $runId"
         $key = "dt-build:${runId}:launch-cap:$($Decision.trigger_seq)"
     }
+    elseif ($Decision.stop_kind -eq 'ceiling') {
+        $text = "dt-build run $runId is paused at the absolute launch safety ceiling: $($Decision.detail). This ceiling includes healthy rotations and guards against a watcher bug; it is separate from the thrash cap. Evidence is in $folder (launches.jsonl and jobs/events.jsonl). After checking, restart it with: /dt-build resume $runId"
+        $key = "dt-build:${runId}:launch-ceiling:$($Decision.trigger_seq)"
+    }
     else {
-        $text = "dt-build run $runId is paused: the watcher started a fresh coordinator $($script:WatcherMaxAttempts) times and none picked up the work. Evidence is in $folder (launches.jsonl). After checking, restart it with: /dt-build resume $runId"
+        $text = "dt-build run $runId is paused for coordinator thrash: the watcher started a fresh coordinator $($script:WatcherMaxAttempts) times and none picked up the work (the same trigger remains unconsumed). Evidence is in $folder (launches.jsonl). After checking, restart it with: /dt-build resume $runId"
         $key = "dt-build:${runId}:launch-failed:$($Decision.trigger_seq)"
     }
     # A failed delivery stays pending and is retried on later ticks until it lands.
@@ -316,7 +369,7 @@ function Complete-WatcherRotation {
             Save-DtJobLease -RunFolder $folder -Lease $current
         }
         $state = Get-DtJobRunState -BuildStatePath ([string]$Entry.build_state_path)
-        Add-DtJobEvent -RunFolder $folder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason 'context_rotation'
+        Add-DtJobEvent -RunFolder $folder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason 'context_rotation' -RequestedBy $CoordinatorId -ConsumedEventSeq $state.last_consumed_event_seq
     }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.24.0",
+  "version": "0.24.1",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.24.1 dt-build 2.21.13: progress-aware watcher thrash cap, distinct absolute safety ceiling, lean managed resume bootstrap and checkpoint history, and baseline-size regression checks.",
       "0.24.0 Model router: ranked judging needs a significant lead over 16 rounds (identical setups no longer get winners); per-run call cap 1000, dt-build 2.21.12, dt-review 1.16.23, dt-image-gen 0.3.23, dt-writing-draft 0.2.23, dt-writing-edit 0.3.23.",
       "0.23.4 Model router: new models read 'researched' after their release research pass instead of staying 'unprofiled'; a model back in the vendor catalog reads 'known'., dt-build 2.21.11, dt-review 1.16.22, dt-image-gen 0.3.22, dt-writing-draft 0.2.22, dt-writing-edit 0.3.22.",
       "0.23.3 Model router: bench call time limit is set per job; deep-thinker calls get 15 minutes. dt-build 2.21.10, dt-review 1.16.21, dt-image-gen 0.3.21, dt-writing-draft 0.2.21, dt-writing-edit 0.3.21.",

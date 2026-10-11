@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.21.12
+  version: 2.21.13
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -22,6 +22,8 @@ Path resolution is governed by `../../references/conventions.md` (resolve from t
 If this skill has stricter domain-specific behavior, keep that stricter behavior; otherwise follow the shared baseline.
 
 ## Host adapter
+
+For an existing managed resume, enter through `references/managed-resume.md` instead of repeating intake steps 1–5. Complete its authorization reads, mark bootstrap immediately, then load only the execution references the current step needs. The watcher supplies exact run paths. Keep checkpoint history in the run folder and use `scripts/write-resume-checkpoint.ps1` for a lean atomic checkpoint.
 
 For rollout and rollback, follow [the adoption procedure](references/adoption-procedure.md) only on Danny's go-ahead.
 
@@ -67,9 +69,9 @@ Do NOT fire for:
 
 ## Contract source of truth
 
-- Canonical roadmap schema: `skills/dt-roadmap/references/roadmap-schema.md`.
+- Canonical roadmap schema (read at intake/contract revision, not every resume): `skills/dt-roadmap/references/roadmap-schema.md`.
 - Canonical validator: `skills/dt-roadmap/scripts/roadmap-validator.ps1`.
-- `dt-build` must read both through repo-relative paths; no copied schema is allowed.
+- At intake or contract revision, `dt-build` must read both through repo-relative paths; no copied schema is allowed. A resume uses the validated run-folder contract pack and loads the current milestone only.
 
 ## Acceptance contract (per-milestone verify-before-complete)
 
@@ -231,6 +233,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   and downgrade status. This append-only row is the final ledger's source of truth.
 - h. **Update the integration branch** (`<integration-branch>` from `build-plan.md`) via compare-and-swap through `scripts/branch-cas-update.ps1` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
 - i. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (e–g) and the integration branch is updated (h), rewrite `_build-state.md` in the project's planning folder (the folder holding `plan-draft.md` / `design-final*.md` / `roadmap.md`, typically `<project>/design/`) as an atomic full-file rewrite from the canonical template `skills/dt-pipeline/templates/build-state-template.md` — reference that template, never duplicate its shape here. Record phase, current milestone, completed list (this milestone appended with its commit SHA), in-flight work, last commit SHA, uncommitted artifacts, and next step. Preserve the `run_status` and `last_consumed_event_seq` lines exactly as they are: only `dt-job` changes them (`consume -Seq <n>` after handling an event). This file is distinct from the run-folder `build-state.md` (dt-build's internal run scaffold from step 4): `_build-state.md` is the crash-resume checkpoint dt-pipeline and Danny read.
+  Keep the checkpoint at most 8 KiB. Store detailed history in the run folder; retain active approvals/restrictions and authoritative boundary paths. Write the candidate to a run-folder file, then run `scripts/write-resume-checkpoint.ps1 -RunFolder <folder> -BuildStatePath <checkpoint> -ContentPath <candidate>` to archive the old file and atomically replace it under the run lock, preserving dt-job's latest owned fields. Existing oversized checkpoints remain readable until rewritten.
   Then run the frontier-spend check (alert only): `pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1
   -RunStartedAt <run start, ISO> -RunId <RUN_ID> -RemainingMilestones <milestones not yet accepted> -Json`, and
   relay its `ROUTER_ALERT:` line if one prints.

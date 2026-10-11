@@ -198,6 +198,29 @@ function Get-JobRecord {
     return (Get-Content -Raw -LiteralPath (Join-Path $RunFolder "jobs/$JobId.json") | ConvertFrom-Json)
 }
 
+function Seed-RotationHistory {
+    # Existing JSONL format, including watcher rotations that did not carry requested_by/cursor.
+    param($Run, [int]$Count, [DateTime]$NowUtc, [string]$ProgressType = 'completed')
+    $events = [System.Collections.Generic.List[object]]::new()
+    $launches = [System.Collections.Generic.List[object]]::new()
+    $seq = 1
+    $events.Add([ordered]@{ seq = $seq; job_id = 'run'; ts_utc = $NowUtc.AddMinutes(-59).ToString('o'); type = 'continuation_requested'; status = 'runnable'; reason = 'managed_start' })
+    for ($i = 0; $i -lt $Count; $i++) {
+        $at = $NowUtc.AddMinutes(-58 + $i * (55.0 / $Count))
+        $trigger = $seq
+        $launches.Add([ordered]@{ type = 'launch'; trigger_seq = $trigger; host = 'codex'; attempt = 1; launched_utc = $at.ToString('o'); pid = $null; coordinator_id = "healthy-$i"; launcher_exit = 0 })
+        $seq++
+        $events.Add([ordered]@{ seq = $seq; job_id = "j-$i"; ts_utc = $at.AddSeconds(10).ToString('o'); type = $ProgressType; status = $(if ($ProgressType -eq 'completed') { 'succeeded' } else { 'running' }) })
+        $seq++
+        $event = [ordered]@{ seq = $seq; job_id = 'run'; ts_utc = $at.AddSeconds(20).ToString('o'); type = 'continuation_requested'; status = 'runnable'; reason = $(if ($i % 2) { 'managed_start' } else { 'context_rotation' }) }
+        if ($i % 2) { $event.requested_by = "healthy-$i"; $event.consumed_event_seq = $seq - 1 }
+        $events.Add($event)
+    }
+    Write-Utf8 (Join-Path $Run.folder 'launches.jsonl') ((($launches | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join "`n") + "`n")
+    Write-Utf8 (Join-Path $Run.folder 'jobs/events.jsonl') ((($events | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join "`n") + "`n")
+    New-BuildState -Path $Run.state -Cursor ($seq - 1)
+}
+
 function Wait-JobRunning {
     param([string]$RunFolder, [string]$JobId, [int]$TimeoutSec = 60)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
@@ -1031,7 +1054,61 @@ Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
     $rowsAfter = @(Get-Content -LiteralPath (Join-Path $run.folder 'notifications.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True ((Get-DmCount 'dm-retry') -eq 1 -and @($rowsAfter | Where-Object { $_.status -eq 'delivered' }).Count -eq 1) 'a later tick delivers it exactly once'
 
-    # ---- run-wide cap: 6 launches in 60 minutes, then a stop whose failed DM is retried; resume re-arms.
+    # ---- eight productive rotations in an hour exceed the old cap without pausing (legacy and new rows).
+    foreach ($progressType in @('completed', 'launched')) {
+        Use-Scenario "healthy-$progressType"
+        $run = New-Run -Name "healthy-$progressType" -NoLease
+        $now = [DateTime]::UtcNow
+        Seed-RotationHistory -Run $run -Count 8 -NowUtc $now -ProgressType $progressType
+        $tick = @(Invoke-Tick -NowUtc $now)[0]
+        Assert-True ($tick.action -eq 'launch' -and (Get-RunState $run.state).run_status -eq 'runnable' -and (Get-DmCount $run.run_id) -eq 0) "eight rotations with new $progressType job events do not pause"
+    }
+
+    # ---- a claimed rotation alone never proves progress; bootstrap/identity/cursor failures count.
+    $proofScript = Join-Path $tempRoot 'progress-proof.ps1'
+    Write-Utf8 $proofScript @'
+param([string]$WatcherScript)
+. $WatcherScript
+$previous = [pscustomobject]@{ launched_utc = '2026-10-11T04:00:00Z'; trigger_seq = 1; coordinator_id = 'previous'; launcher_exit = 0 }
+$next = [pscustomobject]@{ launched_utc = '2026-10-11T04:03:00Z'; trigger_seq = 4 }
+$job = [pscustomobject]@{ seq = 2; job_id = 'j-0001'; ts_utc = '2026-10-11T04:01:00Z'; type = 'completed'; status = 'failed' }
+$continuation = [pscustomobject]@{ seq = 4; job_id = 'run'; ts_utc = '2026-10-11T04:02:00Z'; type = 'continuation_requested'; status = 'runnable'; reason = 'context_rotation'; requested_by = 'previous'; consumed_event_seq = 3 }
+function Proof { Test-WatcherProductivePredecessor -Predecessor $previous -Successor $next -Events @($job, $continuation) -Cursor 3 }
+$result = [ordered]@{ failed_job_progress = (Proof) }
+$job.type = 'recorded'; $job.status = 'queued'; $result.queued_only = Proof
+$job.type = 'completed'; $job.status = 'failed'
+$job.ts_utc = '2026-10-11T03:59:59Z'; $result.before_launch = Proof
+$job.ts_utc = '2026-10-11T04:02:01Z'; $result.after_continuation = Proof
+$job.ts_utc = '2026-10-11T04:01:00Z'
+$continuation.reason = 'resume'; $result.wrong_reason = Proof
+$continuation.reason = 'context_rotation'; $continuation.requested_by = 'intruder'; $result.wrong_holder = Proof
+$continuation.requested_by = 'previous'; $continuation.consumed_event_seq = 0; $result.unconsumed_trigger = Proof
+$continuation.consumed_event_seq = 3; $previous.launcher_exit = 1; $result.failed_bootstrap = Proof
+$previous.launcher_exit = 0; $next.trigger_seq = 5; $result.newer_terminal_trigger = Proof
+$continuation.type = 'awaiting_danny'; $result.no_continuation = Proof
+$result | ConvertTo-Json -Compress
+'@
+    $proof = (& pwsh -NoProfile -File $proofScript -WatcherScript $watcher | Select-Object -Last 1) | ConvertFrom-Json
+    Assert-True ($proof.failed_job_progress) 'a new failed terminal job is ledger progress'
+    Assert-True ($proof.newer_terminal_trigger) 'a detached completion after continuation does not erase productive rotation credit'
+    foreach ($case in @('queued_only','before_launch','after_continuation','wrong_reason','wrong_holder','unconsumed_trigger','failed_bootstrap','no_continuation')) {
+        Assert-True (-not $proof.$case) "productive predecessor proof rejects $case"
+    }
+
+    # ---- thirty productive launches still hit a distinct absolute safety ceiling.
+    Use-Scenario 'ceiling'
+    $run = New-Run -Name 'ceiling' -NoLease
+    $now = [DateTime]::UtcNow
+    Seed-RotationHistory -Run $run -Count 30 -NowUtc $now
+    $tick = @(Invoke-Tick -NowUtc $now)[0]
+    $stop = @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'stopped' })[-1]
+    $dm = @(Get-Content $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.content.Contains('run ceiling ') })[-1]
+    Assert-True ($tick.action -eq 'stop' -and $stop.reason -eq 'ceiling' -and $dm.content.Contains('absolute launch safety ceiling')) 'absolute ceiling pauses with its own stop kind and plain DM'
+    Invoke-DtJob @('resume', '-RunFolder', $run.folder) | Out-Null
+    $tick = @(Invoke-Tick -NowUtc $now.AddSeconds(10))[0]
+    Assert-True ($tick.action -eq 'launch') 'resume re-arms the absolute ceiling too'
+
+    # ---- thrash cap: 6 launches with no job progress, failed DM retry, then resume re-arms.
     Use-Scenario 'cap'
     $run = New-Run -Name 'cap'
     $tk = [DateTime]::UtcNow
@@ -1047,7 +1124,7 @@ Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
     Assert-True ((Get-LaunchCount 'cap') -eq 6 -and (Get-RunState $run.state).run_status -eq 'awaiting_danny' -and (Get-DmCount 'cap') -eq 0) 'the seventh launch inside 60 minutes stops the run instead'
     foreach ($offset in @(14, 16, 18)) { Invoke-Tick -NowUtc $tk.AddMinutes($offset) | Out-Null }
     $capDm = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('run cap ') }
-    Assert-True ((Get-DmCount 'cap') -eq 1 -and ([string]@($capDm)[0].content).Contains('/dt-build resume cap') -and (Get-LaunchCount 'cap') -eq 6) 'the failed stop DM is retried once and names resume'
+    Assert-True ((Get-DmCount 'cap') -eq 1 -and ([string]@($capDm)[0].content).Contains('/dt-build resume cap') -and ([string]@($capDm)[0].content).Contains('coordinator thrash') -and (Get-LaunchCount 'cap') -eq 6) 'the failed thrash DM is retried once and names the case and resume'
     Invoke-DtJob @('resume', '-RunFolder', $run.folder) | Out-Null
     Invoke-Tick -NowUtc $tk.AddMinutes(20) | Out-Null
     Assert-True ((Get-LaunchCount 'cap') -eq 7) 'resume re-arms the run under the cap'
@@ -1259,7 +1336,7 @@ try { $runs = @(Read-WatcherRegistry); $outcome = "ok:$($runs[0].run_id)" } catc
     $registerText = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'register-dt-build-watcher.ps1')
     Assert-True ($registerText.Contains("-Execute 'wscript.exe'") -and $registerText.Contains('run-hidden.vbs') -and $registerText.Contains('New-TimeSpan -Minutes 2')) 'the scheduled task runs through run-hidden.vbs every 2 minutes'
     $launcherText = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'launch-managed-coordinator.ps1')
-    Assert-True ($launcherText.Contains('resume $RunId (managed coordinator $CoordinatorId)') -and $launcherText.Contains("'`$dt-build'") -and $launcherText.Contains('-LaunchedBy watcher')) 'the default launcher sends the one-line resume prompt and writes a watcher lease'
+    Assert-True ($launcherText.Contains('references/managed-resume.md') -and $launcherText.Contains('Run folder: $runRoot') -and $launcherText.Contains('Checkpoint: $BuildStatePath') -and $launcherText.Contains('canonical context bridge') -and $launcherText.Contains('-LaunchedBy watcher') -and -not $launcherText.Contains('$skillPrefix')) 'the default launcher supplies the bounded resume contract and exact run paths while retaining the watcher lease and canonical bridge'
     $acquireAt = $launcherText.IndexOf('-Action acquire')
     $createAt = $launcherText.IndexOf('-MethodName Create')
     $pidAt = $launcherText.IndexOf('-Action renew -CoordinatorId $CoordinatorId -Pid $childPid')

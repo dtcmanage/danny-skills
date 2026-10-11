@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.13
+
+- Exclude ledger-proven productive rotations from the thrash cap, retain a distinct 30-launch ceiling and consumed-cursor evidence, narrow managed resume bootstrap, archive bounded checkpoints, and add progress/baseline regression gates.
+
 ## 2.21.12
 
 - Shared model router: ranked judging calls a winner only on a statistically significant lead over 16 rounds; lower-effort and swap proposals are blocked when they trail.

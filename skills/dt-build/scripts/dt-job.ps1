@@ -237,7 +237,7 @@ function Save-DtJobRecord {
 }
 
 function Add-DtJobEvent {
-    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId, [Parameter(Mandatory)][string]$Type, [Parameter(Mandatory)][string]$Status, [string]$Reason, [string]$RequestedBy)
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId, [Parameter(Mandatory)][string]$Type, [Parameter(Mandatory)][string]$Status, [string]$Reason, [string]$RequestedBy, [Nullable[long]]$ConsumedEventSeq)
     $eventsPath = (Get-DtJobPaths -RunFolder $RunFolder).Events
     $seq = 1
     $prefix = ''
@@ -254,6 +254,7 @@ function Add-DtJobEvent {
     $evt = [ordered]@{ seq = $seq; job_id = $JobId; ts_utc = [DateTime]::UtcNow.ToString('o'); type = $Type; status = $Status }
     if ($Reason) { $evt.reason = $Reason }
     if ($RequestedBy) { $evt.requested_by = $RequestedBy }
+    if ($null -ne $ConsumedEventSeq) { $evt.consumed_event_seq = [long]$ConsumedEventSeq }
     [System.IO.File]::AppendAllText($eventsPath, ($prefix + ($evt | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -1255,7 +1256,7 @@ function Invoke-DtJobRequestContinuation {
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $state = Get-DtJobRunState -BuildStatePath $ctx.build_state_path
-        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason $(if ($Reason) { $Reason } else { 'continuation requested' }) -RequestedBy $CoordinatorId
+        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason $(if ($Reason) { $Reason } else { 'continuation requested' }) -RequestedBy $CoordinatorId -ConsumedEventSeq $state.last_consumed_event_seq
     }
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx) -AsJson:$Json
 }
