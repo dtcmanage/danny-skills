@@ -1360,9 +1360,11 @@ function Invoke-DtJobAwaitDanny {
 
 function Assert-DtJobOperator {
     # approve and resume are Danny's commands: a coordinator or a job can never release its own boundary.
-    param([Parameter(Mandatory)][string]$VerbName, [Parameter(Mandatory)][string]$RunFolder)
+    param([Parameter(Mandatory)][string]$VerbName, [Parameter(Mandatory)][string]$RunFolder, [switch]$AllowLiveCoordinator)
     if ($env:DT_BUILD_COORDINATOR_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; coordinator $env:DT_BUILD_COORDINATOR_ID cannot run it" }
     if ($env:DT_JOB_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; it cannot run inside dt-job job $env:DT_JOB_ID" }
+    # hold only adds a reason to Danny's DM and releases nothing, so it may run while the coordinator closes out.
+    if ($AllowLiveCoordinator) { return }
     # The env checks can be bypassed by clearing a variable; a live watcher-launched coordinator cannot hide its process.
     $lease = Get-DtJobLease -RunFolder $RunFolder
     if ($null -ne $lease -and $lease.launched_by -eq 'watcher') {
@@ -1416,7 +1418,7 @@ function Invoke-DtJobHold {
     # handled rather than forgotten. -Clear removes the reason. The DM still goes out on time.
     if (-not $Operation) { throw 'DT_JOB_USAGE: hold requires -Operation.' }
     if (-not $Clear -and [string]::IsNullOrWhiteSpace($Reason)) { throw 'DT_JOB_USAGE: hold requires -Reason "<why>" or -Clear.' }
-    Assert-DtJobOperator -VerbName 'hold' -RunFolder $RunFolder
+    Assert-DtJobOperator -VerbName 'hold' -RunFolder $RunFolder -AllowLiveCoordinator
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder

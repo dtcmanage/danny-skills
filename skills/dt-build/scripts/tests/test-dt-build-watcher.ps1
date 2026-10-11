@@ -695,7 +695,15 @@ try {
     try { $coordHold = Invoke-DtJobExpectFail @('hold', '-RunFolder', $run.folder, '-Operation', 'parser-review', '-Reason', 'x') }
     finally { $env:DT_BUILD_COORDINATOR_ID = $null }
     Assert-True ($coordHold.exit -ne 0 -and $coordHold.text -match 'DT_JOB_OPERATOR_ONLY') 'a coordinator cannot hold its own stop'
+    # A watcher-launched coordinator still closing out (this test process stands in for it) blocks approve, not hold.
+    $leasePath = Join-Path $run.folder 'coordinator.lease'
+    $savedLease = if (Test-Path -LiteralPath $leasePath) { Get-Content -Raw -LiteralPath $leasePath } else { $null }
+    $liveLease = [ordered]@{ coordinator_id = 'mc-closing'; host = 'codex'; session_id = $null; pid = $PID; pid_start_utc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(9).ToString('o'); released_utc = $null }
+    Write-Utf8 $leasePath ($liveLease | ConvertTo-Json)
+    $liveApprove = Invoke-DtJobExpectFail @('approve', '-RunFolder', $run.folder, '-Operation', 'parser-review')
+    Assert-True ($liveApprove.exit -ne 0 -and $liveApprove.text -match 'DT_JOB_OPERATOR_ONLY') 'approve still waits for a live watcher-launched coordinator to exit'
     Invoke-DtJob @('hold', '-RunFolder', $run.folder, '-Operation', 'parser-review', '-Reason', 'waiting on the tooling fix for reviewer file access') | Out-Null
+    if ($null -ne $savedLease) { Write-Utf8 $leasePath $savedLease } else { Remove-Item -LiteralPath $leasePath -Force }
     $doc = Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json
     Assert-True ($doc.awaiting.held.reason -eq 'waiting on the tooling fix for reviewer file access') 'hold records the reason on the pending stop'
     $doc.awaiting.escalate_after_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o')
