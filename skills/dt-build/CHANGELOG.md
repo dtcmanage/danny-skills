@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.27.1
+
+- hold no longer waits for a live watcher-launched coordinator to exit: it only adds a reason to Danny's DM. approve, resume and delegate still wait.
+
 ## 2.27.0
 
 - Repeat-wall guard: when a coordinator uses up its working room without starting a job, the watcher records the files whose reads filled it (context-wall.json). The next coordinator sees them in its resume record, and the PreToolUse hook denies direct reads of them, sending the read to a mechanical worker.
