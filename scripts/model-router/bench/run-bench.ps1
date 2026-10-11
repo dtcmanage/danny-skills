@@ -37,7 +37,7 @@ function Set-BenchClaudeNativeEnvironment {
 function Add-BenchSpendDefaults {
     param([Parameter(Mandatory)][hashtable]$Config, [Parameter(Mandatory)][string]$ShippedPath)
     $shipped = Get-Content -LiteralPath $ShippedPath -Raw | ConvertFrom-Json -AsHashtable
-    foreach ($key in @('spend_stop_points','spend_stop_model_calls','spend_reading_stale_hours','spend_baseline_max_age_minutes')) {
+    foreach ($key in @('spend_stop_points','spend_stop_model_calls','spend_reading_stale_hours','spend_baseline_max_age_minutes','max_parallel_calls','spend_check_interval_seconds')) {
         if (-not $Config.ContainsKey($key) -and $shipped.ContainsKey($key)) { $Config[$key] = $shipped[$key] }
     }
 }
@@ -148,7 +148,13 @@ function Invoke-BenchCli {
         try {
             $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
             $write=$process.StandardInput.WriteAsync($inputText)
-            if(-not $write.Wait(5000)){throw 'Claude stdin timeout'}
+            try { if(-not $write.Wait(5000)){throw 'Claude stdin timeout'} }
+            catch {
+                # The CLI closed stdin before reading the prompt; keep what it said on the way out.
+                $null=$process.WaitForExit(10000)
+                $said=if($stdout.Wait(1000) -and $stderr.Wait(1000)){Get-BenchErrorDetail -Stdout $stdout.Result -Stderr $stderr.Result}else{''}
+                throw ("Claude stdin closed (exit $(if($process.HasExited){$process.ExitCode}else{'running'})). "+$said)
+            }
             $process.StandardInput.Close()
             if(-not $process.WaitForExit($TimeoutMs)){throw 'Claude timeout'}
             if(-not $stdout.Wait(1000) -or -not $stderr.Wait(1000)){throw 'Claude output timeout'}
@@ -210,6 +216,47 @@ function Get-BenchFailureCategory {
     return 'unclassified'
 }
 
+function Invoke-BenchDispatchCall {
+    param($Request, [Parameter(Mandatory)][scriptblock]$CliInvoker)
+    # The model call only. Safe on any runspace: it writes no shared router state.
+    try { $response=& $CliInvoker $Request; if($null -eq $response){throw 'Empty dispatch response'} }
+    catch {
+        if($_.Exception.Data.Contains('bench_response')){$response=$_.Exception.Data['bench_response']}
+        else{$response=@{status='unknown';failure_category=(Get-BenchFailureCategory $_.Exception.Message);root_cause='unverified';detail=$_.Exception.Message;usage=$null;usage_partial=$true}}
+    }
+    return $response
+}
+
+function Complete-BenchDispatch {
+    param($Request, $Response, [scriptblock]$Limits, [scriptblock]$Diagnosis)
+    # Refusal blocks, diagnosis and quota readings write shared state; the host runs these one at a time.
+    $response=$Response | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json -AsHashtable
+    if($response.status -ne 'ok'){
+        $response.detail=Get-BenchErrorDetail -Stdout ([string]$response.detail) -Stderr ''
+        $refusal=Test-RouterLimitRefusal -Vendor $Request.vendor -Text $response.detail
+        if($refusal.refused){
+            $blockArgs=@{Vendor=$Request.vendor;Reason='quota_refusal'}
+            if($refusal.reset_at_utc){$blockArgs.ResetAtUtc=[datetimeoffset]$refusal.reset_at_utc}
+            $null=Add-RouterVendorBlock @blockArgs
+        }
+        $response.diagnosis=& $Diagnosis $Request.vendor ([string]$response.detail)
+    }
+    if($Request.vendor -eq 'codex' -and $response.ContainsKey('rate_limits_weekly') -and $response.rate_limits_weekly -is [hashtable]){
+        try { $null = Save-RouterCodexAppServerReading -Reading $response.rate_limits_weekly } catch { Write-Warning "Codex app-server reading not saved: $($_.Exception.Message)" }
+    }
+    try {$response.quota_after=& $Limits $Request.vendor} catch {$response.quota_after=@{measurement='unavailable';detail=$_.Exception.Message}}
+    return $response
+}
+
+# One model call on a pooled runspace: load this script's functions, call, return JSON.
+$script:BenchParallelCall = {
+    param([string]$BenchScript, [string]$RequestJson, [int]$TimeoutMs)
+    . $BenchScript
+    $request = $RequestJson | ConvertFrom-Json -AsHashtable
+    $invoker = { param($r) Invoke-BenchCli -Request $r -TimeoutMs $TimeoutMs }.GetNewClosure()
+    Invoke-BenchDispatchCall -Request $request -CliInvoker $invoker | ConvertTo-Json -Depth 30 -Compress
+}
+
 function Invoke-RouterBench {
     [CmdletBinding()]
     param([Parameter(Mandatory)][ValidateSet('fast','coder','deep-thinker','writer','illustrator')][string]$Job,
@@ -249,6 +296,9 @@ function Invoke-RouterBench {
     if (-not $PSBoundParameters.ContainsKey('ConfigPath')) {
         Add-BenchSpendDefaults -Config $config -ShippedPath (Join-Path $script:BenchRoot 'bench-config.json')
     }
+    # Parallel model calls need the real CLI path; an injected invoker (tests) stays serial.
+    $maxParallel=if($CliInvoker -or -not $config.ContainsKey('max_parallel_calls')){1}else{[Math]::Max(1,[int]$config.max_parallel_calls)}
+    $config.max_parallel_calls=$maxParallel
     if(-not $CliInvoker){$CliInvoker={param($r) Invoke-BenchCli -Request $r -TimeoutMs $TimeoutMs}}
     if(-not $Limits){$Limits={param($v) $u=if($v -eq 'claude'){Get-RouterClaudeUsage}else{Get-RouterCodexUsage -Weekly}; @{blocked=(Get-RouterVendorBlocked -Vendor $v);usage=$u}}}
     if(-not $Diagnosis){$Diagnosis={param($v,$e) Resolve-RouterDispatchFailure -Vendor $v -ErrorText $e}}
@@ -270,12 +320,46 @@ function Invoke-RouterBench {
     [void]$psi.ArgumentList.Add((Join-Path $script:BenchRoot 'bench_engine.py'))
     $process=[Diagnostics.Process]::Start($psi)
     $errors=$process.StandardError.ReadToEndAsync()
+    $pool=$null
+    $inflight=[Collections.Generic.List[object]]::new()
+    if($maxParallel -gt 1){
+        # Each call parks thread-pool threads on its stdout/stderr reads for its whole life. Without
+        # headroom the pool grows slowly and a queued prompt write misses the Claude CLI's 3s stdin wait.
+        $workers=0;$io=0;[Threading.ThreadPool]::GetMinThreads([ref]$workers,[ref]$io)
+        $need=$maxParallel*4+16
+        if($workers -lt $need){[void][Threading.ThreadPool]::SetMinThreads($need,[Math]::Max($io,$need))}
+        $pool=[runspacefactory]::CreateRunspacePool(1,$maxParallel);$pool.Open()
+    }
+    $benchScript=Join-Path $script:BenchRoot 'run-bench.ps1'
+    $idleLimit=[Math]::Max(60000,$TimeoutMs+10000)
+    $idle=[Diagnostics.Stopwatch]::StartNew()
+    $pending=$null
     try {
         $process.StandardInput.WriteLine(($arguments | ConvertTo-Json -Depth 30 -Compress));$process.StandardInput.Flush()
         while($true){
-            $pending=$process.StandardOutput.ReadLineAsync()
-            if(-not $pending.Wait([Math]::Max(60000,$TimeoutMs+10000))){throw 'Bench IPC timeout'}
-            $line=$pending.GetAwaiter().GetResult()
+            # Answer finished parallel calls first; the engine matches replies to requests by id.
+            for($i=$inflight.Count-1;$i -ge 0;$i--){
+                $call=$inflight[$i]
+                if(-not $call.handle.IsCompleted){continue}
+                $inflight.RemoveAt($i)
+                try {
+                    $json=[string](@($call.ps.EndInvoke($call.handle)) | Select-Object -Last 1)
+                    if(-not $json){throw ('Parallel call returned nothing. '+(@($call.ps.Streams.Error) -join ' '))}
+                    $response=$json | ConvertFrom-Json -AsHashtable
+                } catch {
+                    $response=@{status='unknown';failure_category=(Get-BenchFailureCategory $_.Exception.Message);root_cause='unverified';detail=$_.Exception.Message;usage=$null;usage_partial=$true}
+                } finally {$call.ps.Dispose()}
+                try {$reply=@{id=$call.id;value=(Complete-BenchDispatch -Request $call.request -Response $response -Limits $Limits -Diagnosis $Diagnosis)}}
+                catch {$reply=@{id=$call.id;error=$_.Exception.Message}}
+                $process.StandardInput.WriteLine(($reply | ConvertTo-Json -Depth 40 -Compress));$process.StandardInput.Flush()
+                $idle.Restart()
+            }
+            if(-not $pending){$pending=$process.StandardOutput.ReadLineAsync()}
+            if(-not $pending.Wait($(if($inflight.Count){200}else{1000}))){
+                if($inflight.Count -eq 0 -and $idle.ElapsedMilliseconds -gt $idleLimit){throw 'Bench IPC timeout'}
+                continue
+            }
+            $line=$pending.GetAwaiter().GetResult();$pending=$null;$idle.Restart()
             if($null -eq $line){throw "Bench engine ended: $($errors.GetAwaiter().GetResult())"}
             $message=$line | ConvertFrom-Json -AsHashtable
             if($message.operation -eq 'result'){
@@ -286,6 +370,12 @@ function Invoke-RouterBench {
                     if (-not $NoAlerts) { Send-RouterEffortAlerts }
                 }
                 return $result
+            }
+            if($message.operation -eq 'dispatch' -and $pool){
+                $ps=[PowerShell]::Create();$ps.RunspacePool=$pool
+                [void]$ps.AddScript($script:BenchParallelCall.ToString()).AddArgument($benchScript).AddArgument(($message.payload | ConvertTo-Json -Depth 30 -Compress)).AddArgument($TimeoutMs)
+                $inflight.Add(@{id=$message.id;request=$message.payload;ps=$ps;handle=$ps.BeginInvoke()})
+                continue
             }
             try {
                 $value=switch($message.operation){
@@ -306,35 +396,21 @@ function Invoke-RouterBench {
                     'outcome' { $null=& $Outcome $message.payload; $null }
                     'dispatch' {
                         $r=$message.payload
-                        try { $response=& $CliInvoker $r; if($null -eq $response){throw 'Empty dispatch response'} }
-                        catch {
-                            if($_.Exception.Data.Contains('bench_response')){$response=$_.Exception.Data['bench_response']}
-                            else{$response=@{status='unknown';failure_category=(Get-BenchFailureCategory $_.Exception.Message);root_cause='unverified';detail=$_.Exception.Message;usage=$null;usage_partial=$true}}
-                        }
-                        $response=$response | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json -AsHashtable
-                        if($response.status -ne 'ok'){
-                            $response.detail=Get-BenchErrorDetail -Stdout ([string]$response.detail) -Stderr ''
-                            $refusal=Test-RouterLimitRefusal -Vendor $r.vendor -Text $response.detail
-                            if($refusal.refused){
-                                $blockArgs=@{Vendor=$r.vendor;Reason='quota_refusal'}
-                                if($refusal.reset_at_utc){$blockArgs.ResetAtUtc=[datetimeoffset]$refusal.reset_at_utc}
-                                $null=Add-RouterVendorBlock @blockArgs
-                            }
-                            $response.diagnosis=& $Diagnosis $r.vendor ([string]$response.detail)
-                        }
-                        if($r.vendor -eq 'codex' -and $response.ContainsKey('rate_limits_weekly') -and $response.rate_limits_weekly -is [hashtable]){
-                            try { $null = Save-RouterCodexAppServerReading -Reading $response.rate_limits_weekly } catch { Write-Warning "Codex app-server reading not saved: $($_.Exception.Message)" }
-                        }
-                        try {$response.quota_after=& $Limits $r.vendor} catch {$response.quota_after=@{measurement='unavailable';detail=$_.Exception.Message}}
-                        $response
+                        $response=Invoke-BenchDispatchCall -Request $r -CliInvoker $CliInvoker
+                        Complete-BenchDispatch -Request $r -Response $response -Limits $Limits -Diagnosis $Diagnosis
                     }
                     default {throw 'Unknown IPC operation'}
                 }
-                $reply=@{value=$value}
-            } catch {$reply=@{error=$_.Exception.Message}}
+                $reply=@{id=$message.id;value=$value}
+            } catch {$reply=@{id=$message.id;error=$_.Exception.Message}}
             $process.StandardInput.WriteLine(($reply | ConvertTo-Json -Depth 40 -Compress));$process.StandardInput.Flush()
+            $idle.Restart()
         }
-    } finally {if(-not $process.HasExited){$process.Kill($true)};$process.Dispose()}
+    } finally {
+        if(-not $process.HasExited){$process.Kill($true)};$process.Dispose()
+        foreach($call in $inflight){try{$call.ps.Stop()}catch{};$call.ps.Dispose()}
+        if($pool){$pool.Close();$pool.Dispose()}
+    }
     } finally { Exit-RouterBenchLock $benchLock }
 }
 

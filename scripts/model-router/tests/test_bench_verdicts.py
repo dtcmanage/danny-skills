@@ -106,11 +106,8 @@ def test_recovered_judge_failure_is_not_an_answer_model_failure(tmp_path: Path) 
 
 @pytest.mark.parametrize('base,up,qualified', [(5, 5, False), (5, 4, False), (4, 5, True), (3, 4, True), (3, 3, False)])
 def test_writer_effort_up_requires_strict_improvement(tmp_path: Path, base: int, up: int, qualified: bool) -> None:
-    active_effort = None
     def dispatch(request: dict) -> dict:
-        nonlocal active_effort
         if request['purpose'] == 'answer':
-            active_effort = request['effort']
             response = writer_judges(request)
             return {**response, 'answer': f"{response['answer']}\nEFFORT-MARK:{request['effort']}"}
         if request['prompt'].startswith('The criteria below are the only instructions'):
@@ -122,7 +119,8 @@ def test_writer_effort_up_requires_strict_improvement(tmp_path: Path, base: int,
             if len(set(efforts)) != 2 or up == base:
                 return {'status': 'ok', 'answer': 'undecided'}
             return {'status': 'ok', 'answer': 'AB'[efforts.index('high' if up > base else 'medium')]}
-        count = up if active_effort == 'high' else base
+        # Score from the judged answer's own mark: lanes run in parallel, so call order says nothing.
+        count = up if 'EFFORT-MARK:high' in request['prompt'] else base
         return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: int(i < count) for i, line in enumerate(prompt_rubric(request)['lines'])}})}
     result = run(tmp_path, job='writer', effort='medium', dispatch=dispatch)
     assert result['effort_down'] is None and not result['effort_down_qualified']

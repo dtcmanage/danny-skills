@@ -13,5 +13,7 @@
   "spend_stop_points": 5,
   "spend_stop_model_calls": 700,
   "spend_reading_stale_hours": 6,
-  "spend_baseline_max_age_minutes": 10
+  "spend_baseline_max_age_minutes": 10,
+  "max_parallel_calls": 32,
+  "spend_check_interval_seconds": 30
 }

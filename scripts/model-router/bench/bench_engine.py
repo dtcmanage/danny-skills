@@ -5,7 +5,9 @@ StateDir is the router state root. No implicit live state, alerts, or approvals.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from fractions import Fraction
+import itertools
 import json
 import hashlib
 import math
@@ -18,6 +20,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from typing import Any, Callable
 from uuid import uuid4
@@ -28,6 +31,23 @@ from bench_ledger import append_ledger
 BENCH = Path(__file__).resolve().parent
 JOBS = {'fast', 'coder', 'deep-thinker', 'writer', 'illustrator'}
 TRIGGERS = {'new-model', 'research', 'drift', 'manual'}
+# Graders are CPU-bound local subprocesses with a 30s clock; too many at once time each other out.
+GRADER_SLOTS = threading.BoundedSemaphore(8)
+
+
+def run_all(function: Callable[[Any], Any], items: list[Any], parallel: int) -> list[Any]:
+    """Map in order. Parallel mode starts every item at once (model calls are throttled
+    separately); the first spend halt, else the first error, is raised after all finish."""
+    items = list(items)
+    if parallel <= 1 or len(items) <= 1:
+        return [function(item) for item in items]
+    with ThreadPoolExecutor(max_workers=len(items)) as pool:
+        futures = [pool.submit(function, item) for item in items]
+        wait(futures)
+    errors = [future.exception() for future in futures if future.exception() is not None]
+    if errors:
+        raise next((error for error in errors if isinstance(error, SpendHalted)), errors[0])
+    return [future.result() for future in futures]
 
 # Explicit input contract: fixture directories also contain grader-only data.
 CANDIDATE_INPUTS = {
@@ -103,7 +123,7 @@ def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, A
         try:
             process = subprocess.Popen(
                 [sys.executable, str(BENCH / 'grader-runner.py'), str(task.resolve()), str(evidence)],
-                cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, start_new_session=os.name != 'nt')
             try:
                 stdout, stderr = process.communicate(timeout=timeout)
@@ -111,7 +131,7 @@ def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, A
                 # Kill descendants while the root PID is still alive. Killing
                 # just the outer runner leaves pytest/Node holding temp files.
                 if os.name == 'nt':
-                    subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                    subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], stdin=subprocess.DEVNULL,
                                    capture_output=True, timeout=5, check=True)
                 else:
                     os.killpg(process.pid, signal.SIGKILL)
@@ -210,7 +230,7 @@ def render_ranked(task: Path, answer: str, png: Path) -> dict[str, Any]:
         source.write_text(answer_body(answer), encoding='utf-8')
         result = subprocess.run(['node', str(BENCH / 'tasks/ui-frontend-card/harness/render-ranked.cjs'),
             str(source), str(png), metadata['render'], json.dumps(metadata.get('key_presses', []))],
-            capture_output=True, text=True, timeout=30)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
         if result.returncode or not png.is_file():
             raise ValueError((result.stderr or result.stdout)[-2000:])
         return {'status': 'ok', 'path': str(png)}
@@ -221,84 +241,99 @@ def render_ranked(task: Path, answer: str, png: Path) -> dict[str, Any]:
 def rank_tasks(tasks: list[Path], *, run: Path, job: str, tier: str,
                configurations: dict[str, Any], judges: dict[str, str], judge_effort: str,
                call: Callable[..., dict[str, Any]], renderer: Callable[..., dict[str, Any]],
-               between_tasks: Callable[[], None] = lambda: None) -> dict[str, Any] | None:
+               between_tasks: Callable[[], None] = lambda: None,
+               parallel: int = 1) -> dict[str, Any] | None:
     if not tasks:
         return None
+
+    def rep_unit(unit: tuple[Path, dict[str, Any], int]) -> dict[str, Any]:
+        task, metadata, rep = unit
+        if rep == 1 or parallel > 1:
+            between_tasks()
+        result: dict[str, Any] = {'render_failures': [], 'invalid_replies': []}
+        answers, images, failed = {}, {}, []
+        record: dict[str, Any] = {'rep': rep, 'outputs': {}, 'judges': []}
+        sides = list(configurations.items())
+        responses = run_all(lambda item: call(item[1]['model'], item[1]['effort'],
+                                              candidate_prompt(task, private=True), 'answer'), sides, parallel)
+        for (side, configuration), response in zip(sides, responses):
+            answer = response.get('answer', '')
+            path = run / f'{side}-{task.name}-{rep}.txt'
+            path.write_text(answer, encoding='utf-8')
+            record['outputs'][side] = {'response': response, 'answer_path': str(path)}
+            answers[side] = answer
+            if response.get('status') != 'ok':
+                failed.append(side)
+            elif metadata.get('render'):
+                # Image input paths can be visible to a judge. Keep side
+                # labels out of those paths as well as out of the prompt.
+                png = run / f'ranked-image-{rep}-{uuid4().hex}.png'
+                rendered = renderer(task, answer, png)
+                record['outputs'][side]['render'] = rendered
+                if rendered.get('status') != 'ok':
+                    failed.append(side)
+                    result['render_failures'].append({'rep': rep, 'side': side, **rendered})
+                else:
+                    images[side] = rendered['path']
+        winner, reason = 'draw', None
+        if failed:
+            # Missing answers are draws; only an observed render failure loses a rep.
+            if len(failed) == 1 and 'render' in record['outputs'][failed[0]]:
+                winner = 'incumbent' if failed[0] == 'candidate' else 'candidate'
+            elif len(failed) == 2 and all('render' in record['outputs'][s] for s in failed):
+                reason = 'both_renders_failed'
+            else:
+                reason = 'answer_unavailable'
+        else:
+            votes = []
+            reasons = []
+
+            def ask(judge: str) -> tuple[int, list[str], str, dict[str, Any]]:
+                seed, order = ranked_order(run.name, task.name, rep, judge)
+                text = [answers[s] if metadata.get('render') != 'svg' else f'Image {label} attached.'
+                        for label, s in zip(('A', 'B'), order)]
+                prompt, token = ranked_prompt(task, text)
+                return seed, order, token, call(judge, judge_effort, prompt, 'judge',
+                                                images=[images[s] for s in order] if images else None)
+            for judge, (seed, order, token, judged) in zip(judges.values(), run_all(ask, list(judges.values()), parallel)):
+                vote = judged.get('answer', '').strip().lower() if judged.get('status') == 'ok' else None
+                entry = {'model': judge, 'effort': judge_effort, 'seed': seed, 'order': order,
+                         'delimiter_token': token, 'response': judged, 'reply': vote}
+                if vote in ('a', 'b'):
+                    entry['vote'] = order[0 if vote == 'a' else 1]
+                else:
+                    entry['vote'] = None
+                    if vote == 'no_difference':
+                        reasons.append('no_difference')
+                    elif judged.get('status') != 'ok':
+                        reasons.append('judge_unavailable')
+                    else:
+                        reasons.append('invalid_reply')
+                        result['invalid_replies'].append({'rep': rep, **entry})
+                record['judges'].append(entry)
+                votes.append(entry['vote'])
+            if votes[0] is not None and votes[0] == votes[1]:
+                winner = votes[0]
+            else:
+                reason = ','.join(dict.fromkeys(reasons)) or 'split_vote'
+        record['winner'] = winner
+        return {**result, 'task': task, 'record': record, 'reason': reason}
+
+    plan = [(task, json.loads((task / 'task.json').read_text(encoding='utf-8'))) for task in tasks]
+    outcomes = run_all(rep_unit, [(task, metadata, rep) for task, metadata in plan for rep in range(1, 4)], parallel)
     results = []
-    for task in tasks:
-        between_tasks()
-        metadata = json.loads((task / 'task.json').read_text(encoding='utf-8'))
+    for task, _ in plan:
         result: dict[str, Any] = {'task_id': task.name, 'candidate_wins': 0, 'incumbent_wins': 0,
             'draws': 0, 'reps': [], 'disagreements': [], 'invalid_replies': [], 'render_failures': []}
-        for rep in range(1, 4):
-            answers, images, failed = {}, {}, []
-            record: dict[str, Any] = {'rep': rep, 'outputs': {}, 'judges': []}
-            for side, configuration in configurations.items():
-                response = call(configuration['model'], configuration['effort'],
-                                candidate_prompt(task, private=True), 'answer')
-                answer = response.get('answer', '')
-                path = run / f'{side}-{task.name}-{rep}.txt'
-                path.write_text(answer, encoding='utf-8')
-                record['outputs'][side] = {'response': response, 'answer_path': str(path)}
-                answers[side] = answer
-                if response.get('status') != 'ok':
-                    failed.append(side)
-                elif metadata.get('render'):
-                    # Image input paths can be visible to a judge. Keep side
-                    # labels out of those paths as well as out of the prompt.
-                    png = run / f'ranked-image-{rep}-{uuid4().hex}.png'
-                    rendered = renderer(task, answer, png)
-                    record['outputs'][side]['render'] = rendered
-                    if rendered.get('status') != 'ok':
-                        failed.append(side)
-                        result['render_failures'].append({'rep': rep, 'side': side, **rendered})
-                    else:
-                        images[side] = rendered['path']
-            winner, reason = 'draw', None
-            if failed:
-                # Missing answers are draws; only an observed render failure loses a rep.
-                if len(failed) == 1 and 'render' in record['outputs'][failed[0]]:
-                    winner = 'incumbent' if failed[0] == 'candidate' else 'candidate'
-                elif len(failed) == 2 and all('render' in record['outputs'][s] for s in failed):
-                    reason = 'both_renders_failed'
-                else:
-                    reason = 'answer_unavailable'
-            else:
-                votes = []
-                reasons = []
-                for judge in judges.values():
-                    seed, order = ranked_order(run.name, task.name, rep, judge)
-                    text = [answers[s] if metadata.get('render') != 'svg' else f'Image {label} attached.'
-                            for label, s in zip(('A', 'B'), order)]
-                    prompt, token = ranked_prompt(task, text)
-                    judged = call(judge, judge_effort, prompt, 'judge',
-                                  images=[images[s] for s in order] if images else None)
-                    vote = judged.get('answer', '').strip().lower() if judged.get('status') == 'ok' else None
-                    entry = {'model': judge, 'effort': judge_effort, 'seed': seed, 'order': order,
-                             'delimiter_token': token, 'response': judged, 'reply': vote}
-                    if vote in ('a', 'b'):
-                        entry['vote'] = order[0 if vote == 'a' else 1]
-                    else:
-                        entry['vote'] = None
-                        if vote == 'no_difference':
-                            reasons.append('no_difference')
-                        elif judged.get('status') != 'ok':
-                            reasons.append('judge_unavailable')
-                        else:
-                            reasons.append('invalid_reply')
-                            result['invalid_replies'].append({'rep': rep, **entry})
-                    record['judges'].append(entry)
-                    votes.append(entry['vote'])
-                if votes[0] is not None and votes[0] == votes[1]:
-                    winner = votes[0]
-                else:
-                    reason = ','.join(dict.fromkeys(reasons)) or 'split_vote'
-            record['winner'] = winner
-            if winner == 'draw':
+        for outcome in (o for o in outcomes if o['task'] is task):
+            record = outcome['record']
+            result['render_failures'] += outcome['render_failures']
+            result['invalid_replies'] += outcome['invalid_replies']
+            if record['winner'] == 'draw':
                 result['draws'] += 1
-                result['disagreements'].append({'rep': rep, 'reason': reason})
+                result['disagreements'].append({'rep': record['rep'], 'reason': outcome['reason']})
             else:
-                result[winner + '_wins'] += 1
+                result[record['winner'] + '_wins'] += 1
             result['reps'].append(record)
         result['winner'] = ('candidate' if result['candidate_wins'] > result['incumbent_wins'] else
                             'incumbent' if result['incumbent_wins'] > result['candidate_wins'] else 'draw')
@@ -425,6 +460,11 @@ class ComparisonSpend:
         # the writer on 2026-10-06 after nine calls).
         self.baseline_max_age = config.get('spend_baseline_max_age_minutes', 10) * 60
         self.calls = 0
+        # Parallel lanes share one comparison budget: serialize readings and stop everyone on the first halt.
+        self.lock = threading.RLock()
+        self.halted: SpendHalted | None = None
+        self.check_interval = config.get('spend_check_interval_seconds', 0) if config.get('max_parallel_calls', 1) > 1 else 0
+        self.last_check = 0.0
         self.completed_reports: list[dict[str, Any]] = []
         self.started = datetime.now(timezone.utc)
         self.start = self.read()
@@ -502,12 +542,35 @@ class ComparisonSpend:
         value = reading.get('used_percent')
         return float(value) if type(value) in (int, float) and math.isfinite(value) else None
 
+    def count_call(self) -> None:
+        with self.lock:
+            self.calls += 1
+
     def before_call(self) -> None:
-        if self.fallback and self.calls - (self.uncovered_since or 0) >= self.call_limit:
-            uncovered = self.calls - (self.uncovered_since or 0)
-            raise SpendHalted(f'Model-call cap reached ({uncovered}/{self.call_limit}); weekly readings unavailable or stale.')
+        with self.lock:
+            if self.halted:
+                raise self.halted
+            if self.fallback and self.calls - (self.uncovered_since or 0) >= self.call_limit:
+                uncovered = self.calls - (self.uncovered_since or 0)
+                self.halted = SpendHalted(f'Model-call cap reached ({uncovered}/{self.call_limit}); weekly readings unavailable or stale.')
+                raise self.halted
 
     def check(self, final: bool = False) -> None:
+        with self.lock:
+            if self.halted:
+                raise self.halted
+            if not final and self.check_interval and time.monotonic() - self.last_check < self.check_interval:
+                self.before_call()
+                return
+            try:
+                self._check(final)
+            except SpendHalted as error:
+                self.halted = error
+                raise
+            finally:
+                self.last_check = time.monotonic()
+
+    def _check(self, final: bool) -> None:
         self.latest = self.read()
         for vendor in ('claude', 'codex'):
             baseline, latest = self.baselines[vendor], self.percent(self.latest[vendor])
@@ -694,6 +757,8 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     rows: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
     judges = config['judges']
+    parallel = max(1, int(config.get('max_parallel_calls', 1)))
+    slots = threading.BoundedSemaphore(parallel)
 
     def call(model: str, level: str | None, prompt: str, purpose: str,
              images: list[str] | None = None) -> dict[str, Any]:
@@ -712,134 +777,169 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                       'detail': 'Image invocation unsupported by text CLI', 'quota': quota}
         else:
             if spend:
-                spend.calls += 1
-            started = datetime.now(timezone.utc).isoformat()
-            clock = time.perf_counter()
-            try:
-                request = {'model': model, 'vendor': vendor, 'effort': level,
-                           'prompt': prompt, 'purpose': purpose}
-                if images:
-                    request['images'] = images
-                result = dispatch(request)
-                if not isinstance(result, dict) or (result.get('status') == 'ok' and not isinstance(result.get('answer'), str)):
-                    raise ValueError('Invalid dispatch payload')
-            except Exception as error:
-                result = {'status': 'unknown', 'failure_category': 'unclassified',
-                          'root_cause': 'unverified', 'detail': str(error)}
+                spend.count_call()
+            request = {'model': model, 'vendor': vendor, 'effort': level,
+                       'prompt': prompt, 'purpose': purpose}
+            if images:
+                request['images'] = images
+            with slots:
+                started = datetime.now(timezone.utc).isoformat()
+                clock = time.perf_counter()
+                try:
+                    result = dispatch(request)
+                    if not isinstance(result, dict) or (result.get('status') == 'ok' and not isinstance(result.get('answer'), str)):
+                        raise ValueError('Invalid dispatch payload')
+                except Exception as error:
+                    result = {'status': 'unknown', 'failure_category': 'unclassified',
+                              'root_cause': 'unverified', 'detail': str(error)}
+                duration = round((time.perf_counter() - clock) * 1000)
             # Wall-clock per call feeds the bench ledger (performance over time, not just cost).
-            result = {**result, 'quota': quota, 'started_at_utc': started,
-                      'duration_ms': round((time.perf_counter() - clock) * 1000)}
+            result = {**result, 'quota': quota, 'started_at_utc': started, 'duration_ms': duration}
         calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result, 'effort': level})
         return result
 
     comparison_tables: list[dict[str, Any]] = []
 
-    def table(model: str, level: str | None, side: str) -> dict[str, Any]:
-        results = []
+    def table(model: str, level: str | None, side: str, record: bool = True) -> dict[str, Any]:
+        """Every (task, rep) is one unit; parallel mode runs all units of the lane at once."""
+        plan = []
         for task in selected:
-            if spend:
-                spend.check()
             metadata = json.loads((task / 'task.json').read_text(encoding='utf-8'))
-            if task.name == 'pelican' and trigger != 'manual':
+            skip = task.name == 'pelican' and trigger != 'manual'
+            count = 1 if task.name == 'pelican' else 3
+            plan.append((task, metadata, skip, count))
+        units = [(index, task, metadata, rep) for index, (task, metadata, skip, count) in enumerate(plan)
+                 for rep in ([0] if skip else range(1, count + 1))]
+
+        def rep_unit(unit: tuple[int, Path, dict[str, Any], int]) -> str | None:
+            _, task, metadata, rep = unit
+            # Serial runs keep the per-task spend check; parallel runs check per unit (throttled).
+            if spend and (rep <= 1 or parallel > 1):
+                spend.check()
+            if rep == 0:
+                return None
+            for attempt in (1, 2, 3):
+                row = {'source': 'bench', 'trigger': trigger, 'job': job, 'tier': tier, 'effort': level,
+                       'model': model, 'side': side, 'task_bank_sha256': digest,
+                       'task_id': task.name, 'rep': rep, 'attempt': attempt,
+                       'private': review.loaded[task.name][1],
+                       'timestamp': datetime.now(timezone.utc).isoformat()}
+                try:
+                    prompt = candidate_prompt(task, private=review.loaded[task.name][1])
+                except OSError as error:
+                    response = {'status': 'unknown', 'failure_category': 'environment',
+                                'detail': 'Required candidate input unavailable: ' + str(error)}
+                else:
+                    response = call(model, level, prompt, 'answer')
+                row['response'] = response
+                status = response.get('status', 'unknown')
+                if status == 'ok':
+                    try:
+                        answer = answer_body(response['answer'], structured=metadata['grader'] != 'rubric')
+                    except ValueError as error:
+                        answer = response['answer']
+                        status = 'fail'
+                        row['grading'] = {'status': 'fail', 'failure_category': 'answer_format', 'detail': str(error)}
+                    evidence = run / f'{side}-{task.name}-{rep}-{attempt}.txt'
+                    evidence.write_text(answer, encoding='utf-8')
+                    row['answer_path'] = str(evidence)
+                    if status == 'fail':
+                        pass
+                    elif task.name == 'pelican':
+                        artifact = evidence.with_suffix('.svg')
+                        artifact.write_text(answer, encoding='utf-8')
+                        row['artifact_path'] = str(artifact)
+                        status = 'ungraded'
+                    elif metadata['grader'] == 'rubric':
+                        rubric = json.loads((task / 'golden/rubric.json').read_text(encoding='utf-8'))
+                        prompt = ((task / 'judge-prompt.md').read_text(encoding='utf-8') + '\n'
+                                  + 'Original request and supplied input evidence:\n' + candidate_prompt(task, private=review.loaded[task.name][1]) + '\n'
+                                  + json.dumps(rubric) + '\n' + envelope(answer))
+                        scores = []
+                        status = 'pass'
+                        # Both judges see the same answer; ask them at the same time.
+                        for judge, judged in zip(judges.values(), run_all(
+                                lambda judge: call(judge, judge_effort, prompt, 'judge'),
+                                list(judges.values()), parallel)):
+                            record = {'model': judge, 'effort': judge_effort, 'response': judged,
+                                      'weight': 2 if model in judges.values() and judge != model else 1}
+                            try:
+                                if judged.get('status') != 'ok':
+                                    raise ValueError('Judge unavailable')
+                                record['score'], record['scores'] = judge_score(rubric, judged['answer'])
+                            except (ValueError, KeyError, TypeError) as error:
+                                status = 'unknown'
+                                record['error'] = str(error)
+                            scores.append(record)
+                        row['judge_scores'] = scores
+                        row['judge_models'] = list(judges.values())
+                        row['judge_effort'] = judge_effort
+                        if status != 'unknown':
+                            # Preserve exact binary-score fractions through weighting and threshold.
+                            average = sum(Fraction(sum(s['scores'].values()), len(s['scores'])) * s['weight']
+                                          for s in scores) / sum(s['weight'] for s in scores)
+                            row['judge_average'] = float(average)
+                            row['judge_disagreement'] = abs(scores[0]['score'] - scores[1]['score'])
+                            row['disagreement'] = row['judge_disagreement'] > config.get('judge_disagreement_threshold', .3)
+                            status = 'pass' if average >= Fraction(str(rubric.get('threshold', config.get('rubric_threshold', .8)))) else 'fail'
+                    else:
+                        with GRADER_SLOTS:
+                            graded = grade(task, answer)
+                        row['grading'] = graded
+                        status = graded['status']
+                unknown_category = response.get('failure_category', 'unclassified')
+                if response.get('status') == 'ok' and status == 'unknown':
+                    unknown_category = 'judge' if row.get('judge_scores') else row.get('grading', {}).get('failure_category', 'unclassified')
+                row.update(status=status, passed=status == 'pass', unknown=status == 'unknown',
+                           failure_category=unknown_category if status == 'unknown' else
+                           ('implementation' if status == 'fail' else None))
+                rows.append(row)
+                outcome(row)
+                identity_failure = status == 'unknown' and unknown_category == 'identity'
+                if status != 'unknown' or attempt == 3 or (attempt == 2 and not identity_failure):
+                    break
+            return status
+
+        statuses = run_all(rep_unit, units, parallel)
+        results = []
+        for index, (task, metadata, skip, count) in enumerate(plan):
+            if skip:
                 results.append({'task_id': task.name, 'status': 'ungraded', 'reps': [],
                                 'detail': 'Artifact-only pelican runs on manual/full-bank scope'})
                 continue
-            reps = []
-            count = 1 if task.name == 'pelican' else 3
-            for rep in range(1, count + 1):
-                # Two attempts per rep; a vendor identity failure (the Claude CLI silently answering on a
-                # different model, about 11% of opus-5-5 high calls on 2026-10-06/07) earns a third.
-                for attempt in (1, 2, 3):
-                    row = {'source': 'bench', 'trigger': trigger, 'job': job, 'tier': tier, 'effort': level,
-                           'model': model, 'side': side, 'task_bank_sha256': digest,
-                           'task_id': task.name, 'rep': rep, 'attempt': attempt,
-                           'private': review.loaded[task.name][1],
-                           'timestamp': datetime.now(timezone.utc).isoformat()}
-                    try:
-                        prompt = candidate_prompt(task, private=review.loaded[task.name][1])
-                    except OSError as error:
-                        response = {'status': 'unknown', 'failure_category': 'environment',
-                                    'detail': 'Required candidate input unavailable: ' + str(error)}
-                    else:
-                        response = call(model, level, prompt, 'answer')
-                    row['response'] = response
-                    status = response.get('status', 'unknown')
-                    if status == 'ok':
-                        try:
-                            answer = answer_body(response['answer'], structured=metadata['grader'] != 'rubric')
-                        except ValueError as error:
-                            answer = response['answer']
-                            status = 'fail'
-                            row['grading'] = {'status': 'fail', 'failure_category': 'answer_format', 'detail': str(error)}
-                        evidence = run / f'{side}-{task.name}-{rep}-{attempt}.txt'
-                        evidence.write_text(answer, encoding='utf-8')
-                        row['answer_path'] = str(evidence)
-                        if status == 'fail':
-                            pass
-                        elif task.name == 'pelican':
-                            artifact = evidence.with_suffix('.svg')
-                            artifact.write_text(answer, encoding='utf-8')
-                            row['artifact_path'] = str(artifact)
-                            status = 'ungraded'
-                        elif metadata['grader'] == 'rubric':
-                            rubric = json.loads((task / 'golden/rubric.json').read_text(encoding='utf-8'))
-                            prompt = ((task / 'judge-prompt.md').read_text(encoding='utf-8') + '\n'
-                                      + 'Original request and supplied input evidence:\n' + candidate_prompt(task, private=review.loaded[task.name][1]) + '\n'
-                                      + json.dumps(rubric) + '\n' + envelope(answer))
-                            scores = []
-                            status = 'pass'
-                            for judge in judges.values():
-                                judged = call(judge, judge_effort, prompt, 'judge')
-                                record = {'model': judge, 'effort': judge_effort, 'response': judged,
-                                          'weight': 2 if model in judges.values() and judge != model else 1}
-                                try:
-                                    if judged.get('status') != 'ok':
-                                        raise ValueError('Judge unavailable')
-                                    record['score'], record['scores'] = judge_score(rubric, judged['answer'])
-                                except (ValueError, KeyError, TypeError) as error:
-                                    status = 'unknown'
-                                    record['error'] = str(error)
-                                scores.append(record)
-                            row['judge_scores'] = scores
-                            row['judge_models'] = list(judges.values())
-                            row['judge_effort'] = judge_effort
-                            if status != 'unknown':
-                                # Preserve exact binary-score fractions through weighting and threshold.
-                                average = sum(Fraction(sum(s['scores'].values()), len(s['scores'])) * s['weight']
-                                              for s in scores) / sum(s['weight'] for s in scores)
-                                row['judge_average'] = float(average)
-                                row['judge_disagreement'] = abs(scores[0]['score'] - scores[1]['score'])
-                                row['disagreement'] = row['judge_disagreement'] > config.get('judge_disagreement_threshold', .3)
-                                status = 'pass' if average >= Fraction(str(rubric.get('threshold', config.get('rubric_threshold', .8)))) else 'fail'
-                        else:
-                            graded = grade(task, answer)
-                            row['grading'] = graded
-                            status = graded['status']
-                    unknown_category = response.get('failure_category', 'unclassified')
-                    if response.get('status') == 'ok' and status == 'unknown':
-                        unknown_category = 'judge' if row.get('judge_scores') else row.get('grading', {}).get('failure_category', 'unclassified')
-                    row.update(status=status, passed=status == 'pass', unknown=status == 'unknown',
-                               failure_category=unknown_category if status == 'unknown' else
-                               ('implementation' if status == 'fail' else None))
-                    rows.append(row)
-                    outcome(row)
-                    identity_failure = status == 'unknown' and unknown_category == 'identity'
-                    if status != 'unknown' or attempt == 3 or (attempt == 2 and not identity_failure):
-                        break
-                reps.append(status)
+            reps = [status for unit, status in zip(units, statuses) if unit[0] == index]
             task_status = 'unknown' if 'unknown' in reps else ('ungraded' if count == 1 else
                           ('pass' if reps.count('pass') >= 2 else 'fail'))
             results.append({'task_id': task.name, 'private': review.loaded[task.name][1], 'status': task_status, 'reps': reps})
         score = {'model': model, 'effort': level, 'tasks': results,
                  'passed': sum(t['status'] == 'pass' for t in results),
                  'unknown': sum(t['status'] == 'unknown' for t in results)}
-        comparison_tables.append(score)
+        if record:
+            comparison_tables.append(score)
         return score
 
-    candidate_table = table(candidate, candidate_effort, 'candidate')
-    incumbent_table = candidate_table if job == 'illustrator' and incumbent == candidate else table(incumbent, incumbent_effort, 'incumbent')
     down = {'medium': 'low', 'high': 'medium'}.get(incumbent_effort) if job != 'writer' and tier != 'beyond' else None
-    down_table = table(incumbent, down, 'effort-down') if down else None
+    up = ({'low': 'medium', 'medium': 'high', 'high': 'xhigh'} if job == 'writer' else
+          {'low': 'medium', 'medium': 'high'}).get(incumbent_effort) if (job == 'writer' or
+          (job in {'coder', 'deep-thinker'} and ranked)) and tier != 'beyond' else None
+    same_side = job == 'illustrator' and incumbent == candidate
+    if parallel > 1:
+        # All lanes at once; tables are recorded in the serial order (candidate, incumbent,
+        # effort-down, calibration, effort-up) so discrimination sees the same sequence.
+        lanes = [(candidate, candidate_effort, 'candidate')]
+        lanes += [] if same_side else [(incumbent, incumbent_effort, 'incumbent')]
+        lanes += [(incumbent, down, 'effort-down')] if down else []
+        lanes += [(incumbent, up, 'effort-up')] if up else []
+        tables = dict(zip([lane[2] for lane in lanes],
+                          run_all(lambda lane: table(*lane, record=False), lanes, parallel)))
+        candidate_table = tables['candidate']
+        incumbent_table = candidate_table if same_side else tables['incumbent']
+        down_table = tables.get('effort-down')
+        comparison_tables.extend(t for t in (candidate_table, None if same_side else incumbent_table, down_table) if t is not None)
+    else:
+        candidate_table = table(candidate, candidate_effort, 'candidate')
+        incumbent_table = candidate_table if same_side else table(incumbent, incumbent_effort, 'incumbent')
+        down_table = table(incumbent, down, 'effort-down') if down else None
     proposed_relabels = []
     if (tier == 'hard' and not effort_override
             and tier_effort(entry, 'first', 'standard', effort) != tier_effort(entry, 'first', 'hard', effort)):
@@ -857,21 +957,25 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                     'proposed': 'standard' if low_passes >= 2 else 'beyond', 'model': first,
                     'standard_effort': standard, 'hard_effort': hard,
                     'standard_passes': low_passes, 'hard_passes': high_passes})
-    up = ({'low': 'medium', 'medium': 'high', 'high': 'xhigh'} if job == 'writer' else
-          {'low': 'medium', 'medium': 'high'}).get(incumbent_effort) if (job == 'writer' or
-          (job in {'coder', 'deep-thinker'} and ranked)) and tier != 'beyond' else None
-    up_table = table(incumbent, up, 'effort-up') if up else None
+    if parallel > 1:
+        up_table = tables.get('effort-up')
+        if up_table is not None:
+            comparison_tables.append(up_table)
+    else:
+        up_table = table(incumbent, up, 'effort-up') if up else None
     def rank_pair(model: str, level: str | None) -> dict[str, Any] | None:
         return rank_tasks(ranked, run=run, job=job, tier=tier,
             configurations={'candidate': {'model': model, 'effort': level},
                             'incumbent': {'model': incumbent, 'effort': incumbent_effort}},
             judges=judges, judge_effort=judge_effort, call=call, renderer=renderer,
-            between_tasks=spend.check if spend else lambda: None)
-    quality_verdict = rank_pair(candidate, candidate_effort)
+            between_tasks=spend.check if spend else lambda: None, parallel=parallel)
     # Effort comparisons always put the proposed effort on the candidate side:
     # lower for effort-down, higher for effort-up; incumbent is the current effort.
-    down_quality = rank_pair(incumbent, down) if down else None
-    up_quality = rank_pair(incumbent, up) if up else None
+    pairs = [(candidate, candidate_effort)] + ([(incumbent, down)] if down else []) + ([(incumbent, up)] if up else [])
+    verdicts = run_all(lambda pair: rank_pair(*pair), pairs, parallel)
+    quality_verdict = verdicts[0]
+    down_quality = verdicts[1] if down else None
+    up_quality = verdicts[-1] if up else None
     uninformative, proposed_drops = discrimination(comparison_tables, state, job, tier, run.name)
     excluded = set(uninformative)
     pass_insufficient = not has_informative_evidence(comparison_tables, excluded)
@@ -1101,9 +1205,36 @@ def summarize_calls(calls: list[dict[str, Any]], prices: dict[str, Any]) -> dict
 def main() -> None:
     """Line IPC: all production callbacks execute in the PowerShell host."""
     arguments = json.loads(sys.stdin.readline())
+    # Requests carry an id so a parallel host can answer them out of order.
+    # The reader thread blocks on stdin for the whole run; on Windows a child that inherits that
+    # pipe can hang at startup, so every subprocess here gets stdin=DEVNULL.
+    pending: dict[int, Future] = {}
+    numbers = itertools.count(1)
+    # Two locks on purpose: a write can block on a full pipe until the host reads, and the host
+    # reads only after its own replies drain. The reader must never wait behind a writer.
+    registry, writer = threading.Lock(), threading.Lock()
+
+    def replies() -> None:
+        for line in sys.stdin:
+            reply = json.loads(line)
+            with registry:
+                waiter = pending.pop(reply.get('id'), None)
+            if waiter is not None:
+                waiter.set_result(reply)
+        with registry:
+            for waiter in pending.values():
+                waiter.set_exception(RuntimeError('Bench host closed the channel'))
+            pending.clear()
+    threading.Thread(target=replies, daemon=True).start()
+
     def callback(operation: str, payload: Any) -> Any:
-        print(json.dumps({'operation': operation, 'payload': payload}), flush=True)
-        reply = json.loads(sys.stdin.readline())
+        waiter: Future = Future()
+        with registry:
+            number = next(numbers)
+            pending[number] = waiter
+        with writer:
+            print(json.dumps({'id': number, 'operation': operation, 'payload': payload}), flush=True)
+        reply = waiter.result()
         if 'error' in reply:
             raise RuntimeError(reply['error'])
         return reply['value']

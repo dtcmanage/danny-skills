@@ -256,6 +256,11 @@ def run(tmp_path: Path, **overrides: object) -> dict:
     return engine.run_bench(**arguments)
 
 
+def serial_config() -> dict:
+    # For mocks that count calls across reps: those counts assume the serial call order.
+    return {**json.loads((BENCH / 'bench-config.json').read_text()), 'max_parallel_calls': 1}
+
+
 def prompt_rubric(request: dict) -> dict:
     # Each writer task has its own rubric; the judge prompt carries it on one line.
     return next(json.loads(line) for line in request['prompt'].splitlines() if line.startswith('{"threshold"'))
@@ -300,7 +305,7 @@ def test_identity_failure_earns_a_third_attempt(tmp_path: Path) -> None:
         if request['model'] == 'incumbent':
             return {'status': 'unknown', 'failure_category': 'environment', 'detail': 'timeout'}
         return {'status': 'ok', 'answer': '{}'}
-    result = run(tmp_path, dispatch=dispatch)
+    result = run(tmp_path, dispatch=dispatch, config=serial_config())
     candidate = [row for row in result['outcomes'] if row['side'] == 'candidate']
     incumbent = [row for row in result['outcomes'] if row['side'] == 'incumbent']
     assert max(row['attempt'] for row in candidate) == 3 and all(not row['unknown'] for row in candidate if row['attempt'] == 3)
@@ -464,7 +469,7 @@ def test_blocked_judge_and_successful_retry(tmp_path: Path) -> None:
     def grade(t: Path, a: str) -> dict:
         attempts[t.name] = attempts.get(t.name, 0) + 1
         return {'status': 'unknown' if attempts[t.name] % 2 else 'pass'}
-    retried = run(tmp_path / 'retry', grade=grade)
+    retried = run(tmp_path / 'retry', grade=grade, config=serial_config())
     assert retried['raw_gate'] == 'pass' and len(retried['outcomes']) == 36
 
 
