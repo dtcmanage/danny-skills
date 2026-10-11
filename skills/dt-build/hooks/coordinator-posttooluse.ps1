@@ -128,7 +128,7 @@ try {
     if (@('checkpoint', 'rotate') -notcontains $context.state) { exit 0 }
     $runFolder = if ($coordinator.run_folder) { $coordinator.run_folder } else { '<run folder>' }
     $next = if ($context.state -eq 'checkpoint') {
-        'Soft limit reached: finish the current decision and write _build-state.md before taking on more.'
+        "Soft limit reached: start no new reads or dispatches. Bring the step in hand to a safe stopping point, then hand off: write _build-state.md and the coordinator handoff, run pwsh -NoProfile -File `"$($script:HookDtJob)`" request-continuation -RunFolder `"$runFolder`" -Reason context_rotation, release the lease, and end the turn. Running jobs keep going."
     }
     elseif ($context.deferred) {
         'Hard limit reached; rotation waits for the open irreversible step. Finish it, run dt-job irreversible -Action end, then rotate.'

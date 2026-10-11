@@ -6,31 +6,31 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 
 - Resolve the worker per `SKILL.md` "Model routing" and dispatch on the returned `vendor`, either vendor.
 - Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Model <model> -Mutates <worktree key> -Command "<wrapper call>"`, where the wrapper call is `scripts/invoke-claude-chunk.ps1` or `scripts/invoke-codex-chunk.ps1` with the arguments `SKILL.md` names. Add `-DependsOn <job ids>` when it must wait for other jobs. `start` returns a `job_id` at once; record it in `_build-state.md` in-flight work.
-- Run long tests, builds, and browser or screenshot checks as `-Kind test` or `-Kind command` jobs too, never in the foreground.
+- Run long tests, builds, and browser or screenshot checks as `-Kind test` or `-Kind command` jobs, never in the foreground.
 - A Claude pick at the session's own effort may still use the Agent tool with the returned `agent_alias`. Any other effort goes through the wrapper as a job.
 
 ## Waiting and completion
 
 - Wait with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, run through the Bash tool with `run_in_background: true` and a Bash `timeout` longer than `-TimeoutSec`. Claude Code notifies once when it exits, whatever the outcome. End the turn after starting it.
-- Never use CronCreate (forbidden in a dt-build coordinator), Monitor heartbeats, `sleep` loops, repeated `status` calls, or any self-scheduled check.
+- Never use CronCreate, Monitor heartbeats, `sleep` loops, repeated `status` calls, or any self-scheduled check.
 - The ledger is the truth, not the notification: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and on `wait_timeout`, then start one new background wait for the jobs still running.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.
 
 ## Bootstrap and context
 
-- For managed resumes follow `managed-resume.md`: required canonical and authorization reads first, in full; mark bootstrap immediately after them. Load other references only at their triggered step. For new starts do the mandatory CLAUDE.md chain, MEMORY.md and governing reads first.
+- Managed resumes follow `managed-resume.md` (required reads in full, then mark bootstrap at once). New starts do the mandatory CLAUDE.md chain, MEMORY.md and governing reads first. Load other references only at their step.
 - No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
 - New starts register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested.
 - Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host claude`. Use one id, e.g. `<RUN_ID>-claude-<yyyyMMddHHmm>`, from the starting directory or with `-TranscriptPath <transcript>`.
 - An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host claude`. Any call with your id renews it through long waits. A watcher-launched coordinator already holds it.
-- Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` finish the current decision and rewrite `_build-state.md`; `rotate` rotate now.
+- Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` reach a safe stopping point, then rotate; `rotate` rotate now.
 - Past the hard limit `dt-job start` refuses with `ROTATE_REQUIRED` and the PreToolUse hook denies it: rotate now; do not retry the dispatch.
 - Rotation steps, in order: consume handled events, rewrite `_build-state.md` (keep the `run_status` and `last_consumed_event_seq` lines as they are), write a coordinator handoff note in the run folder, `dt-job request-continuation -CoordinatorId <id> -Reason context_rotation`, `dt-job lease -Action release -CoordinatorId <id>`, then end. Interactive: tell Danny the one command to continue in a fresh session, `/dt-build <RUN_ID>`.
 - Jobs survive rotation. Before an irreversible step run `dt-job irreversible -CoordinatorId <id> -Action begin -Operation <op>`, and `-Action end` after it; rotation waits while it is open.
 
 ## Hooks
 
-- Two hooks ship in `hooks/`; adoption installs them into the live settings file `hooks/README.md` names.
+- Two hooks ship in `hooks/`; `hooks/README.md` names where adoption installs them.
 - In a coordinator session the PreToolUse hook denies a Read of a file over 400 lines without a range, image Reads, and CronCreate. Past the hard context limit it also denies direct reads, searches, web tools, Agent, `dt-job start`, and every shell command except the dt-build state scripts and `git status|log|rev-parse`. The deny reason names the next step: follow it.
 - The PostToolUse hook surfaces the `context:` line at `checkpoint` and `rotate`.
 - Managed Claude coordinators get both hooks through the `--settings` file the launcher writes.
@@ -39,7 +39,7 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 
 - For managed starts, the interactive session registers with `-Managed`, runs `dt-job request-continuation -CoordinatorId <id> -Reason managed_start`, takes no lease, and ends; the watcher continues.
 
-- On new starts (managed relaunches verify the existing registration through `read-resume-record.ps1`): `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters it.
+- Managed relaunches verify the existing registration through `read-resume-record.ps1`. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters the run.
 - The watcher (`scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts queued jobs, and launches a headless coordinator when no lease exists, a managed lease is released, or its watcher-launched coordinator is gone and an unconsumed event waits. Unconsumed triggers retry at 2, 10, and 30 minutes, then stop with one DM.
 - Legacy managed coordinator prompts read `/dt-build resume <RUN_ID> (managed coordinator <id>)`. Continue as `<id>` (reconcile, read `_build-state.md`, carry on); never run `dt-job resume`.
 - Before ending each headless turn, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state it shows. An unconsumed trigger counts as a failed launch.

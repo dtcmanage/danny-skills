@@ -12,6 +12,8 @@ A session counts as a coordinator when `DT_BUILD_COORDINATOR_ID` is set, or when
 
 `__DT_BUILD_HOOKS_DIR__` in `settings-snippet.json` stands for the absolute path of this `hooks` folder, written with forward slashes (for example `D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/skills/dt-build/hooks`). Replace every occurrence before merging. `${CLAUDE_PLUGIN_ROOT}` is deliberately not used.
 
+Managed Codex coordinators get both hooks as session flags (`codex exec -c hooks.PreToolUse=... -c hooks.PostToolUse=...`) from the launcher, which first records them as trusted in the Codex `config.toml` through `scripts/ensure-codex-hook-trust.ps1` (Codex runs a hook only once its hash is trusted). Codex sends the same hook input as Claude, with shell calls named `Bash`, and the hooks read its rollout transcript.
+
 `launch-managed-coordinator.ps1` does this replacement itself for managed Claude coordinators: it writes `coordinator-settings.json` into the run folder with the real path and passes it with `--settings`. Interactive sessions get the hooks only once the snippet is merged into the live settings file at adoption.
 
 ## Live settings file (adoption target)

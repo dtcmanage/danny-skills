@@ -172,7 +172,9 @@ function Get-HookContext {
     $transcript = [string](Get-HookProperty $HookInput 'transcript_path')
     if (-not $transcript -and $null -ne $Coordinator.baseline) { $transcript = [string]$Coordinator.baseline.transcript_path }
     $tokens = $null
-    if ($transcript -and (Test-Path -LiteralPath $transcript)) { $tokens = Get-DtCtxTokens -TranscriptHost 'claude' -TranscriptPath $transcript }
+    # A managed Codex coordinator runs these hooks too; its rollout transcript has its own format.
+    $transcriptHost = if ($null -ne $Coordinator.baseline -and $Coordinator.baseline.PSObject.Properties['host'] -and $Coordinator.baseline.host) { [string]$Coordinator.baseline.host } elseif ($transcript -match 'rollout-[^\\/]*\.jsonl$') { 'codex' } else { 'claude' }
+    if ($transcript -and (Test-Path -LiteralPath $transcript)) { $tokens = Get-DtCtxTokens -TranscriptHost $transcriptHost -TranscriptPath $transcript }
     $baseline = if ($null -ne $Coordinator.baseline) { [long]$Coordinator.baseline.baseline_tokens } else { $null }
     $report = Get-DtCtxState -Tokens $tokens -Baseline $baseline
     # Only a step the current lease holder opened defers the hard-limit denials.

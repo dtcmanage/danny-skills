@@ -136,6 +136,7 @@ function Get-DtJobPaths {
         Rotations = Join-Path $root 'rotations.jsonl'
         KillFailed = Join-Path $root 'kill-failed.json'
         StepErrors = Join-Path $root 'step-errors.json'
+        PastHard = Join-Path $root 'past-hard.json'
     }
 }
 

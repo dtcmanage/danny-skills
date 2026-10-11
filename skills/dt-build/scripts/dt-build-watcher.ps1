@@ -31,6 +31,28 @@ $script:WatcherRunLaunchWindowMin = 60
 $script:WatcherRegistryRetryMs = 500
 # The same step error on this many consecutive ticks of a run sends Danny one DM.
 $script:WatcherStepErrorRepeatTicks = 3
+# A Codex coordinator with trusted context hooks hands off itself; the watcher ends it only this far
+# past its hard limit, or after this long past it.
+$script:WatcherBackstopTokens = 30000
+$script:WatcherBackstopMinutes = 10
+
+function Test-WatcherCoordinatorHooks {
+    # True when the launcher recorded that this coordinator's context hooks were trusted at launch.
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$CoordinatorId)
+    $log = Join-Path $RunFolder "coordinator-$CoordinatorId.log"
+    if (-not (Test-Path -LiteralPath $log)) { return $false }
+    try {
+        $stream = [System.IO.File]::Open($log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+        try {
+            $buffer = [byte[]]::new([math]::Min(4096, $stream.Length))
+            [void]$stream.Read($buffer, 0, $buffer.Length)
+        }
+        finally { $stream.Dispose() }
+        $head = [System.Text.Encoding]::UTF8.GetString($buffer)
+        return ($head -match '(?m)^hook trust: \{"status":"ok"')
+    }
+    catch { return $false }
+}
 
 function Get-WatcherNow {
     if ($env:DT_BUILD_WATCHER_NOW_UTC) { return (ConvertTo-DtJobUtc $env:DT_BUILD_WATCHER_NOW_UTC) }
@@ -290,8 +312,8 @@ function Invoke-WatcherStop {
 }
 
 function Invoke-WatcherContextRotation {
-    # Codex runs no hooks, so a managed Codex coordinator past its hard limit is ended here, within one
-    # tick: kill its process tree, release its lease, and request a continuation so the relaunch rules
+    # A managed Codex coordinator past its hard limit is ended here: at once when it has no trusted context
+    # hooks, otherwise only as a backstop (see Test-WatcherCoordinatorHooks). Ending it means: kill its process tree, release its lease, and request a continuation so the relaunch rules
     # start a fresh one. Its jobs are detached and keep running. Claude coordinators are left to their
     # hooks, and an irreversible step this coordinator opened defers the kill. A kill that leaves any
     # process running opens a kill-failed episode (kill-failed.json) that holds the run until every
@@ -310,7 +332,25 @@ function Invoke-WatcherContextRotation {
     try { $tokens = Get-DtCtxTokens -TranscriptHost 'codex' -TranscriptPath ([string]$entryBaseline.transcript_path) }
     catch { return "context unreadable for $coordinatorId" }
     $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entryBaseline.baseline_tokens)
-    if ($report.state -ne 'rotate') { return $null }
+    $pastHardPath = (Get-DtJobPaths -RunFolder $folder).PastHard
+    if ($report.state -ne 'rotate') { Remove-Item -LiteralPath $pastHardPath -Force -ErrorAction SilentlyContinue; return $null }
+    # A coordinator launched with trusted context hooks is told to hand off at the soft limit and is held
+    # to the handoff steps past the hard limit, so it is ended only as a backstop: well past the hard
+    # limit, or past it longer than the grace period. Without trusted hooks the hard limit still ends it.
+    if (Test-WatcherCoordinatorHooks -RunFolder $folder -CoordinatorId $coordinatorId) {
+        $since = $NowUtc
+        try {
+            $seen = Read-DtJobText -Path $pastHardPath | ConvertFrom-Json -ErrorAction Stop
+            if ([string]$seen.coordinator_id -ceq $coordinatorId) { $since = ConvertTo-DtJobUtc $seen.first_seen_utc }
+            else { throw 'other coordinator' }
+        }
+        catch { Write-DtJobAtomic -Path $pastHardPath -Content ([ordered]@{ coordinator_id = $coordinatorId; first_seen_utc = $NowUtc.ToString('o'); tokens = [long]$tokens } | ConvertTo-Json) }
+        $overBy = [long]$tokens - [long]$report.hard
+        $pastMin = ($NowUtc - $since).TotalMinutes
+        if ($overBy -lt $script:WatcherBackstopTokens -and $pastMin -lt $script:WatcherBackstopMinutes) {
+            return "handoff pending: $coordinatorId at $tokens past hard $($report.hard) for $([math]::Round($pastMin, 1)) min; backstop at +$($script:WatcherBackstopTokens) tokens or $($script:WatcherBackstopMinutes) min"
+        }
+    }
     $open = @((Split-DtCtxIrreversibleSteps -Open @(Get-DtJobIrreversibleOpen -RunFolder $folder) -Lease $lease).deferring)
     if ($open.Count -gt 0) { return "rotation deferred: $coordinatorId at $tokens past hard $($report.hard), irreversible $($open[0].operation) open" }
     # The coordinator's descendants (the codex process under the wrapper), snapshotted before the kill so
@@ -347,6 +387,7 @@ function Invoke-WatcherContextRotation {
     Complete-WatcherRotation -Entry $Entry -CoordinatorId $coordinatorId -NowUtc $NowUtc
     $row = [ordered]@{ coordinator_id = $coordinatorId; tokens_at_kill = [long]$tokens; hard_limit = [long]$report.hard; overshoot = ([long]$tokens - [long]$report.hard); killed_utc = $NowUtc.ToString('o') }
     [System.IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $folder).Rotations, (($row | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
+    Remove-Item -LiteralPath $pastHardPath -Force -ErrorAction SilentlyContinue
     return "rotated $coordinatorId at $tokens (hard $($report.hard), overshoot $($row.overshoot))"
 }
 

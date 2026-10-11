@@ -165,7 +165,8 @@ function New-LiveLauncher([string]$Path, [string]$Prompt) {
     # Adapt only a temporary copy: production launch behavior and skill discovery stay untouched.
     $text = [IO.File]::ReadAllText((Join-Path $scripts 'launch-managed-coordinator.ps1'))
     $text = $text.Replace('$dtJob = Join-Path $PSScriptRoot ''dt-job.ps1''', ('$dtJob = ' + (Quote $jobScript)))
-    $text = $text.Replace('$prompt = "$skillPrefix resume $RunId (managed coordinator $CoordinatorId)"', ('$prompt = ' + (Quote $Prompt)))
+    # The launcher's prompt is a here-string ending at the first "@ line.
+    $text = [regex]::Replace($text, '(?s)\$prompt = @"\r?\n.*?\r?\n"@', [System.Text.RegularExpressions.MatchEvaluator] { param($m) '$prompt = ' + (Quote $Prompt) }, [System.Text.RegularExpressions.RegexOptions]::None)
     $text = $text.Replace("(Join-Path `$PSScriptRoot '..\hooks')", (Quote ([IO.Path]::GetFullPath((Join-Path $scripts '../hooks')))))
     # The launcher's fresh child environment needs the harness's existing context-limit test seam.
     $text = $text.Replace("'DT_BUILD_STATE_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'", "'DT_BUILD_STATE_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'DT_BUILD_CTX_SOFT_MARGIN', 'DT_BUILD_CTX_HARD_MARGIN'")
@@ -558,6 +559,50 @@ if (`$script:alive) { throw 'coordinator survived one tick' }
         Call $stubTick @() | Out-Null
         $rotation = @(Rows (Join-Path $c.folder 'rotations.jsonl'))
         Assert ($rotation.Count -eq 1 -and $rotation[0].overshoot -eq 5000 -and $rotation[0].tokens_at_kill -eq 175000) 'overshoot not recorded'
+        # With trusted context hooks the coordinator hands off itself: past the hard limit the watcher waits,
+        # and ends it only at the backstop (30k tokens over, or 10 minutes past the hard limit).
+        $h = New-Run s08-codex-hooks codex
+        Lease $h managed codex
+        $leasePath = Join-Path $h.folder 'coordinator.lease'
+        $lease = [IO.File]::ReadAllText($leasePath) | ConvertFrom-Json
+        $lease.pid = 424242; $lease.pid_start_utc = '2026-10-10T00:00:00Z'
+        Write-Text $leasePath ($lease | ConvertTo-Json)
+        $rollout = Join-Path $h.folder 'codex.jsonl'
+        Write-Text $rollout '{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":175000}}}}'
+        Write-Text (Join-Path $h.folder 'context-baseline.json') (@{coordinators=@{managed=@{coordinator_id='managed';host='codex';transcript_path=$rollout;baseline_tokens=100000;session_id=$null;transcript_source='explicit';marked_utc=[DateTime]::UtcNow.ToString('o')}}} | ConvertTo-Json -Depth 6)
+        Write-Text (Join-Path $h.folder 'coordinator-managed.log') ('hook trust: {"status":"ok","trusted":[],"already_trusted":["k"],"error":null}' + "`n")
+        $hookTick = Join-Path $h.folder 'stub-tick.ps1'
+        Write-Text $hookTick @"
+param([string]`$Now)
+. $(Quote $watcher)
+`$env:DT_BUILD_WATCHER_NOW_UTC = `$Now
+`$script:alive = `$true
+function Test-DtJobProcessIdentity { param(`$ProcessId,`$StartUtc) return (`$ProcessId -eq 424242 -and `$script:alive) }
+function Get-WatcherDescendantProcesses { param(`$ProcessId,`$StartUtc) return @() }
+function Stop-WatcherProcessTree { param(`$ProcessId) `$script:alive = `$false }
+`$result = Invoke-WatcherRun -Entry (Get-DtJobRegistryEntry -RunFolder $(Quote $h.folder))
+[pscustomobject]@{ alive = `$script:alive; rotation = [string]`$result.rotation } | ConvertTo-Json -Compress
+"@
+        $first = (Call $hookTick @('-Now','2026-10-11T06:00:00Z')).text | ConvertFrom-Json
+        Assert ($first.alive -and $first.rotation -match '^handoff pending' -and (Test-Path (Join-Path $h.folder 'past-hard.json'))) "hooked coordinator was ended at the hard limit: $($first.rotation)"
+        $second = (Call $hookTick @('-Now','2026-10-11T06:05:00Z')).text | ConvertFrom-Json
+        Assert ($second.alive -and $second.rotation -match 'for 5 min') "grace period not measured from the first sighting: $($second.rotation)"
+        $third = (Call $hookTick @('-Now','2026-10-11T06:10:30Z')).text | ConvertFrom-Json
+        Assert (-not $third.alive -and $third.rotation -match '^rotated' -and -not (Test-Path (Join-Path $h.folder 'past-hard.json'))) "stuck hooked coordinator not ended after 10 minutes: $($third.rotation)"
+        $far = New-Run s08-codex-hooks-far codex
+        Lease $far managed codex
+        $leasePath = Join-Path $far.folder 'coordinator.lease'
+        $lease = [IO.File]::ReadAllText($leasePath) | ConvertFrom-Json
+        $lease.pid = 424242; $lease.pid_start_utc = '2026-10-10T00:00:00Z'
+        Write-Text $leasePath ($lease | ConvertTo-Json)
+        $rollout = Join-Path $far.folder 'codex.jsonl'
+        Write-Text $rollout '{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":205000}}}}'
+        Write-Text (Join-Path $far.folder 'context-baseline.json') (@{coordinators=@{managed=@{coordinator_id='managed';host='codex';transcript_path=$rollout;baseline_tokens=100000;session_id=$null;transcript_source='explicit';marked_utc=[DateTime]::UtcNow.ToString('o')}}} | ConvertTo-Json -Depth 6)
+        Write-Text (Join-Path $far.folder 'coordinator-managed.log') ('hook trust: {"status":"ok","trusted":["k"],"already_trusted":[],"error":null}' + "`n")
+        $farTick = (Get-Content -Raw $hookTick).Replace($h.folder, $far.folder)
+        Write-Text (Join-Path $far.folder 'stub-tick.ps1') $farTick
+        $farResult = (Call (Join-Path $far.folder 'stub-tick.ps1') @('-Now','2026-10-11T06:00:00Z')).text | ConvertFrom-Json
+        Assert (-not $farResult.alive -and $farResult.rotation -match '^rotated') "hooked coordinator 35k past hard not ended at the backstop: $($farResult.rotation)"
         # Exercise the live transcript readers without any live model call. Model-written claims
         # alone must fail; Claude needs paired tool_results and Codex needs two function calls.
         $claudeRows = @(

@@ -64,7 +64,18 @@ if ($CoordinatorHost -eq 'codex') {
     # The permission flags invoke-codex-chunk.ps1 uses for a substantive chunk: no approval prompts, and on
     # Windows (where Codex removed its sandbox) explicit full access instead of a sandbox that fails closed.
     $permission = if ($env:OS -eq 'Windows_NT') { "-c $(ConvertTo-SingleQuoted 'default_permissions=":danger-full-access"')" } else { '--sandbox workspace-write' }
-    $lines.Add("& codex --ask-for-approval never exec $permission $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
+    # The same context hooks a Claude coordinator gets, as session flags for this coordinator only: after
+    # each step the coordinator sees its context state, so it hands off at a safe point instead of being
+    # killed mid-work, and past the hard limit only the handoff steps run. Codex runs them once trusted.
+    $hooksDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\hooks')).Replace('\', '/')
+    $hookOverrides = @(foreach ($pair in @(@('PreToolUse', 'coordinator-pretooluse.ps1'), @('PostToolUse', 'coordinator-posttooluse.ps1'))) {
+        "hooks.$($pair[0])=[{matcher=`"*`",hooks=[{type=`"command`",command='pwsh -NoProfile -NonInteractive -File `"$hooksDir/$($pair[1])`"'}]}]"
+    })
+    # In-process: pwsh -File would flatten the string[] into one argument. The helper never throws.
+    $trust = & (Join-Path $PSScriptRoot 'ensure-codex-hook-trust.ps1') -HookOverrides $hookOverrides
+    [System.IO.File]::AppendAllText($log, "hook trust: $($trust -join ' ')`n", [System.Text.UTF8Encoding]::new($false))
+    $hookArgs = ($hookOverrides | ForEach-Object { "-c $(ConvertTo-SingleQuoted $_)" }) -join ' '
+    $lines.Add("& codex --ask-for-approval never exec $permission $hookArgs $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
 }
 else {
     $lines.Add('Remove-Item Env:DT_BUILD_LEAN_BOOTSTRAP -ErrorAction SilentlyContinue')

@@ -93,7 +93,7 @@ try {
     Assert-True ($codexText -match 'in the foreground' -and $codexText -match 'call `dt-job wait` again') 'Codex waits in the foreground and re-calls on wait_timeout'
     Assert-True (-not $codexText.Contains('CronCreate')) 'Codex adapter does not mention CronCreate'
     $codexHooks = [regex]::Match($codexText, '(?s)## Hooks\s*(.*?)(?=\r?\n## )').Groups[1].Value
-    Assert-True ($codexHooks -match '^- None\.' -and $codexHooks -match 'advisory' -and $codexHooks -match 'watcher') 'Codex hooks: none, advisory interactively, watcher-enforced when managed'
+    Assert-True ($codexHooks -match 'trusted session flags' -and $codexHooks -match 'safe point' -and $codexHooks -match 'backstop' -and $codexHooks -match 'Interactive Codex: no hooks; the limit is advisory') 'Codex hooks: managed coordinators get trusted hooks and hand off at a safe point, the watcher is a backstop, interactive stays advisory'
 
     # SKILL.md: the host-adapter section and load-one rule, near the top.
     $skillText = Get-Content -Raw -LiteralPath (Join-Path $skillRoot 'SKILL.md')
