@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.10
+
+- Shared model router: bench call time limit is now set per job; deep-thinker calls get 15 minutes so hard questions can finish.
+
 ## 2.21.9
 
 - Watcher, chunk wrappers and shared router messages state quota as X% used / Y% left with reset times in US Eastern, so a remaining-percent reading is never mistaken for usage.

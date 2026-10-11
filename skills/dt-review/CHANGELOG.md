@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.21 (2026-10-11): Shared model router: bench call time limit is now set per job; deep-thinker calls get 15 minutes so hard questions can finish.
+
 - 1.16.20 (2026-10-10): Shared model router quota messages now read X% used / Y% left with reset times in US Eastern.
 
 - 1.16.19 (2026-10-10): Shared model router: Codex prompts rejected as too large (input_too_large) now fail fast as a tooling failure, with no retry and an alert naming the prompt size and the limit.
