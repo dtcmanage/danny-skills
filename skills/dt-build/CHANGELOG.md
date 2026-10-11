@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.18
+
+- Coordinators get 250k tokens of working room past startup: wrap-up at baseline + 250k, handoff-only at + 280k. Managed Codex runs Sol at its 872k window (compaction at 800k) with the hard limit capped at 760k and the watcher backstop at 790k; Claude stays capped at 240k. SKILL.md no longer has drivers pass -TimeoutMs 600000.
+
 ## 2.21.17
 
 - Coordinators get 150k tokens of working room past startup: wrap-up at baseline + 150k, handoff-only at + 180k, hard limit capped at 240k and watcher backstop at 252k to stay under Codex Sol's usable window.
