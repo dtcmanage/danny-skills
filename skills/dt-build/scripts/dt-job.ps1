@@ -441,6 +441,24 @@ function Limit-DtJobLine {
     return $Text.Substring(0, $script:DtJobLineMaxChars - 15) + ' ...[truncated]'
 }
 
+function ConvertTo-DtJobReadableText {
+    # A job's pwsh child can write its errors to a redirected stream as CLIXML ("#< CLIXML" then one long
+    # <Objs> line with _xHHHH_ escapes) and colours them with ANSI codes, which buried the real message
+    # past the excerpt's line cut. Unwrap the error, warning and output strings and drop the colour codes.
+    param([AllowNull()][string]$Text)
+    $script:DtJobLastTextDecoded = $false
+    if (-not $Text) { return $Text }
+    if ($Text.Contains('#< CLIXML') -or $Text.Contains('<Objs Version=')) {
+        $parts = foreach ($m in [regex]::Matches($Text, '<S S="[^"]*">(.*?)(?:</S>|$)', [System.Text.RegularExpressions.RegexOptions]::Singleline)) { $m.Groups[1].Value }
+        if (@($parts).Count -gt 0) {
+            $decoded = [regex]::Replace((@($parts) -join ''), '_x([0-9A-Fa-f]{4})_', { param($m) [string][char][Convert]::ToInt32($m.Groups[1].Value, 16) })
+            $Text = [System.Net.WebUtility]::HtmlDecode($decoded)
+            $script:DtJobLastTextDecoded = $true
+        }
+    }
+    return [regex]::Replace($Text, '\x1b\[[0-9;?]*[A-Za-z]', '')
+}
+
 function Read-DtJobTail {
     param([Parameter(Mandatory)][string]$Path, [int]$MaxLines, [int]$MaxBytes = 65536)
     if (-not (Test-Path -LiteralPath $Path)) { return [pscustomobject]@{ lines = @(); more = $false } }
@@ -452,8 +470,10 @@ function Read-DtJobTail {
         $text = $reader.ReadToEnd()
     }
     finally { $stream.Dispose() }
+    $text = ConvertTo-DtJobReadableText $text
     $lines = @($text -split "\r?\n")
-    if ($start -gt 0 -and $lines.Count -gt 0) { $lines = @($lines | Select-Object -Skip 1) }
+    if ($start -gt 0 -and $lines.Count -gt 0 -and -not $script:DtJobLastTextDecoded) { $lines = @($lines | Select-Object -Skip 1) }
+    $lines = @($lines | Where-Object { $_ -notmatch '^\s*\|?\s*~+\s*$' })
     while ($lines.Count -gt 0 -and $lines[-1] -eq '') { $lines = @($lines | Select-Object -SkipLast 1) }
     $more = ($start -gt 0) -or ($lines.Count -gt $MaxLines)
     return [pscustomobject]@{ lines = @($lines | Select-Object -Last $MaxLines); more = $more }

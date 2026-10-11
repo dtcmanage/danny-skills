@@ -104,6 +104,17 @@ try {
     Wait-JobTerminal -RunFolder $rf -JobId $job.job_id | Out-Null
     $envelope = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $job.job_id)
     Assert-True ($envelope.exit_code -eq 2 -and (@($envelope.stderr_excerpt) -contains 'boom on stderr')) 'failed envelope carries a stderr tail'
+    # A pwsh child that writes its error as CLIXML: one long line, _xHHHH_ escapes, ANSI colours, message at the end.
+    $clixmlPath = Join-Path $tempRoot 'clixml-stderr.txt'
+    $esc = '_x001B_'
+    $longPath = 'D:\fixture\' + ('deep\' * 60) + 'run-independent.ps1'
+    $clixml = "#< CLIXML`r`n<Objs Version=`"1.1.0.1`" xmlns=`"http://schemas.microsoft.com/powershell/2004/04`"><S S=`"Error`">$esc[31;1mException: $esc[0m$longPath:147$esc[0m_x000D__x000A_</S><S S=`"Error`">$esc[31;1mLine |_x000D__x000A_</S><S S=`"Error`">     | $esc[31;1m~~~~~~~~~~$esc[0m_x000D__x000A_</S><S S=`"Error`">     | $esc[31;1mDIRECT_FILE_CAPTURE_FAILED &amp; settled$esc[0m_x000D__x000A_</S></Objs>"
+    Write-Utf8 -Path $clixmlPath -Content $clixml
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "[Console]::Error.Write([System.IO.File]::ReadAllText('$clixmlPath')); exit 1")
+    Wait-JobTerminal -RunFolder $rf -JobId $job.job_id | Out-Null
+    $envelope = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $job.job_id)
+    $errText = @($envelope.stderr_excerpt) -join "`n"
+    Assert-True ($errText.Contains('| DIRECT_FILE_CAPTURE_FAILED & settled') -and -not $errText.Contains('CLIXML') -and -not $errText.Contains('_x001B_') -and -not $errText.Contains('~~~') -and -not $errText.Contains([char]27)) "a CLIXML stderr reaches the envelope as plain readable lines ($errText)"
 
     # Exit semantics: the final statement decides, as with pwsh -Command.
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "cmd /c exit 3; 'done'")
