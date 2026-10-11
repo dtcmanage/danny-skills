@@ -840,3 +840,28 @@ def test_first_attempt_failures_do_not_blame_answer_model_for_judge():
     assert actual['actual-judge']['answer_reps'] == 0
     assert actual['actual-judge']['judge_calls'] == actual['actual-judge']['judge_dispatch_failures'] == 1
     assert actual['actual-judge']['failure_categories'] == {'protocol':1}
+
+
+def _fake_run(tmp_path, scenario):
+    import codex_appserver as transport
+    return transport.run([sys.executable, str(Path(__file__).with_name('fake-appserver.py')), scenario],
+                         {'model':'gpt-6.1-sol','effort':'high','prompt':'Synthetic fixture\nexact bytes'}, tmp_path, 5000)
+
+
+def test_codex_error_codex_retries_is_not_fatal(tmp_path):
+    result = _fake_run(tmp_path, 'error-retry')
+    assert result['status'] == 'ok' and result['answer'] == 'synthetic answer'
+
+
+@pytest.mark.parametrize('scenario, detail, category', [
+    ('error-final:overloaded', 'codex error: serverOverloaded', 'transport'),
+    ('error-final:stream', 'codex error: responseStreamDisconnected http 502', 'transport'),
+    ('error-final:usage', 'ERROR: Usage limit reached', 'quota'),
+    ('error-final:hostile', 'unsupported event: error', 'protocol'),
+])
+def test_codex_final_error_named_by_fixed_code(tmp_path, scenario, detail, category):
+    import codex_appserver as transport
+    with pytest.raises(transport.BoundaryError) as raised:
+        _fake_run(tmp_path, scenario)
+    assert str(raised.value) == detail and 'SECRET_SENTINEL' not in str(raised.value)
+    assert transport.failure_category(str(raised.value)) == category

@@ -100,6 +100,10 @@ for line in sys.stdin:
   if scenario=='reroute-id':event('model/rerouted',{'fromModel':'gpt-6.1-sol','toModel':'gpt-6-luna'});continue
   if scenario=='request':emit({'id':88,'method':'item/tool/call','params':base});continue
   if scenario in ('unknown','error'):event('UNKNOWN_SECRET_SENTINEL' if scenario=='unknown' else 'error',base);continue
+  if scenario=='error-retry':event('error',dict(base,willRetry=True,error={'message':'SYNTHETIC_SECRET_SENTINEL','codexErrorInfo':{'responseStreamDisconnected':{'httpStatusCode':None}}}))
+  if scenario.startswith('error-final:'):
+   info={'overloaded':'serverOverloaded','stream':{'responseStreamDisconnected':{'httpStatusCode':502}},'usage':'usageLimitExceeded','hostile':'SYNTHETIC_SECRET_SENTINEL'}[scenario.split(':')[1]]
+   event('error',dict(base,willRetry=False,error={'message':'SYNTHETIC_SECRET_SENTINEL','codexErrorInfo':info}));continue
   if scenario in ('reroute','reroute-stale'):event('model/rerouted',dict(base,turnId='old' if scenario=='reroute-stale' else 'u',fromModel='gpt-6.1-sol',toModel='gpt-6-luna',reason='modelUnavailable'));continue
   if scenario.startswith('item:'):event('item/completed',dict(base,item={'id':'i','type':scenario[5:]}));continue
   last={'inputTokens':100,'cachedInputTokens':40,'cacheWriteInputTokens':5,'outputTokens':8,'reasoningOutputTokens':2,'totalTokens':108}

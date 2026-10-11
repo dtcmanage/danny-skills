@@ -43,11 +43,11 @@ class BoundaryError(Exception):
 
 
 def failure_category(message: str) -> str:
-    if re.search(r'timeout|timed out|transport fail(?:ed|ure)', message, re.I):
+    if re.search(r'timeout|timed out|transport fail(?:ed|ure)|codex error: (?:responseStream|httpConnectionFailed|serverOverloaded|internalServerError|responseTooManyFailedAttempts|flexUnavailable)', message, re.I):
         return 'transport'
     if any(text in message for text in ('model or effort mismatch', 'model rerouted', 'actual settings changed')):
         return 'identity'
-    if any(text in message for text in ('tool or', 'server request forbidden', 'unsupported event: error', 'single-inference raw evidence')):
+    if any(text in message for text in ('tool or', 'server request forbidden', 'unsupported event: error', 'codex error: ', 'single-inference raw evidence')):
         return 'protocol'
     if message.startswith('ERROR: Usage limit'):
         return 'quota'
@@ -113,6 +113,33 @@ def quota_diagnostic(error: Any) -> str | None:
         except (ValueError, OverflowError, OSError):
             pass
     return safe
+
+
+CODEX_ERROR_CODES = ('contextWindowExceeded', 'sessionBudgetExceeded', 'usageLimitExceeded', 'rateLimitExceeded',
+                     'flexUnavailable', 'serverOverloaded', 'cyberPolicy', 'misalignmentPolicyViolation',
+                     'tooManyDenials', 'internalServerError', 'unauthorized', 'badRequest',
+                     'threadRollbackFailed', 'sandboxError', 'other', 'httpConnectionFailed',
+                     'responseStreamConnectionFailed', 'responseStreamDisconnected', 'responseTooManyFailedAttempts',
+                     'activeTurnNotSteerable')
+
+
+def codex_error_diagnostic(error: Any) -> str:
+    """Name a final Codex error by its fixed code and HTTP status only; its free text never crosses."""
+    info = error.get('codexErrorInfo') if isinstance(error, dict) else None
+    code, status = None, None
+    if isinstance(info, str) and info in CODEX_ERROR_CODES:
+        code = info
+    elif isinstance(info, dict) and len(info) == 1:
+        key, value = next(iter(info.items()))
+        if key in CODEX_ERROR_CODES:
+            code = key
+            raw = value.get('httpStatusCode') if isinstance(value, dict) else None
+            status = raw if isinstance(raw, int) and not isinstance(raw, bool) and 100 <= raw <= 599 else None
+    if code in ('usageLimitExceeded', 'rateLimitExceeded'):
+        return 'ERROR: Usage limit reached'
+    if code is None:
+        return 'unsupported event: error'
+    return f'codex error: {code}' + (f' http {status}' if status is not None else '')
 
 
 def model_identity(value: Any) -> str | None:
@@ -306,7 +333,13 @@ class Server:
                 required_id(message.get('params', {}).get('turnId'))
                 return message
             if method == 'error':
-                raise BoundaryError(quota_diagnostic(message['params'].get('error')) or 'unsupported event: error')
+                params = message.get('params') or {}
+                # Codex retries a dropped stream or overloaded server itself; the turn carries on.
+                if params.get('willRetry') is True:
+                    required_id(params.get('threadId'))
+                    required_id(params.get('turnId'))
+                    return message
+                raise BoundaryError(quota_diagnostic(params.get('error')) or codex_error_diagnostic(params.get('error')))
             if method not in BENIGN:
                 if method in ('configWarning', 'warning', 'error', 'account/rateLimits/updated', 'mcpServer/startupStatus/updated'):
                     raise BoundaryError('unsupported event: ' + method)
