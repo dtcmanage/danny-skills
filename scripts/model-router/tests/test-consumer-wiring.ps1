@@ -334,6 +334,24 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
             $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-limit-$($limit[0])-$($limit[2])" $extra } else { Invoke-ClaudeWrapper "$lane-limit-$($limit[0])-$($limit[2])" $extra }
             Assert-True ([long]$r.prov.timeout_ms -eq $limit[2]) "$lane $($limit[0]) time limit is $($limit[2]) ms$(if ($limit[1].Count) { ' when set explicitly' } else { ' by default' })"
         }
+        # -AdHoc: one-off work outside a dt-build run. No prompt envelope or report shape is required;
+        # routing and provenance still apply. Without -AdHoc the same prompt is refused.
+        $adhocPrompt = Join-Path $temp "$lane-adhoc-task.md"
+        Write-Utf8 $adhocPrompt "Diagnose why the ECKS sync stalls. Reply in plain prose."
+        $adhocOut = Join-Path $temp "$lane-adhoc.md"
+        $wrapperPath = Join-Path $buildScripts "invoke-$lane-chunk.ps1"
+        $cliArgs = if ($lane -eq 'codex') { @('-CodexCliPath', $fakeCodex) } else { @() }
+        $env:DT_FAKE_DIAGNOSIS = 'unexplained-invalid'
+        try {
+            & pwsh -NoProfile -File $wrapperPath -ProjectPath $project -PromptPath $adhocPrompt -OutputPath $adhocOut -Category 'code-review' -Effort 'high' -SelectionReason 'one-off diagnosis' -AdHoc -Json @cliArgs *> $null
+            $adhocExit = $LASTEXITCODE
+            & pwsh -NoProfile -File $wrapperPath -ProjectPath $project -PromptPath $adhocPrompt -OutputPath (Join-Path $temp "$lane-adhoc-refused.md") -Category 'code-review' -Effort 'high' -SelectionReason 'one-off diagnosis' -Json @cliArgs *> $null
+            $refusedExit = $LASTEXITCODE
+        }
+        finally { $env:DT_FAKE_DIAGNOSIS = $null }
+        $adhocProv = if (Test-Path -LiteralPath "$adhocOut.provenance.json") { Get-Content -Raw -LiteralPath "$adhocOut.provenance.json" | ConvertFrom-Json } else { $null }
+        Assert-True ($adhocExit -eq 0 -and $null -ne $adhocProv -and $adhocProv.category -eq 'code-review' -and $adhocProv.disclosure_line -match '^MODEL_SELECTION: adhoc-' -and @($adhocProv.output_shape_errors).Count -eq 0) "$lane -AdHoc runs a headerless prompt through the router (exit $adhocExit)"
+        Assert-True ($refusedExit -ne 0) "$lane without -AdHoc still refuses a headerless prompt"
         # Under dt-job a substantive call has no time limit, even when one is passed.
         $env:DT_JOB_ID = 'j-test'
         try { $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-limit-dtjob" @('-Category','complex-coding','-TimeoutMs','600000') } else { Invoke-ClaudeWrapper "$lane-limit-dtjob" @('-Category','complex-coding','-TimeoutMs','600000') } }

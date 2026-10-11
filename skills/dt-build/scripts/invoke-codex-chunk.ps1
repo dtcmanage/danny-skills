@@ -20,6 +20,7 @@ param(
     [switch]$Preflight,
     [switch]$ReadOnly,
     [switch]$Scrutiny,
+    [switch]$AdHoc,
     [string]$CodexCliPath = "",
     [switch]$Json
 )
@@ -96,17 +97,25 @@ if (-not $Preflight) {
     $PromptPath = (Resolve-Path -LiteralPath $PromptPath).Path
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
     $promptText = Get-Content -Raw -LiteralPath $PromptPath
-    $attemptMatch = [regex]::Match($promptText, '(?m)^attempt:\s*(\d+)\s*$')
-    if (-not $attemptMatch.Success -or [int]$attemptMatch.Groups[1].Value -ne $Attempt) {
-        throw "CODEX_INVOKE_FAIL: prompt attempt header must equal -Attempt $Attempt."
+    # An ad-hoc call (one-off delegated work outside a dt-build run) keeps routing, the usage ledger,
+    # error classification and stall reporting, but its prompt and report carry no dt-build envelope.
+    if ($AdHoc) {
+        $promptRunId = 'adhoc'
+        $promptChunkId = 'adhoc-' + [System.IO.Path]::GetFileNameWithoutExtension($PromptPath)
     }
-    $runMatch = [regex]::Match($promptText, '(?m)^RUN_ID:\s*(.+?)\s*$')
-    $chunkMatch = [regex]::Match($promptText, '(?m)^chunk_id:\s*(.+?)\s*$')
-    if (-not $runMatch.Success -or -not $chunkMatch.Success) {
-        throw "CODEX_INVOKE_FAIL: prompt must contain RUN_ID and chunk_id identity headers."
+    else {
+        $attemptMatch = [regex]::Match($promptText, '(?m)^attempt:\s*(\d+)\s*$')
+        if (-not $attemptMatch.Success -or [int]$attemptMatch.Groups[1].Value -ne $Attempt) {
+            throw "CODEX_INVOKE_FAIL: prompt attempt header must equal -Attempt $Attempt."
+        }
+        $runMatch = [regex]::Match($promptText, '(?m)^RUN_ID:\s*(.+?)\s*$')
+        $chunkMatch = [regex]::Match($promptText, '(?m)^chunk_id:\s*(.+?)\s*$')
+        if (-not $runMatch.Success -or -not $chunkMatch.Success) {
+            throw "CODEX_INVOKE_FAIL: prompt must contain RUN_ID and chunk_id identity headers."
+        }
+        $promptRunId = $runMatch.Groups[1].Value.Trim()
+        $promptChunkId = $chunkMatch.Groups[1].Value.Trim()
     }
-    $promptRunId = $runMatch.Groups[1].Value.Trim()
-    $promptChunkId = $chunkMatch.Groups[1].Value.Trim()
     if ($SelectionReason -match '[\r\n]') {
         throw "CODEX_INVOKE_FAIL: -SelectionReason must be one line."
     }
@@ -375,7 +384,7 @@ try {
         $failureReason = "CODEX_PREFLIGHT_FAIL: expected OK, received '$($lastMessage.Trim())'. Redacted stream: $streamPath"
         $failureCategory = 'model-output'
     }
-    elseif (-not $Preflight -and -not $Scrutiny) {
+    elseif (-not $Preflight -and -not $Scrutiny -and -not $AdHoc) {
         $shape = Get-ReportShapeResult -Text $lastMessage -RunId $promptRunId -ChunkId $promptChunkId -ExpectedAttempt $Attempt
         $shapeErrors = @($shape.errors)
         $reportVersionWarning = $shape.warning
