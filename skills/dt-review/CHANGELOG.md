@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.25 (2026-10-11): model router: the bench lets Codex retry its own stream errors and names final errors by code.
+
 - 1.16.24 (2026-10-11): Shared model router: tests cover the chunk wrappers' per-job time limits.
 
 - 1.16.23 (2026-10-11): Shared model router: ranked judging calls a winner only on a statistically significant lead over 16 rounds; lower-effort and swap proposals are blocked when they trail.

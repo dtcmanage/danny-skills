@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.19
+
+- model router: the bench lets Codex retry its own stream errors and names final errors by code.
+
 ## 2.21.18
 
 - Coordinators get 250k tokens of working room past startup: wrap-up at baseline + 250k, handoff-only at + 280k. Managed Codex runs Sol at its 872k window (compaction at 800k) with the hard limit capped at 760k and the watcher backstop at 790k; Claude stays capped at 240k. SKILL.md no longer has drivers pass -TimeoutMs 600000.
