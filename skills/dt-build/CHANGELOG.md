@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.7
+
+- Model router bench runs model calls side by side (default 32 at once) and asks both judges at the same time; a deep-thinker comparison drops from hours to minutes.
+
 ## 2.21.6
 
 - Model router usage reads as X% used / Y% left in the weekly report, limits CLI, and limit wait reasons; the weekly report adds a Codex usage line.

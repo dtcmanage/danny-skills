@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.18 (2026-10-10): Model router bench runs model calls side by side (default 32 at once) and asks both judges at the same time; a deep-thinker comparison drops from hours to minutes.
+
 - 0.3.17 (2026-10-10): Model router usage reads as X% used / Y% left in the weekly report, limits CLI, and limit wait reasons; the weekly report adds a Codex usage line.
 
 - 0.3.16 (2026-10-10): Model router re-checks Codex limits live when a stale reading says Codex is blocked, so a usage reset is seen without waiting for a Codex run.
