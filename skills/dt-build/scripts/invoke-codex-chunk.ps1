@@ -145,6 +145,12 @@ if ([string]::IsNullOrWhiteSpace($Category)) {
     $Category = $mappedCategory.category
     $isProtected = $isProtected -or $mappedCategory.protected
 }
+# A builder or reviewer chunk routinely runs past 10 minutes; killing it there throws its work away.
+# Without an explicit -TimeoutMs, coder work gets 45 minutes and deep-thinker work 30.
+if (-not $PSBoundParameters.ContainsKey('TimeoutMs')) {
+    $timeoutJob = try { Get-RouterCategoryJob -Category $Category } catch { $null }
+    $TimeoutMs = switch ($timeoutJob) { 'coder' { 2700000 } 'deep-thinker' { 1800000 } default { 600000 } }
+}
 try {
     $Difficulty = $Difficulty.ToLowerInvariant()
     if ($RetryAtHardFrom) { $Difficulty = 'hard' }

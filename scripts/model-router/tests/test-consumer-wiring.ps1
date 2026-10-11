@@ -329,6 +329,13 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     Assert-True ($stamped.exit -eq 0) 'stamped Claude OK passes preflight'
     $env:DT_FAKE_CLAUDE_MODE = $null
     foreach ($lane in @('codex','claude')) {
+        foreach ($limit in @(@('complex-coding', @(), 2700000), @('code-review', @(), 1800000), @('mechanical', @(), 600000), @('complex-coding', @('-TimeoutMs','120000'), 120000))) {
+            $extra = @('-Category', $limit[0]) + @($limit[1])
+            $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-limit-$($limit[0])-$($limit[2])" $extra } else { Invoke-ClaudeWrapper "$lane-limit-$($limit[0])-$($limit[2])" $extra }
+            Assert-True ([long]$r.prov.timeout_ms -eq $limit[2]) "$lane $($limit[0]) time limit is $($limit[2]) ms$(if ($limit[1].Count) { ' when set explicitly' } else { ' by default' })"
+        }
+    }
+    foreach ($lane in @('codex','claude')) {
         foreach ($case in @('offline-resume','offline-timeout','incident','offline-incident','unexplained-invalid','unexplained-success','unexplained-fail')) {
             Remove-Item (Join-Path $state 'vendor-status-cache.json'),(Join-Path $state 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
             # Each fixture represents a separate outage, despite its fixed clock.

@@ -14,6 +14,7 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 - Codex has no in-session completion notice. Wait in the foreground with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` below the shell command timeout (for example 540 under a 600-second limit).
 - On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again for the jobs still running. Do no other work between waits.
 - Never poll with repeated `status` calls, `sleep` loops, or log tails.
+- Chunk wrappers stop a dispatch after 45 minutes for coder work, 30 for deep-thinker work and 10 otherwise, unless `-TimeoutMs` says otherwise. Do not give a wrapper job a shorter `dt-job start -TimeoutSec`; dt-job raises it to the wrapper's limit plus two minutes.
 - A run that will wait for hours uses managed mode (below) rather than a long interactive wait.
 - The ledger is the truth: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and after any `wait_timeout`.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.

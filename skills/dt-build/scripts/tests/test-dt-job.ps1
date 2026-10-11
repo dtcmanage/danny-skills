@@ -120,6 +120,15 @@ try {
     Assert-True ($record.status -eq 'timeout') "timeout status was $($record.status)"
     Assert-True (Test-ProcessGone $record.pid) 'timed-out process was stopped'
 
+    # A job limit below a chunk wrapper's own limit is raised so it cannot kill the wrapper mid-work.
+    $rf = New-RunFolder 'wrapper-floor'
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok # invoke-codex-chunk.ps1 -Category complex-coding', '-TimeoutSec', '660')
+    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 2820) 'wrapper job limit raised to 45 minutes plus 2'
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok # invoke-claude-chunk.ps1 -TimeoutMs 1200000', '-TimeoutSec', '660')
+    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 1320) 'wrapper job limit follows an explicit -TimeoutMs'
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok # invoke-codex-chunk.ps1', '-TimeoutSec', '9000')
+    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 9000) 'a longer wrapper job limit is kept'
+
     # Dependency chain: a failure blocks two levels downstream.
     $rf = New-RunFolder 'deps'
     $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 1; exit 1')

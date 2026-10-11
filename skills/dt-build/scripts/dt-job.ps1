@@ -603,6 +603,14 @@ function Invoke-DtJobStart {
     if ([string]::IsNullOrWhiteSpace($Command) -eq [string]::IsNullOrWhiteSpace($ScriptPath)) {
         throw 'DT_JOB_USAGE: start takes exactly one of -Command or -ScriptPath.'
     }
+    # A chunk wrapper enforces its own limit (up to 45 minutes for coder work). A job limit below it kills
+    # the wrapper mid-work, so it is raised to the wrapper's limit plus two minutes for cleanup.
+    $jobText = (@($Command, $ScriptPath) + @($ArgumentList)) -join ' '
+    if ($TimeoutSec -gt 0 -and $jobText -match '(?i)invoke-(codex|claude)-chunk\.ps1') {
+        $wrapperMs = if ($jobText -match '(?i)-TimeoutMs\s+[''"]?(\d+)') { [long]$Matches[1] } else { 2700000 }
+        $floor = [int][math]::Ceiling($wrapperMs / 1000) + 120
+        if ($TimeoutSec -lt $floor) { $TimeoutSec = $floor }
+    }
     $spec = [ordered]@{ command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec; environment = (Get-DtJobEnvironment -Extra $PassEnv) }
     if ($Command) { $spec.command = $Command; $identity = $Command }
     else {
