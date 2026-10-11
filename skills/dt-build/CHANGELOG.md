@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.24.0
+
+- Operator notes: dt-job note adds standing instructions in operator-notes.json that run status, every wait and read-resume-record show in full; coordinators follow them and never copy them into the checkpoint.
+
 ## 2.23.0
 
 - Approval delegation: dt-job delegate routes routine await-danny stops to a named session with no DM; the watcher DMs Danny after 15 unapproved minutes; production, install, Azure, irreversible and -AlwaysNotify stops always DM; finish sends a digest of delegated approvals.
