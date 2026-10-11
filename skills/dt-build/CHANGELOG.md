@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.25.2
+
+- model router: read-only Codex workers on Windows can read files (unsandboxed with an unchanged-tree check); the ad-hoc wiring test uses the fixture Claude CLI.
+
 ## 2.25.1
 
 - model router: chunk wrappers refuse prompts over 400,000 characters (PROMPT_TOO_LARGE) and point to path-plus-sha256 references.
