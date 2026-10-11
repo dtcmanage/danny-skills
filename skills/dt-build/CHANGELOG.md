@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.22.0
+
+- model router: chunk wrappers have no time limit under dt-job; activity check-ins flag stalls instead.
+
 ## 2.21.19
 
 - model router: the bench lets Codex retry its own stream errors and names final errors by code.

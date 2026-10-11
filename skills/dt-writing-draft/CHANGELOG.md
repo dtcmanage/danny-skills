@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.26 (2026-10-11): model router: chunk wrappers have no time limit under dt-job; activity check-ins flag stalls instead.
+
 - 0.2.25 (2026-10-11): model router: the bench lets Codex retry its own stream errors and names final errors by code.
 
 - 0.2.24 (2026-10-11): Shared model router: tests cover the chunk wrappers' per-job time limits.
