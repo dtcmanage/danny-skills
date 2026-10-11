@@ -172,6 +172,10 @@ if (`$env:DT_FAKE_DIAGNOSIS -eq 'unexplained-invalid') {
     `$idx = [Array]::IndexOf([object[]]`$args, '--output-last-message')
     [IO.File]::WriteAllText([string]`$args[`$idx + 1], 'invalid report'); exit 0
 }
+if (`$env:DT_FAKE_CODEX_MODE -eq 'touch-project') {
+    `$cdIndex = [Array]::IndexOf([object[]]`$args, '--cd')
+    [IO.File]::WriteAllText((Join-Path ([string]`$args[`$cdIndex + 1]) 'reviewer-wrote-this.txt'), 'x')
+}
 `$outIndex = [Array]::IndexOf([object[]]`$args, '--output-last-message')
 [void][Console]::In.ReadToEnd()
 [IO.File]::WriteAllText([string]`$args[`$outIndex + 1], @'
@@ -340,7 +344,8 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
         Write-Utf8 $adhocPrompt "Diagnose why the ECKS sync stalls. Reply in plain prose."
         $adhocOut = Join-Path $temp "$lane-adhoc.md"
         $wrapperPath = Join-Path $buildScripts "invoke-$lane-chunk.ps1"
-        $cliArgs = if ($lane -eq 'codex') { @('-CodexCliPath', $fakeCodex) } else { @() }
+        # Always the fixture CLI: without it the Claude lane would call the real claude.exe.
+        $cliArgs = if ($lane -eq 'codex') { @('-CodexCliPath', $fakeCodex) } else { @('-ClaudeCliPath', $fakeClaude) }
         $env:DT_FAKE_DIAGNOSIS = 'unexplained-invalid'
         try {
             & pwsh -NoProfile -File $wrapperPath -ProjectPath $project -PromptPath $adhocPrompt -OutputPath $adhocOut -Category 'code-review' -Effort 'high' -SelectionReason 'one-off diagnosis' -AdHoc -Json @cliArgs *> $null
@@ -364,6 +369,16 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
         finally { $env:DT_BUILD_PROMPT_MAX_CHARS = $null }
         $launchesAfter = if (Test-Path -LiteralPath $launchLog) { @(Get-Content -LiteralPath $launchLog).Count } else { 0 }
         Assert-True ($bigExit -ne 0 -and $bigErr -match 'PROMPT_TOO_LARGE' -and $bigErr -match 'sha256 pins' -and $launchesAfter -eq $launchesBefore) "$lane refuses an oversized prompt before dispatch (exit $bigExit)"
+        if ($lane -eq 'codex') {
+            # A read-only Codex reviewer on Windows runs unsandboxed (the read-only sandbox blocks every
+            # command) and is rejected if it changes the project tree.
+            $ro = Invoke-CodexWrapper 'codex-readonly' @('-Category','code-review','-ReadOnly')
+            Assert-True ($ro.exit -eq 0 -and $ro.prov.sandbox -match 'read-only enforced by an unchanged-tree check') "a read-only Codex review runs with the unchanged-tree check (exit $($ro.exit); sandbox: $($ro.prov.sandbox); $($ro.stderr))"
+            $env:DT_FAKE_CODEX_MODE = 'touch-project'
+            try { $roBad = Invoke-CodexWrapper 'codex-readonly-writes' @('-Category','code-review','-ReadOnly') }
+            finally { $env:DT_FAKE_CODEX_MODE = $null; Remove-Item -LiteralPath (Join-Path $project 'reviewer-wrote-this.txt') -Force -ErrorAction SilentlyContinue }
+            Assert-True ($roBad.exit -ne 0 -and ($roBad.stdout + $roBad.stderr) -match 'CODEX_READONLY_VIOLATION') "a read-only Codex reviewer that writes into the project is rejected (exit $($roBad.exit); $($roBad.stderr))"
+        }
         # Under dt-job a substantive call has no time limit, even when one is passed.
         $env:DT_JOB_ID = 'j-test'
         try { $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-limit-dtjob" @('-Category','complex-coding','-TimeoutMs','600000') } else { Invoke-ClaudeWrapper "$lane-limit-dtjob" @('-Category','complex-coding','-TimeoutMs','600000') } }

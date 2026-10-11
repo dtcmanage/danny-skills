@@ -137,6 +137,47 @@ if (-not $Preflight) {
     }
 }
 
+function Get-ReadOnlyTreeSnapshot {
+    # The project's state as comparable entries: git HEAD, status, tracked diff and untracked file contents, or for
+    # a non-git folder every file's path, size and write time. Paths under -IgnoreDir (the wrapper's own
+    # output folder) and any .dt-build folder are left out.
+    param([Parameter(Mandatory)][string]$Root, [string]$IgnoreDir)
+    $ignore = if ($IgnoreDir) { [System.IO.Path]::GetFullPath($IgnoreDir).TrimEnd('\', '/') } else { $null }
+    # An output folder that contains the whole project would hide every change: ignore it only inside.
+    if ($ignore -and ([System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + '\').StartsWith($ignore + '\', [System.StringComparison]::OrdinalIgnoreCase)) { $ignore = $null }
+    $skip = { param([string]$full) ($full -match '[\\/]\.dt-build([\\/]|$)') -or ($ignore -and $full.StartsWith($ignore, [System.StringComparison]::OrdinalIgnoreCase)) }
+    # A fixed first entry keeps an empty folder's snapshot non-empty for Compare-Object.
+    $parts = [System.Collections.Generic.List[string]]::new(); $parts.Add("root:$Root")
+    $top = (& git -C $Root rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+    if ($LASTEXITCODE -eq 0 -and $top) {
+        $head = [string](& git -C $Root rev-parse --verify -q HEAD 2>$null | Select-Object -First 1)
+        $parts.Add("head:$head")
+        foreach ($line in @(& git -C $Root -c core.quotepath=false status --porcelain=v1 --untracked-files=all 2>$null)) {
+            if ($line.Length -lt 4) { continue }
+            $rel = $line.Substring(3)
+            $full = [System.IO.Path]::GetFullPath((Join-Path $top $rel))
+            if (& $skip $full) { continue }
+            $parts.Add($line)
+            if ($line.StartsWith('??') -and (Test-Path -LiteralPath $full -PathType Leaf)) { $parts.Add((Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash) }
+        }
+        if ($head) { $parts.Add('diff:' + ((& git -C $Root diff HEAD --no-ext-diff --binary 2>$null) -join "`n")) }
+    }
+    else {
+        foreach ($f in @(Get-ChildItem -LiteralPath $Root -Recurse -File -Force -ErrorAction SilentlyContinue | Sort-Object FullName)) {
+            if (& $skip $f.FullName) { continue }
+            $parts.Add("$($f.FullName)|$($f.Length)|$($f.LastWriteTimeUtc.Ticks)")
+        }
+    }
+    return @($parts)
+}
+
+function Get-ReadOnlyTreeChanges {
+    # The snapshot entries that differ between two snapshots, at most five, for the violation message.
+    param([string[]]$Before, [string[]]$After)
+    $changed = @(Compare-Object -ReferenceObject @($Before) -DifferenceObject @($After) -CaseSensitive | ForEach-Object { [string]$_.InputObject })
+    return @($changed | Select-Object -First 5)
+}
+
 $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot "scripts\resolve-codex-model.ps1")
 . (Join-Path $repoRoot "scripts\model-router\resolve-model.ps1")
@@ -256,8 +297,12 @@ $sandbox = if ($Preflight -or $ReadOnly) { 'read-only' } else { 'workspace-write
 # unsandboxed via explicit default_permissions; containment is the scoped
 # worktree plus the orchestrator's independent verification. Preflight and
 # non-Windows hosts keep the real sandbox. Verified 2026-08-30, codex-cli 0.151.0.
-$windowsUnsandboxed = (-not $Preflight -and -not $ReadOnly) -and ($env:OS -eq 'Windows_NT')
-if ($windowsUnsandboxed) { $sandbox = 'danger-full-access (windows: codex sandbox removed upstream)' }
+# A read-only reviewer is unsandboxed too: Codex's read-only sandbox blocks every command on Windows
+# ("CreateProcess: blocked by policy"), so it could not read the files it is pinned to. Read-only is
+# enforced after the fact instead: the project tree must be unchanged when it exits.
+$windowsUnsandboxed = (-not $Preflight) -and ($env:OS -eq 'Windows_NT')
+$verifyReadOnly = $windowsUnsandboxed -and $ReadOnly
+if ($windowsUnsandboxed) { $sandbox = if ($ReadOnly) { 'danger-full-access (windows: read-only enforced by an unchanged-tree check)' } else { 'danger-full-access (windows: codex sandbox removed upstream)' } }
 $sandboxArgs = if ($windowsUnsandboxed) {
     @('-c', 'default_permissions=":danger-full-access"')
 } else {
@@ -320,6 +365,7 @@ try {
     $startInfo.WorkingDirectory = $projectRoot
     foreach ($arg in @($prefixArgs) + @($args)) { [void]$startInfo.ArgumentList.Add($arg) }
 
+    $readOnlyBefore = if ($verifyReadOnly) { Get-ReadOnlyTreeSnapshot -Root $projectRoot -IgnoreDir (Split-Path -Parent $OutputPath) } else { $null }
     :dispatch do {
     $diagnosis = $null
     $dispatchDiagnosis = $null
@@ -385,6 +431,11 @@ try {
         $failureCategory = 'tooling'
     }
 
+    elseif ($verifyReadOnly -and @(Get-ReadOnlyTreeChanges -Before $readOnlyBefore -After (Get-ReadOnlyTreeSnapshot -Root $projectRoot -IgnoreDir (Split-Path -Parent $OutputPath))).Count -gt 0) {
+        $readOnlyChanged = @(Get-ReadOnlyTreeChanges -Before $readOnlyBefore -After (Get-ReadOnlyTreeSnapshot -Root $projectRoot -IgnoreDir (Split-Path -Parent $OutputPath)))
+        $failureReason = "CODEX_READONLY_VIOLATION: the read-only worker changed files under ${projectRoot}: $($readOnlyChanged -join '; '). Its report is rejected. Redacted stream: $streamPath"
+        $failureCategory = 'model-output'
+    }
     elseif ([string]::IsNullOrWhiteSpace($lastMessage)) {
         $failureReason = "CODEX_INVOKE_FAIL: codex exec returned no final message. Redacted stream: $streamPath"
         $failureCategory = 'model-output'

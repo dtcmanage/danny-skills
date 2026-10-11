@@ -100,7 +100,7 @@ Routing lives in the shared model router: `scripts/model-router/resolve-model.ps
 - **Frontier spend (alert only):** after step 6.i run `pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1 -RunStartedAt <run start, ISO> -RunId <RUN_ID> -RemainingMilestones <n> -Json` and relay its `ROUTER_ALERT:` line if any.
 - **Stop finished subagents** (TaskStop on claude-host) after collecting the report.
 
-Harness terms: `claude-host` has the Agent tool; `codex-host` is any other orchestrator. CLAUDE_DISPATCH is the Claude-lane dispatch above; VERIFY_DISPATCH is a fresh read-only non-builder session on the vendor returned for `code-review`. Run `-Preflight -TimeoutMs 30000` on each wrapper once per category before its first substantive use; substantive calls run as jobs without a time limit. On Windows the Codex wrapper runs unsandboxed; containment is the scoped worktree plus independent verification, recorded in provenance.
+Harness terms: `claude-host` has the Agent tool; `codex-host` is any other orchestrator. CLAUDE_DISPATCH is the Claude-lane dispatch above; VERIFY_DISPATCH is a fresh read-only non-builder session on the vendor returned for `code-review`. Run `-Preflight -TimeoutMs 30000` on each wrapper once per category before its first substantive use; substantive calls run as jobs without a time limit. On Windows Codex runs unsandboxed; containment is the scoped worktree plus independent verification; read-only workers fail if the tree changes.
 
 ## Context discipline
 
