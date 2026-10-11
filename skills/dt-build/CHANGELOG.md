@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.14
+
+- Chunk wrappers default to 45 minutes for coder work and 30 for deep-thinker work instead of 10, and dt-job start raises a wrapper job's shorter -TimeoutSec, so builders are no longer killed mid-work.
+
 ## 2.21.13
 
 - Exclude ledger-proven productive rotations from the thrash cap, retain a distinct 30-launch ceiling and consumed-cursor evidence, narrow managed resume bootstrap, archive bounded checkpoints, and add progress/baseline regression gates.

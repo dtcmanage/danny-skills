@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.24 (2026-10-11): Shared model router: tests cover the chunk wrappers' per-job time limits.
+
 - 0.2.23 (2026-10-11): Shared model router: ranked judging calls a winner only on a statistically significant lead over 16 rounds; lower-effort and swap proposals are blocked when they trail.
 
 - 0.2.22 (2026-10-11): Shared model router: new models read 'researched' after their release research pass instead of staying 'unprofiled'.
