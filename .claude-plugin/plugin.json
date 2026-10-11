@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.24.15",
+  "version": "0.24.16",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.24.16 dt-build 2.27.0: repeat-wall guard sends walled reads to workers.",
       "0.24.15 dt-build 2.26.0: delegate hold reasons in escalation DMs.",
       "0.24.14 model router read-only reviewer on Windows: dt-build 2.25.2, dt-review 1.16.29, dt-image-gen 0.3.29, dt-writing-draft 0.2.29, dt-writing-edit 0.3.29.",
       "0.24.13 model router prompt size guard: dt-build 2.25.1, dt-review 1.16.28, dt-image-gen 0.3.28, dt-writing-draft 0.2.28, dt-writing-edit 0.3.28.",

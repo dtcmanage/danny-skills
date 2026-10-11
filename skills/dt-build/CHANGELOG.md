@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.27.0
+
+- Repeat-wall guard: when a coordinator uses up its working room without starting a job, the watcher records the files whose reads filled it (context-wall.json). The next coordinator sees them in its resume record, and the PreToolUse hook denies direct reads of them, sending the read to a mechanical worker.
+
 ## 2.26.0
 
 - Added the hold verb: a delegate holding a stop on purpose records why, and the 15-minute escalation DM tells Danny who is holding it and why instead of saying nobody approved it.
