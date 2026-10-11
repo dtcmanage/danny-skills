@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.23.0",
+  "version": "0.23.1",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.23.1 Model router: Codex input_too_large fails fast with no retry and an alert naming the prompt size and limit. dt-build 2.21.8, dt-review 1.16.19, dt-image-gen 0.3.19, dt-writing-draft 0.2.19, dt-writing-edit 0.3.19.",
       "0.23.0 Model router bench runs model calls side by side (default 32 at once, both judges together); host replies are matched by id. dt-build 2.21.7, dt-review 1.16.18, dt-image-gen 0.3.18, dt-writing-draft 0.2.18, dt-writing-edit 0.3.18. Version policy: owner entry for the new router parallel test.",
       "0.22.4 Model router usage shows X% used / Y% left (weekly report adds Codex usage). dt-build 2.21.6, dt-review 1.16.17, dt-image-gen 0.3.17, dt-writing-draft 0.2.17, dt-writing-edit 0.3.17.",
       "0.22.3 dt-build 2.21.5: a rotating coordinator never consumes its own continuation request, so managed relaunch works on the Codex host.",

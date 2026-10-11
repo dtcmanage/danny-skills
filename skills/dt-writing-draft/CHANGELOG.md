@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.19 (2026-10-10): Shared model router: Codex prompts rejected as too large (input_too_large) now fail fast as a tooling failure, with no retry and an alert naming the prompt size and the limit.
+
 - 0.2.18 (2026-10-10): Model router bench runs model calls side by side (default 32 at once) and asks both judges at the same time; a deep-thinker comparison drops from hours to minutes.
 
 - 0.2.17 (2026-10-10): Model router usage reads as X% used / Y% left in the weekly report, limits CLI, and limit wait reasons; the weekly report adds a Codex usage line.

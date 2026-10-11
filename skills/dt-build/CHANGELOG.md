@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.8
+
+- Shared model router: Codex prompts rejected as too large (input_too_large) now fail fast as a tooling failure, with no retry and an alert naming the prompt size and the limit.
+
 ## 2.21.7
 
 - Model router bench runs model calls side by side (default 32 at once) and asks both judges at the same time; a deep-thinker comparison drops from hours to minutes.
