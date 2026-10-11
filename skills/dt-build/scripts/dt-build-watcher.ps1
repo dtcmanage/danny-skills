@@ -34,8 +34,8 @@ $script:WatcherStepErrorRepeatTicks = 3
 # A Codex coordinator with trusted context hooks hands off itself; the watcher ends it only this far
 # past its hard limit, or after this long past it.
 $script:WatcherBackstopTokens = 30000
-# The backstop never reaches past this total, so the kill lands before Codex compacts (~258k usable).
-$script:WatcherBackstopCeiling = 252000
+# The backstop never reaches past this total, so the kill lands before Codex compacts (800k).
+$script:WatcherBackstopCeiling = 790000
 $script:WatcherBackstopMinutes = 10
 
 function Test-WatcherCoordinatorHooks {
@@ -333,7 +333,7 @@ function Invoke-WatcherContextRotation {
     if ($null -eq $entryBaseline) { return $null }
     try { $tokens = Get-DtCtxTokens -TranscriptHost 'codex' -TranscriptPath ([string]$entryBaseline.transcript_path) }
     catch { return "context unreadable for $coordinatorId" }
-    $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entryBaseline.baseline_tokens)
+    $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entryBaseline.baseline_tokens) -TranscriptHost 'codex'
     $pastHardPath = (Get-DtJobPaths -RunFolder $folder).PastHard
     if ($report.state -ne 'rotate') { Remove-Item -LiteralPath $pastHardPath -Force -ErrorAction SilentlyContinue; return $null }
     # A coordinator launched with trusted context hooks is told to hand off at the soft limit and is held

@@ -72,10 +72,12 @@ function Save-HookBootstrapCapture {
         $prop = $all.coordinators.PSObject.Properties[$Capture.coordinator_id]
         if ($null -eq $prop) {
             if (-not (Test-Path -LiteralPath $transcript)) { return }
-            $tokens = Get-DtCtxTokens -TranscriptHost 'claude' -TranscriptPath $transcript
+            # A managed Codex coordinator runs this hook too; its rollout transcript has its own format.
+            $captureHost = if ($transcript -match 'rollout-[^\\/]*\.jsonl$') { 'codex' } else { 'claude' }
+            $tokens = Get-DtCtxTokens -TranscriptHost $captureHost -TranscriptPath $transcript
             if ($null -eq $tokens) { return }
             $new = [pscustomobject][ordered]@{
-                coordinator_id = $Capture.coordinator_id; host = 'claude'; transcript_path = $transcript; session_id = $sessionId
+                coordinator_id = $Capture.coordinator_id; host = $captureHost; transcript_path = $transcript; session_id = $sessionId
                 transcript_source = 'hook'; baseline_tokens = [long]$tokens; marked_utc = [DateTime]::UtcNow.ToString('o'); captured_utc = [DateTime]::UtcNow.ToString('o')
             }
             $all.coordinators | Add-Member -NotePropertyName $Capture.coordinator_id -NotePropertyValue $new -Force

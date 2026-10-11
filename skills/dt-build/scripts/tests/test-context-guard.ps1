@@ -265,11 +265,14 @@ try {
     try { $overrides = & pwsh -NoProfile -Command ". '$guard'; (Get-DtCtxState -Tokens 115 -Baseline 100).state; (Get-DtCtxState -Tokens 120 -Baseline 100).state; (Get-DtCtxState -Tokens 50 -Baseline `$null).state" }
     finally { Remove-Item Env:DT_BUILD_CTX_CEILING -ErrorAction SilentlyContinue; $env:DT_BUILD_CTX_SOFT_MARGIN = '40000'; $env:DT_BUILD_CTX_HARD_MARGIN = '70000' }
     Assert-True ((@($overrides) -join ',') -eq 'checkpoint,rotate,rotate') "env overrides move soft, hard, and ceiling ($(@($overrides) -join ','))"
-    # Shipped defaults: 150k of working room past the startup baseline, handoff-only past 180k, hard limit capped at 240k.
-    $defaults = & pwsh -NoProfile -Command "Remove-Item Env:DT_BUILD_CTX_SOFT_MARGIN, Env:DT_BUILD_CTX_HARD_MARGIN -ErrorAction SilentlyContinue; . '$guard'; foreach (`$t in 204999, 205000, 234999, 235000) { (Get-DtCtxState -Tokens `$t -Baseline 55000).state }; (Get-DtCtxState -Tokens 1 -Baseline 55000).line; (Get-DtCtxState -Tokens 1 -Baseline 100000).line"
-    Assert-True ((@($defaults)[0..3] -join ',') -eq 'ok,checkpoint,checkpoint,rotate') "defaults: wrap-up at baseline+150k, handoff-only at baseline+180k ($(@($defaults)[0..3] -join ','))"
-    Assert-True (@($defaults)[4] -eq 'context: 1 ok (baseline 55000, soft 205000, hard 235000)') "default limits line ($(@($defaults)[4]))"
-    Assert-True (@($defaults)[5] -eq 'context: 1 ok (baseline 100000, soft 210000, hard 240000)') "a large baseline is capped at 240k and keeps 30k of wrap-up room ($(@($defaults)[5]))"
+    # Shipped defaults: 250k of working room past the startup baseline, handoff-only past 280k. The hard
+    # limit is capped at 760k for Codex (Sol at its full window) and 240k for Claude.
+    $defaults = & pwsh -NoProfile -Command "Remove-Item Env:DT_BUILD_CTX_SOFT_MARGIN, Env:DT_BUILD_CTX_HARD_MARGIN -ErrorAction SilentlyContinue; . '$guard'; foreach (`$t in 304999, 305000, 334999, 335000) { (Get-DtCtxState -Tokens `$t -Baseline 55000 -TranscriptHost codex).state }; (Get-DtCtxState -Tokens 1 -Baseline 55000 -TranscriptHost codex).line; (Get-DtCtxState -Tokens 1 -Baseline 500000 -TranscriptHost codex).line; (Get-DtCtxState -Tokens 1 -Baseline 55000 -TranscriptHost claude).line; (Get-DtCtxState -Tokens 1 -Baseline 55000).line"
+    Assert-True ((@($defaults)[0..3] -join ',') -eq 'ok,checkpoint,checkpoint,rotate') "defaults: wrap-up at baseline+250k, handoff-only at baseline+280k ($(@($defaults)[0..3] -join ','))"
+    Assert-True (@($defaults)[4] -eq 'context: 1 ok (baseline 55000, soft 305000, hard 335000)') "default Codex limits line ($(@($defaults)[4]))"
+    Assert-True (@($defaults)[5] -eq 'context: 1 ok (baseline 500000, soft 730000, hard 760000)') "a Codex hard limit is capped at 760k and keeps 30k of wrap-up room ($(@($defaults)[5]))"
+    Assert-True (@($defaults)[6] -eq 'context: 1 ok (baseline 55000, soft 210000, hard 240000)') "a Claude hard limit is capped at 240k ($(@($defaults)[6]))"
+    Assert-True (@($defaults)[7] -eq @($defaults)[6]) "no host gets the Claude cap ($(@($defaults)[7]))"
 
     # ---- mark-bootstrap: fixed per coordinator and idempotent.
     $run = New-Run -Name 'boot'

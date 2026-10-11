@@ -1395,13 +1395,13 @@ function Get-DtJobContextReport {
         $entry = Get-DtJobContextBaseline -RunFolder $RunFolder -CoordinatorId $CoordinatorId
         if ($null -ne $entry) {
             $tokens = Get-DtCtxTokens -TranscriptHost ([string]$entry.host) -TranscriptPath ([string]$entry.transcript_path)
-            $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entry.baseline_tokens)
+            $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entry.baseline_tokens) -TranscriptHost ([string]$entry.host)
         }
         else {
             $ctxHost = Resolve-DtJobContextHost -RunFolder $RunFolder -CoordinatorId $CoordinatorId -RequestedHost $RequestedHost
             if (-not $ctxHost) { throw 'host unknown before mark-bootstrap' }
             $transcript = Find-DtCtxTranscript -TranscriptHost $ctxHost
-            $report = Get-DtCtxState -Tokens (Get-DtCtxTokens -TranscriptHost $ctxHost -TranscriptPath $transcript) -Baseline $null
+            $report = Get-DtCtxState -Tokens (Get-DtCtxTokens -TranscriptHost $ctxHost -TranscriptPath $transcript) -Baseline $null -TranscriptHost $ctxHost
         }
     }
     catch {

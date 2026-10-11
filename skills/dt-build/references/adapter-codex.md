@@ -33,7 +33,7 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 
 ## Hooks
 
-- Managed Codex: the launcher adds the dt-build hooks as trusted session flags. Past the soft limit each step shows the context line: hand off at the next safe point. Past the hard limit only handoff steps run. The watcher ends a coordinator only as a backstop, never during an open irreversible step.
+- Managed Codex: the launcher runs Sol at full window and adds the dt-build hooks as trusted session flags. Past the soft limit each step says: hand off at the next safe point. Past the hard limit, only handoff steps. The watcher kills only as a backstop, never during an open irreversible step.
 - Interactive Codex: no hooks; the limit is advisory, except that `dt-job start` refuses with `ROTATE_REQUIRED` past the hard limit. Rotate yourself per `SKILL.md` "Context discipline".
 - The SessionStart bridge's lean mode changes eager reads, never authorization.
 

@@ -75,7 +75,9 @@ if ($CoordinatorHost -eq 'codex') {
     $trust = & (Join-Path $PSScriptRoot 'ensure-codex-hook-trust.ps1') -HookOverrides $hookOverrides
     [System.IO.File]::AppendAllText($log, "hook trust: $($trust -join ' ')`n", [System.Text.UTF8Encoding]::new($false))
     $hookArgs = ($hookOverrides | ForEach-Object { "-c $(ConvertTo-SingleQuoted $_)" }) -join ' '
-    $lines.Add("& codex --ask-for-approval never exec $permission $hookArgs $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
+    # Sol's full 872k window (828k usable), compacting only at 800k: past the 760k window cap in context-guard.
+    $windowArgs = "-c model_context_window=872000 -c model_auto_compact_token_limit=800000"
+    $lines.Add("& codex --ask-for-approval never exec $permission $hookArgs $windowArgs $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
 }
 else {
     $lines.Add('Remove-Item Env:DT_BUILD_LEAN_BOOTSTRAP -ErrorAction SilentlyContinue')
