@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.26.0
+
+- Added the hold verb: a delegate holding a stop on purpose records why, and the 15-minute escalation DM tells Danny who is holding it and why instead of saying nobody approved it.
+
 ## 2.25.2
 
 - model router: read-only Codex workers on Windows can read files (unsandboxed with an unchanged-tree check); the ad-hoc wiring test uses the fixture Claude CLI.
