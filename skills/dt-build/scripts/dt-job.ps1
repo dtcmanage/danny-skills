@@ -104,6 +104,11 @@ $script:DtJobLeaseDefaultTtlSec = 600
 $script:DtJobExplicitParams = @()
 $script:DtJobLeaseRenewMaxSec = 60
 $script:DtJobWaitPollMs = 500
+# An agent job (a chunk wrapper, or a script that calls one) is never stopped on time. Its runner records
+# activity every heartbeat; a job with no activity for the stall period is reported stalled at the
+# coordinator's check-ins, and the coordinator decides whether to cancel it.
+$script:DtJobHeartbeatSec = 30
+$script:DtJobStallSec = 1200
 $script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
 $script:DtJobAlertScript = Join-Path $PSScriptRoot '..\..\..\scripts\model-router\send-router-alert.ps1'
 # The calling coordinator: -CoordinatorId, else DT_BUILD_COORDINATOR_ID; $null for anyone else.
@@ -520,6 +525,7 @@ function New-DtJobEnvelope {
         truncated_evidence = $cutPaths
     }
     if ($null -ne $Cursor) { $envelope.last_event_seq = $Cursor.last_event_seq; $envelope.last_consumed_event_seq = $Cursor.last_consumed_event_seq }
+    if ($Record.status -eq 'running') { $envelope.activity = Limit-DtJobLine (Get-DtJobActivity -RunFolder $RunFolder -Record $Record).line ([ref]$cut) }
     if ($excerptCut) { $cutPaths.Add($stdout) }
     if ($stderrCut) { $cutPaths.Add($stderr) }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $excerpt.Count -gt 0) {
@@ -548,10 +554,18 @@ function New-DtJobRunEnvelope {
     $cut = $false
     $jobs = [System.Collections.Generic.List[object]]::new()
     $source = if ($null -ne $Records) { @($Records) } else { @(Get-DtJobRecords -RunFolder $RunFolder) }
+    # Running jobs carry their activity, and stalled ones are named up front so a new coordinator sees them.
+    $stalled = [System.Collections.Generic.List[string]]::new()
     foreach ($r in $source) {
-        $jobs.Add([ordered]@{ job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)) })
+        $entry = [ordered]@{ job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)) }
+        if ($r.status -eq 'running') {
+            $activity = Get-DtJobActivity -RunFolder $RunFolder -Record $r
+            $entry.activity = Limit-DtJobLine $activity.line ([ref]$cut)
+            if ($activity.stalled) { $stalled.Add([string]$r.job_id) }
+        }
+        $jobs.Add($entry)
     }
-    $envelope = [ordered]@{ run_folder = $paths.Root; job_count = $jobs.Count; jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
+    $envelope = [ordered]@{ run_folder = $paths.Root; job_count = $jobs.Count; stalled = @($stalled); jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
     if ($null -ne $Cursor) { $envelope.last_event_seq = $Cursor.last_event_seq; $envelope.last_consumed_event_seq = $Cursor.last_consumed_event_seq }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -604,14 +618,10 @@ function Invoke-DtJobStart {
     if ([string]::IsNullOrWhiteSpace($Command) -eq [string]::IsNullOrWhiteSpace($ScriptPath)) {
         throw 'DT_JOB_USAGE: start takes exactly one of -Command or -ScriptPath.'
     }
-    # A chunk wrapper enforces its own limit (up to 45 minutes for coder work). A job limit below it kills
-    # the wrapper mid-work, so it is raised to the wrapper's limit plus two minutes for cleanup.
-    $jobText = (@($Command, $ScriptPath) + @($ArgumentList)) -join ' '
-    if ($TimeoutSec -gt 0 -and $jobText -match '(?i)invoke-(codex|claude)-chunk\.ps1') {
-        $wrapperMs = if ($jobText -match '(?i)-TimeoutMs\s+[''"]?(\d+)') { [long]$Matches[1] } else { 2700000 }
-        $floor = [int][math]::Ceiling($wrapperMs / 1000) + 120
-        if ($TimeoutSec -lt $floor) { $TimeoutSec = $floor }
-    }
+    # An agent job is never stopped on time: its -TimeoutSec becomes the expected duration that check-ins
+    # compare against, and only a stall the coordinator confirms ends it.
+    $expectedSec = $TimeoutSec
+    if (Test-DtJobAgentJob -Command $Command -ScriptPath $ScriptPath -ArgumentList $ArgumentList) { $TimeoutSec = 0 }
     $spec = [ordered]@{ command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec; environment = (Get-DtJobEnvironment -Extra $PassEnv) }
     if ($Command) { $spec.command = $Command; $identity = $Command }
     else {
@@ -651,6 +661,7 @@ function Invoke-DtJobStart {
             status_reason     = $null
             exit_code         = $null
             timeout_sec       = $TimeoutSec
+            expected_sec      = $expectedSec
             working_directory = (Get-Location).ProviderPath
             output_path       = (Join-Path $jobDir 'stdout.log')
             stderr_path       = (Join-Path $jobDir 'stderr.log')
@@ -1036,6 +1047,49 @@ function Send-DtJobPendingAlerts {
     return @($results)
 }
 
+function Get-DtJobSettingSec {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][int]$Default)
+    $parsed = 0
+    $value = [System.Environment]::GetEnvironmentVariable($Name)
+    if ($value -and [int]::TryParse($value, [ref]$parsed) -and $parsed -gt 0) { return $parsed }
+    return $Default
+}
+
+function Test-DtJobAgentJob {
+    # A chunk wrapper call, or a script whose text calls one (a build's driver.ps1).
+    param([string]$Command, [string]$ScriptPath, [string[]]$ArgumentList)
+    $pattern = '(?i)invoke-(codex|claude)-chunk\.ps1'
+    if (((@($Command, $ScriptPath) + @($ArgumentList)) -join ' ') -match $pattern) { return $true }
+    if ($ScriptPath -and (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+        try { return ([System.IO.File]::ReadAllText($ScriptPath) -match $pattern) } catch { return $false }
+    }
+    return $false
+}
+
+function Get-DtJobActivity {
+    # A running job's progress from its runner's heartbeat: minutes running, seconds since its last sign
+    # of life (CPU, output or file changes in its working directory), and whether that makes it stalled.
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Record)
+    $now = [DateTime]::UtcNow
+    $started = if ($Record.started) { ConvertTo-DtJobUtc $Record.started } else { $now }
+    $beat = $null
+    $beatPath = Join-Path (Join-Path (Get-DtJobPaths -RunFolder $RunFolder).Jobs $Record.job_id) 'heartbeat.json'
+    if (Test-Path -LiteralPath $beatPath) { try { $beat = Read-DtJobText -Path $beatPath | ConvertFrom-Json -ErrorAction Stop } catch { $beat = $null } }
+    $lastActive = if ($null -ne $beat -and $beat.last_activity_utc) { ConvertTo-DtJobUtc $beat.last_activity_utc } else { $started }
+    $idleSec = [int][Math]::Max(0, ($now - $lastActive).TotalSeconds)
+    $runningMin = [int][Math]::Floor(($now - $started).TotalMinutes)
+    $expected = if ($Record.PSObject.Properties['expected_sec'] -and $Record.expected_sec) { [int]$Record.expected_sec } else { 0 }
+    $stallSec = Get-DtJobSettingSec -Name 'DT_JOB_STALL_SEC' -Default $script:DtJobStallSec
+    $stalled = $idleSec -ge $stallSec
+    $cpu = if ($null -ne $beat) { [int]$beat.cpu_seconds } else { $null }
+    $files = if ($null -ne $beat) { [int]$beat.file_changes } else { $null }
+    $line = "$($Record.job_id) running $runningMin min, last activity $(if ($idleSec -lt 120) { "$idleSec s" } else { "$([int][Math]::Floor($idleSec / 60)) min" }) ago"
+    if ($null -ne $beat) { $line += " (cpu $cpu s, $files file changes)" } else { $line += ' (no heartbeat yet)' }
+    if ($expected -gt 0 -and ($now - $started).TotalSeconds -gt $expected) { $line += "; past its expected $([int][Math]::Ceiling($expected / 60)) min" }
+    if ($stalled) { $line += "; STALLED: no activity for $([int][Math]::Floor($idleSec / 60)) min. Check its output, then cancel and retry or keep waiting" }
+    return [pscustomobject][ordered]@{ job_id = $Record.job_id; running_min = $runningMin; idle_sec = $idleSec; stalled = $stalled; cpu_seconds = $cpu; file_changes = $files; line = $line }
+}
+
 function Get-DtJobWaitRenewSec {
     # A blocked wait renews at least every min(60 s, ttl/2), never more often than once a second.
     param($Lease)
@@ -1076,7 +1130,9 @@ function Invoke-DtJobWait {
         $lines.Add((Limit-DtJobLine "$($r.job_id) $($r.status) exit=$($r.exit_code) evidence=$($r.output_path)" ([ref]$cut)))
     }
     $running = @($records | Where-Object { -not (Test-DtJobTerminal $_.status) } | ForEach-Object { $_.job_id })
-    $envelope = [ordered]@{ result = $result; jobs = $jobs; still_running = @($running); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
+    # A check-in: every job still running reports its progress, and a stalled one says so.
+    $progress = @($records | Where-Object { $_.status -eq 'running' } | ForEach-Object { Get-DtJobActivity -RunFolder $RunFolder -Record $_ })
+    $envelope = [ordered]@{ result = $result; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
     if ($Json -and $null -ne $script:DtJobContext) { $envelope.context = $script:DtJobContext.line }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -1087,6 +1143,7 @@ function Invoke-DtJobWait {
     $envelope.truncated = $cut
     if ($Json) { return ($envelope | ConvertTo-Json -Depth 6 -Compress) }
     if ($envelope.omitted -gt 0) { $lines.Add("...[truncated] $($envelope.omitted) finished job(s) omitted; dt-job status -RunFolder lists all") }
+    foreach ($entry in $envelope.progress) { $lines.Add([string]$entry.line) }
     if ($result -eq 'wait_timeout') { $lines.Add((Limit-DtJobLine "wait_timeout still_running=$($running -join ',')" ([ref]$cut))) }
     return $lines
 }

@@ -5,14 +5,15 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 ## Dispatch
 
 - Resolve the worker per `SKILL.md` "Model routing" and dispatch on the returned `vendor`, either vendor.
-- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Model <model> -Mutates <worktree key> -Command "<wrapper call>"`, where the wrapper call is `scripts/invoke-claude-chunk.ps1` or `scripts/invoke-codex-chunk.ps1` with the arguments `SKILL.md` names. Add `-DependsOn <job ids>` when it must wait for other jobs. `start` returns a `job_id` at once; record it in `_build-state.md` in-flight work.
-- Run long tests, builds, and browser or screenshot checks as `-Kind test` or `-Kind command` jobs, never in the foreground.
+- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Model <model> -Mutates <worktree key> -Command "<wrapper call>"`, where the wrapper call is `scripts/invoke-claude-chunk.ps1` or `scripts/invoke-codex-chunk.ps1` with the arguments `SKILL.md` names. Add `-DependsOn <job ids>` when it must wait for other jobs. Record the returned `job_id` in `_build-state.md` in-flight work.
+- Run long tests, builds and browser checks as `-Kind test|command` jobs.
 - A Claude pick at the session's own effort may still use the Agent tool with the returned `agent_alias`. Any other effort goes through the wrapper as a job.
 
 ## Waiting and completion
 
-- Wait with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, run through the Bash tool with `run_in_background: true` and a Bash `timeout` longer than `-TimeoutSec`. Claude Code notifies once when it exits, whatever the outcome. End the turn after starting it.
-- Never use CronCreate, Monitor heartbeats, `sleep` loops, repeated `status` calls, or any self-scheduled check.
+- Wait with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 600 -Json`, run through the Bash tool with `run_in_background: true` and a longer Bash `timeout`. Claude Code notifies on exit. End the turn after starting it.
+- Each `wait_timeout` is a check-in listing each running job's `progress`. Agent jobs have no time limit; for a `STALLED` job (20 silent minutes), check its output, then cancel and retry or keep waiting.
+- Never use CronCreate, Monitor heartbeats, `sleep` loops, or repeated `status` calls.
 - The ledger is the truth, not the notification: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and on `wait_timeout`, then start one new background wait for the jobs still running.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.
 
@@ -30,7 +31,6 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 
 ## Hooks
 
-- Two hooks ship in `hooks/`; `hooks/README.md` names where adoption installs them.
 - In a coordinator session the PreToolUse hook denies a Read of a file over 400 lines without a range, image Reads, and CronCreate. Past the hard context limit it also denies direct reads, searches, web tools, Agent, `dt-job start`, and every shell command except the dt-build state scripts and `git status|log|rev-parse`. The deny reason names the next step: follow it.
 - The PostToolUse hook surfaces the `context:` line at `checkpoint` and `rotate`.
 - Managed Claude coordinators get both hooks through the `--settings` file the launcher writes.

@@ -5,16 +5,16 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 ## Dispatch
 
 - Resolve the worker per `SKILL.md` "Model routing" and dispatch on the returned `vendor`, either vendor.
-- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Model <model> -Mutates <worktree key> -Command "<wrapper call>"`, where the wrapper call is `scripts/invoke-codex-chunk.ps1` or `scripts/invoke-claude-chunk.ps1` with the arguments `SKILL.md` names. Add `-DependsOn <job ids>` when it must wait for other jobs. `start` returns a `job_id` at once; record it in `_build-state.md` in-flight work.
-- Run long tests, builds, and browser or screenshot checks as `-Kind test` or `-Kind command` jobs, never in the foreground.
+- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Model <model> -Mutates <worktree key> -Command "<wrapper call>"`, where the wrapper call is `scripts/invoke-codex-chunk.ps1` or `scripts/invoke-claude-chunk.ps1` with the arguments `SKILL.md` names. Add `-DependsOn <job ids>` when it must wait for other jobs. Record the returned `job_id` in `_build-state.md` in-flight work.
+- Run long tests, builds and browser checks as `-Kind test|command` jobs.
 - Never hand-roll `codex exec` or `claude -p` or use Codex subagents for chunks.
 
 ## Waiting and completion
 
-- Codex has no in-session completion notice. Wait in the foreground with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` below the shell command timeout (for example 540 under a 600-second limit).
+- Codex has no in-session completion notice. Wait in the foreground with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` (at most 600) below the shell timeout.
 - On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again for jobs still running; nothing else between waits.
 - Never poll with `status`, `sleep` loops, or log tails.
-- Wrapper time limits: 45 minutes for coder work, 30 for deep-thinker, 10 otherwise. dt-job raises a shorter wrapper-job `-TimeoutSec` to match.
+- Each `wait_timeout` is a check-in listing each running job's `progress`. Agent jobs have no time limit; for a `STALLED` job (20 silent minutes), check its output, then cancel and retry or keep waiting.
 - Waits of hours use managed mode (below).
 - The ledger is the truth: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and after any `wait_timeout`.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.

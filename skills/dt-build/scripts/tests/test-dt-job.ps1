@@ -120,14 +120,41 @@ try {
     Assert-True ($record.status -eq 'timeout') "timeout status was $($record.status)"
     Assert-True (Test-ProcessGone $record.pid) 'timed-out process was stopped'
 
-    # A job limit below a chunk wrapper's own limit is raised so it cannot kill the wrapper mid-work.
-    $rf = New-RunFolder 'wrapper-floor'
+    # An agent job is never stopped on time: its -TimeoutSec becomes the expected duration.
+    $rf = New-RunFolder 'agent-no-limit'
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok # invoke-codex-chunk.ps1 -Category complex-coding', '-TimeoutSec', '660')
-    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 2820) 'wrapper job limit raised to 45 minutes plus 2'
-    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok # invoke-claude-chunk.ps1 -TimeoutMs 1200000', '-TimeoutSec', '660')
-    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 1320) 'wrapper job limit follows an explicit -TimeoutMs'
-    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok # invoke-codex-chunk.ps1', '-TimeoutSec', '9000')
-    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 9000) 'a longer wrapper job limit is kept'
+    $rec = Get-JobRecord -RunFolder $rf -JobId $job.job_id
+    Assert-True ($rec.timeout_sec -eq 0 -and $rec.expected_sec -eq 660) "a wrapper job has no time limit, 660 s expected ($($rec.timeout_sec), $($rec.expected_sec))"
+    $driver = Join-Path $rf 'driver.ps1'
+    Set-Content -LiteralPath $driver -Value "& (Join-Path 'x' 'invoke-claude-chunk.ps1') -TimeoutMs 600000`nexit 0" -Encoding utf8
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-ScriptPath', $driver, '-TimeoutSec', '900')
+    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 0) 'a driver script that calls a wrapper has no time limit'
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok', '-TimeoutSec', '900')
+    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 900) 'a non-agent job keeps its time limit'
+
+    # Check-ins: a silent agent job is reported stalled; a working one reports its activity.
+    $rf = New-RunFolder 'stall'
+    $env:DT_JOB_HEARTBEAT_SEC = '1'; $env:DT_JOB_STALL_SEC = '4'
+    try {
+        $quiet = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 12 # invoke-codex-chunk.ps1', '-TimeoutSec', '5')
+        $busy = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'for ($i = 0; $i -lt 12; $i++) { Write-Output "step $i"; Start-Sleep 1 } # invoke-codex-chunk.ps1')
+        Start-Sleep -Seconds 7
+        $checkin = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', "$($quiet.job_id),$($busy.job_id)", '-Any', '-TimeoutSec', '1')
+        $q = @($checkin.progress | Where-Object { $_.job_id -eq $quiet.job_id })[0]
+        $b = @($checkin.progress | Where-Object { $_.job_id -eq $busy.job_id })[0]
+        Assert-True ($checkin.result -eq 'wait_timeout' -and $q.stalled -and $q.line -match 'STALLED' -and $q.line -match 'past its expected 1 min') "a silent agent job is reported stalled at a check-in ($($q.line))"
+        Assert-True (-not $b.stalled -and $b.idle_sec -lt 4 -and $b.line -match 'last activity') "a working agent job reports activity, not a stall ($($b.line))"
+        $status = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $quiet.job_id)
+        Assert-True ($status.activity -match 'STALLED') "status shows a running job's activity ($($status.activity))"
+        $runStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
+        Assert-True (@($runStatus.stalled) -contains $quiet.job_id -and @($runStatus.stalled) -notcontains $busy.job_id) "run status names stalled jobs up front ($(@($runStatus.stalled) -join ','))"
+        $text = & pwsh -NoProfile -File $DtJob wait -RunFolder $rf -JobId $busy.job_id -Any -TimeoutSec 1
+        Assert-True ((@($text) -join "`n") -match "$($busy.job_id) running \d+ min, last activity") "text check-in lists progress ($(@($text) -join ' | '))"
+        $doneQuiet = Wait-JobTerminal -RunFolder $rf -JobId $quiet.job_id -TimeoutSec 30
+        Assert-True ($doneQuiet.status -eq 'succeeded') "a stalled agent job is never stopped on time ($($doneQuiet.status))"
+        Wait-JobTerminal -RunFolder $rf -JobId $busy.job_id -TimeoutSec 30 | Out-Null
+    }
+    finally { Remove-Item Env:DT_JOB_HEARTBEAT_SEC, Env:DT_JOB_STALL_SEC -ErrorAction SilentlyContinue }
 
     # Dependency chain: a failure blocks two levels downstream.
     $rf = New-RunFolder 'deps'

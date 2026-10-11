@@ -334,6 +334,11 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
             $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-limit-$($limit[0])-$($limit[2])" $extra } else { Invoke-ClaudeWrapper "$lane-limit-$($limit[0])-$($limit[2])" $extra }
             Assert-True ([long]$r.prov.timeout_ms -eq $limit[2]) "$lane $($limit[0]) time limit is $($limit[2]) ms$(if ($limit[1].Count) { ' when set explicitly' } else { ' by default' })"
         }
+        # Under dt-job a substantive call has no time limit, even when one is passed.
+        $env:DT_JOB_ID = 'j-test'
+        try { $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-limit-dtjob" @('-Category','complex-coding','-TimeoutMs','600000') } else { Invoke-ClaudeWrapper "$lane-limit-dtjob" @('-Category','complex-coding','-TimeoutMs','600000') } }
+        finally { $env:DT_JOB_ID = $null }
+        Assert-True ([long]$r.prov.timeout_ms -eq [int]::MaxValue) "$lane has no time limit under dt-job ($($r.prov.timeout_ms))"
     }
     foreach ($lane in @('codex','claude')) {
         foreach ($case in @('offline-resume','offline-timeout','incident','offline-incident','unexplained-invalid','unexplained-success','unexplained-fail')) {

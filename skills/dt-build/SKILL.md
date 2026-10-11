@@ -100,13 +100,13 @@ Routing lives in the shared model router: `scripts/model-router/resolve-model.ps
 - **Frontier spend (alert only):** after step 6.i run `pwsh -NoProfile -File scripts/model-router/check-frontier-spend.ps1 -RunStartedAt <run start, ISO> -RunId <RUN_ID> -RemainingMilestones <n> -Json` and relay its `ROUTER_ALERT:` line if any.
 - **Stop finished subagents** (TaskStop on claude-host) after collecting the report.
 
-Harness terms: `claude-host` has the Agent tool; `codex-host` is any other orchestrator. CLAUDE_DISPATCH is the Claude-lane dispatch above; VERIFY_DISPATCH is a fresh read-only non-builder session on the vendor returned for `code-review`. Run `-Preflight -TimeoutMs 30000` on each wrapper once per category before its first substantive use; substantive calls omit `-TimeoutMs` (coder gets 45 minutes, deep-thinker 30). On Windows the Codex wrapper runs unsandboxed (Codex removed its Windows sandbox); containment is the scoped worktree plus independent verification, recorded in provenance.
+Harness terms: `claude-host` has the Agent tool; `codex-host` is any other orchestrator. CLAUDE_DISPATCH is the Claude-lane dispatch above; VERIFY_DISPATCH is a fresh read-only non-builder session on the vendor returned for `code-review`. Run `-Preflight -TimeoutMs 30000` on each wrapper once per category before its first substantive use; substantive calls run as jobs without a time limit. On Windows the Codex wrapper runs unsandboxed; containment is the scoped worktree plus independent verification, recorded in provenance.
 
 ## Context discipline
 
 These rules are enforced by scripts both hosts must call; the adapter gives each host's exact commands.
 
-- **Run work as jobs.** Workers, tests, builds, and browser checks run as `scripts/dt-job.ps1` jobs, never in the coordinator's foreground. Take results only from the capped `dt-job status|wait -Json` envelopes. Run `dt-job reconcile` at every coordinator start and resume and after any `wait_timeout`.
+- **Run work as jobs.** Workers, tests, builds, and browser checks run as `scripts/dt-job.ps1` jobs, never in the coordinator's foreground. Take results only from the capped `dt-job status|wait -Json` envelopes. Run `dt-job reconcile` at every start, resume and `wait_timeout`; each wait is a 10-minute check-in flagging stalls.
 - **Read deeper deliberately.** Open job evidence only through `scripts/read-evidence.ps1` (`-Lines a-b` or `-Grep`), never by reading stream logs or output files directly.
 - **Mark bootstrap once.** After the mandatory reads and before the first dispatch, run `dt-job mark-bootstrap`; the context limits are measured from that point.
 - **Rotate on the limit.** On a `checkpoint` context line, reach a safe stopping point and rotate. On a `rotate` line or `ROTATE_REQUIRED`, rotate as the adapter says: rewrite `_build-state.md`, write a handoff note, `dt-job request-continuation`, release the lease, end. Running jobs continue; verification is never skipped or shortened to save context.

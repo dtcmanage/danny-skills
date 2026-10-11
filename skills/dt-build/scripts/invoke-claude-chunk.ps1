@@ -16,7 +16,7 @@ param(
     [string]$SelectionReason = "",
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
     [ValidateRange(1, 2)][int]$Attempt = 1,
-    [ValidateRange(1000, 3600000)][int]$TimeoutMs = 600000,
+    [ValidateRange(1000, 2147483647)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
     [switch]$ReadOnly,
     [switch]$Scrutiny,
@@ -150,8 +150,11 @@ if ([string]::IsNullOrWhiteSpace($Category)) {
     $isProtected = $isProtected -or $mappedCategory.protected
 }
 # A builder or reviewer chunk routinely runs past 10 minutes; killing it there throws its work away.
-# Without an explicit -TimeoutMs, coder work gets 45 minutes and deep-thinker work 30.
-if (-not $PSBoundParameters.ContainsKey('TimeoutMs')) {
+# Under dt-job (DT_JOB_ID set) a substantive call has no time limit: the runner records its activity and
+# the coordinator's 10-minute check-ins decide what a stall means. Called directly without an explicit
+# -TimeoutMs, coder work gets 45 minutes and deep-thinker work 30.
+if ($env:DT_JOB_ID -and -not $Preflight) { $TimeoutMs = [int]::MaxValue }
+elseif (-not $PSBoundParameters.ContainsKey('TimeoutMs')) {
     $timeoutJob = try { Get-RouterCategoryJob -Category $Category } catch { $null }
     $TimeoutMs = switch ($timeoutJob) { 'coder' { 2700000 } 'deep-thinker' { 1800000 } default { 600000 } }
 }

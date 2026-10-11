@@ -52,6 +52,86 @@ function Get-DtJobCommandScript {
     return "$body`n`$dtJobOk = `$?`nif (`$global:LASTEXITCODE -ne 0) { exit `$global:LASTEXITCODE }`nif (-not `$dtJobOk) { exit 1 }`nexit 0`n"
 }
 
+function Get-DtJobTreeCpuSeconds {
+    # CPU seconds used so far by the job process and every process under it.
+    param([Parameter(Mandatory)][int]$RootPid)
+    if ($IsWindows) {
+        $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, KernelModeTime, UserModeTime -ErrorAction Stop)
+        $children = @{}
+        foreach ($p in $all) { $key = [int]$p.ParentProcessId; if (-not $children.ContainsKey($key)) { $children[$key] = [System.Collections.Generic.List[object]]::new() }; $children[$key].Add($p) }
+        $byId = @{}; foreach ($p in $all) { $byId[[int]$p.ProcessId] = $p }
+        $total = [double]0
+        $queue = [System.Collections.Generic.Queue[int]]::new(); $queue.Enqueue($RootPid)
+        $seen = [System.Collections.Generic.HashSet[int]]::new()
+        while ($queue.Count -gt 0) {
+            $id = $queue.Dequeue()
+            if (-not $seen.Add($id)) { continue }
+            if ($byId.ContainsKey($id)) { $total += ([double]$byId[$id].KernelModeTime + [double]$byId[$id].UserModeTime) / 1e7 }
+            if ($children.ContainsKey($id)) { foreach ($c in $children[$id]) { $queue.Enqueue([int]$c.ProcessId) } }
+        }
+        return $total
+    }
+    return (Get-Process -Id $RootPid -ErrorAction Stop).TotalProcessorTime.TotalSeconds
+}
+
+function Wait-DtJobProcess {
+    # Waits for the job without a time limit unless the job has one, and every heartbeat records whether
+    # it showed any sign of life: CPU in its process tree, output, or file changes in its working
+    # directory outside the run folder. Returns $false only when a job time limit ran out.
+    param([Parameter(Mandatory)]$Process, [int]$TimeoutSec, [Parameter(Mandatory)][string]$WorkDir, [Parameter(Mandatory)][System.IO.Stream[]]$Outputs)
+    $heartbeatSec = Get-DtJobSettingSec -Name 'DT_JOB_HEARTBEAT_SEC' -Default $script:DtJobHeartbeatSec
+    $beatPath = Join-Path $jobDir 'heartbeat.json'
+    $runRoot = [System.IO.Path]::GetFullPath($paths.Root).TrimEnd('\', '/')
+    $sourceId = "dtjob-fs-$JobId"
+    $fsWatcher = $null
+    try {
+        $fsWatcher = [System.IO.FileSystemWatcher]::new($WorkDir)
+        $fsWatcher.IncludeSubdirectories = $true
+        $fsWatcher.InternalBufferSize = 65536
+        foreach ($name in 'Changed', 'Created', 'Deleted', 'Renamed') { Register-ObjectEvent -InputObject $fsWatcher -EventName $name -SourceIdentifier "$sourceId-$name" | Out-Null }
+        $fsWatcher.EnableRaisingEvents = $true
+    }
+    catch { $fsWatcher = $null }
+    $started = [DateTime]::UtcNow
+    $lastActivity = $started
+    $lastCpu = $null; $lastBytes = [long]-1; $fileChanges = 0; $newFiles = 0
+    $nextBeat = $started
+    try {
+        while (-not $Process.WaitForExit(1000)) {
+            if ($null -ne $fsWatcher) {
+                foreach ($evt in @(Get-Event -ErrorAction SilentlyContinue | Where-Object { $_.SourceIdentifier -like "$sourceId-*" })) {
+                    $full = [string]$evt.SourceEventArgs.FullPath
+                    if (-not $full.StartsWith($runRoot, [System.StringComparison]::OrdinalIgnoreCase)) { $newFiles++ }
+                    Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
+                }
+            }
+            $now = [DateTime]::UtcNow
+            if ($now -ge $nextBeat) {
+                $cpu = try { Get-DtJobTreeCpuSeconds -RootPid $Process.Id } catch { $null }
+                $bytes = [long]0; foreach ($s in $Outputs) { try { $bytes += $s.Position } catch { } }
+                $active = $newFiles -gt 0 -or ($lastBytes -ge 0 -and $bytes -ne $lastBytes) -or ($null -ne $cpu -and $null -ne $lastCpu -and ($cpu - $lastCpu) -ge 1)
+                if ($active) { $lastActivity = $now }
+                $fileChanges += $newFiles; $newFiles = 0
+                if ($null -ne $cpu) { $lastCpu = $cpu }
+                $lastBytes = $bytes
+                $beat = [ordered]@{ sampled_utc = $now.ToString('o'); last_activity_utc = $lastActivity.ToString('o'); cpu_seconds = $(if ($null -ne $cpu) { [int]$cpu } else { $null }); output_bytes = $bytes; file_changes = $fileChanges }
+                try { Write-DtJobAtomic -Path $beatPath -Content ($beat | ConvertTo-Json -Compress) } catch { }
+                $nextBeat = $now.AddSeconds($heartbeatSec)
+            }
+            if ($TimeoutSec -gt 0 -and ($now - $started).TotalSeconds -ge $TimeoutSec) { return $false }
+        }
+        return $true
+    }
+    finally {
+        if ($null -ne $fsWatcher) {
+            $fsWatcher.EnableRaisingEvents = $false
+            foreach ($name in 'Changed', 'Created', 'Deleted', 'Renamed') { Unregister-Event -SourceIdentifier "$sourceId-$name" -ErrorAction SilentlyContinue }
+            Get-Event -ErrorAction SilentlyContinue | Where-Object { $_.SourceIdentifier -like "$sourceId-*" } | Remove-Event -ErrorAction SilentlyContinue
+            $fsWatcher.Dispose()
+        }
+    }
+}
+
 # Set once the child's result is known, so a failed ledger save cannot turn it into a runner error.
 $outcome = $null
 
@@ -66,6 +146,8 @@ try {
     # This runner was started from the registry profile; restore the caller's allow-listed environment.
     if ($spec.PSObject.Properties['environment'] -and $null -ne $spec.environment) {
         foreach ($property in $spec.environment.PSObject.Properties) { $psi.Environment[$property.Name] = [string]$property.Value }
+        # The runner's own heartbeat settings come from the caller too.
+        foreach ($property in @($spec.environment.PSObject.Properties | Where-Object { $_.Name -like 'DT_JOB_*' })) { [System.Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value) }
     }
     # Defense against an inherited watcher environment or legacy job spec.
     $psi.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
@@ -119,7 +201,7 @@ try {
         }
 
         $timeoutSec = [int]$spec.timeout_sec
-        $finished = if ($timeoutSec -gt 0) { $process.WaitForExit($timeoutSec * 1000) } else { $process.WaitForExit(); $true }
+        $finished = Wait-DtJobProcess -Process $process -TimeoutSec $timeoutSec -WorkDir $psi.WorkingDirectory -Outputs @($stdoutFile, $stderrFile)
         if (-not $finished) {
             $process.Kill($true)
             $process.WaitForExit()
