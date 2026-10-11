@@ -37,7 +37,7 @@ function Set-BenchClaudeNativeEnvironment {
 function Add-BenchSpendDefaults {
     param([Parameter(Mandatory)][hashtable]$Config, [Parameter(Mandatory)][string]$ShippedPath)
     $shipped = Get-Content -LiteralPath $ShippedPath -Raw | ConvertFrom-Json -AsHashtable
-    foreach ($key in @('spend_stop_points','spend_stop_model_calls','spend_reading_stale_hours','spend_baseline_max_age_minutes','max_parallel_calls','spend_check_interval_seconds')) {
+    foreach ($key in @('spend_stop_points','spend_stop_model_calls','spend_reading_stale_hours','spend_baseline_max_age_minutes','max_parallel_calls','spend_check_interval_seconds','call_timeout_ms_by_job')) {
         if (-not $Config.ContainsKey($key) -and $shipped.ContainsKey($key)) { $Config[$key] = $shipped[$key] }
     }
 }
@@ -299,6 +299,10 @@ function Invoke-RouterBench {
     # Parallel model calls need the real CLI path; an injected invoker (tests) stays serial.
     $maxParallel=if($CliInvoker -or -not $config.ContainsKey('max_parallel_calls')){1}else{[Math]::Max(1,[int]$config.max_parallel_calls)}
     $config.max_parallel_calls=$maxParallel
+    # Some jobs think longer by design (deep-thinker); an explicit -TimeoutMs still wins.
+    if(-not $PSBoundParameters.ContainsKey('TimeoutMs') -and $config.ContainsKey('call_timeout_ms_by_job') -and $config.call_timeout_ms_by_job -and $config.call_timeout_ms_by_job.ContainsKey($Job)) {
+        $TimeoutMs=[int]$config.call_timeout_ms_by_job[$Job]
+    }
     if(-not $CliInvoker){$CliInvoker={param($r) Invoke-BenchCli -Request $r -TimeoutMs $TimeoutMs}}
     if(-not $Limits){$Limits={param($v) $u=if($v -eq 'claude'){Get-RouterClaudeUsage}else{Get-RouterCodexUsage -Weekly}; @{blocked=(Get-RouterVendorBlocked -Vendor $v);usage=$u}}}
     if(-not $Diagnosis){$Diagnosis={param($v,$e) Resolve-RouterDispatchFailure -Vendor $v -ErrorText $e}}
