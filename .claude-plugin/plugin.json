@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.22.3",
+  "version": "0.22.4",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.22.4 Model router usage shows X% used / Y% left (weekly report adds Codex usage). dt-build 2.21.6, dt-review 1.16.17, dt-image-gen 0.3.17, dt-writing-draft 0.2.17, dt-writing-edit 0.3.17.",
       "0.22.3 dt-build 2.21.5: a rotating coordinator never consumes its own continuation request, so managed relaunch works on the Codex host.",
       "0.22.2 Model router re-checks Codex limits live when a stale reading blocks Codex. dt-build 2.21.4, dt-review 1.16.16, dt-image-gen 0.3.16, dt-writing-draft 0.2.16, dt-writing-edit 0.3.16. Version policy: owner entry for the new router test fixture.",
       "0.22.1 dt-build 2.21.3: live test harness respects the real usage guard.",

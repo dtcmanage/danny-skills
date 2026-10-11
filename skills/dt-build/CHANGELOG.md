@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.6
+
+- Model router usage reads as X% used / Y% left in the weekly report, limits CLI, and limit wait reasons; the weekly report adds a Codex usage line.
+
 ## 2.21.5
 
 - A rotating coordinator no longer consumes its own continuation request, so the watcher always relaunches a successor; rotation steps now consume handled events first.

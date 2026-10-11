@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.17 (2026-10-10): Model router usage reads as X% used / Y% left in the weekly report, limits CLI, and limit wait reasons; the weekly report adds a Codex usage line.
+
 - 1.16.16 (2026-10-10): Model router re-checks Codex limits live when a stale reading says Codex is blocked, so a usage reset is seen without waiting for a Codex run.
 
 - 1.16.15 (2026-10-10): Shared model router: DT_ROUTER_GUARD_OVERRIDE lifts the 95% quota guard for named vendors in one process, only on Danny explicit permission.
