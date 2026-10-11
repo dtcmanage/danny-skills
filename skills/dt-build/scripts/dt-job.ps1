@@ -237,7 +237,7 @@ function Save-DtJobRecord {
 }
 
 function Add-DtJobEvent {
-    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId, [Parameter(Mandatory)][string]$Type, [Parameter(Mandatory)][string]$Status, [string]$Reason)
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId, [Parameter(Mandatory)][string]$Type, [Parameter(Mandatory)][string]$Status, [string]$Reason, [string]$RequestedBy)
     $eventsPath = (Get-DtJobPaths -RunFolder $RunFolder).Events
     $seq = 1
     $prefix = ''
@@ -253,6 +253,7 @@ function Add-DtJobEvent {
     }
     $evt = [ordered]@{ seq = $seq; job_id = $JobId; ts_utc = [DateTime]::UtcNow.ToString('o'); type = $Type; status = $Status }
     if ($Reason) { $evt.reason = $Reason }
+    if ($RequestedBy) { $evt.requested_by = $RequestedBy }
     [System.IO.File]::AppendAllText($eventsPath, ($prefix + ($evt | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -1231,9 +1232,20 @@ function Invoke-DtJobConsume {
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $last = Get-DtJobLastEventSeq -RunFolder $RunFolder
         if ($Seq -gt $last) { throw "DT_JOB_CONSUME_AHEAD: seq $Seq is past the last event $last" }
+        $cursor = (Get-DtJobRunState -BuildStatePath $ctx.build_state_path).last_consumed_event_seq
+        # A coordinator never consumes its own continuation request: that event is the watcher's trigger
+        # for its successor, so the cursor stops just before it.
+        $target = [int64]$Seq
+        if ($CoordinatorId) {
+            foreach ($evt in (Get-DtJobEvents -RunFolder $RunFolder)) {
+                $s = [int64]$evt.seq
+                if ($s -gt $cursor -and $s -le $target -and $evt.type -eq 'continuation_requested' -and
+                    $evt.PSObject.Properties['requested_by'] -and $evt.requested_by -ceq $CoordinatorId) { $target = $s - 1 }
+            }
+        }
         # The cursor never moves backwards; an older seq is a no-op.
-        if ($Seq -gt (Get-DtJobRunState -BuildStatePath $ctx.build_state_path).last_consumed_event_seq) {
-            Set-DtJobRunState -BuildStatePath $ctx.build_state_path -Cursor $Seq
+        if ($target -gt $cursor) {
+            Set-DtJobRunState -BuildStatePath $ctx.build_state_path -Cursor $target
         }
     }
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx) -AsJson:$Json
@@ -1243,7 +1255,7 @@ function Invoke-DtJobRequestContinuation {
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $state = Get-DtJobRunState -BuildStatePath $ctx.build_state_path
-        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason $(if ($Reason) { $Reason } else { 'continuation requested' })
+        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status $state.run_status -Reason $(if ($Reason) { $Reason } else { 'continuation requested' }) -RequestedBy $CoordinatorId
     }
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx) -AsJson:$Json
 }

@@ -369,6 +369,12 @@ try {
     Assert-True ($ahead.exit -ne 0 -and $ahead.text -match 'DT_JOB_CONSUME_AHEAD' -and (Get-RunState $run.state).cursor -eq 3) 'consume past the last event is refused'
     $events = @(Get-Content -LiteralPath (Join-Path $run.folder 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True ($events.Count -eq 3 -and @($events | Where-Object { $_.type -eq 'continuation_requested' }).Count -eq 3) 'consume appends no event; request-continuation appends one each'
+    # A rotating coordinator that consumes after its own continuation request leaves that trigger for the watcher.
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder, '-CoordinatorId', 'rot-a', '-Reason', 'context_rotation') | Out-Null
+    Invoke-DtJob @('consume', '-RunFolder', $run.folder, '-CoordinatorId', 'rot-a', '-Seq', '4') | Out-Null
+    Assert-True ((Get-RunState $run.state).cursor -eq 3) 'a coordinator never consumes its own continuation request'
+    Invoke-DtJob @('consume', '-RunFolder', $run.folder, '-CoordinatorId', 'rot-b', '-Seq', '4') | Out-Null
+    Assert-True ((Get-RunState $run.state).cursor -eq 4) 'the successor coordinator consumes it'
 
     # ---- template fields: insert at position, then a two-line rewrite.
     $template = Get-Content -Raw -LiteralPath $templatePath
