@@ -352,6 +352,18 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
         $adhocProv = if (Test-Path -LiteralPath "$adhocOut.provenance.json") { Get-Content -Raw -LiteralPath "$adhocOut.provenance.json" | ConvertFrom-Json } else { $null }
         Assert-True ($adhocExit -eq 0 -and $null -ne $adhocProv -and $adhocProv.category -eq 'code-review' -and $adhocProv.disclosure_line -match '^MODEL_SELECTION: adhoc-' -and @($adhocProv.output_shape_errors).Count -eq 0) "$lane -AdHoc runs a headerless prompt through the router (exit $adhocExit)"
         Assert-True ($refusedExit -ne 0) "$lane without -AdHoc still refuses a headerless prompt"
+        # A prompt over the size limit is refused before anything is dispatched.
+        $bigPrompt = Join-Path $temp "$lane-big-prompt.md"
+        Write-Utf8 $bigPrompt ("Review these sources.`n" + ('x' * 2000))
+        $launchesBefore = if (Test-Path -LiteralPath $launchLog) { @(Get-Content -LiteralPath $launchLog).Count } else { 0 }
+        $env:DT_BUILD_PROMPT_MAX_CHARS = '1000'
+        try {
+            $bigErr = & pwsh -NoProfile -File $wrapperPath -ProjectPath $project -PromptPath $bigPrompt -OutputPath (Join-Path $temp "$lane-big.md") -Category 'code-review' -Effort 'high' -SelectionReason 'size guard' -AdHoc -Json @cliArgs 2>&1 | Out-String
+            $bigExit = $LASTEXITCODE
+        }
+        finally { $env:DT_BUILD_PROMPT_MAX_CHARS = $null }
+        $launchesAfter = if (Test-Path -LiteralPath $launchLog) { @(Get-Content -LiteralPath $launchLog).Count } else { 0 }
+        Assert-True ($bigExit -ne 0 -and $bigErr -match 'PROMPT_TOO_LARGE' -and $bigErr -match 'sha256 pins' -and $launchesAfter -eq $launchesBefore) "$lane refuses an oversized prompt before dispatch (exit $bigExit)"
         # Under dt-job a substantive call has no time limit, even when one is passed.
         $env:DT_JOB_ID = 'j-test'
         try { $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-limit-dtjob" @('-Category','complex-coding','-TimeoutMs','600000') } else { Invoke-ClaudeWrapper "$lane-limit-dtjob" @('-Category','complex-coding','-TimeoutMs','600000') } }

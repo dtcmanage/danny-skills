@@ -106,6 +106,15 @@ if (-not $Preflight) {
     $PromptPath = (Resolve-Path -LiteralPath $PromptPath).Path
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
     $promptText = Get-Content -Raw -LiteralPath $PromptPath
+    # Pasted sources, evidence packets and histories have pushed review prompts past Codex's
+    # 1,048,576-character cap. Refuse well below it, before anything is dispatched.
+    $maxPromptChars = 400000
+    $limitText = [System.Environment]::GetEnvironmentVariable('DT_BUILD_PROMPT_MAX_CHARS')
+    $parsedLimit = 0
+    if ($limitText -and [int]::TryParse($limitText, [ref]$parsedLimit) -and $parsedLimit -gt 0) { $maxPromptChars = $parsedLimit }
+    if ($promptText.Length -gt $maxPromptChars) {
+        throw "CLAUDE_INVOKE_FAIL: PROMPT_TOO_LARGE: the prompt is $($promptText.Length) characters, over the $maxPromptChars limit. Pass file paths with sha256 pins and let the worker read and hash them itself; never paste sources, evidence packets or histories."
+    }
     # An ad-hoc call (one-off delegated work outside a dt-build run) keeps routing, the usage ledger,
     # error classification and stall reporting, but its prompt and report carry no dt-build envelope.
     if ($AdHoc) {

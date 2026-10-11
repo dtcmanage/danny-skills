@@ -57,6 +57,9 @@ Standing execution rules (every build, fix, verification, and review prompt):
 - The orchestrator continues a checkpointed chunk in a fresh session and never sends follow-up messages to
   a builder that has already done substantive work.
 - Briefs carry paths and line ranges, not pasted file content.
+- Byte custody uses pins, not copies: name each file with its sha256 and have the worker read and hash it.
+  Never embed full sources, evidence packets or run histories; aim under 300,000 characters. The wrappers
+  refuse a prompt over 400,000 (`PROMPT_TOO_LARGE`).
 
 Every verification prompt is read-only and contains:
 - The milestone contract and exact accepted diff/commit.
