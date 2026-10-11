@@ -401,6 +401,23 @@ function Test-RouterLimitRefusal {
     return [pscustomobject]@{ refused=[bool]$refused; reset_at_utc=$reset }
 }
 
+function Test-RouterInputTooLarge {
+    param([Parameter(Mandatory)][ValidateSet('codex','claude')][string]$Vendor, [Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $none = [pscustomobject]@{ too_large=$false; max_chars=$null; actual_chars=$null }
+    if ($Vendor -ne 'codex') { return $none }
+    # Codex echoes the prompt to stderr before its error, so only the last line counts: a prompt that
+    # quotes this error must not classify itself. The request is deterministic, so retrying cannot help.
+    $last = @($Text -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 1)
+    if (-not $last.Count -or $last[0] -notmatch '"input_error_code"\s*:\s*"input_too_large"') { return $none }
+    $max = [regex]::Match($last[0], '"max_chars"\s*:\s*(\d+)')
+    $actual = [regex]::Match($last[0], '"actual_chars"\s*:\s*(\d+)')
+    return [pscustomobject]@{
+        too_large=$true
+        max_chars=$(if ($max.Success) { [long]$max.Groups[1].Value } else { $null })
+        actual_chars=$(if ($actual.Success) { [long]$actual.Groups[1].Value } else { $null })
+    }
+}
+
 function Format-RouterResumeAfterEt {
     param([Parameter(Mandatory)][datetimeoffset]$AtUtc, [Parameter(Mandatory)][string]$Source)
     $et = [TimeZoneInfo]::ConvertTime($AtUtc, [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time'))

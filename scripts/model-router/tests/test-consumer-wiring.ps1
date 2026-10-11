@@ -159,6 +159,15 @@ if (`$env:DT_FAKE_DISPATCH_COUNTER) {
 }
 if (`$env:DT_FAKE_CODEX_MODE -eq 'limit') { [Console]::Error.WriteLine('ERROR: usage limit reached; try again at $fixtureResetUtc'); exit 1 }
 if (`$env:DT_FAKE_CODEX_MODE -eq 'source-text') { [Console]::Error.WriteLine('Failed to compile rate_limits/usage_limit.ps1: rate limiting middleware'); exit 1 }
+if (`$env:DT_FAKE_CODEX_MODE -eq 'too-large') {
+    # Real Codex echoes the prompt before the error; the echoed copy quotes the error too and must not count.
+    [Console]::Error.WriteLine('quoted: "input_error_code":"input_too_large","max_chars":1,"actual_chars":2')
+    [Console]::Error.WriteLine('Error: turn/start: turn/start failed: Input exceeds the maximum length of 1048576 characters. (code -32602), data: {"input_error_code":"input_too_large","max_chars":1048576,"actual_chars":1596376}'); exit 1
+}
+if (`$env:DT_FAKE_CODEX_MODE -eq 'too-large-echo') {
+    [Console]::Error.WriteLine('quoted: "input_error_code":"input_too_large","max_chars":1,"actual_chars":2')
+    [Console]::Error.WriteLine('fixture vendor failure'); exit 1
+}
 if (`$env:DT_FAKE_DIAGNOSIS -eq 'unexplained-invalid') {
     `$idx = [Array]::IndexOf([object[]]`$args, '--output-last-message')
     [IO.File]::WriteAllText([string]`$args[`$idx + 1], 'invalid report'); exit 0
@@ -221,6 +230,16 @@ $report
     $env:DT_FAKE_CODEX_MODE = 'source-text'
     $r = Invoke-CodexWrapper 'codex-source-text' @('-Tier','standard')
     Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.diagnosis -eq 'unexplained' -and -not $r.prov.vendor_block) 'Codex failed output with limit identifiers does not block vendor'
+    $env:DT_FAKE_CODEX_MODE = 'too-large'
+    $launchesBefore = @(Get-Content $launchLog).Count
+    $r = Invoke-CodexWrapper 'codex-too-large' @('-Tier','standard')
+    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'tooling' -and $null -eq $r.prov.diagnosis -and $r.prov.termination_reason -match '^CODEX_INPUT_TOO_LARGE: prompt is 1596376 characters; Codex accepts at most 1048576\.') 'Codex input_too_large is a tooling failure with both sizes'
+    Assert-True ((@(Get-Content $launchLog).Count - $launchesBefore) -eq 1) 'Codex input_too_large is not retried'
+    $alerts = @(Get-Content (Join-Path $state 'alert-log.jsonl') | ConvertFrom-Json | Where-Object { $_.key -eq ('input-too-large:codex:' + $r.prov.dispatch_id + ':1596376:1048576') })
+    Assert-True ($alerts.Count -gt 0 -and $r.stderr -match 'The prompt is 1,596,376 characters; codex accepts at most 1,048,576\.') 'Codex input_too_large alert names the sizes'
+    $env:DT_FAKE_CODEX_MODE = 'too-large-echo'
+    $r = Invoke-CodexWrapper 'codex-too-large-echo' @('-Tier','standard')
+    Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.termination_reason -notmatch 'INPUT_TOO_LARGE') 'echoed input_too_large text before the last line does not classify'
     $env:DT_FAKE_CODEX_MODE = $null
 
     # 3. Claude chunk wrapper: router Claude lane, no fixed tier map.

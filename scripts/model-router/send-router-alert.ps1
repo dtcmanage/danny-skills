@@ -140,6 +140,18 @@ function Get-RouterAlertMessage {
         '^catalog-check-error:(.+)$' { return "Model router catalog check failed for $($Matches[1]); it will retry later." }
         '^research-failure:([^:]+):(\d{4}-\d{2}-\d{2})$' { return "Research: the $($Matches[1]) check has failed since $($Matches[2]) ET. See the research failure record for details." }
         '^router-offline:(\d{4}-\d{2}-\d{2} \d{2}:\d{2} ET)$' { return "Model router connectivity has returned after an outage starting $($Matches[1])." }
+        '^input-too-large:(codex|claude):([^:]+):(\d*):(\d*)$' {
+            $vendor = $Matches[1]
+            $size = if ($Matches[3] -and $Matches[4]) {
+                'The prompt is {0:N0} characters; {1} accepts at most {2:N0}.' -f [long]$Matches[3], $vendor, [long]$Matches[4]
+            } else { "The prompt is longer than $vendor accepts." }
+            $pathText = if ($ArtifactPath) { Invoke-SecretRedaction -Text $ArtifactPath } else { 'unavailable' }
+            $safeModel = if ([string]::IsNullOrWhiteSpace($Model)) { 'unknown' } else { Invoke-SecretRedaction -Text $Model }
+            $safeCategory = if ([string]::IsNullOrWhiteSpace($Category)) { 'unknown' } else { Invoke-SecretRedaction -Text $Category }
+            $safeKey = (Invoke-SecretRedaction -Text $Key).Replace("'", "''")
+            $ackPath = (Join-Path $PSScriptRoot 'send-router-alert.ps1').Replace("'", "''")
+            return "Work stopped on $vendor (model: $safeModel; category: $safeCategory). $size Not retried: the same prompt fails the same way. Split the chunk's prompt and dispatch again.`nRecord: $pathText`nAcknowledge: pwsh -NoProfile -File '$ackPath' -Acknowledge '$safeKey'"
+        }
         '^vendor-error:(codex|claude):([^:]+)(?::([^:]+))?$' {
             $vendor = $Matches[1]
             if (-not $Model -and $Matches.ContainsKey(3)) { $Model = $Matches[3] }

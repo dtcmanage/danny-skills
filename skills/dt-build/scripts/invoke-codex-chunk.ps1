@@ -380,7 +380,16 @@ try {
         # message to stdout, so stdout is model text and never a source of error events.
         $codexErrorText = $stderr
         $refusal = Test-RouterLimitRefusal -Vendor codex -Text $codexErrorText
-        if ($refusal.refused) {
+        $tooLarge = Test-RouterInputTooLarge -Vendor codex -Text $codexErrorText
+        if ($tooLarge.too_large) {
+            # The caller's prompt is over Codex's input cap: no vendor diagnosis, no retry, and the alert names the sizes.
+            $failureReason = "CODEX_INPUT_TOO_LARGE: prompt is $($tooLarge.actual_chars) characters; Codex accepts at most $($tooLarge.max_chars). Split the prompt. Redacted stream: $streamPath"
+            $failureCategory = 'tooling'
+            $key = 'input-too-large:codex:' + $dispatchId + ':' + $tooLarge.actual_chars + ':' + $tooLarge.max_chars
+            $message = Get-RouterAlertMessage -Key $key -Model $resolvedModel -Category $Category -ArtifactPath $provenancePath
+            $null = Send-RouterAlert -Key $key -Message $message -ChatToStderr:$Json
+        }
+        elseif ($refusal.refused) {
             $blockArgs = @{ Vendor='codex'; Reason='usage-limit refusal from codex exec' }
             if ($refusal.reset_at_utc) { $blockArgs.ResetAtUtc = [datetimeoffset]$refusal.reset_at_utc }
             $limitBlock = Add-RouterVendorBlock @blockArgs
