@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.27 (2026-10-11): model router: chunk wrappers gain -AdHoc for one-off work outside a dt-build run (routing and accounting kept, dt-build envelope checks skipped).
+
 - 0.3.26 (2026-10-11): model router: chunk wrappers have no time limit under dt-job; activity check-ins flag stalls instead.
 
 - 0.3.25 (2026-10-11): model router: the bench lets Codex retry its own stream errors and names final errors by code.

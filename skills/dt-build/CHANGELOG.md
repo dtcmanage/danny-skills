@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.25.0
+
+- model router: chunk wrappers gain -AdHoc for one-off work outside a dt-build run (routing and accounting kept, dt-build envelope checks skipped).
+
 ## 2.24.0
 
 - Operator notes: dt-job note adds standing instructions in operator-notes.json that run status, every wait and read-resume-record show in full; coordinators follow them and never copy them into the checkpoint.
