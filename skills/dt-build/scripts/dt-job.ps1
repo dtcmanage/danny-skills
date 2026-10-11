@@ -152,6 +152,7 @@ function Get-DtJobPaths {
         KillFailed = Join-Path $root 'kill-failed.json'
         StepErrors = Join-Path $root 'step-errors.json'
         PastHard = Join-Path $root 'past-hard.json'
+        ContextWall = Join-Path $root 'context-wall.json'
     }
 }
 

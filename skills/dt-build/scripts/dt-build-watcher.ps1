@@ -232,9 +232,56 @@ function Get-WatcherVendorState {
     catch { return [pscustomobject]@{ blocked = $false; resets_at_utc = $null; usage = (Format-RouterUsageMessage -Vendor $Vendor -Usage $null) } }
 }
 
+function Update-WatcherContextWall {
+    # Before each launch: when the previous coordinator used up its working room (past its soft limit)
+    # without starting a single job, record the files whose reads filled it in context-wall.json. The next
+    # coordinator sees them in its resume record, and the PreToolUse hook sends those reads to a worker.
+    # A previous coordinator that started a job, or stayed under its limit, clears the record.
+    param([Parameter(Mandatory)][string]$Folder, [Parameter(Mandatory)][DateTime]$NowUtc)
+    $path = (Get-DtJobPaths -RunFolder $Folder).ContextWall
+    $clear = { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } }
+    try {
+        $previous = @(Get-WatcherLaunches -RunFolder $Folder | Where-Object { $_.type -eq 'launch' -and $_.coordinator_id } | Select-Object -Last 1)
+        if ($previous.Count -eq 0) { return }
+        $previous = $previous[0]
+        $baseline = (Get-DtJobContextBaselines -RunFolder $Folder).coordinators.PSObject.Properties[[string]$previous.coordinator_id]
+        if ($null -eq $baseline -or -not $baseline.Value.transcript_path -or $null -eq $baseline.Value.baseline_tokens) { return }
+        $entry = $baseline.Value
+        $since = ConvertTo-DtJobUtc $previous.launched_utc
+        $started = @(Get-DtJobEvents -RunFolder $Folder | Where-Object {
+            $_.job_id -ne 'run' -and $_.type -in @('launched', 'process_started', 'started') -and
+            (ConvertTo-DtJobUtc $_.ts_utc) -ge $since -and (ConvertTo-DtJobUtc $_.ts_utc) -le $NowUtc })
+        if ($started.Count -gt 0) { & $clear; return }
+        $transcriptHost = if ($entry.PSObject.Properties['host'] -and $entry.host) { [string]$entry.host } else { 'claude' }
+        $tokens = Get-DtCtxTokens -TranscriptHost $transcriptHost -TranscriptPath ([string]$entry.transcript_path)
+        $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entry.baseline_tokens) -TranscriptHost $transcriptHost
+        if ($report.state -eq 'ok') { & $clear; return }
+        $marked = if ($entry.PSObject.Properties['marked_utc'] -and $entry.marked_utc) { ConvertTo-DtJobUtc $entry.marked_utc } else { $since }
+        $reads = @(Get-DtCtxHeavyReads -TranscriptPath ([string]$entry.transcript_path) -SinceUtc $marked)
+        # Consecutive walls keep every earlier heavy file: the coordinator before may have hit a different one.
+        $prior = $null
+        if (Test-Path -LiteralPath $path) { try { $prior = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json } catch { $prior = $null } }
+        $merged = [ordered]@{}
+        foreach ($read in @($reads) + @(if ($null -ne $prior -and $prior.PSObject.Properties['reads']) { @($prior.reads) })) {
+            if ($null -eq $read) { continue }
+            $key = ConvertTo-DtCtxPathKey ([string]$read.path)
+            if (-not $merged.Contains($key)) { $merged[$key] = [pscustomobject][ordered]@{ path = [string]$read.path; reads = [int]$read.reads; chars = [long]$read.chars } }
+        }
+        $coordinators = @(@(if ($null -ne $prior -and $prior.PSObject.Properties['coordinators']) { @($prior.coordinators) }) + @([string]$previous.coordinator_id) | Select-Object -Unique)
+        $record = [ordered]@{
+            coordinator_id = [string]$previous.coordinator_id; coordinators = $coordinators; recorded_utc = $NowUtc.ToString('o')
+            tokens = $tokens; baseline = [long]$entry.baseline_tokens; soft = $report.soft
+            reads = @($merged.Values | Select-Object -First 8)
+        }
+        Write-DtJobAtomic -Path $path -Content ($record | ConvertTo-Json -Depth 6)
+    }
+    catch { }
+}
+
 function Invoke-WatcherLaunch {
     param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)]$Decision, [Parameter(Mandatory)][DateTime]$NowUtc)
     $folder = [string]$Entry.run_folder
+    Update-WatcherContextWall -Folder $folder -NowUtc $NowUtc
     $pinned = [string]$Entry.pinned_host
     $other = if ($pinned -eq 'claude') { 'codex' } else { 'claude' }
     $chosen = $pinned

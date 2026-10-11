@@ -843,6 +843,69 @@ try {
     $postIdleAt = $postText.IndexOf("elseif (Test-HookIdle) { exit 0 }")
     Assert-True ($idleAt -gt 0 -and $idleAt -lt $preText.IndexOf($guardLoad) -and -not $preText.Contains($dtJobLoad) -and $postIdleAt -gt 0 -and $postIdleAt -lt $postText.IndexOf($guardLoad) -and $postIdleAt -lt $postText.IndexOf($dtJobLoad)) 'in both hooks the idle exit comes before context-guard.ps1 or dt-job.ps1 loads, and PreToolUse never loads dt-job.ps1'
 
+    # ---- repeat walls: the files that filled a coordinator are named, recorded, and sent to a worker.
+    $heavyPath = 'D:\fixture\refs\Big Ref.md'
+    $claudeHeavy = Join-Path $fixtures 'heavy-claude.jsonl'
+    $early = [DateTime]::UtcNow.AddMinutes(-30).ToString('o')
+    $late = [DateTime]::UtcNow.AddMinutes(-5).ToString('o')
+    Add-Line $claudeHeavy ([ordered]@{ type = 'assistant'; timestamp = $early; message = [ordered]@{ content = @([ordered]@{ type = 'tool_use'; id = 'tu-0'; name = 'Read'; input = @{ file_path = 'D:\fixture\startup.md' } }) } })
+    Add-Line $claudeHeavy ([ordered]@{ type = 'user'; timestamp = $early; message = [ordered]@{ content = @([ordered]@{ type = 'tool_result'; tool_use_id = 'tu-0'; content = ('s' * 90000) }) } })
+    foreach ($i in 1..2) {
+        Add-Line $claudeHeavy ([ordered]@{ type = 'assistant'; timestamp = $late; message = [ordered]@{ content = @([ordered]@{ type = 'tool_use'; id = "tu-$i"; name = 'Read'; input = @{ file_path = $heavyPath; offset = $i * 100; limit = 100 } }) } })
+        Add-Line $claudeHeavy ([ordered]@{ type = 'user'; timestamp = $late; message = [ordered]@{ content = @([ordered]@{ type = 'tool_result'; tool_use_id = "tu-$i"; content = @([ordered]@{ type = 'text'; text = ('x' * 30000) }) }) } })
+    }
+    Add-Line $claudeHeavy ([ordered]@{ type = 'assistant'; timestamp = $late; message = [ordered]@{ content = @([ordered]@{ type = 'tool_use'; id = 'tu-9'; name = 'Bash'; input = @{ command = 'cat D:/fixture/small.md' } }) } })
+    Add-Line $claudeHeavy ([ordered]@{ type = 'user'; timestamp = $late; message = [ordered]@{ content = @([ordered]@{ type = 'tool_result'; tool_use_id = 'tu-9'; content = 'tiny' }) } })
+    $heavyCall = { param([string]$Path, [string]$Since) @((& pwsh -NoProfile -Command ". '$guard'; @(Get-DtCtxHeavyReads -TranscriptPath '$Path' $(if ($Since) { "-SinceUtc ([DateTime]::Parse('$Since').ToUniversalTime())" })) | ConvertTo-Json -Compress -AsArray") | ConvertFrom-Json) }
+    $heavy = @(& $heavyCall $claudeHeavy ([DateTime]::UtcNow.AddMinutes(-10).ToString('o')))
+    Assert-True ($heavy.Count -eq 1 -and $heavy[0].path -eq 'D:/fixture/refs/Big Ref.md' -and $heavy[0].reads -eq 2 -and $heavy[0].chars -ge 60000) "Claude transcript: the heavy file is named with its reads and size, small and startup reads left out ($($heavy | ConvertTo-Json -Compress))"
+    $codexHeavy = Join-Path $fixtures 'heavy-codex.jsonl'
+    Add-Line $codexHeavy ([ordered]@{ timestamp = $late; type = 'response_item'; payload = [ordered]@{ type = 'custom_tool_call'; id = 'ctc_1'; call_id = 'call_1'; name = 'exec'; input = "text((await tools.exec_command({cmd:`"Get-Content -LiteralPath 'D:/fixture/refs/Big Ref.md' | Select-Object -Skip 100; git -C D:/fixture remote -v # https://github.com/org/repo.git`"})).output);" } })
+    Add-Line $codexHeavy ([ordered]@{ timestamp = $late; type = 'response_item'; payload = [ordered]@{ type = 'custom_tool_call_output'; id = 'ctco_1'; call_id = 'call_1'; output = @([ordered]@{ type = 'input_text'; text = ('y' * 40000) }) } })
+    $heavy = @(& $heavyCall $codexHeavy $null)
+    Assert-True ($heavy.Count -eq 1 -and $heavy[0].path -eq 'D:/fixture/refs/Big Ref.md' -and $heavy[0].chars -ge 40000) "Codex rollout: exec output is charged to the file it names, never to a URL ($($heavy | ConvertTo-Json -Compress))"
+
+    $wallRun = New-Run -Name 'wall' -PinnedHost 'codex' -Managed
+    $wallRollout = Join-Path $fixtures 'wall-rollout.jsonl'
+    New-CodexRollout -Path $wallRollout -Inputs @(100000)
+    Write-Baseline -RunFolder $wallRun.folder -CoordinatorId 'w1' -BaselineHost 'codex' -TranscriptPath $wallRollout -Baseline 100000
+    $after = [DateTime]::UtcNow.AddSeconds(5).ToString('o')
+    Add-Line $wallRollout ([ordered]@{ timestamp = $after; type = 'response_item'; payload = [ordered]@{ type = 'custom_tool_call'; call_id = 'call_w'; name = 'exec'; input = "Get-Content 'D:/fixture/refs/Big Ref.md'" } })
+    Add-Line $wallRollout ([ordered]@{ timestamp = $after; type = 'response_item'; payload = [ordered]@{ type = 'custom_tool_call_output'; call_id = 'call_w'; output = ('z' * 50000) } })
+    Add-CodexTokens -Path $wallRollout -InputTokens 120000
+    Write-Utf8 -Path (Join-Path $wallRun.folder 'launches.jsonl') -Content (([ordered]@{ type = 'launch'; trigger_seq = 1; host = 'codex'; attempt = 1; launched_utc = [DateTime]::UtcNow.AddMinutes(-10).ToString('o'); pid = $null; coordinator_id = 'w1'; launcher_exit = 0 } | ConvertTo-Json -Compress) + "`n")
+    $wallFile = Join-Path $wallRun.folder 'context-wall.json'
+    $callWall = { & pwsh -NoProfile -Command ". '$watcher'; Update-WatcherContextWall -Folder '$($wallRun.folder)' -NowUtc ([DateTime]::UtcNow)" | Out-Null }
+    & $callWall
+    Assert-True (-not (Test-Path -LiteralPath $wallFile)) 'a coordinator still under its soft limit leaves no wall record'
+    Add-CodexTokens -Path $wallRollout -InputTokens 360000
+    & $callWall
+    $wallDoc = if (Test-Path -LiteralPath $wallFile) { Get-Content -Raw -LiteralPath $wallFile | ConvertFrom-Json } else { $null }
+    Assert-True ($null -ne $wallDoc -and $wallDoc.coordinator_id -eq 'w1' -and @($wallDoc.reads)[0].path -eq 'D:/fixture/refs/Big Ref.md' -and @($wallDoc.coordinators) -contains 'w1') 'a coordinator past its soft limit with no job started gets a wall record naming the file that filled it'
+    & pwsh -NoProfile -Command ". '$dtJob'; New-Item -ItemType Directory -Force -Path (Join-Path '$($wallRun.folder)' 'jobs') | Out-Null; Add-DtJobEvent -RunFolder '$($wallRun.folder)' -JobId 'j-0001' -Type 'started' -Status 'running'" | Out-Null
+    & $callWall
+    Assert-True (-not (Test-Path -LiteralPath $wallFile)) 'a coordinator that started a job clears the wall record'
+
+    # Its own transcript: the hook matches a session by transcript too, and $hookOk belongs to another run's coordinator.
+    $wallT = Join-Path $fixtures 'wall-hook.jsonl'
+    Copy-Item -LiteralPath $hookOk -Destination $wallT
+    Write-Baseline -RunFolder $wallRun.folder -CoordinatorId 'w2' -BaselineHost 'claude' -TranscriptPath $wallT -Baseline 100000 -SessionId 'sess-wall'
+    Write-Lease -RunFolder $wallRun.folder -CoordinatorId 'w2' -LeaseHost 'claude' -SessionId 'sess-wall'
+    $bigFwd = $bigFile -replace '\\', '/'
+    Write-Utf8 -Path $wallFile -Content (([ordered]@{ coordinator_id = 'w1'; coordinators = @('w1'); reads = @([ordered]@{ path = $bigFwd; reads = 3; chars = 90000 }) }) | ConvertTo-Json -Depth 4)
+    $r = Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $bigFile; offset = 1; limit = 50 })
+    Assert-True ((Test-Denied $r) -and $r.hookSpecificOutput.permissionDecisionReason -match 'filled an earlier coordinator') 'a later coordinator is denied a ranged Read of a walled file'
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = "Get-Content -LiteralPath '$bigFile' -TotalCount 40" }))) 'a later coordinator is denied a shell read of a walled file'
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = "Copy-Item '$bigFile' '$smallFile.bak'" }))) 'a non-read command naming a walled file is allowed'
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $smallFile }))) 'files not on the wall are unaffected'
+    Write-Utf8 -Path $wallFile -Content (([ordered]@{ coordinator_id = 'w2'; coordinators = @('w2'); reads = @([ordered]@{ path = $bigFwd; reads = 3; chars = 90000 }) }) | ConvertTo-Json -Depth 4)
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $bigFile; offset = 1; limit = 50 }))) 'the coordinator that hit the wall itself is not blocked mid-handoff'
+    Remove-Item -LiteralPath $wallFile -Force
+    $wallLease = Join-Path $wallRun.folder 'coordinator.lease'
+    $leaseDoc = Get-Content -Raw -LiteralPath $wallLease | ConvertFrom-Json
+    $leaseDoc.released_utc = [DateTime]::UtcNow.ToString('o')
+    Write-Utf8 -Path $wallLease -Content ($leaseDoc | ConvertTo-Json)
+
     # ---- static: hook files and launcher flags.
     foreach ($file in @($preHook, $postHook, $guard, (Join-Path $scriptDir 'launch-managed-coordinator.ps1'))) {
         $tokens = $null; $errors = $null

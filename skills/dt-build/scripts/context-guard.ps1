@@ -293,6 +293,67 @@ function Split-DtCtxIrreversibleSteps {
     return [pscustomobject]@{ deferring = @($deferring); stale = @($stale) }
 }
 
+function ConvertTo-DtCtxPathKey {
+    # One spelling per file: forward slashes, single separators, lower case.
+    param([Parameter(Mandatory)][string]$Path)
+    return ($Path -replace '[\\/]+', '/').ToLowerInvariant()
+}
+
+function Get-DtCtxHeavyReads {
+    # The files whose tool output filled a transcript, largest first. Each tool call's output is split
+    # evenly across the absolute file paths its input names. Calls before -SinceUtc (startup) are skipped.
+    param([Parameter(Mandatory)][string]$TranscriptPath, [Nullable[DateTime]]$SinceUtc, [int]$Top = 5, [int]$MinChars = 10000)
+    if (-not (Test-Path -LiteralPath $TranscriptPath -PathType Leaf)) { return @() }
+    $pathRx = [regex]'(?i)(?<![a-z0-9])[a-z]:[\\/]+(?:[^\\/:*?"''<>|\r\n;`]+[\\/]+)*[^\\/:*?"''<>|\r\n;`]+\.[a-z0-9]{1,8}(?![a-z0-9])'
+    $calls = @{}
+    $totals = [ordered]@{}
+    $stream = [System.IO.File]::Open($TranscriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    $reader = [System.IO.StreamReader]::new($stream)
+    try {
+        while ($null -ne ($line = $reader.ReadLine())) {
+            if (-not ($line.Contains('tool_use') -or $line.Contains('tool_result') -or $line.Contains('_call'))) { continue }
+            try { $row = $line | ConvertFrom-Json -Depth 64 -ErrorAction Stop } catch { continue }
+            if ($null -ne $SinceUtc -and $row.PSObject.Properties['timestamp'] -and $row.timestamp) {
+                try { if ([DateTime]::Parse([string]$row.timestamp, $null, [System.Globalization.DateTimeStyles]::AdjustToUniversal) -lt $SinceUtc) { continue } } catch { }
+            }
+            $items = @()
+            if ($row.PSObject.Properties['payload'] -and $null -ne $row.payload) { $items = @($row.payload) }
+            elseif ($row.PSObject.Properties['message'] -and $null -ne $row.message -and $row.message.PSObject.Properties['content'] -and $row.message.content -isnot [string]) { $items = @($row.message.content) }
+            foreach ($item in $items) {
+                if ($null -eq $item -or -not $item.PSObject.Properties['type']) { continue }
+                switch -Regex ([string]$item.type) {
+                    '^(tool_use|function_call|custom_tool_call|local_shell_call)$' {
+                        $id = if ($item.PSObject.Properties['call_id'] -and $item.call_id) { [string]$item.call_id } elseif ($item.PSObject.Properties['id']) { [string]$item.id } else { $null }
+                        if (-not $id) { break }
+                        $text = foreach ($name in 'input', 'arguments', 'action') { if ($item.PSObject.Properties[$name] -and $null -ne $item.$name) { if ($item.$name -is [string]) { $item.$name } else { $item.$name | ConvertTo-Json -Compress -Depth 16 } } }
+                        $paths = [System.Collections.Generic.List[string]]::new()
+                        foreach ($m in $pathRx.Matches(($text -join ' '))) {
+                            $display = ($m.Value -replace '[\\/]+', '/')
+                            if (-not ($paths | Where-Object { $_ -ieq $display })) { $paths.Add($display) }
+                        }
+                        $calls[$id] = @($paths)
+                    }
+                    '^(tool_result|function_call_output|custom_tool_call_output|local_shell_call_output)$' {
+                        $id = if ($item.PSObject.Properties['call_id'] -and $item.call_id) { [string]$item.call_id } elseif ($item.PSObject.Properties['tool_use_id']) { [string]$item.tool_use_id } else { $null }
+                        if (-not $id -or -not $calls.ContainsKey($id) -or $calls[$id].Count -eq 0) { break }
+                        $body = foreach ($name in 'content', 'output') { if ($item.PSObject.Properties[$name] -and $null -ne $item.$name) { if ($item.$name -is [string]) { $item.$name } else { $item.$name | ConvertTo-Json -Compress -Depth 16 } } }
+                        $share = [long][Math]::Floor(($body -join '').Length / $calls[$id].Count)
+                        foreach ($path in $calls[$id]) {
+                            $key = ConvertTo-DtCtxPathKey $path
+                            if (-not $totals.Contains($key)) { $totals[$key] = [pscustomobject][ordered]@{ path = $path; reads = 0; chars = [long]0 } }
+                            $totals[$key].reads++
+                            $totals[$key].chars += $share
+                        }
+                        $calls.Remove($id)
+                    }
+                }
+            }
+        }
+    }
+    finally { $reader.Dispose(); $stream.Dispose() }
+    return @($totals.Values | Where-Object { $_.chars -ge $MinChars } | Sort-Object -Property chars -Descending | Select-Object -First $Top)
+}
+
 # Dot-sourcing loads the functions only.
 if ($MyInvocation.InvocationName -eq '.') { return }
 

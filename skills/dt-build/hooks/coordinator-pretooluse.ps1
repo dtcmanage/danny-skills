@@ -5,7 +5,7 @@
 # context-baseline.json (never a discovered guess); a released or superseded coordinator is not one. Every
 # other session passes untouched, and with the env var unset and no registered run the hook exits before
 # loading anything. For a coordinator it denies a Read of a file over 400 lines without offset/limit, image
-# Reads, and CronCreate; past the hard context limit (unless an irreversible step this coordinator opened
+# Reads, CronCreate, and reads of a file context-wall.json says filled an earlier coordinator; past the hard context limit (unless an irreversible step this coordinator opened
 # is still open) it also denies every discretionary tool, including shell commands other than the dt-build
 # state scripts. Any error inside the hook allows the call: the hook must never break a session it cannot
 # judge. The hooks read run files directly rather than loading dt-job.ps1, so their cost stays near the
@@ -19,6 +19,7 @@ $ErrorActionPreference = 'Stop'
 $script:HookLeaseFile = 'coordinator.lease'
 $script:HookBaselineFile = 'context-baseline.json'
 $script:HookIrreversibleFile = 'irreversible.json'
+$script:HookContextWallFile = 'context-wall.json'
 
 # Everything up to the idle check uses .NET calls only, so a call that exits there loads no module.
 function Get-HookRegistryPath {
@@ -261,6 +262,32 @@ function Test-HookShellStartsJob {
     return $false
 }
 
+function Get-HookWallDenyReason {
+    # A file whose reads filled an earlier coordinator's room without a job started (context-wall.json,
+    # written by the watcher) goes to a worker: a later coordinator may not read it directly. The
+    # coordinator that hit the wall, dt-build state scripts and non-read commands naming the file pass.
+    param([string]$Tool, $ToolInput, [Parameter(Mandatory)]$Coordinator)
+    if (-not $Coordinator.run_folder -or $null -eq $ToolInput) { return $null }
+    $wall = Read-HookJson -Path (Join-Path $Coordinator.run_folder $script:HookContextWallFile)
+    if ($null -eq $wall -or -not $wall.PSObject.Properties['reads']) { return $null }
+    $walled = @(if ($wall.PSObject.Properties['coordinators']) { @($wall.coordinators) } else { @($wall.coordinator_id) })
+    if ($walled -ccontains [string]$Coordinator.coordinator_id) { return $null }
+    $isShell = $script:HookShellTools -contains $Tool
+    if ($Tool -ne 'Read' -and -not $isShell -and $Tool -notin @('Grep', 'exec', 'shell', 'local_shell', 'exec_command')) { return $null }
+    $text = ($ToolInput | ConvertTo-Json -Compress -Depth 8) -replace '[\\/]+', '/'
+    if ($isShell -and (Test-HookShellAllowed ([string](Get-HookProperty $ToolInput 'command')))) { return $null }
+    $readVerb = $Tool -in @('Read', 'Grep') -or $text -match '(?i)\b(get-content|gc|cat|type|sed|awk|head|tail|less|more|select-string|sls|rg|grep|findstr|readalltext|readalllines|readlines|open)\b'
+    if (-not $readVerb) { return $null }
+    $lower = $text.ToLowerInvariant()
+    foreach ($read in @($wall.reads)) {
+        $key = ConvertTo-DtCtxPathKey ([string]$read.path)
+        if (-not $lower.Contains($key)) { continue }
+        $kb = [int][Math]::Round([long]$read.chars / 1000)
+        return "dt-build context guard: reading $($read.path) filled an earlier coordinator's working room ($($read.reads) reads, about $kb KB) and no job was started. Do not read it here. Start a mechanical dt-job worker that reads it and writes a short summary of only what this step needs to a file in the run folder, then read that summary with read-evidence.ps1."
+    }
+    return $null
+}
+
 function Get-HookDenyReason {
     # The deny reason for this call, or $null to allow it.
     param([Parameter(Mandatory)]$HookInput, [Parameter(Mandatory)]$Coordinator, [Parameter(Mandatory)]$Context)
@@ -284,6 +311,8 @@ function Get-HookDenyReason {
     if ($tool -eq 'CronCreate') {
         return 'dt-build context guard: CronCreate is blocked in a dt-build coordinator session; the dt-build watcher owns scheduling. Use dt-job wait for a running job, or end the turn and let the watcher continue the run.'
     }
+    $wallReason = Get-HookWallDenyReason -Tool $tool -ToolInput $toolInput -Coordinator $Coordinator
+    if ($wallReason) { return $wallReason }
     if ($tool -eq 'Read') {
         $path = [string](Get-HookProperty $toolInput 'file_path')
         if ($path -and $script:HookImageExtensions -contains [System.IO.Path]::GetExtension($path).ToLowerInvariant()) {
