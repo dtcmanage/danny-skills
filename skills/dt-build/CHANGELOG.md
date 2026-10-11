@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.11
+
+- Shared model router: new models read 'researched' after their release research pass instead of staying 'unprofiled'.
+
 ## 2.21.10
 
 - Shared model router: bench call time limit is now set per job; deep-thinker calls get 15 minutes so hard questions can finish.

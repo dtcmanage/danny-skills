@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.22 (2026-10-11): Shared model router: new models read 'researched' after their release research pass instead of staying 'unprofiled'.
+
 - 0.2.21 (2026-10-11): Shared model router: bench call time limit is now set per job; deep-thinker calls get 15 minutes so hard questions can finish.
 
 - 0.2.20 (2026-10-10): Shared model router quota messages now read X% used / Y% left with reset times in US Eastern.
