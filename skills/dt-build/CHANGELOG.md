@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.16
+
+- Managed Codex coordinators get the context hooks as trusted session flags and hand off at a safe point after the soft limit; past the hard limit only handoff steps run, and the watcher kills only as a backstop (30k tokens past hard or 10 minutes). Doc word limits restored.
+
 ## 2.21.15
 
 - Use a lean bridge and source-rendered coordinator rulebook for managed Codex resumes; preserve authorization reads and strip the opt-out from all workers.
