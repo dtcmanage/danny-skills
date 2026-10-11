@@ -11,11 +11,14 @@
   "pelican_scoring": "artifact-only; unchanged canary behavior",
   "judge_effort": "high",
   "spend_stop_points": 5,
-  "spend_stop_model_calls": 700,
+  "spend_stop_model_calls": 1000,
   "spend_reading_stale_hours": 6,
   "spend_baseline_max_age_minutes": 10,
   "max_parallel_calls": 32,
   "spend_check_interval_seconds": 30,
+  "ranked_rounds_per_comparison": 16,
+  "ranked_alpha": 0.05,
+  "ranked_harm_alpha": 0.25,
   "call_timeout_ms_by_job": {
     "deep-thinker": 900000
   }

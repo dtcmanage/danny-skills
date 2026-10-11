@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import Callable
 
 import pytest
 
@@ -390,3 +391,73 @@ def test_verdict_counts_tasks_instead_of_pooling_reps(tmp_path: Path) -> None:
     assert result['verdict'] == 'candidate_better'
     assert sum(t['candidate_wins'] for t in result['tasks']) == 2
     assert sum(t['incumbent_wins'] for t in result['tasks']) == 3
+
+
+def significance_ranking(tmp_path: Path, outcome: Callable[[int], str], *, tasks: int = 2, rounds: int = 16,
+                         alpha: float | None = 0.05, harm_alpha: float | None = 0.25) -> dict:
+    """Rank with one scripted outcome per round (candidate, incumbent or draw), both judges agreeing."""
+    task_paths = [make_task(tmp_path / 'tasks', name=f'ranked-significance-{i}') for i in range(tasks)]
+    run = tmp_path / 'run'
+    run.mkdir()
+    judge_count = 0
+    def call(model: str, effort: str, prompt: str, purpose: str, **kwargs: object) -> dict:
+        nonlocal judge_count
+        if purpose == 'answer':
+            return {'status': 'ok', 'answer': model}
+        side = outcome(judge_count // 2)
+        judge_count += 1
+        if side == 'draw':
+            return {'status': 'ok', 'answer': 'no_difference'}
+        first = re.search(r'BEGIN OUTPUT A [a-f0-9]+\n(\w+)', prompt).group(1)
+        return {'status': 'ok', 'answer': 'A' if first == side else 'B'}
+    return engine.rank_tasks(task_paths, run=run, job='deep-thinker', tier='standard',
+        configurations={s: {'model': s, 'effort': 'medium'} for s in ('candidate', 'incumbent')},
+        judges={'claude': 'claude-judge', 'codex': 'codex-judge'}, judge_effort='high',
+        call=call, renderer=lambda *args: pytest.fail('Unexpected render'),
+        rounds=rounds, alpha=alpha, harm_alpha=harm_alpha)
+
+
+def test_rounds_spread_across_tasks(tmp_path: Path) -> None:
+    result = significance_ranking(tmp_path, lambda i: 'draw', tasks=2, rounds=16)
+    assert result['rounds'] == 16 and all(len(t['reps']) == 8 for t in result['tasks'])
+    one = significance_ranking(tmp_path / 'one', lambda i: 'draw', tasks=1, rounds=16)
+    assert one['rounds'] == 16
+    floor = significance_ranking(tmp_path / 'floor', lambda i: 'draw', tasks=4, rounds=6)
+    assert all(len(t['reps']) == 3 for t in floor['tasks'])
+
+
+def test_small_lead_is_no_difference(tmp_path: Path) -> None:
+    # 3-0 with draws was "candidate_better" under the old rule; a fair coin does that 1 time in 8.
+    result = significance_ranking(tmp_path, lambda i: 'candidate' if i < 3 else 'draw')
+    assert (result['candidate_round_wins'], result['incumbent_round_wins']) == (3, 0)
+    assert result['verdict'] == 'no_difference' and result['p_value'] == pytest.approx(0.125)
+    assert result['candidate_not_worse']
+
+
+def test_significant_lead_wins(tmp_path: Path) -> None:
+    result = significance_ranking(tmp_path, lambda i: 'candidate' if i < 7 else 'incumbent' if i == 7 else 'draw')
+    assert (result['candidate_round_wins'], result['incumbent_round_wins']) == (7, 1)
+    assert result['verdict'] == 'candidate_better' and result['p_value'] <= 0.05
+
+
+def test_suggestive_loss_blocks_downgrade_without_significance(tmp_path: Path) -> None:
+    result = significance_ranking(tmp_path, lambda i: 'incumbent' if i < 2 else 'draw')
+    assert result['verdict'] == 'no_difference' and result['p_value'] == pytest.approx(0.25)
+    assert not result['candidate_not_worse'] and not engine.not_worse(result)
+    lean = significance_ranking(tmp_path / 'lean', lambda i: 'incumbent' if i < 2 else 'candidate' if i == 2 else 'draw')
+    assert lean['candidate_not_worse']
+
+
+def test_legacy_config_keeps_task_win_rule(tmp_path: Path) -> None:
+    result = significance_ranking(tmp_path, lambda i: 'candidate' if i == 0 else 'draw', tasks=2, rounds=6,
+                                  alpha=None, harm_alpha=None)
+    assert result['verdict'] == 'candidate_better' and result['candidate_not_worse']
+    assert engine.not_worse({'verdict': 'incumbent_better'}) is False
+    assert engine.not_worse({'verdict': 'no_difference'}) is True
+
+
+def test_sign_test_values() -> None:
+    assert engine.sign_test(0, 0) == 1.0
+    assert engine.sign_test(5, 0) == pytest.approx(1 / 32)
+    assert engine.sign_test(3, 0) == pytest.approx(0.125)
+    assert engine.sign_test(0, 3) == 1.0

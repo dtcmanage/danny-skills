@@ -37,7 +37,7 @@ function Set-BenchClaudeNativeEnvironment {
 function Add-BenchSpendDefaults {
     param([Parameter(Mandatory)][hashtable]$Config, [Parameter(Mandatory)][string]$ShippedPath)
     $shipped = Get-Content -LiteralPath $ShippedPath -Raw | ConvertFrom-Json -AsHashtable
-    foreach ($key in @('spend_stop_points','spend_stop_model_calls','spend_reading_stale_hours','spend_baseline_max_age_minutes','max_parallel_calls','spend_check_interval_seconds','call_timeout_ms_by_job')) {
+    foreach ($key in @('spend_stop_points','spend_stop_model_calls','spend_reading_stale_hours','spend_baseline_max_age_minutes','max_parallel_calls','spend_check_interval_seconds','call_timeout_ms_by_job','ranked_rounds_per_comparison','ranked_alpha','ranked_harm_alpha')) {
         if (-not $Config.ContainsKey($key) -and $shipped.ContainsKey($key)) { $Config[$key] = $shipped[$key] }
     }
 }

@@ -242,9 +242,11 @@ def rank_tasks(tasks: list[Path], *, run: Path, job: str, tier: str,
                configurations: dict[str, Any], judges: dict[str, str], judge_effort: str,
                call: Callable[..., dict[str, Any]], renderer: Callable[..., dict[str, Any]],
                between_tasks: Callable[[], None] = lambda: None,
-               parallel: int = 1) -> dict[str, Any] | None:
+               parallel: int = 1, rounds: int | None = None, alpha: float | None = None,
+               harm_alpha: float | None = None) -> dict[str, Any] | None:
     if not tasks:
         return None
+    reps = 3 if rounds is None else max(3, math.ceil(int(rounds) / len(tasks)))
 
     def rep_unit(unit: tuple[Path, dict[str, Any], int]) -> dict[str, Any]:
         task, metadata, rep = unit
@@ -320,7 +322,7 @@ def rank_tasks(tasks: list[Path], *, run: Path, job: str, tier: str,
         return {**result, 'task': task, 'record': record, 'reason': reason}
 
     plan = [(task, json.loads((task / 'task.json').read_text(encoding='utf-8'))) for task in tasks]
-    outcomes = run_all(rep_unit, [(task, metadata, rep) for task, metadata in plan for rep in range(1, 4)], parallel)
+    outcomes = run_all(rep_unit, [(task, metadata, rep) for task, metadata in plan for rep in range(1, reps + 1)], parallel)
     results = []
     for task, _ in plan:
         result: dict[str, Any] = {'task_id': task.name, 'candidate_wins': 0, 'incumbent_wins': 0,
@@ -340,10 +342,39 @@ def rank_tasks(tasks: list[Path], *, run: Path, job: str, tier: str,
         results.append(result)
     candidate_wins = sum(t['winner'] == 'candidate' for t in results)
     incumbent_wins = sum(t['winner'] == 'incumbent' for t in results)
+    # Rounds pool across tasks and a side is better only when its lead would be unlikely by
+    # chance (one-sided sign test over rounds both judges agreed on). Identical setups
+    # produced a "winner" in 11 of 33 comparisons under the old most-task-wins rule.
+    won = sum(t['candidate_wins'] for t in results)
+    lost = sum(t['incumbent_wins'] for t in results)
+    p_candidate, p_incumbent = sign_test(won, lost), sign_test(lost, won)
+    if alpha is None:  # Configs without ranked_alpha keep the most-task-wins rule.
+        verdict = ('candidate_better' if candidate_wins > incumbent_wins else
+                   'incumbent_better' if incumbent_wins > candidate_wins else 'no_difference')
+    else:
+        verdict = ('candidate_better' if won > lost and p_candidate <= float(alpha) else
+                   'incumbent_better' if lost > won and p_incumbent <= float(alpha) else 'no_difference')
     return {'job': job, 'tier': tier, 'configurations': configurations, 'tasks': results,
             'candidate_task_wins': candidate_wins, 'incumbent_task_wins': incumbent_wins,
-            'verdict': 'candidate_better' if candidate_wins > incumbent_wins else
-                       'incumbent_better' if incumbent_wins > candidate_wins else 'no_difference'}
+            'candidate_round_wins': won, 'incumbent_round_wins': lost,
+            'rounds': reps * len(results), 'p_value': min(p_candidate, p_incumbent),
+            # A lower effort or a swap must not look worse even short of significance.
+            'candidate_not_worse': (verdict != 'incumbent_better' if harm_alpha is None else
+                                    verdict != 'incumbent_better' and not (lost > won and p_incumbent <= float(harm_alpha))),
+            'verdict': verdict}
+
+
+def sign_test(wins: int, losses: int) -> float:
+    """One-sided probability of at least `wins` of `wins + losses` fair coin flips."""
+    total = wins + losses
+    if total == 0:
+        return 1.0
+    return sum(math.comb(total, k) for k in range(wins, total + 1)) / 2 ** total
+
+
+def not_worse(verdict: dict[str, Any]) -> bool:
+    # Verdicts recorded before the significance rule carry no candidate_not_worse field.
+    return bool(verdict.get('candidate_not_worse', verdict['verdict'] != 'incumbent_better'))
 
 
 def discrimination(tables: list[dict[str, Any]], state: Path, job: str, tier: str,
@@ -968,7 +999,9 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             configurations={'candidate': {'model': model, 'effort': level},
                             'incumbent': {'model': incumbent, 'effort': incumbent_effort}},
             judges=judges, judge_effort=judge_effort, call=call, renderer=renderer,
-            between_tasks=spend.check if spend else lambda: None, parallel=parallel)
+            between_tasks=spend.check if spend else lambda: None, parallel=parallel,
+            rounds=config.get('ranked_rounds_per_comparison'),
+            alpha=config.get('ranked_alpha'), harm_alpha=config.get('ranked_harm_alpha'))
     # Effort comparisons always put the proposed effort on the candidate side:
     # lower for effort-down, higher for effort-up; incumbent is the current effort.
     pairs = [(candidate, candidate_effort)] + ([(incumbent, down)] if down else []) + ([(incumbent, up)] if up else [])
@@ -1006,7 +1039,7 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             {t.name for t in selected if tier == 'hard' or json.loads((t / 'task.json').read_text(encoding='utf-8'))['grader'] == 'grounding'}) and
         # Ranked tasks exist to catch a quality loss at lower effort: judges that never
         # answered (outage, blocked vendor, protocol failure) are not evidence of no loss.
-        (down_quality is None or (quality_decided(down_quality) and down_quality['verdict'] != 'incumbent_better')))
+        (down_quality is None or (quality_decided(down_quality) and not_worse(down_quality))))
     raw_gate = 'unknown' if pass_insufficient else compare(candidate_table, incumbent_table)
     if job == 'illustrator' and raw_gate != 'unknown':
         raw_gate = 'advisory'
@@ -1071,9 +1104,9 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     result['tied'] = tier != 'beyond' and known and quality['candidate'] == quality['incumbent']
     result['better'] = (candidate if quality['candidate'] > quality['incumbent'] else incumbent) if known and not result['tied'] else None
     result['swap_qualified'] = raw_gate == 'pass' and (quality_verdict is None or
-        (quality_decided(quality_verdict) and quality_verdict['verdict'] != 'incumbent_better'))
+        (quality_decided(quality_verdict) and not_worse(quality_verdict)))
     result['tie_qualified'] = result['tied'] and (quality_verdict is None or
-        (quality_decided(quality_verdict) and quality_verdict['verdict'] == 'no_difference'))
+        (quality_decided(quality_verdict) and quality_verdict['verdict'] == 'no_difference' and not_worse(quality_verdict)))
     verdict = 'tied' if result['tied'] else (result['better'] or 'unknown')
     lines = [f"Gate: {result['gate']} (raw: {raw_gate}); shadow: {shadow}",
              f"Shortfall: {result['shortfall_tasks']} task(s)",
