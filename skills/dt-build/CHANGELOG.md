@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.4
+
+- Model router re-checks Codex limits live when a stale reading says Codex is blocked, so a usage reset is seen without waiting for a Codex run.
+
 ## 2.21.3
 
 - Live test harness checks the real model router first and skips any vendor the router says to wait on, so live tests never run past the usage guard.

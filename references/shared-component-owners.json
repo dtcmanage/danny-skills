@@ -467,6 +467,7 @@
   "scripts/model-router/tests/test-router-cadence.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-router-research.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-vendor-limits.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/fixtures/fake-codex-limits.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-resolve-model.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-send-router-alert.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-update-outcomes.ps1": {"consumers": [], "summary_token": "model router"},

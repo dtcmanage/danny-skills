@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.16 (2026-10-10): Model router re-checks Codex limits live when a stale reading says Codex is blocked, so a usage reset is seen without waiting for a Codex run.
+
 - 1.16.15 (2026-10-10): Shared model router: DT_ROUTER_GUARD_OVERRIDE lifts the 95% quota guard for named vendors in one process, only on Danny explicit permission.
 
 - 1.16.14 (2026-10-07): Shared model router scripts: declined effort swaps stay declined, one bench comparison at a time, research replies parse past a timestamp preface.
