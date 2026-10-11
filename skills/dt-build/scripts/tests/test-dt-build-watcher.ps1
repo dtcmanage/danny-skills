@@ -661,6 +661,45 @@ try {
     Invoke-Tick -NowUtc $tb.AddSeconds(30) | Out-Null
     Assert-True ((Get-LaunchCount 'approval') -eq 1) 'approve produces exactly one new launch'
 
+    # ---- scenario 10d: a delegated run routes routine stops away from Danny, escalates late ones once,
+    # always DMs production/Azure/irreversible stops, and digests delegated approvals at finish.
+    Use-Scenario 'delegate'
+    $run = New-Run -Name 'delegate'
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    Invoke-DtJob @('consume', '-RunFolder', $run.folder, '-Seq', '1') | Out-Null
+    $env:DT_BUILD_COORDINATOR_ID = 'mc-test'
+    try { $refused = Invoke-DtJobExpectFail @('delegate', '-RunFolder', $run.folder, '-Delegate', 'File Sorter session') }
+    finally { $env:DT_BUILD_COORDINATOR_ID = $null }
+    Assert-True ($refused.exit -ne 0 -and $refused.text -match 'DT_JOB_OPERATOR_ONLY') 'a coordinator cannot set a delegate'
+    Invoke-DtJob @('delegate', '-RunFolder', $run.folder, '-Delegate', 'File Sorter session') | Out-Null
+    $routine = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'source-repair', '-Message', 'Review the repaired source.')
+    $pending = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'approvals.json') | ConvertFrom-Json).awaiting
+    Assert-True ($routine.alert -eq 'delegated' -and (Get-DmCount 'delegate') -eq 0 -and $pending.delegated_to -eq 'File Sorter session') 'a routine stop goes to the delegate with no DM'
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-DmCount 'delegate') -eq 0) 'no DM while the delegate still has time'
+    $approvalsPath = Join-Path $run.folder 'approvals.json'
+    $doc = Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json
+    $doc.awaiting.escalate_after_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o')
+    Write-Utf8 $approvalsPath ($doc | ConvertTo-Json -Depth 6)
+    Invoke-Tick | Out-Null
+    Invoke-Tick | Out-Null
+    $late = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('run delegate ') }
+    Assert-True (@($late).Count -eq 1 -and ([string]@($late)[0].content).Contains('File Sorter session has not approved it')) 'a stop the delegate has not approved in time DMs Danny once'
+    Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'source-repair') | Out-Null
+    $doc = Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json
+    Assert-True ($doc.approvals[0].delegated_to -eq 'File Sorter session' -and $doc.delegate.name -eq 'File Sorter session') 'approval records who it was delegated to and the delegate survives'
+    $prod = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'release-install', '-Message', 'Install the release on production.')
+    Assert-True ($prod.alert -eq 'sent' -and (Get-DmCount 'delegate') -eq 2) 'a production install stop always DMs Danny'
+    Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'release-install') | Out-Null
+    $forced = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'vm-snapshot', '-Message', 'Take the snapshot.', '-AlwaysNotify')
+    Assert-True ($forced.alert -eq 'sent' -and (Get-DmCount 'delegate') -eq 3) '-AlwaysNotify DMs Danny despite the delegate'
+    Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'vm-snapshot') | Out-Null
+    Invoke-DtJob @('delegate', '-RunFolder', $run.folder, '-Clear') | Out-Null
+    Assert-True ($null -eq (Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json).delegate) 'delegate -Clear removes the delegate'
+    Invoke-DtJob @('finish', '-RunFolder', $run.folder) | Out-Null
+    $digest = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('run delegate finished') }
+    Assert-True (@($digest).Count -eq 1 -and ([string]@($digest)[0].content) -match 'Approved on your behalf: source-repair \(.+ ET, File Sorter session\)\.$') "finish sends one digest of delegated approvals ($([string]@($digest)[0].content))"
+
     # ---- scenario 10c: failed launches honor 2/10/30, stop with one DM, and resume re-arms once.
     Use-Scenario 'retry'
     $run = New-Run -Name 'retry'

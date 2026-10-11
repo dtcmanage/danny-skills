@@ -591,6 +591,8 @@ function Invoke-WatcherRunTick {
     $retried = @()
     if ((Test-Path -LiteralPath $statePath) -and (Get-DtJobRunState -BuildStatePath $statePath).run_status -eq 'awaiting_danny') {
         $retried = @(Send-DtJobPendingAlerts -RunFolder $folder)
+        $escalated = Send-DtJobDelegateEscalation -RunFolder $folder -RunId $runId
+        if ($escalated) { $retried += [pscustomobject][ordered]@{ key = 'delegate-escalation'; alert = $escalated } }
     }
     $now = Get-WatcherNow
     $decision = Get-WatcherDecision -Entry $Entry -NowUtc $now

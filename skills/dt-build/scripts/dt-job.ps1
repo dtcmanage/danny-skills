@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
+    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -71,6 +71,12 @@ param(
 
     [string]$Message,
 
+    [string]$Delegate,
+
+    [switch]$Clear,
+
+    [switch]$AlwaysNotify,
+
     [string]$TranscriptPath,
 
     [string]$WorkingTree,
@@ -107,6 +113,8 @@ $script:DtJobWaitPollMs = 500
 # stall period is reported stalled at the coordinator's check-ins, and the coordinator decides whether to
 # cancel it.
 $script:DtJobHeartbeatSec = 30
+# A stop delegated to another session DMs Danny if it is still unapproved after this many minutes.
+$script:DtJobDelegateEscalateMin = 15
 $script:DtJobStallSec = 1200
 $script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
 $script:DtJobAlertScript = Join-Path $PSScriptRoot '..\..\..\scripts\model-router\send-router-alert.ps1'
@@ -962,14 +970,16 @@ function Get-DtJobApprovals {
     $path = (Get-DtJobPaths -RunFolder $RunFolder).Approvals
     if (Test-Path -LiteralPath $path) {
         $parsed = Read-DtJobText -Path $path | ConvertFrom-Json
-        return [pscustomobject]@{ awaiting = $parsed.awaiting; approvals = @($parsed.approvals | Where-Object { $null -ne $_ }) }
+        $delegateRecord = if ($parsed.PSObject.Properties['delegate']) { $parsed.delegate } else { $null }
+        return [pscustomobject]@{ awaiting = $parsed.awaiting; approvals = @($parsed.approvals | Where-Object { $null -ne $_ }); delegate = $delegateRecord }
     }
-    return [pscustomobject]@{ awaiting = $null; approvals = @() }
+    return [pscustomobject]@{ awaiting = $null; approvals = @(); delegate = $null }
 }
 
 function Save-DtJobApprovals {
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Approvals)
-    $content = [ordered]@{ awaiting = $Approvals.awaiting; approvals = @($Approvals.approvals) } | ConvertTo-Json -Depth 5
+    $delegateRecord = if ($Approvals.PSObject.Properties['delegate']) { $Approvals.delegate } else { $null }
+    $content = [ordered]@{ awaiting = $Approvals.awaiting; approvals = @($Approvals.approvals); delegate = $delegateRecord } | ConvertTo-Json -Depth 5
     Write-DtJobAtomic -Path (Get-DtJobPaths -RunFolder $RunFolder).Approvals -Content $content
 }
 
@@ -1317,14 +1327,26 @@ function Invoke-DtJobAwaitDanny {
             Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'awaiting_danny'
             Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'awaiting_danny' -Status 'awaiting_danny' -Reason "operation $Operation"
             $seq = Get-DtJobLastEventSeq -RunFolder $RunFolder
-            $approvals.awaiting = [ordered]@{ operation = $Operation; message = $Message; since_utc = [DateTime]::UtcNow.ToString('o'); seq = $seq }
+            $awaiting = [ordered]@{ operation = $Operation; message = $Message; since_utc = [DateTime]::UtcNow.ToString('o'); seq = $seq }
+            # A delegated run routes routine stops to the delegate; Danny is told only if it has not acted
+            # in time, and always for production, install, Azure or irreversible steps.
+            if ($null -ne $approvals.delegate -and -not (Test-DtJobMustNotifyDanny -Operation $Operation -Message $Message -AlwaysNotify:$AlwaysNotify)) {
+                $awaiting.delegated_to = [string]$approvals.delegate.name
+                $awaiting.escalate_after_utc = [DateTime]::UtcNow.AddMinutes((Get-DtJobSettingSec -Name 'DT_BUILD_DELEGATE_ESCALATE_MIN' -Default $script:DtJobDelegateEscalateMin)).ToString('o')
+            }
+            $approvals.awaiting = $awaiting
             Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
             $seq
         }
     }
-    $text = "dt-build run $($ctx.run_id) is paused for your approval before: $Operation. $Message To approve, run: /dt-build approve $($ctx.run_id) $Operation"
-    # Every boundary gets its own key (the await event's seq), so a later boundary for the same operation DMs again.
-    $alert = Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:$($ctx.run_id):awaiting:${Operation}:$awaitSeq" -Message $text -RetryUntilDelivered
+    $pendingNow = (Get-DtJobApprovals -RunFolder $RunFolder).awaiting
+    $delegatedTo = if ($null -ne $pendingNow -and $pendingNow.PSObject.Properties['delegated_to']) { [string]$pendingNow.delegated_to } else { $null }
+    if ($delegatedTo) { $alert = 'delegated' }
+    else {
+        $text = "dt-build run $($ctx.run_id) is paused for your approval before: $Operation. $Message To approve, run: /dt-build approve $($ctx.run_id) $Operation"
+        # Every boundary gets its own key (the await event's seq), so a later boundary for the same operation DMs again.
+        $alert = Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:$($ctx.run_id):awaiting:${Operation}:$awaitSeq" -Message $text -RetryUntilDelivered
+    }
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ operation = $Operation; alert = $alert; await_seq = $awaitSeq }) -AsJson:$Json
 }
 
@@ -1351,13 +1373,45 @@ function Invoke-DtJobApprove {
         if ([string]$approvals.awaiting.operation -cne $Operation) {
             throw "DT_JOB_APPROVE_MISMATCH: run $($ctx.run_id) waits on '$($approvals.awaiting.operation)', not '$Operation'; nothing recorded"
         }
-        $approvals.approvals = @($approvals.approvals) + @([pscustomobject][ordered]@{ operation = $Operation; approved_utc = [DateTime]::UtcNow.ToString('o') })
+        $delegatedTo = if ($approvals.awaiting.PSObject.Properties['delegated_to']) { [string]$approvals.awaiting.delegated_to } else { $null }
+        $approvals.approvals = @($approvals.approvals) + @([pscustomobject][ordered]@{ operation = $Operation; approved_utc = [DateTime]::UtcNow.ToString('o'); delegated_to = $delegatedTo })
         $approvals.awaiting = $null
         Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
         Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'runnable'
         Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status 'runnable' -Reason "approved $Operation"
     }
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ approved = $Operation }) -AsJson:$Json
+}
+
+function Test-DtJobMustNotifyDanny {
+    # Stops Danny always hears about himself, delegate or not.
+    param([string]$Operation, [string]$Message, [switch]$AlwaysNotify)
+    if ($AlwaysNotify) { return $true }
+    return ("$Operation $Message" -match '(?i)\b(prod|production|install|installs|installation|azure|irreversible)\b')
+}
+
+function Invoke-DtJobDelegate {
+    # Danny names the session that approves this run's routine stops for him, or clears it with -Clear.
+    Assert-DtJobOperator -VerbName 'delegate' -RunFolder $RunFolder
+    if (-not $Clear -and [string]::IsNullOrWhiteSpace($Delegate)) { throw 'DT_JOB_USAGE: delegate requires -Delegate <name> or -Clear.' }
+    $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+        $approvals.delegate = if ($Clear) { $null } else { [pscustomobject][ordered]@{ name = $Delegate.Trim(); set_utc = [DateTime]::UtcNow.ToString('o') } }
+        Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+    }
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ delegate = $(if ($Clear) { $null } else { $Delegate.Trim() }) }) -AsJson:$Json
+}
+
+function Send-DtJobDelegateEscalation {
+    # A delegated stop the delegate has not approved in time DMs Danny, once.
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$RunId)
+    $pending = (Get-DtJobApprovals -RunFolder $RunFolder).awaiting
+    if ($null -eq $pending -or -not $pending.PSObject.Properties['delegated_to'] -or -not $pending.delegated_to) { return $null }
+    if ([DateTime]::UtcNow -lt (ConvertTo-DtJobUtc $pending.escalate_after_utc)) { return $null }
+    $minutes = [int][Math]::Round(([DateTime]::UtcNow - (ConvertTo-DtJobUtc $pending.since_utc)).TotalMinutes)
+    $text = "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation), and $($pending.delegated_to) has not approved it. $($pending.message) To approve, run: /dt-build approve $RunId $($pending.operation)"
+    return (Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:${RunId}:awaiting:$($pending.operation):$($pending.seq)" -Message $text -RetryUntilDelivered)
 }
 
 function Invoke-DtJobResume {
@@ -1380,6 +1434,13 @@ function Invoke-DtJobFinish {
         Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'finished' -Status 'finished'
     }
     $removed = Remove-DtJobRegistryEntry -RunFolder $RunFolder
+    # One FYI digest of the stops a delegate approved for Danny.
+    $delegated = @((Get-DtJobApprovals -RunFolder $RunFolder).approvals | Where-Object { $_.PSObject.Properties['delegated_to'] -and $_.delegated_to })
+    if ($delegated.Count -gt 0) {
+        $et = [TimeZoneInfo]::FindSystemTimeZoneById($(if ($IsWindows) { 'Eastern Standard Time' } else { 'America/New_York' }))
+        $items = @($delegated | ForEach-Object { "$($_.operation) ($([TimeZoneInfo]::ConvertTimeFromUtc((ConvertTo-DtJobUtc $_.approved_utc), $et).ToString('MMM d h:mm tt')) ET, $($_.delegated_to))" })
+        $null = Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:$($ctx.run_id):delegate-digest" -Message "dt-build run $($ctx.run_id) finished. Approved on your behalf: $($items -join '; ')." -RetryUntilDelivered
+    }
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ unregistered = [int]$removed }) -AsJson:$Json
 }
 
@@ -1657,6 +1718,7 @@ $verbOutput = switch ($Verb) {
     'request-continuation' { Invoke-DtJobRequestContinuation }
     'await-danny' { Invoke-DtJobAwaitDanny }
     'approve' { Invoke-DtJobApprove }
+    'delegate' { Invoke-DtJobDelegate }
     'resume' { Invoke-DtJobResume }
     'finish' { Invoke-DtJobFinish }
     'mark-bootstrap' { Invoke-DtJobMarkBootstrap }

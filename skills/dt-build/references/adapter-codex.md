@@ -11,8 +11,8 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 
 ## Waiting and completion
 
-- Codex has no in-session completion notice. Wait in the foreground with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` (at most 600) below the shell timeout.
-- On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again for jobs still running; nothing else between waits.
+- Codex has no in-session completion notice. Wait in the foreground: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` (at most 600) below the shell timeout.
+- On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again; nothing else between waits.
 - Never poll with `status`, `sleep` loops, or log tails.
 - Each `wait_timeout` is a check-in listing each running job's `progress`. Jobs have no time limit; for a `STALLED` job (20 silent minutes), check its output, then cancel and retry or keep waiting.
 - Waits of hours use managed mode (below).
@@ -46,8 +46,8 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 - Legacy managed coordinator prompts read `$dt-build resume <RUN_ID> (managed coordinator <id>)`. Continue as `<id>` (reconcile, read `_build-state.md`, carry on); never run `dt-job resume`.
 - Before ending each headless turn, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state it shows. An unconsumed trigger counts as a failed launch.
 - The launcher alone sets `DT_BUILD_COORDINATOR_ID`, for managed coordinators. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
-- At approval boundaries (merge, push, deploy, prod write, irreversible step): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end. Never run `dt-job approve` or `dt-job resume`; they are Danny's alone.
-- Danny's commands: `/dt-build approve <RUN_ID> <operation>` records his approval and makes the run runnable; `/dt-build resume <RUN_ID>` re-arms a stopped run (`$dt-build` in place of `/dt-build` when typed in Codex). When Danny types either, run the matching `dt-job approve -Operation <operation>` or `dt-job resume`.
+- At approval boundaries (merge, push, deploy, prod write, irreversible): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end; add `-AlwaysNotify` for production, Azure or irreversible. Never run `dt-job approve`, `resume` or `delegate`; they are Danny's alone.
+- Danny's commands: `/dt-build approve <RUN_ID> <operation>` records his approval and makes the run runnable; `/dt-build resume <RUN_ID>` re-arms a stopped run; `/dt-build delegate <RUN_ID> <session>` (`-Clear` undoes) routes routine stops there (`$dt-build` in place of `/dt-build` when typed in Codex). When Danny types one, run the matching `dt-job` verb.
 
 ## Evidence
 
