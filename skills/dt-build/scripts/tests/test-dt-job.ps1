@@ -113,14 +113,13 @@ try {
     $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
     Assert-True ($record.status -eq 'failed' -and $record.exit_code -eq 4) "failing final native command keeps its exit code ($($record.status), $($record.exit_code))"
 
-    # Timeout.
+    # -TimeoutSec is an expected duration, never a kill.
     $rf = New-RunFolder 'timeout'
-    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 30', '-TimeoutSec', '2')
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 4', '-TimeoutSec', '1')
     $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id -TimeoutSec 30
-    Assert-True ($record.status -eq 'timeout') "timeout status was $($record.status)"
-    Assert-True (Test-ProcessGone $record.pid) 'timed-out process was stopped'
+    Assert-True ($record.status -eq 'succeeded' -and $record.timeout_sec -eq 0 -and $record.expected_sec -eq 1) "a job past its expected time runs to completion ($($record.status), $($record.timeout_sec), $($record.expected_sec))"
 
-    # An agent job is never stopped on time: its -TimeoutSec becomes the expected duration.
+    # No job is stopped on time: -TimeoutSec becomes the expected duration.
     $rf = New-RunFolder 'agent-no-limit'
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok # invoke-codex-chunk.ps1 -Category complex-coding', '-TimeoutSec', '660')
     $rec = Get-JobRecord -RunFolder $rf -JobId $job.job_id
@@ -130,7 +129,8 @@ try {
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-ScriptPath', $driver, '-TimeoutSec', '900')
     Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 0) 'a driver script that calls a wrapper has no time limit'
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Write-Output ok', '-TimeoutSec', '900')
-    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).timeout_sec -eq 900) 'a non-agent job keeps its time limit'
+    $rec = Get-JobRecord -RunFolder $rf -JobId $job.job_id
+    Assert-True ($rec.timeout_sec -eq 0 -and $rec.expected_sec -eq 900) 'a test or command job has no time limit either'
 
     # Check-ins: a silent agent job is reported stalled; a working one reports its activity.
     $rf = New-RunFolder 'stall'
@@ -362,23 +362,28 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     Assert-True ($stdout.Trim() -eq 'env=[hello][passed][][named-secret]') "caller environment reaches the job ($($stdout.Trim()))"
     Assert-True (-not ((Get-Content -Raw -LiteralPath (Join-Path $rf "jobs/$($job.job_id)/spec.json")) -match 'unnamed-secret')) 'unnamed secret-looking variable never written to the spec'
 
-    # Runner died but child lives: reconcile expires it past timeout plus grace.
+    # Runner died but child lives: reconcile leaves it running, and a check-in reports it stalled.
     $rf = New-RunFolder 'expire'
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 120', '-TimeoutSec', '20', '-Mutates', 'exp')
     $record = Wait-JobState -RunFolder $rf -JobId $job.job_id -Until { param($r) [bool]$r.pid }
     Stop-Process -Id ([int]$record.runner_pid) -Force
     Start-Sleep -Milliseconds 500
     Invoke-DtJob @('reconcile', '-RunFolder', $rf) | Out-Null
-    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).status -eq 'running') 'live child within its timeout stays running'
+    Assert-True ((Get-JobRecord -RunFolder $rf -JobId $job.job_id).status -eq 'running') 'a live child stays running'
     $record = Get-JobRecord -RunFolder $rf -JobId $job.job_id
+    Remove-Item -LiteralPath (Join-Path $rf "jobs/$($job.job_id)/heartbeat.json") -Force -ErrorAction SilentlyContinue
     $record.started = [DateTime]::UtcNow.AddSeconds(-60).ToString('o')
     Write-Utf8 (Join-Path $rf "jobs/$($job.job_id).json") ($record | ConvertTo-Json -Depth 8)
     Invoke-DtJob @('reconcile', '-RunFolder', $rf) | Out-Null
     $after = Get-JobRecord -RunFolder $rf -JobId $job.job_id
-    Assert-True ($after.status -eq 'timeout' -and $after.status_reason -match 'expired') "expired job marked timeout ($($after.status): $($after.status_reason))"
+    Assert-True ($after.status -eq 'running') "a job past its expected time is never ended by reconcile ($($after.status))"
+    $env:DT_JOB_STALL_SEC = '30'
+    try { $runStatus = Invoke-DtJob @('status', '-RunFolder', $rf) } finally { Remove-Item Env:DT_JOB_STALL_SEC -ErrorAction SilentlyContinue }
+    Assert-True (@($runStatus.stalled) -contains $job.job_id) 'a job whose runner died shows as stalled'
+    Invoke-DtJob @('cancel', '-RunFolder', $rf, '-JobId', $job.job_id) | Out-Null
     Start-Sleep -Milliseconds 500
-    Assert-True (Test-ProcessGone $record.pid) 'expired child process killed'
-    Assert-True (-not (Test-Path -Path (Join-Path $rf 'jobs/locks/key-exp-*.lock'))) 'expired job frees its key'
+    Assert-True (Test-ProcessGone $record.pid) 'cancel stops the child'
+    Assert-True (-not (Test-Path -Path (Join-Path $rf 'jobs/locks/key-exp-*.lock'))) 'a cancelled job frees its key'
 
     # A partial last line in events.jsonl does not wedge later transitions.
     $rf = New-RunFolder 'partial-event'

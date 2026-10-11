@@ -89,7 +89,6 @@ $script:DtJobEnvelopeMaxBytes = 8192
 $script:DtJobLineMaxChars = 400
 $script:DtJobExcerptLines = 40
 $script:DtJobLaunchGraceSec = 60
-$script:DtJobExpiryGraceSec = 30
 $script:DtJobMoveRetryMs = 2000
 $script:DtJobStderrExcerptLines = 10
 $script:DtJobEnvAllow = @('CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PATH')
@@ -104,9 +103,9 @@ $script:DtJobLeaseDefaultTtlSec = 600
 $script:DtJobExplicitParams = @()
 $script:DtJobLeaseRenewMaxSec = 60
 $script:DtJobWaitPollMs = 500
-# An agent job (a chunk wrapper, or a script that calls one) is never stopped on time. Its runner records
-# activity every heartbeat; a job with no activity for the stall period is reported stalled at the
-# coordinator's check-ins, and the coordinator decides whether to cancel it.
+# No job is stopped on time. Its runner records activity every heartbeat; a job with no activity for the
+# stall period is reported stalled at the coordinator's check-ins, and the coordinator decides whether to
+# cancel it.
 $script:DtJobHeartbeatSec = 30
 $script:DtJobStallSec = 1200
 $script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
@@ -331,13 +330,6 @@ function Test-DtJobAlive {
         return ($age -lt $script:DtJobLaunchGraceSec)
     }
     return $false
-}
-
-function Test-DtJobExpired {
-    param([Parameter(Mandatory)]$Record)
-    if ([int]$Record.timeout_sec -le 0 -or -not $Record.started) { return $false }
-    $age = ([DateTime]::UtcNow - (ConvertTo-DtJobUtc $Record.started)).TotalSeconds
-    return ($age -gt ([int]$Record.timeout_sec + $script:DtJobExpiryGraceSec))
 }
 
 function Stop-DtJobProcesses {
@@ -618,10 +610,10 @@ function Invoke-DtJobStart {
     if ([string]::IsNullOrWhiteSpace($Command) -eq [string]::IsNullOrWhiteSpace($ScriptPath)) {
         throw 'DT_JOB_USAGE: start takes exactly one of -Command or -ScriptPath.'
     }
-    # An agent job is never stopped on time: its -TimeoutSec becomes the expected duration that check-ins
-    # compare against, and only a stall the coordinator confirms ends it.
+    # No job is stopped on time: -TimeoutSec is the expected duration that check-ins compare against, and
+    # only a stall the coordinator confirms ends a job.
     $expectedSec = $TimeoutSec
-    if (Test-DtJobAgentJob -Command $Command -ScriptPath $ScriptPath -ArgumentList $ArgumentList) { $TimeoutSec = 0 }
+    $TimeoutSec = 0
     $spec = [ordered]@{ command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec; environment = (Get-DtJobEnvironment -Extra $PassEnv) }
     if ($Command) { $spec.command = $Command; $identity = $Command }
     else {
@@ -750,13 +742,7 @@ function Invoke-DtJobReconcile {
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         foreach ($r in (Get-DtJobRecords -RunFolder $RunFolder)) {
             if ($r.status -ne 'running') { continue }
-            if (Test-DtJobExpired -Record $r) {
-                # Past its timeout plus grace: the runner that enforces it is gone or stuck.
-                Stop-DtJobProcesses -Record $r
-                Remove-DtJobKeyLocks -RunFolder $RunFolder -Record $r
-                Set-DtJobState -RunFolder $RunFolder -Record $r -Status 'timeout' -EventType 'expired' -Reason "expired: running past timeout $($r.timeout_sec) s plus $($script:DtJobExpiryGraceSec) s grace"
-                continue
-            }
+            # A live job is never ended on time; a silent one shows as stalled at check-ins.
             if (Test-DtJobAlive -Record $r) { continue }
             # Re-read under the lock: a terminal record written by the runner always wins.
             $fresh = Get-DtJobRecord -RunFolder $RunFolder -JobId $r.job_id
@@ -1053,17 +1039,6 @@ function Get-DtJobSettingSec {
     $value = [System.Environment]::GetEnvironmentVariable($Name)
     if ($value -and [int]::TryParse($value, [ref]$parsed) -and $parsed -gt 0) { return $parsed }
     return $Default
-}
-
-function Test-DtJobAgentJob {
-    # A chunk wrapper call, or a script whose text calls one (a build's driver.ps1).
-    param([string]$Command, [string]$ScriptPath, [string[]]$ArgumentList)
-    $pattern = '(?i)invoke-(codex|claude)-chunk\.ps1'
-    if (((@($Command, $ScriptPath) + @($ArgumentList)) -join ' ') -match $pattern) { return $true }
-    if ($ScriptPath -and (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
-        try { return ([System.IO.File]::ReadAllText($ScriptPath) -match $pattern) } catch { return $false }
-    }
-    return $false
 }
 
 function Get-DtJobActivity {

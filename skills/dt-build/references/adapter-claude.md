@@ -12,7 +12,7 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 ## Waiting and completion
 
 - Wait with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 600 -Json`, run through the Bash tool with `run_in_background: true` and a longer Bash `timeout`. Claude Code notifies on exit. End the turn after starting it.
-- Each `wait_timeout` is a check-in listing each running job's `progress`. Agent jobs have no time limit; for a `STALLED` job (20 silent minutes), check its output, then cancel and retry or keep waiting.
+- Each `wait_timeout` is a check-in listing each running job's `progress`. Jobs have no time limit; for a `STALLED` job (20 silent minutes), check its output, then cancel and retry or keep waiting.
 - Never use CronCreate, Monitor heartbeats, `sleep` loops, or repeated `status` calls.
 - The ledger is the truth, not the notification: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and on `wait_timeout`, then start one new background wait for the jobs still running.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.
