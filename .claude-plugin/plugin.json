@@ -26,7 +26,7 @@
   ],
   "metadata": {
     "changelog": [
-      "0.24.13 model router prompt size guard: dt-build 2.25.1 and consumer patch bumps.",
+      "0.24.13 model router prompt size guard: dt-build 2.25.1, dt-review 1.16.28, dt-image-gen 0.3.28, dt-writing-draft 0.2.28, dt-writing-edit 0.3.28.",
       "0.24.12 model router ad-hoc wrappers: dt-build 2.25.0, dt-review 1.16.27, dt-image-gen 0.3.27, dt-writing-draft 0.2.27, dt-writing-edit 0.3.27.",
       "0.24.11 dt-build 2.24.0: operator notes.",
       "0.24.10 dt-build 2.23.0: approval delegation.",
