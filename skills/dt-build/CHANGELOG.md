@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.17
+
+- Coordinators get 150k tokens of working room past startup: wrap-up at baseline + 150k, handoff-only at + 180k, hard limit capped at 240k and watcher backstop at 252k to stay under Codex Sol's usable window.
+
 ## 2.21.16
 
 - Managed Codex coordinators get the context hooks as trusted session flags and hand off at a safe point after the soft limit; past the hard limit only handoff steps run, and the watcher kills only as a backstop (30k tokens past hard or 10 minutes). Doc word limits restored.

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.24.4",
+  "version": "0.24.5",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.24.5 dt-build 2.21.17: 150k tokens of coordinator working room past startup.",
       "0.24.4 dt-build 2.21.16: Codex coordinators hand off at a safe point instead of being force-killed.",
       "0.24.3 dt-build 2.21.15: lean managed Codex coordinator bootstrap, compact source-rendered rulebook, worker environment isolation and measured resume budget.",
       "0.24.2 dt-build 2.21.14: builder and reviewer chunks get 45 and 30 minutes before the wrapper stops them; model router wrapper tests cover the limits, dt-review 1.16.24, dt-image-gen 0.3.24, dt-writing-draft 0.2.24, dt-writing-edit 0.3.24.",
