@@ -10,6 +10,17 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 . (Join-Path $PSScriptRoot 'router-credentials.ps1')
 
+function Format-RouterUsageMessage {
+    param([string]$Vendor, [AllowNull()][object]$Usage)
+    $text = Format-RouterUsageText -Usage $Usage
+    if (-not $text) { $text = 'unknown% used / unknown% left' }
+    if ($null -ne $Usage -and $Usage.resets_at_utc) {
+        $et = [TimeZoneInfo]::ConvertTime([datetimeoffset]$Usage.resets_at_utc, [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time'))
+        $text += ', resets ' + $et.ToString('MMM d h:mm tt', [Globalization.CultureInfo]::InvariantCulture) + ' ET'
+    }
+    return "${Vendor}: $text"
+}
+
 # The weekly-usage guard blocks a vendor at 95%. DT_ROUTER_GUARD_OVERRIDE (comma-separated vendor
 # names) raises that vendor's guard to 100% for the current process only, on Danny's explicit
 # instruction; recorded refusal blocks still apply.
@@ -581,5 +592,8 @@ if ($MyInvocation.InvocationName -ne '.') {
     $blocked = ($block.Count -gt 0 -or ($null -ne $usage -and $usage.used_percent -ge (Get-RouterGuardPercent -Vendor $RouterLimitsCliVendor)))
     $result = [pscustomobject]@{ vendor=$RouterLimitsCliVendor; blocked=$blocked; reason=$(if ($block.Count) { $block[0].reason } elseif ($blocked) { if ($RouterLimitsCliVendor -eq 'claude') { 'Claude weekly usage at or above 95%' } else { 'Codex usage at or above 95%' } } else { $null }); used_percent=$(if ($null -ne $usage) { $usage.used_percent } else { $null }); left_percent=$(if ($null -ne $usage) { [Math]::Max(0.0, 100.0 - [double]$usage.used_percent) } else { $null }); usage=(Format-RouterUsageText -Usage $usage); resets_at_utc=$(if ($null -ne $usage) { $usage.resets_at_utc } else { $null }) }
     if ($RouterLimitsCliVendor -eq 'claude') { $result | Add-Member -NotePropertyName session_percent -NotePropertyValue $(if ($null -ne $usage) { $usage.session_percent } else { $null }) }
-    if ($RouterLimitsCliJson) { $result | ConvertTo-Json -Compress -Depth 5 } else { $result }
+    if ($RouterLimitsCliJson) { $result | ConvertTo-Json -Compress -Depth 5 } else {
+        $status = if ($blocked) { 'blocked' } else { 'available' }
+        "$(Format-RouterUsageMessage -Vendor $RouterLimitsCliVendor -Usage $result); $status"
+    }
 }

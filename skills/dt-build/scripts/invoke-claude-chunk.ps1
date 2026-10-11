@@ -393,7 +393,10 @@ try {
             $blockArgs = @{ Vendor='claude'; Reason='usage-limit refusal from claude -p' }
             if ($refusal.reset_at_utc) { $blockArgs.ResetAtUtc = [datetimeoffset]$refusal.reset_at_utc }
             $limitBlock = Add-RouterVendorBlock @blockArgs
-            $failureReason = "ROUTER_LIMIT: claude at its usage limit until $($limitBlock.reset_at_utc)"
+            $quotaUsage = Get-RouterCachedWeeklyUsage -Vendor claude
+            $quotaPercent = Format-RouterUsageText -Usage $quotaUsage
+            if (-not $quotaPercent) { $quotaPercent = 'unknown% used / unknown% left' }
+            $failureReason = "ROUTER_LIMIT: claude at its usage limit ($quotaPercent); $(Format-RouterResumeAfterEt -AtUtc ([datetimeoffset]$limitBlock.reset_at_utc) -Source $limitBlock.resume_after_source)"
             $failureCategory = 'environment'
         }
 

@@ -21,6 +21,15 @@ $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transport
 $fixtureCodexHome = Enter-RouterTestCodexHome
 $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 try {
+    foreach ($vendor in @('codex','claude')) {
+        $summary = Format-RouterUsageMessage -Vendor $vendor -Usage ([pscustomobject]@{used_percent=2;resets_at_utc='2027-10-17T17:54:00Z'})
+        Assert-True ($summary -ceq "${vendor}: 2% used / 98% left, resets Oct 17 1:54 PM ET") "$vendor exact summary and Eastern reset"
+    }
+    Assert-True ((Format-RouterUsageMessage -Vendor codex -Usage $null) -eq 'codex: unknown% used / unknown% left') 'missing reading is explicit rather than zero'
+    foreach ($vendor in @('codex','claude')) {
+        $emptyCli = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../vendor-limits.ps1') -Vendor $vendor -Json | ConvertFrom-Json
+        Assert-True ($null -eq $emptyCli.used_percent -and $null -eq $emptyCli.left_percent -and $null -eq $emptyCli.usage) "$vendor CLI null reading remains null"
+    }
     $codexIso = Test-RouterLimitRefusal -Vendor codex -Text 'ERROR: usage limit reached; try again at 2026-10-01T12:30:00Z.'
     Assert-True ($codexIso.refused -and $codexIso.reset_at_utc -eq '2026-10-01T12:30:00.0000000+00:00') 'Codex usage refusal parses try-again time'
     $codexEpoch = Test-RouterLimitRefusal -Vendor codex -Text 'rate_limit_exceeded: resets_at=1790857800'
@@ -155,6 +164,13 @@ try {
     Assert-True ((Get-RouterVendorBlocked -Vendor claude)) 'Claude 96 percent blocks'
     $cli = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../vendor-limits.ps1') -Vendor claude -Json | ConvertFrom-Json
     Assert-True ($cli.blocked -and $cli.reason -eq 'Claude weekly usage at or above 95%' -and $cli.session_percent -eq 8 -and $cli.resets_at_utc) 'Claude CLI uses cached weekly reading and reason'
+    Assert-True ($cli.used_percent -eq 96 -and $cli.left_percent -eq 4 -and $cli.usage -ceq '96% used / 4% left') 'Claude CLI preserves main used/left contract'
+    Assert-True (-not $cli.PSObject.Properties['remaining_percent'] -and -not $cli.PSObject.Properties['summary']) 'CLI keeps one authoritative used/left contract'
+    $pick = Resolve-RouterModel -Category routine-coding -Lane claude -Catalog $catalog -SkipModelCheck
+    Assert-True ($pick.status -eq 'wait' -and $pick.reason -match 'claude: 96% used / 4% left, resets .+ ET') 'resolver quota wait names used and remaining with Eastern reset'
+    $human = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../vendor-limits.ps1') -Vendor claude
+    Assert-True ($human -match '^claude: 96% used / 4% left, resets .+ ET; blocked$' -and $human -notmatch 'T\d{2}:\d{2}') 'human CLI shows Eastern summary rather than UTC fields'
+
     $usage = Read-RouterJsonObject -Path $cachePath
     $usage.used_percent = 95
     Write-RouterJsonAtomic -Path $cachePath -Value $usage
@@ -263,12 +279,13 @@ try {
     Assert-True ($null -eq (Get-RouterCodexUsage) -or (Get-RouterCodexUsage).source_file -ne (Get-RouterCodexAppServerReadingPath)) 'the five-hour window never uses the weekly snapshot'
     $parsed = (@{ used_percent=2; resets_at_utc='2026-10-14T00:19:43+00:00' } | ConvertTo-Json | ConvertFrom-Json -AsHashtable)
     Assert-True ((Save-RouterCodexAppServerReading -Reading $parsed).resets_at_utc -eq '2026-10-14T00:19:43.0000000+00:00') 'a reset already parsed to DateTime is saved as ISO UTC'
+    Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json') -ErrorAction SilentlyContinue
     # A blocking rollout reading is re-checked live, at most once per five minutes, and a failed check keeps it.
     $liveSessions = Join-Path $temp 'live-sessions'
     $liveFile = Join-Path $liveSessions '2026/10/10/rollout-live.jsonl'
     [IO.Directory]::CreateDirectory((Split-Path -Parent $liveFile)) | Out-Null
     $row = @{ timestamp=([datetimeoffset]::UtcNow.AddHours(-3)).ToString('o'); type='event_msg'; payload=@{ type='token_count'
-        rate_limits=@{ primary=@{ used_percent=98; window_minutes=10080; resets_at=[datetimeoffset]::UtcNow.AddDays(3).ToUnixTimeSeconds() } } } }
+        rate_limits=@{ primary=@{ used_percent=98; window_minutes=10080; resets_at=[datetimeoffset]::UtcNow.AddDays(1).ToUnixTimeSeconds() } } } }
     Set-Content -LiteralPath $liveFile -Value ($row | ConvertTo-Json -Compress -Depth 6)
     Remove-Item -LiteralPath (Get-RouterCodexLiveReadingPath) -ErrorAction SilentlyContinue
     $probeLog = Join-Path $temp 'probe.log'
@@ -280,6 +297,13 @@ try {
     $env:FAKE_CODEX_LIMITS_PERCENT = '2'
     $live = Get-RouterCodexUsage -SessionsRoot $liveSessions
     Assert-True ($live.used_percent -eq 2 -and $live.source_file -eq (Get-RouterCodexLiveReadingPath)) 'a stale blocking rollout reading is replaced by the live reading'
+    Assert-True ([datetimeoffset]$live.resets_at_utc -gt [datetimeoffset]::FromUnixTimeSeconds($row.payload.rate_limits.primary.resets_at)) 'manual reset live window has a later reset'
+    $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $liveSessions
+    $cli = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../vendor-limits.ps1') -Vendor codex -Json | ConvertFrom-Json
+    Assert-True ($cli.used_percent -eq 2 -and $cli.left_percent -eq 98 -and -not $cli.blocked -and $cli.usage -ceq '2% used / 98% left') 'manual reset CLI reports 2 used / 98 left and is not blocked'
+    $pick = Resolve-RouterModel -Category routine-coding -Lane codex -Catalog (Get-CodexModelCatalog) -SkipModelCheck
+    Assert-True ($pick.status -eq 'ok' -and $pick.vendor -eq 'codex') 'manual reset resolver dispatches Codex'
+    $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $sessions
     $env:FAKE_CODEX_LIMITS_PERCENT = '97'
     $again = Get-RouterCodexUsage -SessionsRoot $liveSessions
     Assert-True ($again.used_percent -eq 2 -and @(Get-Content -LiteralPath $probeLog).Count -eq 2) 'a fresh live reading is used without another probe'

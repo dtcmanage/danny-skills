@@ -14,6 +14,8 @@ $priorState = $env:DT_MODEL_ROUTER_STATE
 $temp = Join-Path $env:TEMP ('model-router-alert-test-' + [guid]::NewGuid().ToString('N'))
 [System.IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
+$priorSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
+$env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'missing-sessions'
 $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-credentials.json'
 
@@ -252,7 +254,12 @@ try {
     $requestCount = $script:requests.Count
     $retryAgain = Send-RouterAlert -Key 'paged-retry' -Message $pagedText -Transport $fake
     Assert-True ($retryAgain.deduped -and $script:requests.Count -eq $requestCount) 'successful retry dedupes all pages'
-    Assert-True ((Get-RouterAlertMessage -Key 'router-wait: resume after October 1, 2026 3:00 PM ET') -eq 'Model router: every eligible vendor is at its limit. resume after October 1, 2026 3:00 PM ET.') 'router-wait key renders the resume line'
+    Assert-True ((Get-RouterAlertMessage -Key 'router-wait: resume after October 1, 2026 3:00 PM ET') -like 'Model router: every eligible vendor is at its limit. codex: *% used / *% left*; claude: *% used / *% left*. resume after October 1, 2026 3:00 PM ET.') 'router-wait key renders the resume line'
+    $alertReading = Save-RouterCodexAppServerReading -Reading @{ used_percent=98; resets_at_utc=[datetimeoffset]::UtcNow.AddDays(1).ToString('o') }
+    Write-RouterJsonAtomic -Path (Get-RouterCodexLiveReadingPath) -Value $alertReading
+    $quotaAlert = Get-RouterAlertMessage -Key 'router-wait: resume after October 1, 2026 3:00 PM ET'
+    Assert-True ($quotaAlert -match 'codex: 98% used / 2% left, resets .+ ET') 'wait alert includes actual cached used and remaining percentages'
+    Remove-Item -LiteralPath (Get-RouterCodexAppServerReadingPath), (Get-RouterCodexLiveReadingPath)
     Assert-True ((Get-RouterAlertMessage -Key 'new-model:gpt-test') -match 'gpt-test' -and (Get-RouterAlertMessage -Key 'unknown:key') -eq 'unknown:key') 'known keys are explained and unknown keys stay intact'
 
     [IO.File]::AppendAllText((Join-Path $temp 'alert-log.jsonl'), '{"event":"delivered","key":"cli-json","channel":"discord"}' + [Environment]::NewLine)
@@ -347,5 +354,6 @@ return [pscustomobject]@{ id = 'fake-message' }
 } finally {
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
     $env:DT_MODEL_ROUTER_STATE = $priorState
+    $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorSessions
     Remove-Item -LiteralPath $temp -Recurse -Force
 }

@@ -130,7 +130,15 @@ function Get-RouterAlertMessage {
         [string]$PromptText, [string]$InvocationText, [switch]$ErrorEchoesInput
     )
     switch -Regex -CaseSensitive ($Key) {
-        '^router-wait: (.+)$' { return "Model router: every eligible vendor is at its limit. $($Matches[1])." }
+        '^router-wait: (.+)$' {
+            $resume = $Matches[1]
+            . (Join-Path $PSScriptRoot 'vendor-limits.ps1')
+            $details = foreach ($vendor in @('codex','claude')) {
+                $usage = if ($vendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterCachedWeeklyUsage -Vendor $vendor }
+                Format-RouterUsageMessage -Vendor $vendor -Usage $usage
+            }
+            return "Model router: every eligible vendor is at its limit. $($details -join '; '). $resume."
+        }
         '^router-roster-missing$' { return 'Model router roster is missing; it is using the default roster.' }
         '^router-roster-invalid: (.+)$' { return "Model router roster is invalid ($($Matches[1])); it is using the default roster." }
         '^router-picks-changed-needs-approval$' { return 'Model router research changed its picks; review and approve before they take effect.' }

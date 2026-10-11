@@ -687,6 +687,7 @@ try {
     $deferred = @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'deferred' })
     Assert-True ((Get-LaunchCount 'quota-both') -eq 0 -and @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'launch' }).Count -eq 0) 'both vendors blocked launches nothing'
     Assert-True ($deferred.Count -eq 1 -and ([DateTime]$deferred[0].resume_after_utc).ToUniversalTime().Ticks -eq $codexReset.Ticks) 'resume_after_utc is the earlier reset, recorded once'
+    Assert-True ($deferred[0].reason -match 'claude: 99% used / 1% left, resets .+ ET; codex: 99% used / 1% left, resets .+ ET' -and $deferred[0].reason -notmatch 'T\d{2}:\d{2}') 'deferred quota reason includes both vendors used / left and Eastern resets'
     $env:DT_TEST_BLOCKED = ''
 
     # ---- both vendors blocked with a stale or missing reset: one deferred row per change, not per tick.

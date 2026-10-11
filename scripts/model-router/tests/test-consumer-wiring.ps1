@@ -223,6 +223,7 @@ $report
     $env:DT_FAKE_CODEX_MODE = 'limit'
     $r = Invoke-CodexWrapper 'codex-limit' @('-Tier','standard')
     Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.termination_reason -match '^ROUTER_LIMIT: codex ' -and $r.prov.vendor_block.vendor -eq 'codex') 'codex refusal records vendor block and environment failure'
+    Assert-True ($r.prov.termination_reason -match '% used / .+% left' -and $r.prov.termination_reason -match ' ET') 'Codex chunk limit reason shows used/left and Eastern resume time'
     $env:DT_FAKE_CODEX_MODE = $null
     $r = Invoke-CodexWrapper 'codex-blocked-override' @('-Tier','standard','-Model','gpt-6-astra')
     Assert-True ($r.exit -ne 0 -and $r.prov.router_status -eq 'wait') 'blocked vendor stops explicit Codex override'
@@ -296,6 +297,7 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     $env:DT_FAKE_CLAUDE_MODE = 'limit'
     $r = Invoke-ClaudeWrapper 'claude-limit' @('-Tier','standard')
     Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.termination_reason -match '^ROUTER_LIMIT: claude ' -and $r.prov.vendor_block.vendor -eq 'claude') 'claude refusal records vendor block and environment failure'
+    Assert-True ($r.prov.termination_reason -match '% used / .+% left' -and $r.prov.termination_reason -match ' ET') 'Claude chunk limit reason shows used/left and Eastern resume time'
     $env:DT_FAKE_CLAUDE_MODE = $null
     $r = Invoke-ClaudeWrapper 'claude-blocked-override' @('-Tier','standard','-Model','claude-fable-5-1')
     Assert-True ($r.exit -ne 0 -and $r.prov.router_status -eq 'wait') 'blocked vendor stops explicit Claude override'

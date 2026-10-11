@@ -49,7 +49,7 @@ try {
     Check ($pick.model -eq $entry.first) 'no recorded tie approval keeps first'
     $entry | Add-Member -NotePropertyName tie_evidence -NotePropertyValue $evidence; Save-Roster
     $pick = Resolve-RouterModel -Category routine-coding -Catalog $catalog
-    Check ($pick.model -eq $entry.backup -and $pick.reason -match 'codex: 70%' -and $pick.reason -match 'claude: 20%') 'lower-use vendor and both readings'
+    Check ($pick.model -eq $entry.backup -and $pick.reason -match 'codex: 70% used / 30% left' -and $pick.reason -match 'claude: 20% used / 80% left') 'lower-use vendor and both readings'
     Remove-Item -LiteralPath (Join-Path $temp 'bench/bank-hash.json')
     $missingBank = Resolve-RouterModel -Category routine-coding -Catalog $catalog
     Check ($missingBank.model -eq $entry.first -and $missingBank.alerts -notcontains 'roster-tie-invalid:coder') 'absent bank skips tie quietly'
@@ -93,7 +93,7 @@ try {
     Check ((Resolve-RouterModel -Category routine-coding -EscalateFrom $entry.first -Catalog $catalog).model -eq $entry.first) 'escalation excludes tie'
     Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @(@{job='coder';model=$entry.backup})
     $pick = Resolve-RouterModel -Category routine-coding -Catalog $catalog
-    Check ($pick.model -eq $entry.first -and $pick.reason -match 'codex: 70%' -and $pick.reason -match 'claude: 20%' -and $pick.reason -match 'drifting') 'drift overrides quota choice with readings retained'
+    Check ($pick.model -eq $entry.first -and $pick.reason -match 'codex: 70% used / 30% left' -and $pick.reason -match 'claude: 20% used / 80% left' -and $pick.reason -match 'drifting') 'drift overrides quota choice with readings retained'
     Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @()
     Save-Usage 99 96
     Check ((Resolve-RouterModel -Category routine-coding -Catalog $catalog).status -eq 'wait') '95 percent block precedes tie'

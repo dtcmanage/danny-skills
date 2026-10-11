@@ -157,8 +157,7 @@ function Resolve-RouterRosterPick {
                     try {
                         $age = ([datetimeoffset]::UtcNow - [datetimeoffset]$reading.observed_at_utc).TotalHours
                         $et = [TimeZoneInfo]::ConvertTime([datetimeoffset]$reading.observed_at_utc, [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time'))
-                        $rounded = [Math]::Round([decimal]$reading.used_percent, 1, [MidpointRounding]::AwayFromZero)
-                        $label = "$rounded% ($($et.ToString('yyyy-MM-dd h:mm:ss tt', [Globalization.CultureInfo]::InvariantCulture)) ET)"
+                        $label = "$(Format-RouterUsageText -Usage $reading) ($($et.ToString('yyyy-MM-dd h:mm:ss tt', [Globalization.CultureInfo]::InvariantCulture)) ET)"
                         if ($age -gt 6 -or $age -lt 0 -or $null -eq $reading.used_percent -or -not [double]::IsFinite([double]$reading.used_percent)) { $fresh = $false }
                     } catch { $fresh = $false; $label = 'invalid' }
                 } else { $fresh = $false }
@@ -203,14 +202,20 @@ function Resolve-RouterRosterPick {
         if ($selectedBlocked) {
             $blockedVendor = $chosen.vendor
             $incident = @(Read-RouterJsonArray -Path (Join-Path (Get-RouterStateDir) 'vendor-blocks.json') | Where-Object { $_.vendor -eq $blockedVendor -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'vendor_incident' })
-            $blockReason = if ($incident.Count) { 'under a vendor incident' } else { 'at its usage limit' }
-            if (-not $incident.Count) {
-                $blockedUsage = if ($blockedVendor -eq 'codex') { Get-RouterCodexUsage } else { Get-RouterClaudeUsage }
-                $usageText = Format-RouterUsageText -Usage $blockedUsage
-                if ($usageText) { $blockReason += " ($usageText)" }
+            $blockDescription = if ($incident.Count) { 'under a vendor incident' } else { 'at its usage limit' }
+            $blockReason = if ($incident.Count) { $blockDescription } else {
+                $usage = if ($blockedVendor -eq 'codex') { Get-RouterCodexUsage } elseif ($resolvedReadings.ContainsKey($blockedVendor)) { $resolvedReadings[$blockedVendor] } else { Get-RouterCachedWeeklyUsage -Vendor $blockedVendor }
+                "at its usage limit ($(Format-RouterUsageMessage -Vendor $blockedVendor -Usage $usage))"
             }
             if (-not $Lane -and $other -and -not $otherBlocked) { $chosen = $other; $reason = $(if ($tieReason) { "Selected $($chosen.model): $blockedVendor $blockReason." } else { "Backup used: $blockedVendor $blockReason." }) }
-            else { $chosen = $null; $quotaWait = $true; $reason = "Wait: $blockedVendor $blockReason; no available model for $job." }
+            else {
+                $chosen = $null; $quotaWait = $true
+                $quotaDetails = @($first, $backup | Where-Object { $null -ne $_ -and (-not $Lane -or $_.vendor -eq $Lane) } | ForEach-Object {
+                    $u = if ($_.vendor -eq 'codex') { Get-RouterCodexUsage } elseif ($resolvedReadings.ContainsKey($_.vendor)) { $resolvedReadings[$_.vendor] } else { Get-RouterCachedWeeklyUsage -Vendor $_.vendor }
+                    Format-RouterUsageMessage -Vendor $_.vendor -Usage $u
+                })
+                $reason = "Wait: $blockedVendor $blockDescription; no available model for $job. $($quotaDetails -join '; ')"
+            }
         }
     }
     if ($chosen -and $chosen.vendor -eq 'codex' -and $Category -ne 'image-generation' -and $null -ne $localCatalog -and -not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {

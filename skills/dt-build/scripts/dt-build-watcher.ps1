@@ -10,10 +10,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'dt-job.ps1')
+$watcherSkillRoot = Split-Path -Parent $PSScriptRoot
+$watcherResolvedSkillRoot = (Get-Item -LiteralPath $watcherSkillRoot).ResolveLinkTarget($true)
+if ($watcherResolvedSkillRoot) { $watcherSkillRoot = $watcherResolvedSkillRoot.FullName }
+$watcherRepoRoot = Split-Path -Parent (Split-Path -Parent $watcherSkillRoot)
+. (Join-Path $watcherRepoRoot 'scripts/model-router/vendor-limits.ps1')
 
 $script:WatcherDtJob = Join-Path $PSScriptRoot 'dt-job.ps1'
 $script:WatcherLauncher = if ($env:DT_BUILD_COORDINATOR_LAUNCHER) { $env:DT_BUILD_COORDINATOR_LAUNCHER } else { Join-Path $PSScriptRoot 'launch-managed-coordinator.ps1' }
-$script:WatcherVendorLimits = if ($env:DT_BUILD_VENDOR_LIMITS_SCRIPT) { $env:DT_BUILD_VENDOR_LIMITS_SCRIPT } else { Join-Path $PSScriptRoot '..\..\..\scripts\model-router\vendor-limits.ps1' }
+$script:WatcherVendorLimits = if ($env:DT_BUILD_VENDOR_LIMITS_SCRIPT) { $env:DT_BUILD_VENDOR_LIMITS_SCRIPT } else { Join-Path $watcherRepoRoot 'scripts/model-router/vendor-limits.ps1' }
 # A launch that exits without consuming its trigger is retried 2, 10, then 30 minutes after the
 # previous attempt; when the last retry also fails, the run stops for Danny.
 $script:WatcherRetryDelaysMin = @(2, 10, 30)
@@ -113,11 +118,11 @@ function Get-WatcherDecision {
     if ($attempts.Count -gt 0) {
         $delayMin = $script:WatcherRetryDelaysMin[$attempts.Count - 1]
         $due = (ConvertTo-DtJobUtc $attempts[-1].launched_utc).AddMinutes($delayMin)
-        if ($NowUtc -lt $due) { return [pscustomobject]@{ action = 'none'; detail = "retry due $($due.ToString('o'))" } }
+        if ($NowUtc -lt $due) { return [pscustomobject]@{ action = 'none'; detail = "retry: $(Format-RouterResumeAfterEt -AtUtc ([datetimeoffset]$due) -Source recheck)" } }
     }
     $deferred = @($rows | Where-Object { $_.type -eq 'deferred' } | Select-Object -Last 1)
     if ($deferred.Count -gt 0 -and $deferred[0].resume_after_utc -and $NowUtc -lt (ConvertTo-DtJobUtc $deferred[0].resume_after_utc)) {
-        return [pscustomobject]@{ action = 'none'; detail = "both vendors blocked until $((ConvertTo-DtJobUtc $deferred[0].resume_after_utc).ToString('o'))" }
+        return [pscustomobject]@{ action = 'none'; detail = "$($deferred[0].reason); $(Format-RouterResumeAfterEt -AtUtc ([datetimeoffset](ConvertTo-DtJobUtc $deferred[0].resume_after_utc)) -Source usage-reset)" }
     }
     # Run-wide cap, counted from the last stop (or the re-arm a resume left when it beat a cap stop),
     # so that resume re-arms the run.
@@ -148,9 +153,10 @@ function Get-WatcherVendorState {
     try {
         $raw = & pwsh -NoProfile -NonInteractive -File $script:WatcherVendorLimits -Vendor $Vendor -Json 2>$null
         $parsed = (@($raw) | Where-Object { $_ } | Select-Object -Last 1) | ConvertFrom-Json
-        return [pscustomobject]@{ blocked = [bool]$parsed.blocked; resets_at_utc = $parsed.resets_at_utc }
+        $usage = if ($parsed.PSObject.Properties['used_percent']) { $parsed } else { $null }
+        return [pscustomobject]@{ blocked = [bool]$parsed.blocked; resets_at_utc = $parsed.resets_at_utc; usage = (Format-RouterUsageMessage -Vendor $Vendor -Usage $usage) }
     }
-    catch { return [pscustomobject]@{ blocked = $false; resets_at_utc = $null } }
+    catch { return [pscustomobject]@{ blocked = $false; resets_at_utc = $null; usage = (Format-RouterUsageMessage -Vendor $Vendor -Usage $null) } }
 }
 
 function Invoke-WatcherLaunch {
@@ -165,7 +171,7 @@ function Invoke-WatcherLaunch {
         if ($otherState.blocked) {
             $resets = @(@($pinnedState.resets_at_utc, $otherState.resets_at_utc) | Where-Object { $_ } | ForEach-Object { ConvertTo-DtJobUtc $_ } | Sort-Object)
             $resumeAfter = if ($resets.Count -gt 0) { $resets[0] } else { $null }
-            $reason = "$pinned and $other blocked"
+            $reason = "$pinned and $other blocked: $($pinnedState.usage); $($otherState.usage)"
             # Record the block once; a new row only when the resume time or the reason changes.
             $last = @(Get-WatcherLaunches -RunFolder $folder | Where-Object { $_.type -eq 'deferred' } | Select-Object -Last 1)
             $lastResume = if ($last.Count -gt 0 -and $last[0].resume_after_utc) { (ConvertTo-DtJobUtc $last[0].resume_after_utc).Ticks } else { $null }
@@ -173,8 +179,8 @@ function Invoke-WatcherLaunch {
             if ($last.Count -eq 0 -or $lastResume -ne $nextResume -or [string]$last[0].reason -cne $reason) {
                 Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'deferred'; trigger_seq = $Decision.trigger_seq; resume_after_utc = $(if ($null -ne $resumeAfter) { $resumeAfter.ToString('o') } else { $null }); recorded_utc = $NowUtc.ToString('o'); reason = $reason })
             }
-            if ($null -eq $resumeAfter) { return 'deferred: both vendors blocked, no reset time reported' }
-            return "deferred until $($resumeAfter.ToString('o'))"
+            if ($null -eq $resumeAfter) { return "deferred: $reason; no reset time reported" }
+            return "deferred: $reason; $(Format-RouterResumeAfterEt -AtUtc ([datetimeoffset]$resumeAfter) -Source usage-reset)"
         }
         $chosen = $other
     }

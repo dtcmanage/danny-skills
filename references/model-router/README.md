@@ -28,6 +28,15 @@ Bench caller effort overrides (including build-roster slot efforts) take precede
 
 Every session that hands work to another model resolves the category through this router first; the session model is never inherited by a subagent or a `codex exec` call. The category guide, the cheap-first rule (collecting is `mechanical`, interpreting is `analysis`; round up only when the result cannot be checked), and worked examples live in `D:\Claude\_Claude-Workspace\00_Resources\model-routing.md`, loaded through the root `CLAUDE.md` rule (2026-09-30). Roster note: coder is Codex-first by policy since 2026-09-30. Weekly use is observable for both vendors; at 95%, a job moves to its other-vendor backup.
 
+## Quota readings
+
+Router `used_percent` is percent **USED**; the Codex UI shows percent **REMAINING**.
+`left_percent` is `100 - used_percent`, floored at zero (null when usage is unknown).
+Read `usage` as `X% used / Y% left`; human messages append reset times in US Eastern (ET).
+After a manual Codex reset, the new window has a later `resets_at` (router `resets_at_utc`);
+readings from the old window are stale. Use the newer live/app-server reading.
+The CLI retains its legacy `reason` values and JSON `resets_at_utc` for compatibility.
+
 ## v2: one roster across both vendors
 
 v2 routes delegated work from a short roster (at most 5 models) defined in `roster-schema.md`. Eleven categories map to five jobs: `mechanical` to fast; `routine-coding`, `complex-coding`, and `ui-frontend` to coder; `code-review`, `planning`, `deep-research`, `math`, and `analysis` to deep thinker; `long-form-writing` to writer; `image-generation` to illustrator. Each job has a first choice and a backup on the other vendor. Frontier models are never on the roster.

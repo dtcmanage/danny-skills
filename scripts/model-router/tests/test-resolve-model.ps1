@@ -112,6 +112,7 @@ try {
     Assert-True ($pick.status -eq 'wait' -and $pick.resume_after_utc -eq $claudeBlock.reset_at_utc -and $pick.resume_after_source -eq 'recheck') 'both blocked wait takes earlier vendor constraint'
     $pick = Resolve-RouterModel -Category routine-coding -Lane codex -Catalog $catalog
     Assert-True ($pick.resume_after_utc -eq $codexReset.ToString('o') -and $pick.resume_after_source -eq 'refusal-reset') 'constrained wait ignores other vendor time'
+    Assert-True ($pick.reason -match 'codex: unknown% used / unknown% left') 'quota wait explicitly reports unavailable percentages'
     Write-RouterJsonAtomic -Path (Join-Path $temp 'drift-marks.json') -Value @([pscustomobject]@{ model='gpt-6.1-sol'; job='coder' })
     $pick = Resolve-RouterModel -Category routine-coding -Lane codex -Catalog $catalog
     Assert-True ($pick.status -eq 'wait' -and $null -eq $pick.resume_after_utc -and $null -eq $pick.resume_after_source -and $null -eq $pick.resume_after_et) 'drift wait has null resume fields even with active block'
