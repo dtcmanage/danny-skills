@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.21.5
+
+- A rotating coordinator no longer consumes its own continuation request, so the watcher always relaunches a successor; rotation steps now consume handled events first.
+
 ## 2.21.4
 
 - Model router re-checks Codex limits live when a stale reading says Codex is blocked, so a usage reset is seen without waiting for a Codex run.
