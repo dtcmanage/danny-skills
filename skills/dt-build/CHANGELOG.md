@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.34.1
+
+- The dt-job test suite holds in-flight jobs on release files instead of Start-Sleep timers, so its queue, dependency, mutation-key, cancel and check-in scenarios no longer race the clock under load (two flakes seen on Oct 12 during concurrent suite runs; three concurrent runs pass after the change).
+
 ## 2.34.0
 
 - The PreToolUse hook records each single-file read per coordinator in hook-reads.jsonl and denies the third full read of the same file, pointing to read-evidence slices; sliced reads still pass. The watcher's automatic kill handoff lists the killed coordinator's top repeated reads. Driven by a live coordinator that read one 20 KB boundary file 72 times before bootstrap.
