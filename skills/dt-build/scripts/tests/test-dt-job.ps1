@@ -42,6 +42,19 @@ function Get-JobRecord {
     return (Get-Content -Raw -LiteralPath (Join-Path $RunFolder "jobs/$JobId.json") | ConvertFrom-Json)
 }
 
+function Get-EvidenceError {
+    param([hashtable]$Arguments)
+    # Match a child pwsh's working directory while capturing the unformatted exception.
+    $originalDirectory = [Environment]::CurrentDirectory
+    try {
+        [Environment]::CurrentDirectory = (Get-Location).ProviderPath
+        & $readEvidence @Arguments | Out-Null
+    }
+    catch { return $_.Exception.Message }
+    finally { [Environment]::CurrentDirectory = $originalDirectory }
+    throw 'ASSERT_FAIL: read-evidence unexpectedly succeeded'
+}
+
 function Wait-JobState {
     param([string]$RunFolder, [string]$JobId, [scriptblock]$Until, [int]$TimeoutSec = 60)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
@@ -118,6 +131,63 @@ try {
     Assert-True ($envelope.verdict -eq 'pass' -and $envelope.exit_code -eq 0) 'envelope verdict pass'
     Assert-True (@($envelope.excerpt) -contains 'ok') 'envelope excerpt holds stdout tail'
     Assert-True ((Test-Path -LiteralPath $envelope.evidence.stdout) -and -not $envelope.truncated) 'envelope names stdout evidence and is not truncated'
+
+    # Job evidence uses the record's paths, with the same selectors and ledger as -Path.
+    $evidenceRecord = Get-JobRecord -RunFolder $rf -JobId $start.job_id
+    $jobDir = Join-Path $rf "jobs/$($start.job_id)"
+    $expectedPaths = [ordered]@{ summary = $evidenceRecord.summary_path; stdout = $evidenceRecord.output_path; stderr = $evidenceRecord.stderr_path; spec = (Join-Path $jobDir 'spec.json') }
+    foreach ($name in $expectedPaths.Keys) {
+        $actual = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -JobId $start.job_id -File $name -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
+        $expectedLines = @(Get-Content -LiteralPath $expectedPaths[$name] -TotalCount 3)
+        Assert-True ($actual.path -eq $expectedPaths[$name] -and @($actual.lines).Count -eq $expectedLines.Count) "$name resolves the recorded job evidence path"
+        for ($i = 0; $i -lt $expectedLines.Count; $i++) {
+            Assert-True ($actual.lines[$i] -eq "$($i + 1): $($expectedLines[$i])") "$name reads the expected evidence line"
+        }
+    }
+    $defaultRead = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -JobId $start.job_id -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
+    Assert-True ($defaultRead.path -eq $evidenceRecord.summary_path -and (@($defaultRead.warnings) -join ' ') -match 'repeat_read') 'JobId defaults to summary and shares repeat-read tracking'
+    $jobGrep = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -JobId $start.job_id -File stdout -Grep '^ok$' -Context 1 -Json) -join "`n" | ConvertFrom-Json
+    Assert-True (@($jobGrep.lines) -contains '1: ok') 'JobId supports grep and context'
+    foreach ($missingPath in @((Join-Path $jobDir 'result.json'), (Join-Path $rf "jobs/$($start.job_id).xml"))) {
+        $miss = Get-EvidenceError @{ RunFolder = $rf; Path = $missingPath; Lines = '1-3' }
+        Assert-True ($miss.Contains('READ_EVIDENCE_MISSING:') -and $miss.Contains("job $($start.job_id) has: summary.json, stdout.log, stderr.log, spec.json (use -JobId $($start.job_id) -File <name>)")) "job path miss lists existing evidence and the JobId form ($miss)"
+    }
+    Push-Location $rf
+    try {
+        $miss = Get-EvidenceError @{ RunFolder = $rf; Path = 'approvals.json'; Lines = '1-3' }
+        Assert-True (-not $miss.Contains('did you mean')) 'run-root miss does not suggest the same path'
+        Push-Location $jobDir
+        try {
+            $miss = Get-EvidenceError @{ RunFolder = $rf; Path = 'approvals.json'; Lines = '1-3' }
+            Assert-True ($miss.Contains("did you mean $(Join-Path $rf 'approvals.json')")) 'bare approvals miss suggests the run folder'
+        } finally { Pop-Location }
+    } finally { Pop-Location }
+    $badArgs = Get-EvidenceError @{ RunFolder = $rf; Path = $evidenceRecord.output_path; JobId = $start.job_id; Lines = '1-3' }
+    Assert-True ($badArgs.Contains('READ_EVIDENCE_ARGS')) 'Path plus JobId fails with the argument error'
+    $unknown = Get-EvidenceError @{ RunFolder = $rf; JobId = 'j-9999'; Lines = '1-3' }
+    Assert-True ($unknown.Contains('READ_EVIDENCE_NO_JOB: j-9999')) 'unknown JobId has the specific missing-record error'
+    $sparseRun = New-RunFolder 'evidence-sparse'
+    $sparseDir = Join-Path $sparseRun 'jobs/j-0001'
+    Write-Utf8 (Join-Path $sparseDir 'stdout.log') 'only stdout exists'
+    $miss = Get-EvidenceError @{ RunFolder = $sparseRun; Path = (Join-Path $sparseDir 'output.log'); Lines = '1-3' }
+    Assert-True ($miss.Contains('has: stdout.log (use -JobId j-0001 -File <name>)')) 'job miss lists only files that exist'
+    Write-Utf8 (Join-Path $sparseRun 'jobs/j-0001.json') (@{ job_id = 'j-0001'; summary_path = (Join-Path $sparseDir 'summary.json') } | ConvertTo-Json)
+    $miss = Get-EvidenceError @{ RunFolder = $sparseRun; JobId = 'j-0001'; Lines = '1-3' }
+    Assert-True ($miss.StartsWith("READ_EVIDENCE_MISSING: $(Join-Path $sparseDir 'summary.json')")) 'resolved missing job file retains the missing-path error'
+
+    # Hundreds of finished records force trimming after accounting for the hint.
+    $manyRun = New-RunFolder 'evidence-many'
+    $manyIds = @(1..300 | ForEach-Object { 'j-{0:D4}' -f $_ })
+    foreach ($id in $manyIds) {
+        $copy = $evidenceRecord | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+        $copy.job_id = $id
+        Write-Utf8 (Join-Path $manyRun "jobs/$id.json") ($copy | ConvertTo-Json -Depth 8)
+    }
+    foreach ($arguments in @(@('status', '-RunFolder', $manyRun), @('wait', '-RunFolder', $manyRun, '-JobId', ($manyIds -join ','), '-All', '-TimeoutSec', '1'))) {
+        $reply = Invoke-DtJob $arguments
+        Assert-True ($reply.evidence_hint -is [string] -and $reply.evidence_hint.Length -lt 400 -and $reply.evidence_hint.Contains('-JobId <job>')) 'large envelope retains its bounded evidence hint'
+        Assert-True ($reply.truncated -and @($reply.jobs).Count -lt 300 -and [Text.Encoding]::UTF8.GetByteCount(($reply | ConvertTo-Json -Depth 8 -Compress)) -le 8192) '300-job envelope including hint is trimmed within 8 KB'
+    }
     $events = @(Get-Content -LiteralPath (Join-Path $rf 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     $seqs = @($events | ForEach-Object { [int]$_.seq })
     Assert-True (($seqs -join ',') -eq ((1..$seqs.Count) -join ',')) 'event seq is monotonic from 1'
@@ -150,7 +220,18 @@ exit 0
             $persisted = Get-Content -Raw -LiteralPath $workerRecord.summary_path | ConvertFrom-Json
             Assert-True ($persisted.report_verdict -eq $reportVerdict -and $persisted.verdict -eq $expectedVerdict -and $persisted.wrapper_pass -eq $true -and $null -eq $persisted.failure_category) "$case persists worker outcome in summary.json"
         }
-        if ($case -eq 'PASS') { Assert-True (@($summary.blockers).Count -eq 0) 'PASS report has no invented blocker' }
+        if ($case -eq 'PASS') {
+            Assert-True (@($summary.blockers).Count -eq 0) 'PASS report has no invented blocker'
+            foreach ($name in @('report', 'provenance')) {
+                $expectedPath = if ($name -eq 'report') { $report } else { "$report.provenance.json" }
+                $actual = (& pwsh -NoProfile -File $readEvidence -RunFolder $workerRun -JobId $worker.job_id -File $name -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
+                $expectedLines = @(Get-Content -LiteralPath $expectedPath -TotalCount 3)
+                Assert-True ($actual.path -eq $expectedPath -and @($actual.lines).Count -eq $expectedLines.Count) "$name resolves the worker wrapper artifact"
+                for ($i = 0; $i -lt $expectedLines.Count; $i++) {
+                    Assert-True ($actual.lines[$i] -eq "$($i + 1): $($expectedLines[$i])") "$name reads the expected worker artifact line"
+                }
+            }
+        }
         if ($case -eq 'wrapper-failure') {
             Assert-True ($summary.wrapper_pass -eq $false -and $summary.failure_category -eq 'environment' -and @($summary.blockers) -contains 'wrapper reported failure (environment)') 'wrapper provenance failure overrides a PASS report'
         } elseif ($case -eq 'missing') {
@@ -159,6 +240,10 @@ exit 0
         $wait = Invoke-DtJob @('wait', '-RunFolder', $workerRun, '-JobId', $worker.job_id, '-All', '-TimeoutSec', '1')
         Assert-True ($wait.jobs[0].report_verdict -eq $summary.report_verdict -and $wait.jobs[0].failure_category -eq $summary.failure_category) "$case wait JSON carries report outcome"
         $runSummary = Invoke-DtJob @('status', '-RunFolder', $workerRun)
+        foreach ($reply in @($wait, $runSummary)) {
+            Assert-True ($reply.evidence_hint.Contains('-JobId <job> -File summary|stdout|stderr|spec|report|provenance') -and $reply.evidence_hint.Contains('jobs/events.jsonl') -and $reply.evidence_hint.Length -lt 400 -and $reply.evidence_hint -notmatch '[\r\n]') "$case envelope has the one-line evidence hint"
+            Assert-True ([Text.Encoding]::UTF8.GetByteCount(($reply | ConvertTo-Json -Depth 8 -Compress)) -le 8192) "$case envelope with evidence hint stays within 8 KB"
+        }
         $row = @($runSummary.jobs | Where-Object job_id -eq $worker.job_id)[0]
         Assert-True ($row.report_verdict -eq $summary.report_verdict -and $row.failure_category -eq $summary.failure_category) "$case run status carries report outcome"
         $waitText = & pwsh -NoProfile -File $dtJob wait -RunFolder $workerRun -JobId $worker.job_id -All -TimeoutSec 1

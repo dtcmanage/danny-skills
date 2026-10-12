@@ -6,8 +6,12 @@ param(
     [Parameter(Mandatory)]
     [string]$RunFolder,
 
-    [Parameter(Mandatory)]
     [string]$Path,
+
+    [string]$JobId,
+
+    [ValidateSet('summary', 'stdout', 'stderr', 'spec', 'report', 'provenance')]
+    [string]$File = 'summary',
 
     [Parameter(Mandatory, ParameterSetName = 'Lines')]
     [ValidatePattern('^\d+-\d+$')]
@@ -32,11 +36,49 @@ $newlineBytes = [Environment]::NewLine.Length
 $repeatWarning = 'repeat_read: same selection of an unchanged file was already read; use the earlier result.'
 
 # Ledger helpers (run lock, shared reads); pass our own values so the dot-sourced param block does not clear them.
-. (Join-Path $PSScriptRoot 'dt-job.ps1') -RunFolder $RunFolder -Json:$Json
+. (Join-Path $PSScriptRoot 'dt-job.ps1') -RunFolder $RunFolder -JobId $JobId -Json:$Json
 
+if (($Path -and $JobId) -or (-not $Path -and -not $JobId)) { throw 'READ_EVIDENCE_ARGS: use exactly one of -Path or -JobId.' }
+$paths = Get-DtJobPaths -RunFolder $RunFolder
+$jobsDir = $paths.Jobs
+if ($JobId) {
+    $jobRecord = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId
+    if ($null -eq $jobRecord) { throw "READ_EVIDENCE_NO_JOB: $JobId" }
+    $Path = switch ($File) {
+        'summary' { $jobRecord.summary_path }
+        'stdout' { $jobRecord.output_path }
+        'stderr' { $jobRecord.stderr_path }
+        'spec' { Join-Path (Join-Path $jobsDir $JobId) 'spec.json' }
+        default {
+            $reportPath = (Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $jobRecord).report_path
+            if (-not $reportPath) { throw "READ_EVIDENCE_MISSING: job $JobId has no report path" }
+            if ($File -eq 'provenance') { "$reportPath.provenance.json" } else { $reportPath }
+        }
+    }
+}
 $fullPath = [System.IO.Path]::GetFullPath($Path)
-if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "READ_EVIDENCE_MISSING: $fullPath" }
-$jobsDir = Join-Path ([System.IO.Path]::GetFullPath($RunFolder).TrimEnd('\', '/')) 'jobs'
+if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+    $message = "READ_EVIDENCE_MISSING: $fullPath"
+    $relative = [System.IO.Path]::GetRelativePath($jobsDir, $fullPath)
+    $jobMatch = [regex]::Match($relative, '^(?<id>[^\\/.]+)(?:[\\/]|\.[^\\/]+$)')
+    if ($jobMatch.Success) {
+        $missingJobId = $jobMatch.Groups['id'].Value
+        $jobDir = Join-Path $jobsDir $missingJobId
+        $available = @('summary.json', 'stdout.log', 'stderr.log', 'spec.json' | Where-Object { Test-Path -LiteralPath (Join-Path $jobDir $_) -PathType Leaf })
+        $message += "; job $missingJobId has: $($available -join ', ') (use -JobId $missingJobId -File <name>)"
+    }
+    if ($Path -eq [System.IO.Path]::GetFileName($Path)) {
+        $runFile = switch ($Path) {
+            'approvals.json' { $paths.Approvals }
+            'operator-notes.json' { $paths.OperatorNotes }
+            'launches.jsonl' { $paths.Launches }
+            'worktrees.jsonl' { $paths.Worktrees }
+            'events.jsonl' { $paths.Events }
+        }
+        if ($runFile -and $fullPath -ine $runFile) { $message += "; did you mean $runFile" }
+    }
+    throw $message
+}
 New-Item -ItemType Directory -Path $jobsDir -Force | Out-Null
 $logPath = Join-Path $jobsDir 'reads.jsonl'
 

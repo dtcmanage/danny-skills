@@ -51,5 +51,5 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 ## Evidence
 
 - Read only `status|wait -Json` envelopes, checking `report_verdict` and `failure_category`.
-- For a deeper look use `pwsh -NoProfile -File scripts/read-evidence.ps1 -RunFolder <run-folder> -Path <file> -Lines a-b` or `-Grep <pattern>`. Calls cap at 16 KB.
+- Use `pwsh -NoProfile -File scripts/read-evidence.ps1 -RunFolder <run-folder> -JobId <id> -File <name>` or `-Path <file>`, with `-Lines a-b` or `-Grep <pattern>`, capped at 16 KB.
 - Never Read/tail/cat job output or stream logs directly. Load screenshots deliberately.
