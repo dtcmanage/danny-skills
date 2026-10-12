@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.30.0
+
+- Job summaries and the status, wait and check-in envelopes carry report_verdict (the worker report's VERDICT), failure_category and wrapper_pass from the wrapper's provenance; a succeeded job whose report says FAIL or BLOCKED, or whose wrapper reported failure, now reads verdict fail with a blocker naming the report. Coordinators no longer open each report to learn the outcome.
+
 ## 2.29.0
 
 - The PostToolUse hook records every git worktree add a coordinator runs in worktrees.jsonl. The watcher's automatic kill handoff lists the trees that coordinator created (recorded and live, by admin-directory creation time), and read-resume-record.ps1 returns worktrees (recorded and live since the run's first launch) so a successor reuses the right tree instead of creating a parallel one.
