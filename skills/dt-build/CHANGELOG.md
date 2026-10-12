@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.34.0
+
+- The PreToolUse hook records each single-file read per coordinator in hook-reads.jsonl and denies the third full read of the same file, pointing to read-evidence slices; sliced reads still pass. The watcher's automatic kill handoff lists the killed coordinator's top repeated reads. Driven by a live coordinator that read one 20 KB boundary file 72 times before bootstrap.
+
 ## 2.33.0
 
 - Run-level worker pin: dt-job pin -Vendor codex|claude -Model <id> (operator-only, or -PinVendor/-PinModel on register-run) stores the pin on the registration; dt-job start refuses a worker on the other vendor and passes DT_BUILD_RUN_PIN_VENDOR/MODEL to every job; both chunk wrappers dispatch on the pinned model without -Model and fail closed on a conflicting vendor or model; status, wait and read-resume-record show the pin, so handoffs no longer restate it.
