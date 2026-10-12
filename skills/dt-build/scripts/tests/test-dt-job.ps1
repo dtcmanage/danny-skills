@@ -71,6 +71,12 @@ function Wait-JobTerminal {
     return (Wait-JobState -RunFolder $RunFolder -JobId $JobId -TimeoutSec $TimeoutSec -Until { param($r) $r.status -notin @('queued', 'running') })
 }
 
+# A test that needs a job to be running holds it on a file, never on the clock.
+function New-HeldJobCommand {
+    param([string]$ReleasePath, [int]$ExitCode = 0)
+    return "`$deadline = [DateTime]::UtcNow.AddSeconds(120); while (-not (Test-Path -LiteralPath '$($ReleasePath.Replace("'", "''"))') -and [DateTime]::UtcNow -lt `$deadline) { Start-Sleep -Milliseconds 100 }; exit $ExitCode"
+}
+
 function Test-ProcessGone {
     param($ProcessId)
     if (-not $ProcessId) { return $true }
@@ -179,9 +185,12 @@ try {
 
     # Start and succeed (nested pwsh command, the shape the wrappers use).
     $rf = New-RunFolder 'succeed'
-    $start = Invoke-DtJob @('start', '-RunFolder', $rf, '-Kind', 'test', '-Category', 'fixture', '-Command', 'pwsh -NoProfile -Command "Start-Sleep 1; ''ok''"')
+    $release = Join-Path $rf "release's.txt"
+    $heldCommand = (New-HeldJobCommand $release).Replace('$', '`$')
+    $start = Invoke-DtJob @('start', '-RunFolder', $rf, '-Kind', 'test', '-Category', 'fixture', '-Command', "pwsh -NoProfile -Command `"'ok'; $heldCommand`"")
     Assert-True ($start.job_id -eq 'j-0001') 'first job id is j-0001'
     Assert-True ($start.status -in @('running', 'queued')) 'start returns at once with a live status'
+    Write-Utf8 $release 'release'
     $record = Wait-JobTerminal -RunFolder $rf -JobId $start.job_id
     Assert-True ($record.status -eq 'succeeded') "succeeded job status was $($record.status)"
     Assert-True ($record.exit_code -eq 0) 'succeeded job exit code 0'
@@ -412,8 +421,10 @@ exit 0
     $rf = New-RunFolder 'stall'
     $env:DT_JOB_HEARTBEAT_SEC = '1'; $env:DT_JOB_STALL_SEC = '4'
     try {
-        $quiet = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 12 # invoke-codex-chunk.ps1', '-TimeoutSec', '5')
-        $busy = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'for ($i = 0; $i -lt 12; $i++) { Write-Output "step $i"; Start-Sleep 1 } # invoke-codex-chunk.ps1')
+        $quietRelease = Join-Path $rf 'quiet-release.txt'; $busyRelease = Join-Path $rf 'busy-release.txt'
+        $quiet = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', ((New-HeldJobCommand $quietRelease) + ' # invoke-codex-chunk.ps1'), '-TimeoutSec', '5')
+        $busyCommand = (New-HeldJobCommand $busyRelease).Replace('Start-Sleep -Milliseconds 100', "Write-Output 'step'; Start-Sleep -Milliseconds 100")
+        $busy = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', ($busyCommand + ' # invoke-codex-chunk.ps1'))
         Start-Sleep -Seconds 7
         $checkin = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', "$($quiet.job_id),$($busy.job_id)", '-Any', '-TimeoutSec', '1')
         $q = @($checkin.progress | Where-Object { $_.job_id -eq $quiet.job_id })[0]
@@ -426,8 +437,10 @@ exit 0
         Assert-True (@($runStatus.stalled) -contains $quiet.job_id -and @($runStatus.stalled) -notcontains $busy.job_id) "run status names stalled jobs up front ($(@($runStatus.stalled) -join ','))"
         $text = & pwsh -NoProfile -File $DtJob wait -RunFolder $rf -JobId $busy.job_id -Any -TimeoutSec 1
         Assert-True ((@($text) -join "`n") -match "$($busy.job_id) running \d+ min, last activity") "text check-in lists progress ($(@($text) -join ' | '))"
+        Write-Utf8 $quietRelease 'release'
         $doneQuiet = Wait-JobTerminal -RunFolder $rf -JobId $quiet.job_id -TimeoutSec 30
         Assert-True ($doneQuiet.status -eq 'succeeded') "a stalled agent job is never stopped on time ($($doneQuiet.status))"
+        Write-Utf8 $busyRelease 'release'
         Wait-JobTerminal -RunFolder $rf -JobId $busy.job_id -TimeoutSec 30 | Out-Null
     }
     finally { Remove-Item Env:DT_JOB_HEARTBEAT_SEC, Env:DT_JOB_STALL_SEC -ErrorAction SilentlyContinue }
@@ -443,11 +456,13 @@ exit 0
     Assert-True ($code -ne 0 -and (($raw | Out-String) -match 'DT_JOB_OPERATOR_ONLY')) 'a coordinator cannot write operator notes'
     $runStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
     Assert-True (@($runStatus.operator_notes).Count -eq 2 -and @($runStatus.operator_notes)[0].text -eq 'Dispatch the repair worker first.') 'run status carries the operator notes in full'
-    $noteJob = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 3')
+    $release = Join-Path $rf 'release.txt'
+    $noteJob = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $release))
     $w = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', $noteJob.job_id, '-Any', '-TimeoutSec', '1')
     Assert-True (@($w.operator_notes).Count -eq 2) 'every wait check-in carries the operator notes'
     $text = & pwsh -NoProfile -File $dtJob wait -RunFolder $rf -JobId $noteJob.job_id -Any -TimeoutSec 1
     Assert-True ((@($text) -join "`n") -match 'operator note n-001: Dispatch the repair worker first\.' -and @($text)[-1] -match '^wait_timeout') "text check-ins list notes and keep wait_timeout last ($(@($text) -join ' | '))"
+    Write-Utf8 $release 'release'
     Wait-JobTerminal -RunFolder $rf -JobId $noteJob.job_id | Out-Null
     $cleared = Invoke-DtJob @('note', '-RunFolder', $rf, '-Clear', '-NoteId', 'n-001')
     Assert-True (@($cleared.operator_notes).Count -eq 1 -and @($cleared.operator_notes)[0].id -eq 'n-002') 'clear -NoteId removes one note'
@@ -458,10 +473,12 @@ exit 0
 
     # Dependency chain: a failure blocks two levels downstream.
     $rf = New-RunFolder 'deps'
-    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 1; exit 1')
+    $release = Join-Path $rf 'release.txt'
+    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $release -ExitCode 1))
     $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'b'", '-DependsOn', $a.job_id)
     $c = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'c'", '-DependsOn', $b.job_id)
     Assert-True ($b.status -eq 'queued' -and $c.status -eq 'queued') 'dependents wait queued'
+    Write-Utf8 $release 'release'
     Wait-JobTerminal -RunFolder $rf -JobId $a.job_id | Out-Null
     $rb = Wait-JobTerminal -RunFolder $rf -JobId $b.job_id
     $rc = Wait-JobTerminal -RunFolder $rf -JobId $c.job_id
@@ -476,12 +493,14 @@ exit 0
 
     # Mutation key: a second job on the same key queues until the key frees.
     $rf = New-RunFolder 'mutates'
-    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 3', '-Mutates', 'worktree:main')
+    $release = Join-Path $rf 'release.txt'
+    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $release), '-Mutates', 'worktree:main')
     $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'b'", '-Mutates', 'worktree:main')
     Assert-True ($a.status -eq 'running') 'key holder runs'
     Assert-True ($b.status -eq 'queued') 'second job on the same key queues'
     $other = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'other'", '-Mutates', 'worktree:other')
     Assert-True ($other.status -eq 'running') 'job on a different key runs'
+    Write-Utf8 $release 'release'
     $ra = Wait-JobTerminal -RunFolder $rf -JobId $a.job_id
     $rb = Wait-JobTerminal -RunFolder $rf -JobId $b.job_id
     Assert-True ($rb.status -eq 'succeeded') "queued key job ran after release ($($rb.status))"
@@ -490,15 +509,17 @@ exit 0
 
     # Cancel queued and cancel running.
     $rf = New-RunFolder 'cancel'
-    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 3', '-Mutates', 'k')
+    $release = Join-Path $rf 'release.txt'
+    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $release), '-Mutates', 'k')
     $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'b'", '-Mutates', 'k')
     $cb = Invoke-DtJob @('cancel', '-RunFolder', $rf, '-JobId', $b.job_id)
     Assert-True ($cb.status -eq 'cancelled') 'queued job cancelled'
+    Write-Utf8 $release 'release'
     Wait-JobTerminal -RunFolder $rf -JobId $a.job_id | Out-Null
     Start-Sleep -Seconds 2
     Assert-True ((Get-JobRecord -RunFolder $rf -JobId $b.job_id).status -eq 'cancelled') 'cancelled queued job stays cancelled after its key frees'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $rf "jobs/$($b.job_id)/stdout.log"))) 'cancelled queued job never launched'
-    $c = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 60', '-Mutates', 'k2')
+    $c = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand (Join-Path $rf 'cancel-release.txt')), '-Mutates', 'k2')
     $rc = Wait-JobState -RunFolder $rf -JobId $c.job_id -Until { param($r) [bool]$r.pid }
     $cc = Invoke-DtJob @('cancel', '-RunFolder', $rf, '-JobId', $c.job_id)
     Assert-True ($cc.status -eq 'cancelled') 'running job cancelled'
@@ -511,12 +532,16 @@ exit 0
     foreach ($delayMs in @(700, 1100, 1500)) {
         $rf = New-RunFolder "race-$delayMs"
         $marker = Join-Path $rf 'marker.txt'
-        $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 1', '-Mutates', 'race')
-        $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "Start-Sleep 2; Set-Content -LiteralPath '$marker' -Value 'ran'", '-Mutates', 'race')
+        $release = Join-Path $rf 'release.txt'; $workRelease = Join-Path $rf 'work-release.txt'
+        $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $release), '-Mutates', 'race')
+        $workCommand = (New-HeldJobCommand $workRelease).Replace('exit 0', "Set-Content -LiteralPath '$($marker.Replace("'", "''"))' -Value 'ran'")
+        $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', $workCommand, '-Mutates', 'race')
         Start-Sleep -Milliseconds $delayMs
         $cancel = Start-Process -FilePath ([System.Environment]::ProcessPath) -ArgumentList @('-NoProfile', '-File', "`"$dtJob`"", 'cancel', '-RunFolder', "`"$rf`"", '-JobId', $b.job_id, '-Json') -PassThru -WindowStyle Hidden
+        Write-Utf8 $release 'release'
         $cancel.WaitForExit()
         Wait-JobTerminal -RunFolder $rf -JobId $a.job_id | Out-Null
+        Write-Utf8 $workRelease 'release'
         Start-Sleep -Seconds 3
         $rb = Get-JobRecord -RunFolder $rf -JobId $b.job_id
         Assert-True ($rb.status -eq 'cancelled') "race ($delayMs ms): job ended cancelled ($($rb.status))"
@@ -525,7 +550,7 @@ exit 0
 
     # Reconcile: a killed job becomes orphaned (never succeeded) and its keys free.
     $rf = New-RunFolder 'orphan'
-    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 60', '-Mutates', 'shared')
+    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand (Join-Path $rf 'release.txt')), '-Mutates', 'shared')
     $ra = Wait-JobState -RunFolder $rf -JobId $a.job_id -Until { param($r) [bool]$r.pid }
     $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'after'", '-Mutates', 'shared')
     Assert-True ($b.status -eq 'queued') 'job queues behind the soon-killed key holder'
@@ -640,12 +665,14 @@ while (-not (Test-Path -LiteralPath $Stop)) {
 
     # Lists under pwsh -File: comma-separated keys and dependencies split.
     $rf = New-RunFolder 'lists'
-    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 3', '-Mutates', 'a,b')
+    $release = Join-Path $rf 'release.txt'
+    $a = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $release), '-Mutates', 'a,b')
     $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'b'", '-Mutates', 'a')
     Assert-True ((@((Get-JobRecord -RunFolder $rf -JobId $a.job_id).mutates) -join '|') -eq 'a|b') 'comma-separated -Mutates splits into two keys'
     Assert-True ($a.status -eq 'running' -and $b.status -eq 'queued') 'one-key job queues behind the two-key job sharing a key'
     $c = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'c'", '-DependsOn', "$($a.job_id), $($b.job_id)")
     Assert-True ((@((Get-JobRecord -RunFolder $rf -JobId $c.job_id).depends_on) -join '|') -eq "$($a.job_id)|$($b.job_id)") 'comma-separated -DependsOn resolves both jobs'
+    Write-Utf8 $release 'release'
     Assert-True ((Wait-JobTerminal -RunFolder $rf -JobId $c.job_id).status -eq 'succeeded') 'job with two dependencies runs after both succeed'
 
     # Environment pass-through: allow-listed caller variables reach the job; secrets only when named.
@@ -664,7 +691,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
 
     # Runner died but child lives: reconcile leaves it running, and a check-in reports it stalled.
     $rf = New-RunFolder 'expire'
-    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'Start-Sleep 120', '-TimeoutSec', '20', '-Mutates', 'exp')
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand (Join-Path $rf 'release.txt')), '-TimeoutSec', '20', '-Mutates', 'exp')
     $record = Wait-JobState -RunFolder $rf -JobId $job.job_id -Until { param($r) [bool]$r.pid }
     Stop-Process -Id ([int]$record.runner_pid) -Force
     Start-Sleep -Milliseconds 500
