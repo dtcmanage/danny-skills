@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.32.0
+
+- Every launch row records a checkpoint fingerprint (SHA-256 of the Next step section). The watcher stops a run after two consecutive launches that made no progress on an unchanged fingerprint, instead of waiting for six in an hour; the Discord alert names the coordinators and the last five commands of the dying one. Resume re-arms it like the other caps.
+
 ## 2.31.0
 
 - read-evidence.ps1 takes -JobId <id> -File summary|stdout|stderr|spec|report|provenance and resolves the file from the job record, so coordinators stop guessing evidence names; a miss inside a job folder lists the files that exist, and a bare run-file name suggests its run-folder path. Status and wait envelopes carry a one-line evidence_hint.
