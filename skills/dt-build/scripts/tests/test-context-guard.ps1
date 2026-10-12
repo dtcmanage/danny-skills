@@ -906,6 +906,43 @@ try {
     $leaseDoc.released_utc = [DateTime]::UtcNow.ToString('o')
     Write-Utf8 -Path $wallLease -Content ($leaseDoc | ConvertTo-Json)
 
+    # ---- direct single-file reads share a best-effort ledger per coordinator.
+    $repeatRun = New-Run -Name 'repeat-reads'
+    $repeatFile = Join-Path $fixtures 'repeat-read.json'
+    Write-Utf8 -Path $repeatFile -Content ('x' * 20000)
+    $repeatKey = ($repeatFile -replace '[\\/]+', '/').ToLowerInvariant()
+    $repeatLedger = Join-Path $repeatRun.folder 'hook-reads.jsonl'
+    Write-Lease -RunFolder $repeatRun.folder -CoordinatorId 'repeat-1' -LeaseHost 'claude' -SessionId 'sess-repeat'
+    $fullRead = "pwsh -NoProfile -Command `"Get-Content -LiteralPath '$repeatFile' -Raw`""
+    foreach ($number in 1..2) {
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = $fullRead }))) "full read $number passes"
+    }
+    $denied = Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = $fullRead })
+    Assert-True ((Test-Denied $denied) -and $denied.hookSpecificOutput.permissionDecisionReason.Contains("$repeatKey was already read 2 times by this coordinator (20 KB each)")) 'third full shell read is denied with the normalized path, count and size'
+    Write-Output "Repeat-read deny: $($denied.hookSpecificOutput.permissionDecisionReason)"
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = "Select-String -LiteralPath '$repeatFile' -Pattern x" }))) 'a search slice passes after the allowance'
+    $rows = @(Get-Content -LiteralPath $repeatLedger | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True ($rows.Count -eq 3 -and @($rows | Where-Object { $_.coordinator_id -ceq 'repeat-1' -and $_.path -ceq $repeatKey -and $_.ts_utc }).Count -eq 3) 'allowed slices are recorded with full reads; denied calls add no row'
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'Read' @{ file_path = $repeatFile; offset = 1; limit = 1 }))) 'a ranged Read passes after the allowance'
+    foreach ($commandText in @("Get-Content '$repeatFile' -TotalCount 1", "Get-Content '$repeatFile' -Tail 1", "head '$repeatFile'", "tail '$repeatFile'", "sed -n '1p' '$repeatFile'", "Get-Content '$repeatFile' -Lines 1-2", "Get-Content '$repeatFile' -Grep x")) {
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'Bash' @{ command = $commandText }))) "slice passes: $commandText"
+    }
+    $beforeEvidence = @(Get-Content -LiteralPath $repeatLedger).Count
+    foreach ($number in 1..3) {
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = "pwsh -NoProfile -File '$scriptDir/read-evidence.ps1' -RunFolder '$($repeatRun.folder)' -Path '$repeatFile' -Grep x" }))) 'read-evidence calls pass regardless of prior direct reads'
+    }
+    Assert-True (@(Get-Content -LiteralPath $repeatLedger).Count -eq $beforeEvidence) 'read-evidence calls do not enter the direct-read ledger'
+    Write-Lease -RunFolder $repeatRun.folder -CoordinatorId 'repeat-2' -LeaseHost 'claude' -SessionId 'sess-repeat'
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'Read' @{ file_path = $repeatFile }))) 'a new coordinator starts clean with a Read tool call'
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'Bash' @{ command = $fullRead }))) 'the second coordinator shell read shares the Read count'
+    $denied = Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'Read' @{ file_path = $repeatFile })
+    Assert-True ((Test-Denied $denied) -and $denied.hookSpecificOutput.permissionDecisionReason -match 'already read 2 times') 'Read and shell calls share the third-read denial'
+    Remove-Item -LiteralPath $repeatLedger -Force
+    New-Item -ItemType Directory -Path $repeatLedger | Out-Null
+    foreach ($number in 1..3) {
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = $fullRead })) -and $LASTEXITCODE -eq 0) 'an unreadable ledger directory neither throws nor denies'
+    }
+
     # ---- resume record surfaces automatic handoffs only ahead of coordinator-written notes.
     $resumeRun = New-Run -Name 'resume-handoff' -PinnedHost 'codex' -Managed
     $resumeRepo = Split-Path -Parent $resumeRun.folder

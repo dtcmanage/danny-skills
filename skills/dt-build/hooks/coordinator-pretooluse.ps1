@@ -5,11 +5,12 @@
 # context-baseline.json (never a discovered guess); a released or superseded coordinator is not one. Every
 # other session passes untouched, and with the env var unset and no registered run the hook exits before
 # loading anything. For a coordinator it denies a Read of a file over 400 lines without offset/limit, image
-# Reads, CronCreate, and reads of a file context-wall.json says filled an earlier coordinator; past the hard context limit (unless an irreversible step this coordinator opened
+# Reads, CronCreate, reads of a file context-wall.json says filled an earlier coordinator, and the third
+# full read of a file by this coordinator; past the hard context limit (unless an irreversible step this coordinator opened
 # is still open) it also denies every discretionary tool, including shell commands other than the dt-build
 # state scripts. Any error inside the hook allows the call: the hook must never break a session it cannot
-# judge. The hooks read run files directly rather than loading dt-job.ps1, so their cost stays near the
-# pwsh start.
+# judge. Ordinary calls read run files directly; only single-file reads load dt-job.ps1 for the ledger
+# path, so non-read cost stays near the pwsh start.
 param()
 
 Set-StrictMode -Version Latest
@@ -89,6 +90,7 @@ if (-not $script:HookDotSourced) {
 
 $script:HookDtJob = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'scripts', 'dt-job.ps1'))
 $script:HookReadMaxLines = 400
+$script:HookRepeatReadAllowance = 2
 $script:HookImageExtensions = @('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')
 $script:HookDiscretionaryTools = @('Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Agent', 'Task', 'NotebookEdit')
 $script:HookShellTools = @('Bash', 'PowerShell')
@@ -288,6 +290,70 @@ function Get-HookWallDenyReason {
     return $null
 }
 
+function Get-HookRepeatReadDenyReason {
+    # Best-effort per-coordinator evidence; non-reads never load the job library or ledger.
+    param($HookInput, [Parameter(Mandatory)]$Coordinator)
+    if (-not $Coordinator.run_folder) { return $null }
+    try {
+        $tool = [string](Get-HookProperty $HookInput 'tool_name')
+        $inputObject = Get-HookProperty $HookInput 'tool_input'
+        $paths = [System.Collections.Generic.List[string]]::new()
+        $sliced = $false
+        if ($tool -eq 'Read') {
+            $path = [string](Get-HookProperty $inputObject 'file_path')
+            if (-not $path) { return $null }
+            $paths.Add($path)
+            $sliced = ($null -ne (Get-HookProperty $inputObject 'offset')) -or ($null -ne (Get-HookProperty $inputObject 'limit'))
+        }
+        elseif ($script:HookShellTools -contains $tool) {
+            $commandText = [string](Get-HookProperty $inputObject 'command')
+            if (Test-HookShellAllowed $commandText) { return $null }
+            # Same verbs as the wall check, but a hyphenated script name such as read-evidence.ps1
+            # is not a verb. This is a text heuristic, not a shell parser.
+            if ($commandText -notmatch '(?i)(?<![\w-])(get-content|gc|cat|type|sed|awk|head|tail|less|more|select-string|sls|rg|grep|findstr|readalltext|readalllines|readlines|open)(?![\w-])') { return $null }
+            $ext = '(?:md|json|jsonl|txt|log|ps1|py|yaml|yml|toml|csv)'
+            $pattern = "(?i)'(?<path>[^']+\.$ext)'|`"(?<path>[^`"]+\.$ext)`"|(?<path>[^\s'`";|()]+\.$ext)(?=\s|$|[;|)])"
+            foreach ($match in [regex]::Matches($commandText, $pattern)) { $paths.Add($match.Groups['path'].Value) }
+            # Simple slice markers: explicit reader flags, search commands, or head/tail/sed -n.
+            $sliced = $commandText -match '(?i)(?<![\w-])-(?:Grep|Lines|TotalCount|Tail|Head)\b|\b(?:Select-String|sls|rg|grep|findstr|head|tail)\b|\bsed\s+-n\b'
+        }
+        else { return $null }
+        $files = @{}
+        foreach ($path in $paths) {
+            if (-not [IO.Path]::IsPathRooted($path)) {
+                $cwd = [string](Get-HookProperty $HookInput 'cwd')
+                if ($cwd) { $path = Join-Path $cwd $path }
+            }
+            $path = [IO.Path]::GetFullPath($path)
+            if ([IO.File]::Exists($path)) { $files[(ConvertTo-DtCtxPathKey $path)] = $path }
+        }
+        if ($files.Count -ne 1) { return $null }
+        $key = @($files.Keys)[0]
+        . $script:HookDtJob
+        $ledger = (Get-DtJobPaths -RunFolder $Coordinator.run_folder).HookReads
+        $count = 0
+        $text = Read-HookText -Path $ledger
+        if ($text) {
+            foreach ($line in ($text -split '\r?\n')) {
+                if (-not $line.Trim()) { continue }
+                try {
+                    $row = $line | ConvertFrom-Json
+                    if ($row.coordinator_id -ceq $Coordinator.coordinator_id -and $row.path -ceq $key) { $count++ }
+                }
+                catch { }
+            }
+        }
+        if ($count -ge $script:HookRepeatReadAllowance -and -not $sliced) {
+            $kb = [int][Math]::Round([IO.FileInfo]::new($files[$key]).Length / 1000)
+            return "dt-build context guard: $key was already read $count times by this coordinator ($kb KB each). Use what you read, or take a slice with read-evidence.ps1 -RunFolder $($Coordinator.run_folder) -Path $key -Grep <pattern> or -Lines a-b. A mechanical worker can summarise it to a run-folder file if you need more."
+        }
+        $row = [ordered]@{ ts_utc = [DateTime]::UtcNow.ToString('o'); coordinator_id = $Coordinator.coordinator_id; path = $key }
+        [IO.File]::AppendAllText($ledger, (($row | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+    }
+    catch { return $null }
+    return $null
+}
+
 function Get-HookDenyReason {
     # The deny reason for this call, or $null to allow it.
     param([Parameter(Mandatory)]$HookInput, [Parameter(Mandatory)]$Coordinator, [Parameter(Mandatory)]$Context)
@@ -323,7 +389,7 @@ function Get-HookDenyReason {
             return "dt-build context guard: $path is longer than $($script:HookReadMaxLines) lines. Read it again with offset and limit (at most $($script:HookReadMaxLines) lines), or summarize it with read-evidence.ps1."
         }
     }
-    return $null
+    return (Get-HookRepeatReadDenyReason -HookInput $HookInput -Coordinator $Coordinator)
 }
 
 # Dot-sourcing (the PostToolUse hook does) loads the functions only.

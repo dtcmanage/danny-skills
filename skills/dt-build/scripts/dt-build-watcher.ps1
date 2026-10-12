@@ -463,10 +463,25 @@ function Write-WatcherKillHandoff {
             }
         }
         $worktrees = if ($trees.Count) { $trees -join "`n" } else { 'none' }
+        $repeatReads = 'none'
+        try {
+            $rows = @(foreach ($line in ((Read-DtJobText -Path (Get-DtJobPaths -RunFolder $folder).HookReads) -split '\r?\n')) {
+                if (-not $line.Trim()) { continue }
+                try {
+                    $row = $line | ConvertFrom-Json
+                    if ($row.coordinator_id -ceq $CoordinatorId -and $row.path) { $row }
+                }
+                catch { }
+            })
+            $top = @($rows | Group-Object -Property path | Sort-Object -Property @{ Expression = 'Count'; Descending = $true }, Name | Select-Object -First 5 | ForEach-Object { "- $($_.Count)x $($_.Name)" })
+            if ($top.Count) { $repeatReads = $top -join "`n" }
+        }
+        catch { }
         $checkpoint = [string]$Entry.build_state_path
         $written = if (Test-Path -LiteralPath $checkpoint -PathType Leaf) { & $time (Get-Item -LiteralPath $checkpoint).LastWriteTimeUtc } else { 'unknown' }
         $prefix = @("# Automatic handoff: $CoordinatorId (written by the watcher)", '', "The coordinator was stopped at $Tokens tokens (hard limit $HardLimit) and wrote no handoff of its own, so this was built from the ledger and log; anything it decided but did not record is lost.", '', "Kill time: $(& $time $NowUtc); launch time: $(& $time $launched)", "Latest checkpoint: $(& $clip $checkpoint 400); last write: $written", '', '## Still running', (& $clip $running 600), '', '## Finished in this episode', (& $clip $finished 600), '', '## Run-level events', (& $clip $runEvents 350), '', '## Pending approval', (& $clip $pending 350), '', '## Worktrees', (& $clip $worktrees 500)) -join "`n"
         $prefix = & $clip $prefix 3300
+        $prefix += "`n`n## repeat_reads`n$(& $clip $repeatReads 400)"
         $logPath = Join-Path $folder "coordinator-$CoordinatorId.log"
         $activity = if (Test-Path -LiteralPath $logPath) { @((ConvertTo-DtJobReadableText -Text (Read-DtJobText -Path $logPath)) -split '\r?\n' | Where-Object { $_.Trim() } | Select-Object -Last 40) -join "`n" } else { '' }
         if ($activity.Length -gt 3000) { $activity = $activity.Substring($activity.Length - 3000) }

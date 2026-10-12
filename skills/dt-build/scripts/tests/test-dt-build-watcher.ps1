@@ -884,6 +884,11 @@ try {
         Write-Utf8 -Path (Join-Path $hf.folder 'approvals.json') -Content '{ "awaiting": { "operation": "merge", "message": "Waiting for Danny" }, "approvals": [] }'
         if ($mode -eq 'automatic') {
             Write-Utf8 -Path (Join-Path $hf.folder 'worktrees.jsonl') -Content (([ordered]@{ ts_utc = $launchTime.ToString('o'); coordinator_id = $hf.coordinator_id; path = (Join-Path $tempRoot 'coordinator-tree'); branch = 'feat/reuse'; command = 'git worktree add coordinator-tree -b feat/reuse' } | ConvertTo-Json -Compress) + "`n")
+            $readRows = @(foreach ($index in 1..6) {
+                foreach ($number in 1..(7 - $index)) { [ordered]@{ ts_utc = $launchTime.ToString('o'); coordinator_id = $hf.coordinator_id; path = "d:/fixture/read-$index.json" } | ConvertTo-Json -Compress }
+            })
+            $readRows += [ordered]@{ ts_utc = $launchTime.ToString('o'); coordinator_id = 'other'; path = 'd:/fixture/other.json' } | ConvertTo-Json -Compress
+            Write-Utf8 -Path (Join-Path $hf.folder 'hook-reads.jsonl') -Content ($readRows -join "`n")
         }
         Write-Utf8 -Path (Join-Path $hf.folder "coordinator-$($hf.coordinator_id).log") -Content ("old activity`n" + ('x' * 4000) + "`nlast activity: testing handoff`n")
         if ($mode -eq 'existing') { Write-Utf8 -Path $notePath -Content '# Coordinator-written handoff: keep me' }
@@ -898,6 +903,10 @@ try {
             Assert-True ($note.StartsWith("# Automatic handoff: $($hf.coordinator_id) (written by the watcher)") -and $note.Contains('j-running: running; working on tests') -and $note.Contains('merge: Waiting for Danny') -and $note.Contains('last activity: testing handoff')) 'kill note names coordinator, active job, pending operation and log activity'
             Assert-True ($note.Length -le 6000 -and -not $note.Contains('old activity') -and $note.Contains('j-done: succeeded; checks passed') -and $note.Contains('continuation_requested: runnable') -and $note -match 'Kill time: \d{1,2}:\d{2} [AP]M ET; launch time: \d{1,2}:\d{2} [AP]M ET' -and $note.Contains('Latest checkpoint:')) 'kill note is bounded, keeps log tail and includes episode and Eastern times'
             Assert-True ((Get-Item -LiteralPath $notePath).LastWriteTimeUtc -le (ConvertTo-TestUtc $continuations[0].ts_utc)) 'handoff exists before continuation is recorded'
+            if ($mode -eq 'automatic') {
+                Assert-True ($note.Contains("## repeat_reads`n- 6x d:/fixture/read-1.json`n- 5x d:/fixture/read-2.json") -and $note.Contains('- 2x d:/fixture/read-5.json') -and -not $note.Contains('read-6.json') -and -not $note.Contains('other.json')) 'kill note lists the top five paths by count for only the killed coordinator'
+            }
+            else { Assert-True ($note.Contains("## repeat_reads`nnone")) 'kill note with no hook read ledger says none' }
             if ($mode -eq 'automatic') { Assert-True ($note -match '(?s)## Pending approval.*## Worktrees\n- .*coordinator-tree \[feat/reuse\] recorded created \d{1,2}:\d{2} [AP]M ET.*## Last activity') 'kill handoff lists the killed coordinator worktree between approval and activity' }
             else { Assert-True ($note.Contains("## Worktrees`nnone")) 'kill handoff with no recorded or live trees says none' }
         }

@@ -165,6 +165,7 @@ function Get-DtJobPaths {
         StepErrors = Join-Path $root 'step-errors.json'
         PastHard = Join-Path $root 'past-hard.json'
         ContextWall = Join-Path $root 'context-wall.json'
+        HookReads = Join-Path $root 'hook-reads.jsonl'
     }
 }
 
