@@ -360,6 +360,46 @@ function Invoke-WatcherStop {
     return "stopped ($($Decision.stop_kind)); alert $alert"
 }
 
+function Write-WatcherKillHandoff {
+    # Best-effort evidence only: a missing note must never hold up the continuation.
+    param($Entry, [string]$CoordinatorId, [DateTime]$NowUtc, [long]$Tokens, [long]$HardLimit)
+    try {
+        $folder = [string]$Entry.run_folder
+        $path = Join-Path $folder "coordinator-handoff-$CoordinatorId.md"
+        if (Test-Path -LiteralPath $path) { return }
+        $clip = { param([string]$Text, [int]$Limit) if ($Text.Length -le $Limit) { return $Text }; return $Text.Substring(0, $Limit - 15) + ' ...[truncated]' }
+        $zone = $null
+        foreach ($zoneId in @('Eastern Standard Time', 'America/New_York')) { try { $zone = [TimeZoneInfo]::FindSystemTimeZoneById($zoneId); break } catch { } }
+        $time = { param($Value) if ($null -eq $Value) { return 'unknown' }; $utc = ConvertTo-DtJobUtc $Value; if ($zone) { return [TimeZoneInfo]::ConvertTimeFromUtc($utc, $zone).ToString('h:mm tt', [System.Globalization.CultureInfo]::InvariantCulture) + ' ET' }; return $utc.ToString('h:mm tt', [System.Globalization.CultureInfo]::InvariantCulture) + ' UTC' }
+        $launch = @(Get-WatcherLaunches -RunFolder $folder | Where-Object { $_.type -eq 'launch' -and $_.coordinator_id -ceq $CoordinatorId } | Select-Object -Last 1)
+        $launched = if ($launch.Count) { ConvertTo-DtJobUtc $launch[0].launched_utc } else { $null }
+        # Without a launch row the episode cannot be attributed safely; leave its events out.
+        $events = @(if ($null -ne $launched) { Get-DtJobEvents -RunFolder $folder | Where-Object { (ConvertTo-DtJobUtc $_.ts_utc) -ge $launched } })
+        $jobs = @($events | Where-Object { $_.job_id -ne 'run' } | Group-Object -Property job_id | ForEach-Object { $_.Group | Sort-Object { ConvertTo-DtJobUtc $_.ts_utc }, seq | Select-Object -Last 1 })
+        $running = @($jobs | Where-Object { $_.status -in @('running', 'queued') } | ForEach-Object { "- $($_.job_id): $($_.status); $($_.reason)" }) -join "`n"
+        $finished = @($jobs | Where-Object { $_.status -notin @('running', 'queued') } | ForEach-Object { "- $($_.job_id): $($_.status); $($_.reason)" }) -join "`n"
+        $runEvents = @($events | Where-Object { $_.job_id -eq 'run' } | ForEach-Object { "- $($_.type): $($_.status); $($_.reason)" }) -join "`n"
+        $awaiting = (Get-DtJobApprovals -RunFolder $folder).awaiting
+        $pending = if ($null -ne $awaiting) { "$($awaiting.operation): $($awaiting.message)" } else { 'none' }
+        $checkpoint = [string]$Entry.build_state_path
+        $written = if (Test-Path -LiteralPath $checkpoint -PathType Leaf) { & $time (Get-Item -LiteralPath $checkpoint).LastWriteTimeUtc } else { 'unknown' }
+        $prefix = @("# Automatic handoff: $CoordinatorId (written by the watcher)", '', "The coordinator was stopped at $Tokens tokens (hard limit $HardLimit) and wrote no handoff of its own, so this was built from the ledger and log; anything it decided but did not record is lost.", '', "Kill time: $(& $time $NowUtc); launch time: $(& $time $launched)", "Latest checkpoint: $(& $clip $checkpoint 400); last write: $written", '', '## Still running', (& $clip $running 600), '', '## Finished in this episode', (& $clip $finished 600), '', '## Run-level events', (& $clip $runEvents 350), '', '## Pending approval', (& $clip $pending 350)) -join "`n"
+        $prefix = & $clip $prefix 2800
+        $logPath = Join-Path $folder "coordinator-$CoordinatorId.log"
+        $activity = if (Test-Path -LiteralPath $logPath) { @((ConvertTo-DtJobReadableText -Text (Read-DtJobText -Path $logPath)) -split '\r?\n' | Where-Object { $_.Trim() } | Select-Object -Last 40) -join "`n" } else { '' }
+        if ($activity.Length -gt 3000) { $activity = $activity.Substring($activity.Length - 3000) }
+        # Longer fences keep log Markdown from closing the block early.
+        do {
+            $fence = '```'
+            foreach ($match in [regex]::Matches($activity, '`{3,}')) { if ($match.Length -ge $fence.Length) { $fence = '`' * ($match.Length + 1) } }
+            $content = "$prefix`n`n## Last activity`n$fence`n$activity`n$fence`n`nSuccessor: verify every item above against the job ledger before acting; trust the ledger over this note.`n"
+            if ($content.Length -gt 6000) { $activity = $activity.Substring([int][math]::Ceiling($activity.Length / 2)) }
+        } while ($content.Length -gt 6000)
+        if (-not (Test-Path -LiteralPath $path)) { Write-DtJobAtomic -Path $path -Content $content }
+    }
+    catch { return }
+}
+
 function Invoke-WatcherContextRotation {
     # A managed Codex coordinator past its hard limit is ended here: at once when it has no trusted context
     # hooks, otherwise only as a backstop (see Test-WatcherCoordinatorHooks). Ending it means: kill its process tree, release its lease, and request a continuation so the relaunch rules
@@ -434,6 +474,7 @@ function Invoke-WatcherContextRotation {
         Write-DtJobAtomic -Path (Get-DtJobPaths -RunFolder $folder).KillFailed -Content ($episode | ConvertTo-Json -Depth 4)
         return (Invoke-WatcherKillFailedEpisode -Entry $Entry -NowUtc $NowUtc -NoRetry)
     }
+    Write-WatcherKillHandoff -Entry $Entry -CoordinatorId $coordinatorId -NowUtc $NowUtc -Tokens $tokens -HardLimit $report.hard
     Complete-WatcherRotation -Entry $Entry -CoordinatorId $coordinatorId -NowUtc $NowUtc
     $row = [ordered]@{ coordinator_id = $coordinatorId; tokens_at_kill = [long]$tokens; hard_limit = [long]$report.hard; overshoot = ([long]$tokens - [long]$report.hard); killed_utc = $NowUtc.ToString('o') }
     [System.IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $folder).Rotations, (($row | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))

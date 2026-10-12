@@ -21,4 +21,11 @@ $state = Get-DtJobRunState -BuildStatePath $ResumeBuildStatePath
 if ($state.run_status -ne 'runnable') { throw "DT_RESUME_STOPPED: run_status $($state.run_status)" }
 $wallPath = (Get-DtJobPaths -RunFolder $ResumeRunFolder).ContextWall
 $wall = if (Test-Path -LiteralPath $wallPath) { try { Read-DtJobText -Path $wallPath | ConvertFrom-Json } catch { $null } } else { $null }
-[ordered]@{ registration = $entry; lease = $lease; state = $state; approvals = (Get-DtJobApprovals -RunFolder $ResumeRunFolder); operator_notes = @(Get-DtJobOperatorNotes -RunFolder $ResumeRunFolder); context_wall = $wall } | ConvertTo-Json -Depth 10
+$automatic = $null; $coordinatorNote = $null
+foreach ($note in @(Get-ChildItem -LiteralPath $ResumeRunFolder -Filter 'coordinator-handoff-*.md' -File | Sort-Object LastWriteTimeUtc -Descending)) {
+    $first = ((Read-DtJobText -Path $note.FullName) -split '\r?\n', 2)[0]
+    if ($first.StartsWith('# Automatic handoff:', [System.StringComparison]::Ordinal)) { if ($null -eq $automatic) { $automatic = $note } }
+    elseif ($null -eq $coordinatorNote) { $coordinatorNote = $note }
+}
+$killHandoff = if ($null -ne $automatic -and ($null -eq $coordinatorNote -or $automatic.LastWriteTimeUtc -gt $coordinatorNote.LastWriteTimeUtc)) { $automatic.FullName } else { $null }
+[ordered]@{ registration = $entry; lease = $lease; state = $state; approvals = (Get-DtJobApprovals -RunFolder $ResumeRunFolder); operator_notes = @(Get-DtJobOperatorNotes -RunFolder $ResumeRunFolder); context_wall = $wall; kill_handoff = $killHandoff } | ConvertTo-Json -Depth 10

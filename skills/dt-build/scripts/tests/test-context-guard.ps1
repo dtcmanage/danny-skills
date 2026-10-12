@@ -906,6 +906,26 @@ try {
     $leaseDoc.released_utc = [DateTime]::UtcNow.ToString('o')
     Write-Utf8 -Path $wallLease -Content ($leaseDoc | ConvertTo-Json)
 
+    # ---- resume record surfaces automatic handoffs only ahead of coordinator-written notes.
+    $resumeRun = New-Run -Name 'resume-handoff' -PinnedHost 'codex' -Managed
+    Write-Lease -RunFolder $resumeRun.folder -CoordinatorId 'successor' -LeaseHost 'codex' -LaunchedBy 'watcher'
+    $resumeReader = Join-Path $scriptDir 'read-resume-record.ps1'
+    $readRecord = { $raw = & pwsh -NoProfile -File $resumeReader -RunFolder $resumeRun.folder -RunId $resumeRun.run_id -BuildStatePath $resumeRun.state -CoordinatorId 'successor'; if ($LASTEXITCODE -ne 0) { throw 'resume reader failed' }; ($raw -join "`n") | ConvertFrom-Json }
+    Assert-True ($null -eq (& $readRecord).kill_handoff) 'no handoff yields a null kill_handoff'
+    $automaticNote = Join-Path $resumeRun.folder 'coordinator-handoff-killed.md'
+    Write-Utf8 -Path $automaticNote -Content "# Automatic handoff: killed (written by the watcher)`nledger evidence"
+    $recordTime = [DateTime]::UtcNow
+    (Get-Item -LiteralPath $automaticNote).LastWriteTimeUtc = $recordTime
+    Write-Utf8 -Path (Join-Path $resumeRun.folder 'context-wall.json') -Content '{ "coordinator_id": "killed", "reads": [] }'
+    $record = & $readRecord
+    Assert-True ($record.kill_handoff -eq $automaticNote -and $record.context_wall.coordinator_id -eq 'killed') 'resume record surfaces automatic handoff alongside context_wall'
+    $ownNote = Join-Path $resumeRun.folder 'coordinator-handoff-own.md'
+    Write-Utf8 -Path $ownNote -Content '# Coordinator handoff'
+    (Get-Item -LiteralPath $ownNote).LastWriteTimeUtc = $recordTime.AddSeconds(1)
+    Assert-True ($null -eq (& $readRecord).kill_handoff) 'newer coordinator-written note supersedes automatic handoff'
+    (Get-Item -LiteralPath $ownNote).LastWriteTimeUtc = $recordTime.AddSeconds(-1)
+    Assert-True ((& $readRecord).kill_handoff -eq $automaticNote) 'older coordinator-written note does not hide automatic handoff'
+
     # ---- static: hook files and launcher flags.
     foreach ($file in @($preHook, $postHook, $guard, (Join-Path $scriptDir 'launch-managed-coordinator.ps1'))) {
         $tokens = $null; $errors = $null

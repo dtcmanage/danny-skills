@@ -870,6 +870,35 @@ try {
     }
     finally { if (-not $live.HasExited) { $live.Kill() } }
 
+    # ---- successful kills leave best-effort handoff evidence before requesting continuation.
+    foreach ($mode in @('automatic', 'existing', 'unreadable')) {
+        $name = "handoff-$mode"
+        Use-Scenario $name
+        $hf = Start-RotationFixture -Name $name
+        $notePath = Join-Path $hf.folder "coordinator-handoff-$($hf.coordinator_id).md"
+        $launchTime = [DateTime]::UtcNow.AddMinutes(-1)
+        Write-Utf8 -Path (Join-Path $hf.folder 'launches.jsonl') -Content (([ordered]@{ type = 'launch'; coordinator_id = $hf.coordinator_id; launched_utc = $launchTime.ToString('o'); trigger_seq = 1; launcher_exit = 0; host = 'codex'; attempt = 1; pid = $hf.child } | ConvertTo-Json -Compress) + "`n")
+        $seed = ". '$dtJob'; Add-DtJobEvent -RunFolder '$($hf.folder)' -JobId 'j-running' -Type 'started' -Status 'running' -Reason 'working on tests'; Add-DtJobEvent -RunFolder '$($hf.folder)' -JobId 'j-done' -Type 'completed' -Status 'succeeded' -Reason 'checks passed'"
+        & pwsh -NoProfile -Command $seed | Out-Null
+        Write-Utf8 -Path (Join-Path $hf.folder 'approvals.json') -Content '{ "awaiting": { "operation": "merge", "message": "Waiting for Danny" }, "approvals": [] }'
+        Write-Utf8 -Path (Join-Path $hf.folder "coordinator-$($hf.coordinator_id).log") -Content ("old activity`n" + ('x' * 4000) + "`nlast activity: testing handoff`n")
+        if ($mode -eq 'existing') { Write-Utf8 -Path $notePath -Content '# Coordinator-written handoff: keep me' }
+        # Only the writer sees the injected read failure; rotation's own ledger reads stay available.
+        $stubs = if ($mode -eq 'unreadable') { '$script:realRead = ${function:Read-DtJobText}; function Read-DtJobText { param([string]$Path) if ($Path.EndsWith("events.jsonl") -and @(Get-PSCallStack | Where-Object { $_.FunctionName -eq "Write-WatcherKillHandoff" }).Count) { throw "events unreadable" }; & $script:realRead -Path $Path }' } else { '' }
+        $tick = Invoke-StubbedRun -RunFolder $hf.folder -Stubs $stubs
+        $rotations = @(Get-Content -LiteralPath (Join-Path $hf.folder 'rotations.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+        $continuations = @(Get-Content -LiteralPath (Join-Path $hf.folder 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.type -eq 'continuation_requested' -and $_.reason -eq 'context_rotation' })
+        Assert-True ($rotations.Count -eq 1 -and $continuations.Count -eq 1 -and $tick.action -eq 'launch') "$mode handoff leaves rotation and continuation working"
+        if ($mode -eq 'automatic') {
+            $note = Get-Content -Raw -LiteralPath $notePath
+            Assert-True ($note.StartsWith("# Automatic handoff: $($hf.coordinator_id) (written by the watcher)") -and $note.Contains('j-running: running; working on tests') -and $note.Contains('merge: Waiting for Danny') -and $note.Contains('last activity: testing handoff')) 'kill note names coordinator, active job, pending operation and log activity'
+            Assert-True ($note.Length -le 6000 -and -not $note.Contains('old activity') -and $note.Contains('j-done: succeeded; checks passed') -and $note.Contains('continuation_requested: runnable') -and $note -match 'Kill time: \d{1,2}:\d{2} [AP]M ET; launch time: \d{1,2}:\d{2} [AP]M ET' -and $note.Contains('Latest checkpoint:')) 'kill note is bounded, keeps log tail and includes episode and Eastern times'
+            Assert-True ((Get-Item -LiteralPath $notePath).LastWriteTimeUtc -le (ConvertTo-TestUtc $continuations[0].ts_utc)) 'handoff exists before continuation is recorded'
+        }
+        elseif ($mode -eq 'existing') { Assert-True ((Get-Content -Raw -LiteralPath $notePath) -ceq '# Coordinator-written handoff: keep me') 'kill preserves coordinator-written handoff' }
+        else { Assert-True (-not (Test-Path -LiteralPath $notePath)) 'writer failure skips the note without blocking rotation' }
+    }
+
     # ---- a rotation kill that leaves the codex child alive holds the run until every survivor is gone.
     Use-Scenario 'kill-episode'
     $killLog = Join-Path $tempRoot 'kill-calls.txt'
