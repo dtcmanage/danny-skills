@@ -65,6 +65,7 @@ function Test-ProcessGone {
 }
 
 $exitCode = 0
+$junctionLink = $null
 try {
     # Live discovery uses the actual Git admin directory, not the ledger or tree file timestamps.
     $treeRepo = New-RunFolder 'tree-repo'
@@ -86,6 +87,22 @@ try {
     Write-Utf8 -Path (Join-Path $treeRun 'worktrees.jsonl') -Content "{broken`n{}`n"
     $treeResult = ((& pwsh -NoProfile -Command $treeProbe) -join "`n") | ConvertFrom-Json
     Assert-True ($treeResult.missing.Count -eq 0) 'malformed worktree ledger lines are ignored'
+
+    # FS-20: dt-job dot-sourced through a skill junction must resolve its alert script in the real repo.
+    $realSkillRoot = Split-Path -Parent $scriptDir
+    $realRepoRoot = Split-Path -Parent (Split-Path -Parent $realSkillRoot)
+    $junctionLink = Join-Path $tempRoot 'dt-build'
+    New-Item -ItemType Junction -Path $junctionLink -Target $realSkillRoot | Out-Null
+    $junctionJob = Join-Path $junctionLink 'scripts/dt-job.ps1'
+    $alertPath = (& pwsh -NoProfile -Command ". '$($junctionJob.Replace("'", "''"))'; Write-Output `$script:DtJobAlertScript" | Select-Object -Last 1)
+    Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $alertPath -PathType Leaf)) "junction dt-job load resolves an existing alert script ($alertPath)"
+    Assert-True ($alertPath.StartsWith($realRepoRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -and -not $alertPath.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) 'junction alert path belongs to the real repo, not the junction parent'
+    $directPath = (& pwsh -NoProfile -Command ". '$($dtJob.Replace("'", "''"))'; Write-Output `$script:DtJobAlertScript" | Select-Object -Last 1)
+    Assert-True ($LASTEXITCODE -eq 0 -and $directPath -eq $alertPath) 'direct and junction loads resolve the same alert path'
+    $fallbackProbe = "function Get-Item { param([string]`$LiteralPath) [pscustomobject]@{} }; . '$($dtJob.Replace("'", "''"))'; Write-Output `$script:DtJobAlertScript"
+    $fallbackPath = (& pwsh -NoProfile -Command $fallbackProbe | Select-Object -Last 1)
+    Assert-True ($LASTEXITCODE -eq 0 -and $fallbackPath -eq $directPath) 'a missing ResolveLinkTarget falls back to the unresolved path without throwing'
+    [IO.Directory]::Delete($junctionLink); $junctionLink = $null
 
     # Start and succeed (nested pwsh command, the shape the wrappers use).
     $rf = New-RunFolder 'succeed'
@@ -545,6 +562,8 @@ catch {
 }
 finally {
     Write-Output "SUMMARY: $script:passed passed"
+    # Unlink only: a recursive delete would follow the junction into the real skill folder.
+    if ($junctionLink -and [IO.Directory]::Exists($junctionLink)) { [IO.Directory]::Delete($junctionLink) }
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 

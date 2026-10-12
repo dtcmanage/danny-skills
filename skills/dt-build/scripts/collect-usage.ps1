@@ -11,11 +11,17 @@ param(
 # runs and refreshes the usage ledger + dashboard. Never blocks a build: any
 # failure is reported on one line and the exit code stays 0.
 
+$UsageSkillRoot = Split-Path -Parent $PSScriptRoot
+$UsageResolvedSkillRoot = $null
+try { $UsageResolvedSkillRoot = (Get-Item -LiteralPath $UsageSkillRoot).ResolveLinkTarget($true) } catch { }
+if ($UsageResolvedSkillRoot) { $UsageSkillRoot = $UsageResolvedSkillRoot.FullName }
+$UsageRepoRoot = Split-Path -Parent (Split-Path -Parent $UsageSkillRoot)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # Reporting has one Windows owner; the Mac observes local quotas independently.
-. (Join-Path $PSScriptRoot '../../../scripts/model-router/router-platform.ps1')
+. (Join-Path $UsageRepoRoot 'scripts/model-router/router-platform.ps1')
 if ((Get-RouterPlatform) -ne 'Windows') {
     Write-Output 'DT_BUILD_USAGE: Reporting sweep is owned by Windows; Mac collection skipped.'
     exit 0
@@ -55,7 +61,7 @@ try {
     & $python2 $script2 --all-sessions --quiet
     if ($LASTEXITCODE -ne 0) { throw "collect-usage.py --all-sessions exited $LASTEXITCODE" }
 
-    $reportScript = Join-Path (Split-Path -Parent $PSCommandPath) '..\..\..\scripts\model-router\cost-report.ps1'
+    $reportScript = Join-Path $UsageRepoRoot 'scripts\model-router\cost-report.ps1'
     if (Test-Path -LiteralPath $reportScript) {
         & $reportScript | ForEach-Object { Write-Output $_ }
     }

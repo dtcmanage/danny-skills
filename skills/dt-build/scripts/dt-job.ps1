@@ -88,6 +88,12 @@ param(
     [switch]$Json
 )
 
+$DtJobSkillRoot = Split-Path -Parent $PSScriptRoot
+$DtJobResolvedSkillRoot = $null
+try { $DtJobResolvedSkillRoot = (Get-Item -LiteralPath $DtJobSkillRoot).ResolveLinkTarget($true) } catch { }
+if ($DtJobResolvedSkillRoot) { $DtJobSkillRoot = $DtJobResolvedSkillRoot.FullName }
+$DtJobRepoRoot = Split-Path -Parent (Split-Path -Parent $DtJobSkillRoot)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -119,7 +125,7 @@ $script:DtJobHeartbeatSec = 30
 $script:DtJobDelegateEscalateMin = 15
 $script:DtJobStallSec = 1200
 $script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
-$script:DtJobAlertScript = Join-Path $PSScriptRoot '..\..\..\scripts\model-router\send-router-alert.ps1'
+$script:DtJobAlertScript = Join-Path $DtJobRepoRoot 'scripts\model-router\send-router-alert.ps1'
 # The calling coordinator: -CoordinatorId, else DT_BUILD_COORDINATOR_ID; $null for anyone else.
 $script:DtJobCoordinator = $null
 # The coordinator's context report for this call; set only when the call has a coordinator.
