@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.31.0
+
+- read-evidence.ps1 takes -JobId <id> -File summary|stdout|stderr|spec|report|provenance and resolves the file from the job record, so coordinators stop guessing evidence names; a miss inside a job folder lists the files that exist, and a bare run-file name suggests its run-folder path. Status and wait envelopes carry a one-line evidence_hint.
+
 ## 2.30.1
 
 - dt-job.ps1 and collect-usage.ps1 resolve the skill folder's link target before walking up to the repo root, so dt-job's Discord alert script and the router scripts are found when dt-build runs through the Codex skill junction; the dt-job suite loads the library through a real junction and checks the fallback.
