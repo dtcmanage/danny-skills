@@ -4,8 +4,8 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 
 ## Dispatch
 
-- Resolve the worker per `SKILL.md` "Model routing" and dispatch on the returned `vendor`, either vendor.
-- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Model <model> -Mutates <worktree key> -Command "<wrapper call>"`, where the wrapper call is `scripts/invoke-claude-chunk.ps1` or `scripts/invoke-codex-chunk.ps1` with the arguments `SKILL.md` names. Add `-DependsOn <job ids>` when it must wait for other jobs. Record the returned `job_id` in `_build-state.md` in-flight work.
+- Resolve unpinned workers per `SKILL.md` "Model routing"; dt-job and wrappers enforce run pins: dispatch without `-Model` and never restate pins in handoffs.
+- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `scripts/invoke-claude-chunk.ps1` or `scripts/invoke-codex-chunk.ps1` with `SKILL.md` arguments. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md` in-flight work.
 - Run long tests, builds and browser checks as `-Kind test|command` jobs.
 - A Claude pick at the session's own effort may still use the Agent tool with the returned `agent_alias`. Any other effort goes through the wrapper as a job.
 

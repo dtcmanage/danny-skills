@@ -87,6 +87,36 @@ if (-not $Preflight -and -not $Effort) {
     exit 1
 }
 
+$runPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR
+$runPinModel = $env:DT_BUILD_RUN_PIN_MODEL
+$runPinActive = -not [string]::IsNullOrWhiteSpace($runPinVendor)
+if ($runPinActive) {
+    $pinFailure = if ($runPinVendor -ine 'codex') {
+        'CODEX_INVOKE_FAIL: RUN_PIN_VENDOR: run is pinned to ' + $runPinVendor + ' (' + $runPinModel + '); codex wrapper refused.'
+    } elseif (-not [string]::IsNullOrWhiteSpace($Model) -and $Model -cne $runPinModel) {
+        'CODEX_INVOKE_FAIL: RUN_PIN_MODEL: run is pinned to ' + $runPinModel + '; explicit model ' + $Model + ' refused.'
+    } elseif ([string]::IsNullOrWhiteSpace($runPinModel)) {
+        'CODEX_INVOKE_FAIL: RUN_PIN_MODEL: run pin model is missing.'
+    } else { $null }
+    if ($pinFailure) {
+        if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+            $pinProvenance = [ordered]@{
+                pass = $false; preflight = [bool]$Preflight; lane = 'codex'; vendor = 'codex'; tier = $Tier; effort = $Effort
+                category = $Category; requested_model = $Model; resolved_model = $null
+                router_reason = 'run pin'; selection_reason = $SelectionReason
+                output_path = $OutputPath; failure_category = 'environment'; termination_reason = $pinFailure
+                dispatched_at_utc = [datetimeoffset]::UtcNow.ToString('o')
+            }
+            $pinPath = [IO.Path]::GetFullPath("$OutputPath.provenance.json")
+            New-Item -ItemType Directory -Path (Split-Path -Parent $pinPath) -Force | Out-Null
+            [IO.File]::WriteAllText($pinPath, ($pinProvenance | ConvertTo-Json -Depth 5))
+        }
+        throw $pinFailure
+    }
+    $Model = $runPinModel
+    $SelectionReason = if ([string]::IsNullOrWhiteSpace($SelectionReason)) { 'run pin' } else { $SelectionReason + '; run pin ' + $runPinModel }
+}
+
 if (-not $Preflight) {
     if ([string]::IsNullOrWhiteSpace($PromptPath) -or -not (Test-Path -LiteralPath $PromptPath -PathType Leaf)) {
         throw "CODEX_INVOKE_FAIL: substantive invocation requires an existing -PromptPath."
@@ -259,6 +289,7 @@ else {
     $routerReason = [string]$routerPick.reason
 }
 if ($Effort) { [void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $Effort -Catalog $modelCatalog -Strict) }
+if ($runPinActive) { $routerReason = 'run pin' }
 $selectionLabel = $Category + $(if ($isProtected) { ', protected' } else { '' }) + $(if ($escalatedFrom) { ", escalated from $escalatedFrom" } else { '' })
 $disclosureLine = if ($Preflight) { $null } else {
     "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel, effort $Effort): $SelectionReason; router: $routerReason"

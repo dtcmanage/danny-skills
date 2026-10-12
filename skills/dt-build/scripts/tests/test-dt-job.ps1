@@ -79,7 +79,67 @@ function Test-ProcessGone {
 
 $exitCode = 0
 $junctionLink = $null
+$pinEnvNames = @('DT_BUILD_STATE_DIR', 'DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID', 'DT_BUILD_RUN_PIN_VENDOR', 'DT_BUILD_RUN_PIN_MODEL')
+$pinSavedEnv = @{}
+foreach ($name in $pinEnvNames) { $pinSavedEnv[$name] = [Environment]::GetEnvironmentVariable($name) }
 try {
+    $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'registry'
+    Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
+    $pinRun = New-RunFolder 'pin-run'
+    $pinState = Join-Path $pinRun '_build-state.md'
+    Write-Utf8 $pinState "updated_utc: fixture`nrun_status: runnable`nlast_consumed_event_seq: 0`n"
+    $registrationArgs = @('register-run', '-RunFolder', $pinRun, '-RunId', 'pin-run', '-BuildStatePath', $pinState, '-PinnedHost', 'codex', '-Managed')
+    $raw = & pwsh -NoProfile -File $dtJob pin -RunFolder $pinRun -Vendor codex -Model fixture *> $null
+    Assert-True ($LASTEXITCODE -ne 0) 'pin refuses an unregistered run'
+    $null = Invoke-DtJob $registrationArgs
+    foreach ($missing in @(@('-Vendor', 'codex'), @('-Model', 'fixture'))) {
+        $raw = & pwsh -NoProfile -File $dtJob pin -RunFolder $pinRun @missing 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_USAGE') 'pin requires both vendor and model'
+    }
+    $pinned = Invoke-DtJob @('pin', '-RunFolder', $pinRun, '-Vendor', 'codex', '-Model', 'gpt-fixture')
+    Assert-True ($pinned.pin.vendor -eq 'codex' -and $pinned.pin.model -eq 'gpt-fixture' -and [bool]$pinned.pin.set_utc) 'pin saves vendor model and timestamp'
+    $pinStatus = Invoke-DtJob @('status', '-RunFolder', $pinRun)
+    Assert-True ($pinStatus.pin -eq 'codex gpt-fixture') 'run status carries pin label'
+    foreach ($identity in @('DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID')) {
+        try {
+            [Environment]::SetEnvironmentVariable($identity, 'fixture')
+            $raw = & pwsh -NoProfile -File $dtJob pin -RunFolder $pinRun -Clear 2>&1
+            Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_OPERATOR_ONLY') "$identity cannot clear a pin"
+        } finally { [Environment]::SetEnvironmentVariable($identity, $null) }
+    }
+    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $pinRun -Kind worker -Vendor claude -Command "'refused'" 2>&1
+    Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_PIN_VENDOR: run is pinned to codex \(gpt-fixture\); worker vendor claude refused') 'worker vendor mismatch refused before job creation'
+    $env:DT_BUILD_RUN_PIN_VENDOR = 'claude'; $env:DT_BUILD_RUN_PIN_MODEL = 'stale'
+    foreach ($kind in @('worker', 'command')) {
+        $pinJob = Invoke-DtJob @('start', '-RunFolder', $pinRun, '-Kind', $kind, '-Vendor', 'codex', '-Command', "'pinned'")
+        $spec = Get-Content -Raw (Join-Path $pinRun "jobs/$($pinJob.job_id)/spec.json") | ConvertFrom-Json
+        Assert-True ($spec.environment.DT_BUILD_RUN_PIN_VENDOR -eq 'codex' -and $spec.environment.DT_BUILD_RUN_PIN_MODEL -eq 'gpt-fixture') "$kind spec carries authoritative registry pin"
+        $null = Wait-JobTerminal $pinRun $pinJob.job_id
+        $pinWait = Invoke-DtJob @('wait', '-RunFolder', $pinRun, '-JobId', $pinJob.job_id, '-All', '-TimeoutSec', '1')
+        Assert-True ($pinWait.pin -eq 'codex gpt-fixture') "$kind wait carries pin label"
+    }
+    $null = Invoke-DtJob @('lease', '-RunFolder', $pinRun, '-Action', 'acquire', '-CoordinatorId', 'pin-reader', '-Host', 'codex', '-LaunchedBy', 'watcher')
+    $resumeArgs = @('-RunFolder', $pinRun, '-RunId', 'pin-run', '-BuildStatePath', $pinState, '-CoordinatorId', 'pin-reader')
+    $resumeRaw = & pwsh -NoProfile -File (Join-Path $scriptDir 'read-resume-record.ps1') @resumeArgs
+    $resume = ($resumeRaw -join "`n") | ConvertFrom-Json
+    Assert-True ($LASTEXITCODE -eq 0 -and $resume.pin.model -eq 'gpt-fixture') 'resume record carries top-level pin object'
+    $null = Invoke-DtJob @('pin', '-RunFolder', $pinRun, '-Clear')
+    $pinStatus = Invoke-DtJob @('status', '-RunFolder', $pinRun)
+    Assert-True ($null -eq $pinStatus.pin) 'clear removes registry pin and status is null'
+    $resumeRaw = & pwsh -NoProfile -File (Join-Path $scriptDir 'read-resume-record.ps1') @resumeArgs
+    $resume = ($resumeRaw -join "`n") | ConvertFrom-Json
+    Assert-True ($LASTEXITCODE -eq 0 -and $null -eq $resume.pin) 'resume record pin is null after clear'
+    $registered = Invoke-DtJob ($registrationArgs + @('-PinVendor', 'claude', '-PinModel', 'claude-fixture'))
+    Assert-True ($registered.pin.vendor -eq 'claude' -and $registered.pin.model -eq 'claude-fixture') 'register-run stores a pin'
+    $registered = Invoke-DtJob $registrationArgs
+    Assert-True ($registered.pin.model -eq 'claude-fixture') 're-registration preserves operator pin'
+    $null = Invoke-DtJob @('pin', '-RunFolder', $pinRun, '-Clear')
+    $pinJob = Invoke-DtJob @('start', '-RunFolder', $pinRun, '-Command', "'unpinned'")
+    $spec = Get-Content -Raw (Join-Path $pinRun "jobs/$($pinJob.job_id)/spec.json") | ConvertFrom-Json
+    Assert-True (-not $spec.environment.PSObject.Properties['DT_BUILD_RUN_PIN_VENDOR'] -and -not $spec.environment.PSObject.Properties['DT_BUILD_RUN_PIN_MODEL']) 'unpinned registry removes inherited pin hints'
+    $null = Wait-JobTerminal $pinRun $pinJob.job_id
+    foreach ($name in $pinEnvNames) { [Environment]::SetEnvironmentVariable($name, $pinSavedEnv[$name]) }
+
     # Live discovery uses the actual Git admin directory, not the ledger or tree file timestamps.
     $treeRepo = New-RunFolder 'tree-repo'
     $treeRun = Join-Path $treeRepo '.dt-build/run'
@@ -646,6 +706,7 @@ catch {
     $exitCode = 1
 }
 finally {
+    foreach ($name in $pinEnvNames) { [Environment]::SetEnvironmentVariable($name, $pinSavedEnv[$name]) }
     Write-Output "SUMMARY: $script:passed passed"
     # Unlink only: a recursive delete would follow the junction into the real skill folder.
     if ($junctionLink -and [IO.Directory]::Exists($junctionLink)) { [IO.Directory]::Delete($junctionLink) }

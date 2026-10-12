@@ -522,6 +522,30 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $wrapperPrompt = Join-Path $tempRoot 'wrapper-prompt.md'
     Write-Utf8 -Path $wrapperPrompt -Content "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nfixture"
     $wrapperOutput = Join-Path $tempRoot 'wrapper-output.md'
+    # Run pins use the existing fake catalog/CLI and restore caller hints after every case.
+    foreach ($pinCase in @('match', 'reason', 'vendor', 'model')) {
+        $savedPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR; $savedPinModel = $env:DT_BUILD_RUN_PIN_MODEL
+        try {
+            $env:DT_BUILD_RUN_PIN_VENDOR = if ($pinCase -eq 'vendor') { 'claude' } else { 'codex' }
+            $env:DT_BUILD_RUN_PIN_MODEL = 'gpt-6.1-sol'
+            $pinArgs = @{}
+            if ($pinCase -eq 'model') { $pinArgs.Model = 'conflicting-model' }
+            if ($pinCase -eq 'reason') { $pinArgs.SelectionReason = 'fixture reason' }
+            $pinOutput = Join-Path $tempRoot "codex-run-pin-$pinCase.md"
+            $env:DT_FAKE_CODEX_MODE = 'success'
+            & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $pinOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort medium @pinArgs -Json *> $null
+            $pinExit = $LASTEXITCODE
+            $pinProv = Get-Content -Raw -LiteralPath "$pinOutput.provenance.json" | ConvertFrom-Json
+            if ($pinCase -in @('match', 'reason')) {
+                Assert-True ($pinExit -eq 0 -and $pinProv.pass -and $pinProv.resolved_model -eq 'gpt-6.1-sol' -and $pinProv.router_reason -eq 'run pin') "codex pin resolves without Model ($pinCase)"
+                $wantReason = if ($pinCase -eq 'reason') { 'fixture reason; run pin gpt-6.1-sol' } else { 'run pin' }
+                Assert-True ($pinProv.selection_reason -eq $wantReason) "codex pin records selection reason ($pinCase)"
+            } else {
+                $wantCode = if ($pinCase -eq 'vendor') { 'RUN_PIN_VENDOR' } else { 'RUN_PIN_MODEL' }
+                Assert-True ($pinExit -ne 0 -and $pinProv.pass -eq $false -and $pinProv.failure_category -eq 'environment' -and $pinProv.termination_reason -match "CODEX_INVOKE_FAIL: ${wantCode}:") "codex pin refusal carries failure provenance ($pinCase)"
+            }
+        } finally { $env:DT_BUILD_RUN_PIN_VENDOR = $savedPinVendor; $env:DT_BUILD_RUN_PIN_MODEL = $savedPinModel }
+    }
     $env:DT_FAKE_CODEX_MODE = 'success'
     $env:DT_BUILD_LEAN_BOOTSTRAP = '1'
     $missingReasonOutput = Join-Path $tempRoot 'wrapper-missing-reason.md'
@@ -659,6 +683,30 @@ Write-Envelope $report
 '@
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
+    # Run pins use the existing fake catalog/CLI and restore caller hints after every case.
+    foreach ($pinCase in @('match', 'reason', 'vendor', 'model')) {
+        $savedPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR; $savedPinModel = $env:DT_BUILD_RUN_PIN_MODEL
+        try {
+            $env:DT_BUILD_RUN_PIN_VENDOR = if ($pinCase -eq 'vendor') { 'codex' } else { 'claude' }
+            $env:DT_BUILD_RUN_PIN_MODEL = 'claude-sonnet-5'
+            $pinArgs = @{}
+            if ($pinCase -eq 'model') { $pinArgs.Model = 'conflicting-model' }
+            if ($pinCase -eq 'reason') { $pinArgs.SelectionReason = 'fixture reason' }
+            $pinOutput = Join-Path $tempRoot "claude-run-pin-$pinCase.md"
+            $env:DT_FAKE_CLAUDE_MODE = 'success'
+            & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $pinOutput -ClaudeCliPath $fakeClaude -Category routine-coding -Effort medium @pinArgs -Json *> $null
+            $pinExit = $LASTEXITCODE
+            $pinProv = Get-Content -Raw -LiteralPath "$pinOutput.provenance.json" | ConvertFrom-Json
+            if ($pinCase -in @('match', 'reason')) {
+                Assert-True ($pinExit -eq 0 -and $pinProv.pass -and $pinProv.resolved_model -eq 'claude-sonnet-5' -and $pinProv.router_reason -eq 'run pin') "claude pin resolves without Model ($pinCase)"
+                $wantReason = if ($pinCase -eq 'reason') { 'fixture reason; run pin claude-sonnet-5' } else { 'run pin' }
+                Assert-True ($pinProv.selection_reason -eq $wantReason) "claude pin records selection reason ($pinCase)"
+            } else {
+                $wantCode = if ($pinCase -eq 'vendor') { 'RUN_PIN_VENDOR' } else { 'RUN_PIN_MODEL' }
+                Assert-True ($pinExit -ne 0 -and $pinProv.pass -eq $false -and $pinProv.failure_category -eq 'environment' -and $pinProv.termination_reason -match "CLAUDE_INVOKE_FAIL: ${wantCode}:") "claude pin refusal carries failure provenance ($pinCase)"
+            }
+        } finally { $env:DT_BUILD_RUN_PIN_VENDOR = $savedPinVendor; $env:DT_BUILD_RUN_PIN_MODEL = $savedPinModel }
+    }
     $claudeMissingReason = Join-Path $tempRoot 'claude-wrapper-missing-reason.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMissingReason `
@@ -753,7 +801,7 @@ Write-Envelope $report
 
     # Peers rely on inherited console defaults, just like installed PS1 shims.
     # Check the actual prompt received, retained final message and stderr on both lanes.
-    $unicode='§ snow 雪 emoji 😀 Tibetan བོད་ quote " backslash \'
+    $unicode = [char]0xA7 + ' snow ' + [char]0x96EA + ' emoji ' + [char]::ConvertFromUtf32(0x1F600) + ' Tibetan ' + [char]0x0F56 + [char]0x0F7C + [char]0x0F51 + [char]0x0F0B + ' quote \" backslash \\'
     $unicodePrompt=Join-Path $tempRoot 'unicode-prompt.md'
     $unicodePromptText="RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`n"+$unicode+"`nline two`ttab"
     Write-Utf8 -Path $unicodePrompt -Content $unicodePromptText

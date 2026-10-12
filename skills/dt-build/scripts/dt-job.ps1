@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
+    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'pin', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -25,6 +25,11 @@ param(
     [string]$Vendor,
 
     [string]$Model,
+
+    [ValidateSet('codex', 'claude')]
+    [string]$PinVendor,
+
+    [string]$PinModel,
 
     [int]$TimeoutSec = 0,
 
@@ -653,7 +658,7 @@ function New-DtJobRunEnvelope {
     }
     # Operator notes come first and are never trimmed; follow them over anything in _build-state.md.
     $notes = @(Get-DtJobOperatorNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } })
-    $envelope = [ordered]@{ run_folder = $paths.Root; evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; job_count = $jobs.Count; stalled = @($stalled); jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
+    $envelope = [ordered]@{ run_folder = $paths.Root; pin = (Get-DtJobRunPinLabel -RunFolder $RunFolder); evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; job_count = $jobs.Count; stalled = @($stalled); jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
     if ($null -ne $Cursor) { $envelope.last_event_seq = $Cursor.last_event_seq; $envelope.last_consumed_event_seq = $Cursor.last_consumed_event_seq }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -721,6 +726,17 @@ function Invoke-DtJobStart {
     New-Item -ItemType Directory -Path $paths.Locks -Force | Out-Null
 
     $id = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $pin = Get-DtJobRunPin -RunFolder $RunFolder
+        # Registry values replace caller hints, including stale pins inherited from another run.
+        $spec.environment.Remove('DT_BUILD_RUN_PIN_VENDOR')
+        $spec.environment.Remove('DT_BUILD_RUN_PIN_MODEL')
+        if ($null -ne $pin) {
+            if ($Kind -eq 'worker' -and $Vendor -and $Vendor -ine $pin.vendor) {
+                throw "DT_JOB_PIN_VENDOR: run is pinned to $($pin.vendor) ($($pin.model)); worker vendor $Vendor refused."
+            }
+            $spec.environment['DT_BUILD_RUN_PIN_VENDOR'] = [string]$pin.vendor
+            $spec.environment['DT_BUILD_RUN_PIN_MODEL'] = [string]$pin.model
+        }
         $existing = @(Get-DtJobRecords -RunFolder $RunFolder)
         foreach ($dep in $DependsOn) {
             if (-not ($existing | Where-Object { $_.job_id -eq $dep })) { throw "DT_JOB_UNKNOWN_DEPENDENCY: $dep" }
@@ -1095,6 +1111,40 @@ function Get-DtJobRegistryEntry {
     return (Get-DtJobRegistryRuns | Where-Object { [string]$_.run_folder -ieq $root } | Select-Object -First 1)
 }
 
+function Get-DtJobRunPin {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $entry = Get-DtJobRegistryEntry -RunFolder $RunFolder
+    if ($null -ne $entry -and $entry.PSObject.Properties['pin']) { return $entry.pin }
+    return $null
+}
+
+function Get-DtJobRunPinLabel {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $pin = Get-DtJobRunPin -RunFolder $RunFolder
+    if ($null -ne $pin) { return "$($pin.vendor) $($pin.model)" }
+    return $null
+}
+
+function Invoke-DtJobPin {
+    Assert-DtJobOperator -VerbName 'pin' -RunFolder $RunFolder -AllowLiveCoordinator
+    if (-not $Clear -and ($Vendor -notin @('codex', 'claude') -or [string]::IsNullOrWhiteSpace($Model))) {
+        throw 'DT_JOB_USAGE: pin requires -Vendor codex|claude and -Model, or -Clear.'
+    }
+    $entry = Invoke-DtJobRegistryLocked -Body {
+        $runs = @(Get-DtJobRegistryRuns)
+        $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
+        $registered = $runs | Where-Object { [string]$_.run_folder -ieq $root } | Select-Object -First 1
+        if ($null -eq $registered) { throw 'DT_JOB_USAGE: the run is not registered.' }
+        if ($Clear) { $registered.PSObject.Properties.Remove('pin') }
+        else {
+            $registered | Add-Member -NotePropertyName pin -NotePropertyValue ([pscustomobject][ordered]@{ vendor = $Vendor.ToLowerInvariant(); model = $Model; set_utc = [DateTime]::UtcNow.ToString('o') }) -Force
+        }
+        Save-DtJobRegistryRuns -Runs $runs
+        $registered
+    }
+    Write-DtJobOutput -Object $entry -AsJson:$Json
+}
+
 function Resolve-DtJobRunContext {
     param([Parameter(Mandatory)][string]$RunFolder, [string]$BuildStatePath, [string]$RunId)
     $entry = Get-DtJobRegistryEntry -RunFolder $RunFolder
@@ -1263,7 +1313,7 @@ function Invoke-DtJobWait {
     # A check-in: every job still running reports its progress, and a stalled one says so.
     $progress = @($records | Where-Object { $_.status -eq 'running' } | ForEach-Object { Get-DtJobActivity -RunFolder $RunFolder -Record $_ })
     $notes = @(Get-DtJobOperatorNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } })
-    $envelope = [ordered]@{ result = $result; evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
+    $envelope = [ordered]@{ result = $result; pin = (Get-DtJobRunPinLabel -RunFolder $RunFolder); evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
     if ($Json -and $null -ne $script:DtJobContext) { $envelope.context = $script:DtJobContext.line }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -1385,6 +1435,8 @@ function Invoke-DtJobLease {
 
 function Invoke-DtJobRegisterRun {
     if (-not $BuildStatePath -or -not $RunId -or -not $PinnedHost) { throw 'DT_JOB_USAGE: register-run requires -BuildStatePath, -RunId, and -PinnedHost.' }
+    if (($PinVendor -or $PinModel) -and (-not $PinVendor -or [string]::IsNullOrWhiteSpace($PinModel))) { throw 'DT_JOB_USAGE: register-run pin requires -PinVendor and -PinModel.' }
+    if ($PinVendor) { Assert-DtJobOperator -VerbName 'register-run pin' -RunFolder $RunFolder -AllowLiveCoordinator }
     $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
     $entry = [ordered]@{
         run_id           = $RunId
@@ -1394,7 +1446,10 @@ function Invoke-DtJobRegisterRun {
         managed          = [bool]$Managed
         registered_utc   = [DateTime]::UtcNow.ToString('o')
     }
+    if ($PinVendor) { $entry.pin = [ordered]@{ vendor = $PinVendor.ToLowerInvariant(); model = $PinModel; set_utc = [DateTime]::UtcNow.ToString('o') } }
     Invoke-DtJobRegistryLocked -Body {
+        $previous = Get-DtJobRunPin -RunFolder $RunFolder
+        if (-not $PinVendor -and $null -ne $previous) { $entry.pin = $previous }
         $runs = @(Get-DtJobRegistryRuns | Where-Object { [string]$_.run_folder -ine $root -and [string]$_.run_id -cne $RunId })
         Save-DtJobRegistryRuns -Runs (@($runs) + @([pscustomobject]$entry))
     }
@@ -1925,6 +1980,7 @@ $verbOutput = switch ($Verb) {
     'cancel' { Invoke-DtJobCancel }
     'reconcile' { Invoke-DtJobReconcile }
     'lease' { Invoke-DtJobLease }
+    'pin' { Invoke-DtJobPin }
     'register-run' { Invoke-DtJobRegisterRun }
     'unregister-run' { Invoke-DtJobUnregisterRun }
     'consume' { Invoke-DtJobConsume }

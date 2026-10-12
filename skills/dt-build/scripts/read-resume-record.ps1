@@ -40,4 +40,4 @@ if (Test-Path -LiteralPath $launchPath) {
     }
 }
 $worktrees = [ordered]@{ recorded = @(Get-DtJobWorktrees -RunFolder $ResumeRunFolder | Select-Object -First 20); live_since_run_start = @(if ($null -ne $firstLaunch) { Get-DtJobLiveWorktrees -RunFolder $ResumeRunFolder -SinceUtc $firstLaunch | Select-Object -First 20 }) }
-[ordered]@{ registration = $entry; lease = $lease; state = $state; approvals = (Get-DtJobApprovals -RunFolder $ResumeRunFolder); operator_notes = @(Get-DtJobOperatorNotes -RunFolder $ResumeRunFolder); context_wall = $wall; kill_handoff = $killHandoff; worktrees = $worktrees } | ConvertTo-Json -Depth 10
+[ordered]@{ pin = (Get-DtJobRunPin -RunFolder $ResumeRunFolder); registration = $entry; lease = $lease; state = $state; approvals = (Get-DtJobApprovals -RunFolder $ResumeRunFolder); operator_notes = @(Get-DtJobOperatorNotes -RunFolder $ResumeRunFolder); context_wall = $wall; kill_handoff = $killHandoff; worktrees = $worktrees } | ConvertTo-Json -Depth 10
