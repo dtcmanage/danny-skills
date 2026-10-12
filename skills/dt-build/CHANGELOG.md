@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.33.0
+
+- Run-level worker pin: dt-job pin -Vendor codex|claude -Model <id> (operator-only, or -PinVendor/-PinModel on register-run) stores the pin on the registration; dt-job start refuses a worker on the other vendor and passes DT_BUILD_RUN_PIN_VENDOR/MODEL to every job; both chunk wrappers dispatch on the pinned model without -Model and fail closed on a conflicting vendor or model; status, wait and read-resume-record show the pin, so handoffs no longer restate it.
+
 ## 2.32.0
 
 - Every launch row records a checkpoint fingerprint (SHA-256 of the Next step section). The watcher stops a run after two consecutive launches that made no progress on an unchanged fingerprint, instead of waiting for six in an hour; the Discord alert names the coordinators and the last five commands of the dying one. Resume re-arms it like the other caps.
