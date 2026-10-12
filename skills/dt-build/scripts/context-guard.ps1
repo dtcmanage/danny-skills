@@ -100,8 +100,9 @@ function Get-DtCtxTokens {
             }
             [System.Array]::Copy($carry, 0, $block, $size, $carry.Length)
             $end = $block.Length
-            for ($i = $block.Length - 1; $i -ge 0; $i--) {
-                if ($block[$i] -ne 10) { continue }
+            while ($end -gt 0) {
+                $i = [System.Array]::LastIndexOf([byte[]]$block, [byte]10, $end - 1)
+                if ($i -lt 0) { break }
                 if ($end - $i - 1 -gt 0) {
                     $tokens = ConvertFrom-DtCtxLine -TranscriptHost $TranscriptHost -Line ([System.Text.Encoding]::UTF8.GetString($block, $i + 1, $end - $i - 1))
                     if ($null -ne $tokens) { return [long]$tokens }

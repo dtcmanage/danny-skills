@@ -587,7 +587,7 @@ if($env:DT_FAKE_UNICODE_TEXT){
 
     $env:DT_FAKE_CODEX_MODE = 'hang'
     $hangPrompt = Join-Path $tempRoot 'wrapper-hang-prompt.md'
-    Write-Utf8 -Path $hangPrompt -Content ("RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`n" + ('x' * 2097152))
+    Write-Utf8 -Path $hangPrompt -Content ("RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`n" + ('x' * 300000))
     $hangOutput = Join-Path $tempRoot 'wrapper-hang.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $hangPrompt -OutputPath $hangOutput `
@@ -596,6 +596,14 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $hangProv = Get-Content -Raw -LiteralPath "$hangOutput.provenance.json" | ConvertFrom-Json
     Assert-True (-not [bool]$hangProv.pass) "timeout failure provenance claimed PASS"
     Assert-True ([string]$hangProv.termination_reason -match 'TIMEOUT') "timeout failure provenance lacked termination reason"
+    $oversizedPrompt = Join-Path $tempRoot 'wrapper-oversized-prompt.md'
+    Write-Utf8 -Path $oversizedPrompt -Content ("RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`n" + ('x' * 400001))
+    $oversizedOutput = Join-Path $tempRoot 'wrapper-oversized.md'; $oversizedLog = Join-Path $tempRoot 'wrapper-oversized.log'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
+        -ProjectPath $workingTree -PromptPath $oversizedPrompt -OutputPath $oversizedOutput `
+        -CodexCliPath $fakeCodex -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -TimeoutMs 1000 -Json *> $oversizedLog
+    Assert-True ($LASTEXITCODE -ne 0) "oversized Codex prompt was accepted"
+    Assert-True ((Get-Content -Raw -LiteralPath $oversizedLog) -match 'PROMPT_TOO_LARGE') "oversized Codex prompt failure lacked size guard reason"
     Remove-Item Env:DT_FAKE_CODEX_MODE -ErrorAction SilentlyContinue
 
     # Claude-lane wrapper mirrors the Codex wrapper contract: attempt cap,
