@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.30.1
+
+- dt-job.ps1 and collect-usage.ps1 resolve the skill folder's link target before walking up to the repo root, so dt-job's Discord alert script and the router scripts are found when dt-build runs through the Codex skill junction; the dt-job suite loads the library through a real junction and checks the fallback.
+
 ## 2.30.0
 
 - Job summaries and the status, wait and check-in envelopes carry report_verdict (the worker report's VERDICT), failure_category and wrapper_pass from the wrapper's provenance; a succeeded job whose report says FAIL or BLOCKED, or whose wrapper reported failure, now reads verdict fail with a blocker naming the report. Coordinators no longer open each report to learn the outcome.
