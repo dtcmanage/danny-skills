@@ -693,7 +693,11 @@ function Stop-WatcherProcessTree { param(`$ProcessId) `$script:alive = `$false }
         Job @('request-continuation','-RunFolder',$r.folder) | Out-Null
         $now = [DateTime]::UtcNow
         $dmBefore = Dms
-        foreach ($seconds in @(0,121,722,2523,2600)) { Tick ($now.AddSeconds($seconds)) }
+        foreach ($seconds in @(0,121,722,2523,2600)) {
+            # Exercise the retry ceiling independently of the unchanged-checkpoint stop.
+            [IO.File]::AppendAllText($r.state, "`nRetry instruction $seconds`n")
+            Tick ($now.AddSeconds($seconds))
+        }
         Assert ((Launches $r) -eq 4) 'failed launch retry schedule'
         Assert-Dms ($dmBefore + 1) 'expected exactly one retries-stop DM'
         $stopNotices = @(Rows (Join-Path $r.folder 'notifications.jsonl'))

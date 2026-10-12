@@ -25,6 +25,7 @@ $script:WatcherRetryDelaysMin = @(2, 10, 30)
 $script:WatcherMaxAttempts = $script:WatcherRetryDelaysMin.Count + 1
 # Only launches without a ledger-proven productive predecessor spend the thrash budget.
 $script:WatcherRunLaunchCap = 6
+$script:WatcherConsecutiveThrashLaunches = 2
 $script:WatcherAbsoluteLaunchCap = 30
 $script:WatcherRunLaunchWindowMin = 60
 # One retry of a failed registry read, this long after the first attempt, before it counts as an error.
@@ -77,6 +78,43 @@ function Add-WatcherLaunch {
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Record)
     $path = (Get-DtJobPaths -RunFolder $RunFolder).Launches
     [System.IO.File]::AppendAllText($path, (($Record | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
+}
+
+function Get-WatcherCheckpointFingerprint {
+    param([Parameter(Mandatory)][string]$BuildStatePath)
+    if (-not (Test-Path -LiteralPath $BuildStatePath -PathType Leaf)) { return $null }
+    try {
+        $text = Read-DtJobText -Path $BuildStatePath
+        $section = [regex]::Match($text, '(?ms)^## Next step[ \t]*(?:\r?\n|\z).*?(?=^## |\z)')
+        if ($section.Success) { $text = $section.Value.Trim() }
+        else { return (Get-FileHash -LiteralPath $BuildStatePath -Algorithm SHA256).Hash.ToLowerInvariant() }
+        return [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($text))).ToLowerInvariant()
+    }
+    catch {
+        try { return (Get-FileHash -LiteralPath $BuildStatePath -Algorithm SHA256).Hash.ToLowerInvariant() }
+        catch { return $null }
+    }
+}
+
+function Get-WatcherLastCommands {
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$CoordinatorId, [int]$Count = 5)
+    $path = Join-Path $RunFolder "coordinator-$CoordinatorId.log"
+    if (-not (Test-Path -LiteralPath $path) -or $Count -le 0) { return '' }
+    try {
+        $commands = [System.Collections.Generic.List[string]]::new()
+        $pending = $false
+        foreach ($line in ((ConvertTo-DtJobReadableText -Text (Read-DtJobText -Path $path)) -split '\r?\n')) {
+            if ($line -match '^exec(?:\s|$)') { $pending = $true; continue }
+            if ($pending -and $line.Trim()) {
+                $command = $line.Trim()
+                if ($command.Length -gt 160) { $command = $command.Substring(0, 157) + '...' }
+                $commands.Add($command)
+                $pending = $false
+            }
+        }
+        return (@($commands | Select-Object -Last $Count) -join ' | ')
+    }
+    catch { return '' }
 }
 
 function Get-WatcherInteractiveDmSeq {
@@ -197,6 +235,22 @@ function Get-WatcherDecision {
         return [pscustomobject]@{ action = 'stop'; stop_kind = 'ceiling'; trigger_seq = $trigger; detail = "absolute safety ceiling: $($recent.Count) launches in the last $($script:WatcherRunLaunchWindowMin) minutes, including productive rotations" }
     }
     $events = @(Get-DtJobEvents -RunFolder $folder)
+    $fingerprint = Get-WatcherCheckpointFingerprint -BuildStatePath $statePath
+    if ($fingerprint -and $launches.Count -ge $script:WatcherConsecutiveThrashLaunches) {
+        $consecutive = $true
+        $start = $launches.Count - $script:WatcherConsecutiveThrashLaunches
+        for ($i = $start; $i -lt $launches.Count; $i++) {
+            $successor = if ($i + 1 -lt $launches.Count) { $launches[$i + 1] } else { [pscustomobject]@{ launched_utc = $NowUtc.ToString('o'); trigger_seq = $trigger } }
+            if (-not $launches[$i].PSObject.Properties['checkpoint_sha256'] -or
+                $launches[$i].checkpoint_sha256 -cne $fingerprint -or
+                (Test-WatcherProductivePredecessor -Predecessor $launches[$i] -Successor $successor -Events $events -Cursor $state.last_consumed_event_seq)) { $consecutive = $false; break }
+        }
+        if ($consecutive) {
+            $ids = @($launches | Select-Object -Last $script:WatcherConsecutiveThrashLaunches | ForEach-Object { [string]$_.coordinator_id })
+            $prefix = $fingerprint.Substring(0, 12)
+            return [pscustomobject]@{ action = 'stop'; stop_kind = 'thrash'; trigger_seq = $trigger; coordinator_ids = $ids; checkpoint_prefix = $prefix; detail = "$($ids.Count) consecutive thrash launches on checkpoint $prefix ($($ids -join ', '))" }
+        }
+    }
     $thrash = 0
     for ($i = 0; $i -lt $launches.Count; $i++) {
         if ((ConvertTo-DtJobUtc $launches[$i].launched_utc) -le $windowStart) { continue }
@@ -306,6 +360,7 @@ function Invoke-WatcherLaunch {
     }
     $coordinatorId = 'mc-{0}-{1}' -f $NowUtc.ToString('yyyyMMddHHmmss'), ([guid]::NewGuid().ToString('N').Substring(0, 6))
     $launcherExit = $null
+    $checkpointFingerprint = Get-WatcherCheckpointFingerprint -BuildStatePath ([string]$Entry.build_state_path)
     # The launcher runs under this tick's coordinator.lock, so its lease acquire must not wait on that lock.
     $env:DT_BUILD_COORDINATOR_LOCK_HELD = $folder
     try {
@@ -317,7 +372,7 @@ function Invoke-WatcherLaunch {
     $lease = Get-DtJobLease -RunFolder $folder
     $launchedPid = if ($null -ne $lease -and $lease.coordinator_id -eq $coordinatorId) { $lease.pid } else { $null }
     # Every attempt counts toward the retry schedule, including one whose launcher failed.
-    Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'launch'; trigger_seq = $Decision.trigger_seq; host = $chosen; attempt = $Decision.attempt; launched_utc = $NowUtc.ToString('o'); pid = $launchedPid; coordinator_id = $coordinatorId; launcher_exit = $launcherExit })
+    Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'launch'; trigger_seq = $Decision.trigger_seq; host = $chosen; attempt = $Decision.attempt; launched_utc = $NowUtc.ToString('o'); pid = $launchedPid; coordinator_id = $coordinatorId; launcher_exit = $launcherExit; checkpoint_sha256 = $checkpointFingerprint })
     return "launched $chosen attempt $($Decision.attempt) as $coordinatorId"
 }
 
@@ -332,7 +387,7 @@ function Invoke-WatcherStop {
         if ($last -ne $Decision.trigger_seq -or $state.last_consumed_event_seq -ge $Decision.trigger_seq) {
             # Danny's resume beat a cap stop: restart the cap window so the next tick does not stop the run again.
             $resumed = @(Get-DtJobEvents -RunFolder $folder | Where-Object { [int64]$_.seq -gt [int64]$Decision.trigger_seq -and $_.type -eq 'continuation_requested' -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'resume' })
-            if ($Decision.stop_kind -in @('cap', 'ceiling') -and $resumed.Count -gt 0) {
+            if ($Decision.stop_kind -in @('cap', 'ceiling', 'thrash') -and $resumed.Count -gt 0) {
                 Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'rearmed'; trigger_seq = $Decision.trigger_seq; rearmed_utc = $NowUtc.ToString('o'); reason = "resume at event $($resumed[-1].seq) beat the cap stop" })
             }
             return "event $last, cursor $($state.last_consumed_event_seq)"
@@ -343,7 +398,18 @@ function Invoke-WatcherStop {
     if ($blocker) { return "changed under run lock: $blocker" }
     Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'stopped'; trigger_seq = $Decision.trigger_seq; stopped_utc = $NowUtc.ToString('o'); reason = $Decision.stop_kind })
     $runId = [string]$Entry.run_id
-    if ($Decision.stop_kind -eq 'cap') {
+    if ($Decision.stop_kind -eq 'thrash') {
+        $ids = @($Decision.coordinator_ids)
+        $lastId = $ids[-1]
+        $commands = Get-WatcherLastCommands -RunFolder $folder -CoordinatorId $lastId -Count 5
+        $prefix = "dt-build run $runId is paused: $($ids.Count) coordinators in a row ($($ids -join ', ')) made no progress on the same checkpoint next step ($($Decision.checkpoint_prefix)). Last commands of ${lastId}: "
+        $suffix = ". Fix the next step in _build-state.md, then restart it with: /dt-build resume $runId"
+        $limit = [math]::Max(0, 1499 - $prefix.Length - $suffix.Length)
+        if ($commands.Length -gt $limit) { $commands = $commands.Substring(0, $limit) }
+        $text = $prefix + $commands + $suffix
+        $key = "dt-build:${runId}:launch-thrash:$($Decision.trigger_seq)"
+    }
+    elseif ($Decision.stop_kind -eq 'cap') {
         $text = "dt-build run $runId is paused for coordinator thrash: $($Decision.detail). Failed bootstraps, crashes, unconsumed triggers, and rotations with no new jobs count; productive rotations do not. Evidence is in $folder (launches.jsonl and jobs/events.jsonl). After checking, restart it with: /dt-build resume $runId"
         $key = "dt-build:${runId}:launch-cap:$($Decision.trigger_seq)"
     }

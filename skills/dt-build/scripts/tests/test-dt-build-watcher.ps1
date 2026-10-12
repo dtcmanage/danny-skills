@@ -737,6 +737,7 @@ try {
         @(1800, 3), @(2521, 3), @(2523, 4)
     )
     foreach ($step in $schedule) {
+        Write-Utf8 $run.state ((Get-Content -Raw $run.state) -replace '__NEXT_STEP__.*', "__NEXT_STEP__$($step[0])")
         Invoke-Tick -NowUtc $t0.AddSeconds($step[0]) | Out-Null
         Assert-True ((Get-LaunchCount 'retry') -eq $step[1]) "at +$($step[0]) s expected $($step[1]) launches, got $(Get-LaunchCount 'retry')"
     }
@@ -1211,11 +1212,121 @@ $result | ConvertTo-Json -Compress
     $tick = @(Invoke-Tick -NowUtc $now.AddSeconds(10))[0]
     Assert-True ($tick.action -eq 'launch') 'resume re-arms the absolute ceiling too'
 
+    # ---- fingerprint and command helpers, including older launch rows.
+    Use-Scenario 'fingerprint'
+    $helperProbe = Join-Path $tempRoot 'fingerprint.ps1'
+    Write-Utf8 $helperProbe @'
+param([string]$WatcherScript, [string]$Root)
+. $WatcherScript
+$path = Join-Path $Root 'fingerprint.md'
+[IO.File]::WriteAllText($path, "## Other`nfirst`n## Next step`nDo the work.`n## Later`nlast`n")
+$first = Get-WatcherCheckpointFingerprint $path
+[IO.File]::WriteAllText($path, "## Other`nchanged`n## Next step`nDo the work.`n## Later`nchanged`n")
+$same = Get-WatcherCheckpointFingerprint $path
+$expected = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("## Next step`nDo the work."))).ToLowerInvariant()
+[IO.File]::WriteAllText($path, "## Other`nwhole file`n")
+$whole = Get-WatcherCheckpointFingerprint $path
+$raw = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText((Join-Path $Root 'coordinator-clip.log'), ((1..7 | ForEach-Object { "exec`n`ncommand-$_ " + ('x' * 200) }) -join "`n"))
+$commands = Get-WatcherLastCommands -RunFolder $Root -CoordinatorId clip
+[ordered]@{ section = ($first -ceq $expected); stable = ($first -ceq $same); fallback = ($whole -ceq $raw); missing = ($null -eq (Get-WatcherCheckpointFingerprint (Join-Path $Root 'missing.md'))); commands = $commands; missing_log = (Get-WatcherLastCommands -RunFolder $Root -CoordinatorId missing) } | ConvertTo-Json -Compress
+'@
+    $helpers = (& pwsh -NoProfile -File $helperProbe -WatcherScript $watcher -Root $tempRoot | Select-Object -Last 1) | ConvertFrom-Json
+    foreach ($check in @('section', 'stable', 'fallback', 'missing')) { Assert-True $helpers.$check "checkpoint fingerprint: $check" }
+    $commands = @($helpers.commands -split ' \| ')
+    Assert-True ($commands.Count -eq 5 -and $commands[0].StartsWith('command-3') -and $commands[-1].StartsWith('command-7') -and @($commands | Where-Object { $_.Length -ne 160 }).Count -eq 0 -and $helpers.missing_log -eq '') 'command helper retains the last five, clips each, and tolerates missing logs'
+
+    # ---- consecutive thrash judges the last launches, including the most recent episode.
+    $decisionProbe = Join-Path $tempRoot 'consecutive-decision.ps1'
+    Write-Utf8 $decisionProbe @'
+param([string]$WatcherScript, [string]$FixtureFolder, [string]$FixtureStatePath, [DateTime]$CheckAtUtc)
+. $WatcherScript
+$fingerprint = Get-WatcherCheckpointFingerprint -BuildStatePath $FixtureStatePath
+$rows = @(Get-WatcherLaunches -RunFolder $FixtureFolder)
+foreach ($row in $rows) { $row | Add-Member -NotePropertyName checkpoint_sha256 -NotePropertyValue $fingerprint }
+[IO.File]::WriteAllText((Join-Path $FixtureFolder 'launches.jsonl'), (($rows | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join "`n") + "`n")
+$entry = [pscustomobject]@{ run_folder = $FixtureFolder; build_state_path = $FixtureStatePath; managed = $true }
+Get-WatcherDecision -Entry $entry -NowUtc $CheckAtUtc | ConvertTo-Json -Compress
+'@
+    foreach ($productiveIndex in @(0, 2)) {
+        Use-Scenario "consecutive-productive-$productiveIndex"
+        $run = New-Run -Name "consecutive-productive-$productiveIndex" -NoLease
+        $now = [DateTime]::UtcNow
+        Seed-RotationHistory -Run $run -Count 3 -NowUtc $now
+        $events = @(Get-Content (Join-Path $run.folder 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+        for ($i = 0; $i -lt 3; $i++) {
+            $continuation = $events | Where-Object { $_.job_id -eq 'run' -and $_.seq -eq (3 + 2 * $i) }
+            $continuation | Add-Member -NotePropertyName requested_by -NotePropertyValue "healthy-$i" -Force
+            $continuation | Add-Member -NotePropertyName consumed_event_seq -NotePropertyValue (2 + 2 * $i) -Force
+        }
+        $events = @($events | Where-Object { $_.job_id -eq 'run' -or $_.job_id -eq "j-$productiveIndex" })
+        Write-Utf8 (Join-Path $run.folder 'jobs/events.jsonl') (($events | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join "`n")
+        $decision = (& pwsh -NoProfile -File $decisionProbe -WatcherScript $watcher -FixtureFolder $run.folder -FixtureStatePath $run.state -CheckAtUtc $now.ToString('o') | Select-Object -Last 1) | ConvertFrom-Json
+        if ($productiveIndex -eq 0) {
+            Assert-True ($decision.action -eq 'stop' -and $decision.stop_kind -eq 'thrash') 'productive L1 does not prevent a thrash stop for unproductive L2 and L3'
+            Assert-True (($decision.coordinator_ids -join ',') -ceq 'healthy-1,healthy-2') 'the thrash decision names L2 and L3 in order'
+        }
+        else {
+            Assert-True ($decision.action -eq 'launch') 'productive L3 prevents a thrash stop after unproductive L1 and L2'
+        }
+    }
+
+    # ---- two consecutive unchanged launches stop; resume permits two more launches.
+    Use-Scenario 'consecutive'
+    $run = New-Run -Name 'consecutive'
+    $now = [DateTime]::UtcNow
+    for ($i = 0; $i -lt 2; $i++) {
+        Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+        $tick = @(Invoke-Tick -NowUtc $now.AddMinutes(2 * $i))[0]
+        Assert-True ($tick.action -eq 'launch') "consecutive launch $i proceeds"
+    }
+    $launches = @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'launch' })
+    Assert-True ($launches[0].checkpoint_sha256 -cmatch '^[0-9a-f]{64}$' -and $launches[0].checkpoint_sha256 -ceq $launches[1].checkpoint_sha256) 'launches record the unchanged lowercase SHA-256'
+    Write-Utf8 (Join-Path $run.folder "coordinator-$($launches[-1].coordinator_id).log") "thinking`nexec`n`nGet-Content _build-state.md`noutput`nexec`nrg next-step`n"
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    $tick = @(Invoke-Tick -NowUtc $now.AddMinutes(4))[0]
+    $stop = @(Get-LaunchRecords $run.folder | Where-Object { $_.type -eq 'stopped' })[-1]
+    $dm = @(Get-Content $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.content.Contains('run consecutive ') })[-1]
+    Assert-True ($tick.action -eq 'stop' -and $stop.reason -eq 'thrash' -and (Get-RunState $run.state).run_status -eq 'awaiting_danny' -and (Get-LaunchCount $run.run_id) -eq 2) 'third decision writes a thrash stop and pauses the run'
+    Assert-True ($dm.content.Contains($launches[0].coordinator_id) -and $dm.content.Contains($launches[1].coordinator_id) -and $dm.content.Contains('Get-Content _build-state.md | rg next-step') -and $dm.content.Length -lt 1500) 'thrash alert names both coordinators and the last commands within the DM limit'
+    $notifications = @(Get-Content (Join-Path $run.folder 'notifications.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($notifications | Where-Object { $_.key -like 'dt-build:consecutive:launch-thrash:*' }).Count -gt 0) 'thrash alert uses its own notification key'
+    Write-Output "SAMPLE_ALERT: $($dm.content)"
+    Invoke-DtJob @('resume', '-RunFolder', $run.folder) | Out-Null
+    $tick = @(Invoke-Tick -NowUtc $now.AddMinutes(6))[0]
+    Assert-True ($tick.action -eq 'launch') 'resume after thrash re-arms the run'
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    $tick = @(Invoke-Tick -NowUtc $now.AddMinutes(8))[0]
+    Assert-True ($tick.action -eq 'launch') 'the second launch after resume proceeds'
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+    $tick = @(Invoke-Tick -NowUtc $now.AddMinutes(10))[0]
+    Assert-True ($tick.action -eq 'stop' -and $tick.detail -like 'stopped (thrash)*') 'unchanged checkpoint stops again after two more launches'
+
+    foreach ($mode in @('changed', 'legacy')) {
+        Use-Scenario "consecutive-$mode"
+        $run = New-Run -Name "consecutive-$mode"
+        for ($i = 0; $i -lt 2; $i++) {
+            if ($mode -eq 'changed') { Write-Utf8 $run.state ((Get-Content -Raw $run.state) -replace '__NEXT_STEP__.*', "__NEXT_STEP__$i") }
+            Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+            Invoke-Tick -NowUtc $now.AddMinutes(2 * $i) | Out-Null
+        }
+        if ($mode -eq 'legacy') {
+            $rows = @(Get-LaunchRecords $run.folder)
+            foreach ($row in $rows) { $row.PSObject.Properties.Remove('checkpoint_sha256') }
+            Write-Utf8 (Join-Path $run.folder 'launches.jsonl') (($rows | ForEach-Object { $_ | ConvertTo-Json -Compress }) -join "`n")
+        }
+        Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
+        $tick = @(Invoke-Tick -NowUtc $now.AddMinutes(4))[0]
+        Assert-True ($tick.action -eq 'launch' -and (Get-RunState $run.state).run_status -eq 'runnable') "$mode checkpoint history does not trigger the consecutive stop"
+    }
+
     # ---- thrash cap: 6 launches with no job progress, failed DM retry, then resume re-arms.
     Use-Scenario 'cap'
     $run = New-Run -Name 'cap'
     $tk = [DateTime]::UtcNow
     for ($i = 0; $i -lt 6; $i++) {
+        # Changed instructions prevent the consecutive stop; the hourly cap still counts these launches.
+        Write-Utf8 $run.state ((Get-Content -Raw $run.state) -replace '__NEXT_STEP__.*', "__NEXT_STEP__$i")
         Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
         Invoke-Tick -NowUtc $tk.AddMinutes(2 * $i) | Out-Null
     }
