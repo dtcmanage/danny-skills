@@ -4,7 +4,8 @@
 # into context-baseline.json for that coordinator: the hook is the authoritative source and replaces any
 # discovered guess, creates the entry when mark-bootstrap found no transcript, and never moves a
 # hook-recorded entry to a different session. Surfaces the context line as additional context when the coordinator reaches
-# checkpoint or rotate; silent when the state is ok and for every non-coordinator session. With the env
+# checkpoint or rotate; records git worktree add segments in the run ledger. Silent when the state is ok
+# and for every non-coordinator session. With the env
 # var unset and no registered run it exits before loading anything except for a mark-bootstrap capture. Any error is silent.
 param()
 
@@ -103,6 +104,30 @@ function Save-HookBootstrapCapture {
     }
 }
 
+function Save-HookWorktrees {
+    param([Parameter(Mandatory)]$Coordinator, [Parameter(Mandatory)]$HookInput, [string]$Command)
+    if (-not $Coordinator.run_folder -or $script:HookShellTools -notcontains [string](Get-HookProperty $HookInput 'tool_name')) { return }
+    foreach ($segment in (Split-HookShellSegments $Command)) {
+        $match = [regex]::Match($segment, '(?i)(?:^|\s)git\s+(?:-C\s+(?:"[^"]*"|''[^'']*''|\S+)\s+)?worktree\s+add(?:\s+|$)(.*)$')
+        if (-not $match.Success) { continue }
+        $args = @([regex]::Matches($match.Groups[1].Value, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } elseif ($_.Groups[2].Success) { $_.Groups[2].Value } else { $_.Groups[3].Value } })
+        $positionals = [System.Collections.Generic.List[string]]::new(); $branch = $null
+        for ($i = 0; $i -lt $args.Count; $i++) {
+            if ($args[$i] -ceq '-b' -or $args[$i] -ceq '-B') { if ($i + 1 -lt $args.Count) { $branch = $args[++$i] }; continue }
+            if ($args[$i].StartsWith('-')) { continue }
+            $positionals.Add($args[$i])
+        }
+        if (-not $positionals.Count) { continue }
+        $path = $positionals[0]
+        if (-not [IO.Path]::IsPathRooted($path)) { $path = Join-Path ([string](Get-HookProperty $HookInput 'cwd')) $path }
+        if ($null -eq $branch -and $positionals.Count -gt 1) { $branch = $positionals[1] }
+        $row = [ordered]@{ ts_utc = [DateTime]::UtcNow.ToString('o'); coordinator_id = $Coordinator.coordinator_id; path = [IO.Path]::GetFullPath($path); branch = $branch; command = $segment.Substring(0, [Math]::Min(300, $segment.Length)) }
+        Invoke-DtJobLocked -RunFolder $Coordinator.run_folder -Action {
+            [IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $Coordinator.run_folder).Worktrees, (($row | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        } | Out-Null
+    }
+}
+
 try {
     $rawText = Read-HookStdin
     if (-not $rawText.Trim()) { exit 0 }
@@ -115,7 +140,7 @@ try {
     elseif (Test-HookIdle) { exit 0 }
     . (Join-Path $PSScriptRoot '..\scripts\context-guard.ps1')
     $hookInput = $rawText | ConvertFrom-Json
-    # Only this rare call loads dt-job.ps1, for its run lock and atomic write.
+    # Bootstrap capture and worktree creation are the rare calls that load the job library.
     try {
         $capture = Get-HookBootstrapCapture -HookInput $hookInput
         if ($null -ne $capture) {
@@ -126,6 +151,16 @@ try {
     catch { }
     $coordinator = Find-HookCoordinator -HookInput $hookInput
     if ($null -eq $coordinator) { exit 0 }
+    if (([string](Get-HookProperty (Get-HookProperty $hookInput 'tool_input') 'command')).Contains('worktree', [StringComparison]::OrdinalIgnoreCase)) {
+        try {
+            $worktreeCommand = [string](Get-HookProperty (Get-HookProperty $hookInput 'tool_input') 'command')
+            if ($script:HookShellTools -contains [string](Get-HookProperty $hookInput 'tool_name') -and $worktreeCommand -match '(?i)worktree\s+add(?:\s|$)') {
+                . (Join-Path $PSScriptRoot '..\scripts\dt-job.ps1')
+                Save-HookWorktrees -Coordinator $coordinator -HookInput $hookInput -Command $worktreeCommand
+            }
+        }
+        catch { }
+    }
     $context = Get-HookContext -Coordinator $coordinator -HookInput $hookInput
     if (@('checkpoint', 'rotate') -notcontains $context.state) { exit 0 }
     $runFolder = if ($coordinator.run_folder) { $coordinator.run_folder } else { '<run folder>' }

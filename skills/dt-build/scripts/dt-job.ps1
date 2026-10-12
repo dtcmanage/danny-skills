@@ -145,6 +145,7 @@ function Get-DtJobPaths {
         Approvals = Join-Path $root 'approvals.json'
         OperatorNotes = Join-Path $root 'operator-notes.json'
         Launches = Join-Path $root 'launches.jsonl'
+        Worktrees = Join-Path $root 'worktrees.jsonl'
         Notifications = Join-Path $root 'notifications.jsonl'
         ContextBaseline = Join-Path $root 'context-baseline.json'
         Irreversible = Join-Path $root 'irreversible.json'
@@ -814,6 +815,59 @@ function Get-DtJobEvents {
         if ($null -ne $parsed -and $parsed.PSObject.Properties['seq']) { $events.Add($parsed) }
     }
     return @($events)
+}
+
+function Get-DtJobWorktrees {
+    # A partial or malformed line is skipped, like the event ledger.
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $path = (Get-DtJobPaths -RunFolder $RunFolder).Worktrees
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    $rows = [System.Collections.Generic.List[object]]::new()
+    foreach ($line in ((Read-DtJobText -Path $path) -split '\r?\n')) {
+        if (-not $line.Trim()) { continue }
+        try { $row = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        if ($null -ne $row -and $row.PSObject.Properties['ts_utc'] -and $row.PSObject.Properties['coordinator_id'] -and $row.PSObject.Properties['path'] -and $row.PSObject.Properties['branch'] -and $row.PSObject.Properties['command']) { $rows.Add($row) }
+    }
+    return @($rows)
+}
+
+function Get-DtJobLiveWorktrees {
+    # Admin-directory timestamps survive a coordinator dying before its hook records the tree.
+    param([Parameter(Mandatory)][string]$RunFolder, [DateTime]$SinceUtc)
+    try {
+        $root = @(& git -C $RunFolder rev-parse --show-toplevel 2>$null)
+        if ($LASTEXITCODE -ne 0 -or $root.Count -ne 1) { return @() }
+        $lines = @(& git -C $root[0] -c core.quotePath=false worktree list --porcelain 2>$null)
+        if ($LASTEXITCODE -ne 0) { return @() }
+    }
+    catch { return @() }
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $current = $null; $first = $true
+    foreach ($line in @($lines) + @('')) {
+        if ($line.StartsWith('worktree ')) { $current = [ordered]@{ path = [IO.Path]::GetFullPath($line.Substring(9)); branch = $null; head = $null; created_utc = $null } }
+        elseif ($null -ne $current -and $line.StartsWith('HEAD ')) { $current.head = $line.Substring(5) }
+        elseif ($null -ne $current -and $line.StartsWith('branch refs/heads/')) { $current.branch = $line.Substring(18) }
+        elseif (-not $line -and $null -ne $current) {
+            if ($first) { $first = $false; $current = $null; continue }
+            try {
+                $gitFile = Join-Path $current.path '.git'
+                $match = [regex]::Match((Read-DtJobText -Path $gitFile).Trim(), '^gitdir:\s*(.+)$')
+                if ($match.Success) {
+                    $adminPath = $match.Groups[1].Value
+                    if (-not [IO.Path]::IsPathRooted($adminPath)) { $adminPath = Join-Path $current.path $adminPath }
+                    $admin = Get-Item -LiteralPath $adminPath -ErrorAction Stop
+                    $created = $admin.CreationTimeUtc
+                    if ($null -eq $created -or $created -eq [DateTime]::MinValue) { $created = $admin.LastWriteTimeUtc }
+                    $current.created_utc = $created
+                }
+            }
+            catch { }
+            if (-not $PSBoundParameters.ContainsKey('SinceUtc') -or ($null -ne $current.created_utc -and $current.created_utc -ge $SinceUtc.ToUniversalTime())) { $rows.Add([pscustomobject]$current) }
+            $current = $null
+            if ($rows.Count -ge 50) { break }
+        }
+    }
+    return @($rows)
 }
 
 function Get-DtJobLastEventSeq {

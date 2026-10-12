@@ -66,6 +66,27 @@ function Test-ProcessGone {
 
 $exitCode = 0
 try {
+    # Live discovery uses the actual Git admin directory, not the ledger or tree file timestamps.
+    $treeRepo = New-RunFolder 'tree-repo'
+    $treeRun = Join-Path $treeRepo '.dt-build/run'
+    New-Item -ItemType Directory -Path $treeRun -Force | Out-Null
+    $addedTree = Join-Path $tempRoot 'added tree'
+    & git -C $treeRepo init -q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'worktree fixture init failed' }
+    & git -C $treeRepo -c user.name=Fixture -c user.email=fixture@example.test commit -q --allow-empty -m fixture | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'worktree fixture commit failed' }
+    & git -C $treeRepo worktree add -q -b feat/live $addedTree 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'worktree fixture add failed' }
+    $treeProbe = ". '$dtJob'; [ordered]@{ live = @(Get-DtJobLiveWorktrees -RunFolder '$treeRun'); future = @(Get-DtJobLiveWorktrees -RunFolder '$treeRun' -SinceUtc ([DateTime]::UtcNow.AddDays(1))); missing = @(Get-DtJobWorktrees -RunFolder '$treeRun') } | ConvertTo-Json -Depth 5"
+    $treeResult = ((& pwsh -NoProfile -Command $treeProbe) -join "`n") | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw 'worktree discovery probe failed' }
+    Assert-True ($treeResult.live.Count -eq 1 -and $treeResult.live[0].path -eq [IO.Path]::GetFullPath($addedTree) -and $treeResult.live[0].branch -eq 'feat/live' -and $treeResult.live[0].head -match '^[0-9a-f]{40}$' -and $null -ne $treeResult.live[0].created_utc) 'live worktree discovery returns the added tree, branch, HEAD and admin creation time, excluding main'
+    Assert-True ($treeResult.future.Count -eq 0) 'live discovery excludes trees before a future SinceUtc'
+    Assert-True ($treeResult.missing.Count -eq 0) 'a missing worktree ledger returns no rows'
+    Write-Utf8 -Path (Join-Path $treeRun 'worktrees.jsonl') -Content "{broken`n{}`n"
+    $treeResult = ((& pwsh -NoProfile -Command $treeProbe) -join "`n") | ConvertFrom-Json
+    Assert-True ($treeResult.missing.Count -eq 0) 'malformed worktree ledger lines are ignored'
+
     # Start and succeed (nested pwsh command, the shape the wrappers use).
     $rf = New-RunFolder 'succeed'
     $start = Invoke-DtJob @('start', '-RunFolder', $rf, '-Kind', 'test', '-Category', 'fixture', '-Command', 'pwsh -NoProfile -Command "Start-Sleep 1; ''ok''"')

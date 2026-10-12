@@ -908,10 +908,26 @@ try {
 
     # ---- resume record surfaces automatic handoffs only ahead of coordinator-written notes.
     $resumeRun = New-Run -Name 'resume-handoff' -PinnedHost 'codex' -Managed
-    Write-Lease -RunFolder $resumeRun.folder -CoordinatorId 'successor' -LeaseHost 'codex' -LaunchedBy 'watcher'
+    $resumeRepo = Split-Path -Parent $resumeRun.folder
+    & git -C $resumeRepo init -q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'resume fixture git init failed' }
+    Write-Lease -RunFolder $resumeRun.folder -CoordinatorId 'successor' -LeaseHost 'codex' -LaunchedBy 'watcher' -SessionId 'sess-trees'
+    $treeHook = @{ session_id = 'sess-trees'; cwd = $resumeRun.folder; tool_name = 'PowerShell'; tool_input = @{ command = 'git worktree add ../repo-x -b feat/x' } }
+    Assert-True ($null -eq (Invoke-Hook $postHook $treeHook) -and $LASTEXITCODE -eq 0) 'worktree recording is silent and succeeds for a managed coordinator'
+    $treeLedger = Join-Path $resumeRun.folder 'worktrees.jsonl'
+    $treeRows = @(Get-Content -LiteralPath $treeLedger | ForEach-Object { $_ | ConvertFrom-Json })
+    $expectedTree = [IO.Path]::GetFullPath((Join-Path $resumeRun.folder '../repo-x'))
+    Assert-True ($treeRows.Count -eq 1 -and $treeRows[0].path -eq $expectedTree -and $treeRows[0].branch -eq 'feat/x' -and $treeRows[0].coordinator_id -eq 'successor' -and $treeRows[0].command -eq $treeHook.tool_input.command) 'PostToolUse records the normalized relative path, branch, command and coordinator'
+    $treeHook.tool_input.command = 'git status'
+    Invoke-Hook $postHook $treeHook | Out-Null
+    Assert-True (@(Get-Content -LiteralPath $treeLedger).Count -eq 1) 'an unrelated shell call appends no worktree row'
     $resumeReader = Join-Path $scriptDir 'read-resume-record.ps1'
     $readRecord = { $raw = & pwsh -NoProfile -File $resumeReader -RunFolder $resumeRun.folder -RunId $resumeRun.run_id -BuildStatePath $resumeRun.state -CoordinatorId 'successor'; if ($LASTEXITCODE -ne 0) { throw 'resume reader failed' }; ($raw -join "`n") | ConvertFrom-Json }
     Assert-True ($null -eq (& $readRecord).kill_handoff) 'no handoff yields a null kill_handoff'
+    $record = & $readRecord
+    Assert-True ($record.worktrees.recorded.Count -eq 1 -and $record.worktrees.recorded[0].path -eq $expectedTree -and $record.worktrees.recorded[0].branch -eq 'feat/x' -and $record.worktrees.live_since_run_start -is [array] -and $record.worktrees.live_since_run_start.Count -eq 0) 'resume record includes recorded worktrees and an empty live array without a launch'
+    Add-Line (Join-Path $resumeRun.folder 'launches.jsonl') ([ordered]@{ type = 'launch'; coordinator_id = 'successor'; launched_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o') })
+    Assert-True ((& $readRecord).worktrees.live_since_run_start -is [array]) 'resume live discovery in a real git repo returns an array'
     $automaticNote = Join-Path $resumeRun.folder 'coordinator-handoff-killed.md'
     Write-Utf8 -Path $automaticNote -Content "# Automatic handoff: killed (written by the watcher)`nledger evidence"
     $recordTime = [DateTime]::UtcNow

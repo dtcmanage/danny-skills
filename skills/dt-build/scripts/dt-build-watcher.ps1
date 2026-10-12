@@ -381,10 +381,26 @@ function Write-WatcherKillHandoff {
         $runEvents = @($events | Where-Object { $_.job_id -eq 'run' } | ForEach-Object { "- $($_.type): $($_.status); $($_.reason)" }) -join "`n"
         $awaiting = (Get-DtJobApprovals -RunFolder $folder).awaiting
         $pending = if ($null -ne $awaiting) { "$($awaiting.operation): $($awaiting.message)" } else { 'none' }
+        $trees = [System.Collections.Generic.List[string]]::new(); $seen = @{}
+        foreach ($tree in @(Get-DtJobWorktrees -RunFolder $folder | Where-Object { $_.coordinator_id -ceq $CoordinatorId })) {
+            $key = [IO.Path]::GetFullPath([string]$tree.path)
+            if ($seen.ContainsKey($key)) { continue }; $seen[$key] = $true
+            $branch = if ($tree.branch) { $tree.branch } else { 'detached' }
+            $trees.Add("- $($tree.path) [$branch] recorded created $(& $time $tree.ts_utc)")
+        }
+        if ($null -ne $launched) {
+            foreach ($tree in @(Get-DtJobLiveWorktrees -RunFolder $folder -SinceUtc $launched)) {
+                $key = [IO.Path]::GetFullPath([string]$tree.path)
+                if ($seen.ContainsKey($key)) { continue }; $seen[$key] = $true
+                $branch = if ($tree.branch) { $tree.branch } else { 'detached' }
+                $trees.Add("- $($tree.path) [$branch] live created $(& $time $tree.created_utc)")
+            }
+        }
+        $worktrees = if ($trees.Count) { $trees -join "`n" } else { 'none' }
         $checkpoint = [string]$Entry.build_state_path
         $written = if (Test-Path -LiteralPath $checkpoint -PathType Leaf) { & $time (Get-Item -LiteralPath $checkpoint).LastWriteTimeUtc } else { 'unknown' }
-        $prefix = @("# Automatic handoff: $CoordinatorId (written by the watcher)", '', "The coordinator was stopped at $Tokens tokens (hard limit $HardLimit) and wrote no handoff of its own, so this was built from the ledger and log; anything it decided but did not record is lost.", '', "Kill time: $(& $time $NowUtc); launch time: $(& $time $launched)", "Latest checkpoint: $(& $clip $checkpoint 400); last write: $written", '', '## Still running', (& $clip $running 600), '', '## Finished in this episode', (& $clip $finished 600), '', '## Run-level events', (& $clip $runEvents 350), '', '## Pending approval', (& $clip $pending 350)) -join "`n"
-        $prefix = & $clip $prefix 2800
+        $prefix = @("# Automatic handoff: $CoordinatorId (written by the watcher)", '', "The coordinator was stopped at $Tokens tokens (hard limit $HardLimit) and wrote no handoff of its own, so this was built from the ledger and log; anything it decided but did not record is lost.", '', "Kill time: $(& $time $NowUtc); launch time: $(& $time $launched)", "Latest checkpoint: $(& $clip $checkpoint 400); last write: $written", '', '## Still running', (& $clip $running 600), '', '## Finished in this episode', (& $clip $finished 600), '', '## Run-level events', (& $clip $runEvents 350), '', '## Pending approval', (& $clip $pending 350), '', '## Worktrees', (& $clip $worktrees 500)) -join "`n"
+        $prefix = & $clip $prefix 3300
         $logPath = Join-Path $folder "coordinator-$CoordinatorId.log"
         $activity = if (Test-Path -LiteralPath $logPath) { @((ConvertTo-DtJobReadableText -Text (Read-DtJobText -Path $logPath)) -split '\r?\n' | Where-Object { $_.Trim() } | Select-Object -Last 40) -join "`n" } else { '' }
         if ($activity.Length -gt 3000) { $activity = $activity.Substring($activity.Length - 3000) }

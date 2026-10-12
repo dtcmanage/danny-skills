@@ -28,4 +28,16 @@ foreach ($note in @(Get-ChildItem -LiteralPath $ResumeRunFolder -Filter 'coordin
     elseif ($null -eq $coordinatorNote) { $coordinatorNote = $note }
 }
 $killHandoff = if ($null -ne $automatic -and ($null -eq $coordinatorNote -or $automatic.LastWriteTimeUtc -gt $coordinatorNote.LastWriteTimeUtc)) { $automatic.FullName } else { $null }
-[ordered]@{ registration = $entry; lease = $lease; state = $state; approvals = (Get-DtJobApprovals -RunFolder $ResumeRunFolder); operator_notes = @(Get-DtJobOperatorNotes -RunFolder $ResumeRunFolder); context_wall = $wall; kill_handoff = $killHandoff } | ConvertTo-Json -Depth 10
+$firstLaunch = $null
+$launchPath = (Get-DtJobPaths -RunFolder $ResumeRunFolder).Launches
+if (Test-Path -LiteralPath $launchPath) {
+    foreach ($line in ((Read-DtJobText -Path $launchPath) -split '\r?\n')) {
+        try { $row = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        if ($null -ne $row -and $row.PSObject.Properties['type'] -and $row.type -eq 'launch') {
+            try { $firstLaunch = ConvertTo-DtJobUtc $row.launched_utc } catch { }
+            break
+        }
+    }
+}
+$worktrees = [ordered]@{ recorded = @(Get-DtJobWorktrees -RunFolder $ResumeRunFolder | Select-Object -First 20); live_since_run_start = @(if ($null -ne $firstLaunch) { Get-DtJobLiveWorktrees -RunFolder $ResumeRunFolder -SinceUtc $firstLaunch | Select-Object -First 20 }) }
+[ordered]@{ registration = $entry; lease = $lease; state = $state; approvals = (Get-DtJobApprovals -RunFolder $ResumeRunFolder); operator_notes = @(Get-DtJobOperatorNotes -RunFolder $ResumeRunFolder); context_wall = $wall; kill_handoff = $killHandoff; worktrees = $worktrees } | ConvertTo-Json -Depth 10
