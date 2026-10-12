@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.28.0
+
+- The watcher writes a compact handoff note, built from the job ledger and the coordinator log, for a coordinator it kills at its context limit; a coordinator's own note is never overwritten. read-resume-record.ps1 returns the newest such note as kill_handoff.
+
 ## 2.27.2
 
 - Job envelopes decode a pwsh child's CLIXML stderr and strip ANSI colour codes, so a failed job's real error reaches the coordinator instead of being cut off inside one long XML line.
