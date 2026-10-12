@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.28.1
+
+- The ship gate runs the host-adapter, context-guard, dt-job and wrapper regression suites before the plugin validate-only build. Get-DtCtxTokens finds newlines with a native reverse search instead of a per-byte PowerShell loop (multi-MB fixture reads drop from about 1.5 s to under 200 ms), so the context-guard timing check no longer flakes under load. The regression suite's hang scenario sends a prompt under the dispatch size guard again, and the guard has its own regression check.
+
 ## 2.28.0
 
 - The watcher writes a compact handoff note, built from the job ledger and the coordinator log, for a coordinator it kills at its context limit; a coordinator's own note is never overwritten. read-resume-record.ps1 returns the newest such note as kill_handoff.
