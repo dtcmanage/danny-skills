@@ -491,6 +491,42 @@ function Get-DtJobEnvelopeBytes {
     return [System.Text.Encoding]::UTF8.GetByteCount(($Envelope | ConvertTo-Json -Depth 8 -Compress))
 }
 
+function Get-DtJobWorkerOutcome {
+    # Advisory worker artifacts never change the ledger or break a status/check-in.
+    param([string]$RunFolder, $Record)
+    $outcome = [ordered]@{ report_path = $null; report_verdict = $null; wrapper_pass = $null; failure_category = $null; termination_reason = $null }
+    try {
+        if ($Record.kind -ne 'worker') { return [pscustomobject]$outcome }
+        $jobDir = Join-Path (Get-DtJobPaths -RunFolder $RunFolder).Jobs $Record.job_id
+        $spec = Read-DtJobText -Path (Join-Path $jobDir 'spec.json') | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        if ($spec -isnot [System.Collections.IDictionary] -or $spec['command'] -isnot [string]) { return [pscustomobject]$outcome }
+        # PowerShell single-quoted strings escape an apostrophe by doubling it.
+        $match = [regex]::Match($spec['command'], '(?i)(?:^|\s)-OutputPath\s+(?:''(?<single>(?:[^'']|'''')*)''|"(?<double>[^"]*)"|(?<bare>[^\s''";]+))(?=\s|;|$)')
+        if (-not $match.Success) { return [pscustomobject]$outcome }
+        $path = if ($match.Groups['single'].Success) { $match.Groups['single'].Value.Replace("''", "'") } elseif ($match.Groups['double'].Success) { $match.Groups['double'].Value } else { $match.Groups['bare'].Value }
+        if ([string]::IsNullOrWhiteSpace($path) -or $path -match '^[\\/]{2}') { return [pscustomobject]$outcome }
+        if (-not [IO.Path]::IsPathFullyQualified($path)) { $path = [IO.Path]::GetFullPath($path, [string]$Record.working_directory) }
+        $outcome.report_path = $path
+    } catch { return [pscustomobject]$outcome }
+    try {
+        $text = Read-DtJobText -Path $path
+        if ($text) {
+            $entries = Get-DtReportSection -Text $text -Name 'VERDICT'
+            if ($null -ne $entries -and @($entries).Count -gt 0 -and $script:DtReportVerdicts -ccontains $entries[0]) { $outcome.report_verdict = $entries[0] }
+        }
+    } catch { }
+    try {
+        $provenance = Read-DtJobText -Path "$path.provenance.json" | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        if ($provenance -is [System.Collections.IDictionary]) {
+            if ($provenance['pass'] -is [bool]) { $outcome.wrapper_pass = $provenance['pass'] }
+            foreach ($field in @('failure_category', 'termination_reason')) {
+                if ($provenance[$field] -is [string] -and $provenance[$field]) { $outcome[$field] = $provenance[$field] }
+            }
+        }
+    } catch { }
+    return [pscustomobject]$outcome
+}
+
 function New-DtJobEnvelope {
     # Bounded result: at most 8 KB in total, every line at most 400 characters, and a
     # truncation marker plus the full-file evidence path whenever anything is cut.
@@ -506,11 +542,26 @@ function New-DtJobEnvelope {
 
     $jobFile = Join-Path $paths.Jobs "$($Record.job_id).json"
     $verdict = switch ($Record.status) { 'succeeded' { 'pass' } 'queued' { 'pending' } 'running' { 'pending' } default { 'fail' } }
+    $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $Record
+    if ($Record.status -eq 'succeeded' -and ($outcome.report_verdict -in @('FAIL', 'BLOCKED') -or $outcome.wrapper_pass -eq $false)) { $verdict = 'fail' }
     $reasonCut = $false
     $reason = Limit-DtJobLine ([string]$Record.status_reason) ([ref]$reasonCut)
     if ($reasonCut) { $cut = $true; $cutPaths.Add($jobFile) }
     $blockers = [System.Collections.Generic.List[string]]::new()
     if ($Record.status_reason -and $verdict -eq 'fail') { $blockers.Add($reason) }
+    if ($outcome.report_verdict -in @('FAIL', 'BLOCKED', 'PARTIAL')) {
+        $blockerCut = $false
+        $blockers.Add((Limit-DtJobLine "report verdict $($outcome.report_verdict); see $($outcome.report_path)" ([ref]$blockerCut)))
+        if ($blockerCut) { $cut = $true; $cutPaths.Add($outcome.report_path) }
+    }
+    if ($outcome.wrapper_pass -eq $false) {
+        $blockerCut = $false
+        $blockers.Add((Limit-DtJobLine "wrapper reported failure ($($outcome.failure_category))" ([ref]$blockerCut)))
+        if ($blockerCut) { $cut = $true; $cutPaths.Add("$($outcome.report_path).provenance.json") }
+    }
+    $categoryCut = $false
+    $failureCategory = if ($null -ne $outcome.failure_category) { Limit-DtJobLine $outcome.failure_category ([ref]$categoryCut) } else { $null }
+    if ($categoryCut) { $cut = $true; $cutPaths.Add("$($outcome.report_path).provenance.json") }
     foreach ($line in (Read-DtJobListFile $blockersPath)) {
         $before = $cut; $blockers.Add((Limit-DtJobLine $line ([ref]$cut))); if ($cut -and -not $before) { $cutPaths.Add($blockersPath) }
     }
@@ -539,6 +590,9 @@ function New-DtJobEnvelope {
         job_id        = $Record.job_id
         status        = $Record.status
         verdict       = $verdict
+        report_verdict = $outcome.report_verdict
+        failure_category = $failureCategory
+        wrapper_pass  = $outcome.wrapper_pass
         exit_code     = $Record.exit_code
         status_reason = $reason
         changed_files = $changed
@@ -582,7 +636,8 @@ function New-DtJobRunEnvelope {
     # Running jobs carry their activity, and stalled ones are named up front so a new coordinator sees them.
     $stalled = [System.Collections.Generic.List[string]]::new()
     foreach ($r in $source) {
-        $entry = [ordered]@{ job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)) }
+        $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $r
+        $entry = [ordered]@{ job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)); report_verdict = $outcome.report_verdict; failure_category = $(if ($null -ne $outcome.failure_category) { Limit-DtJobLine $outcome.failure_category ([ref]$cut) } else { $null }) }
         if ($r.status -eq 'running') {
             $activity = Get-DtJobActivity -RunFolder $RunFolder -Record $r
             $entry.activity = Limit-DtJobLine $activity.line ([ref]$cut)
@@ -1152,6 +1207,8 @@ function Get-DtJobActivity {
     if ($null -ne $beat) { $line += " (cpu $cpu s, $files file changes)" } else { $line += ' (no heartbeat yet)' }
     if ($expected -gt 0 -and ($now - $started).TotalSeconds -gt $expected) { $line += "; past its expected $([int][Math]::Ceiling($expected / 60)) min" }
     if ($stalled) { $line += "; STALLED: no activity for $([int][Math]::Floor($idleSec / 60)) min. Check its output, then cancel and retry or keep waiting" }
+    $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $Record
+    if ($null -ne $outcome.report_verdict) { $line += " verdict=$($outcome.report_verdict)" }
     return [pscustomobject][ordered]@{ job_id = $Record.job_id; running_min = $runningMin; idle_sec = $idleSec; stalled = $stalled; cpu_seconds = $cpu; file_changes = $files; line = $line }
 }
 
@@ -1191,8 +1248,10 @@ function Invoke-DtJobWait {
     $jobs = [System.Collections.Generic.List[object]]::new()
     foreach ($r in $done) {
         $evidence = Limit-DtJobLine ([string]$r.output_path) ([ref]$cut)
-        $jobs.Add([ordered]@{ job_id = $r.job_id; status = $r.status; exit_code = $r.exit_code; evidence = $evidence })
-        $lines.Add((Limit-DtJobLine "$($r.job_id) $($r.status) exit=$($r.exit_code) evidence=$($r.output_path)" ([ref]$cut)))
+        $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $r
+        $jobs.Add([ordered]@{ job_id = $r.job_id; status = $r.status; exit_code = $r.exit_code; evidence = $evidence; report_verdict = $outcome.report_verdict; failure_category = $(if ($null -ne $outcome.failure_category) { Limit-DtJobLine $outcome.failure_category ([ref]$cut) } else { $null }) })
+        $suffix = if ($null -ne $outcome.report_verdict) { " verdict=$($outcome.report_verdict)" } else { '' }
+        $lines.Add((Limit-DtJobLine "$($r.job_id) $($r.status) exit=$($r.exit_code) evidence=$($r.output_path)$suffix" ([ref]$cut)))
     }
     $running = @($records | Where-Object { -not (Test-DtJobTerminal $_.status) } | ForEach-Object { $_.job_id })
     # A check-in: every job still running reports its progress, and a stalled one says so.

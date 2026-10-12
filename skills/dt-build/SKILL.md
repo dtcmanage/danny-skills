@@ -106,7 +106,7 @@ Harness terms: `claude-host` has the Agent tool; `codex-host` is any other orche
 
 These rules are enforced by scripts both hosts must call; the adapter gives each host's exact commands.
 
-- **Run work as jobs.** Workers, tests, builds, and browser checks run as `scripts/dt-job.ps1` jobs, never in the coordinator's foreground. Take results only from the capped `dt-job status|wait -Json` envelopes. Run `dt-job reconcile` at every start, resume and `wait_timeout`; each wait is a 10-minute check-in flagging stalls.
+- **Run work as jobs.** Workers, tests, builds, and browser checks run as `scripts/dt-job.ps1` jobs, never in the coordinator's foreground. Read only capped `dt-job status|wait -Json` envelopes, checking `report_verdict`/`failure_category`. Run `dt-job reconcile` at every start, resume and `wait_timeout`; each wait is a 10-minute check-in flagging stalls.
 - **Read deeper deliberately.** Open job evidence only through `scripts/read-evidence.ps1` (`-Lines a-b` or `-Grep`), never by reading stream logs or output files directly.
 - **Mark bootstrap once.** After the mandatory reads and before the first dispatch, run `dt-job mark-bootstrap`; the context limits are measured from that point.
 - **Rotate on the limit.** On a `checkpoint` context line, reach a safe stopping point and rotate. On a `rotate` line or `ROTATE_REQUIRED`, rotate as the adapter says: rewrite `_build-state.md`, write a handoff note, `dt-job request-continuation`, release the lease, end. Running jobs continue; verification is never skipped or shortened to save context.
