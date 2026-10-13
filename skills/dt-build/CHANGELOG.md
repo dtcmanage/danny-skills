@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.38.4
+
+- Read-only Codex reviewers run in the real MXC sandbox (shared process wrapper); a blocked sandbox read is reported as a blocked review, not a pass.
+
 ## 2.38.3
 
 - Model router bench (shared component): broken or quota-blocked Codex calls stay out of bench results; recovered dispatch failures no longer break quality ties.

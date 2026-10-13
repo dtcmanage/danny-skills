@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.32 (2026-10-13): Read-only Codex reviewers run in the real MXC sandbox (shared process wrapper); a blocked sandbox read is reported as a blocked review, not a pass.
+
 - 0.3.31 (2026-10-13): Model router bench (shared component): broken or quota-blocked Codex calls stay out of bench results; recovered dispatch failures no longer break quality ties.
 
 - 0.3.30 (2026-10-13): Shared process wrapper classifies Codex capacity refusals as capacity, and model router outcome recording treats them as vendor availability, not model quality.
