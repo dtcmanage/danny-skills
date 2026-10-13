@@ -1,3 +1,4 @@
+# Proves a dt-build tooling file matches a published danny-skills main commit; usage: references/tooling-revision-provenance.md.
 param(
     [string]$Path,
     [string]$RepoRoot,
