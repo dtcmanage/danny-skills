@@ -19,7 +19,7 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 
 ## Bootstrap and context
 
-- Managed resumes follow `managed-resume.md` (required reads in full, then mark bootstrap at once). New starts do the mandatory CLAUDE.md chain, MEMORY.md and governing reads first. Load other references only at their step.
+- Managed resumes follow `managed-resume.md`: verified digest above budget, current authority in full, then bootstrap; governing originals in full before actions. New starts do the mandatory CLAUDE.md chain, MEMORY.md and governing reads first. Load other references only at their step.
 - No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
 - New starts register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested.
 - Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host claude`. Use one id, e.g. `<RUN_ID>-claude-<yyyyMMddHHmm>`, from the starting directory or with `-TranscriptPath <transcript>`.

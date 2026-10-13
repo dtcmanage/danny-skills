@@ -1,0 +1,2 @@
+SAMPLE_ALERT: dt-build run consecutive is paused: 2 coordinators in a row (mc-20261013135917-df54e7, mc-20261013140117-6c5fa3) made no progress on the same checkpoint next step (c2be7e7bef61). Last commands of mc-20261013140117-6c5fa3: Get-Content _build-state.md | rg next-step. Fix the next step in _build-state.md, then restart it with: /dt-build resume consecutive
+SUMMARY: 275 passed

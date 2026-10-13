@@ -78,6 +78,11 @@ if ($env:DT_TEST_TREE_FAIL) {
         exit 1
     }
 }
+if ($env:DT_TEST_CAPACITY) {
+    & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action release -CoordinatorId $CoordinatorId -Json *> $null
+    Write-Output 'Selected model is at capacity'
+    exit 1
+}
 if ($env:DT_TEST_LAUNCH_FAIL) {
     & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action release -CoordinatorId $CoordinatorId -Json *> $null
     exit 1
@@ -1220,6 +1225,37 @@ $result | ConvertTo-Json -Compress
     Invoke-DtJob @('resume', '-RunFolder', $run.folder) | Out-Null
     $tick = @(Invoke-Tick -NowUtc $now.AddSeconds(10))[0]
     Assert-True ($tick.action -eq 'launch') 'resume re-arms the absolute ceiling too'
+
+    # ---- capacity refusals use their own fake-clock budget, never the thrash budget.
+    Use-Scenario 'capacity'
+    $run = New-Run -Name 'capacity' -NoLease
+    Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder, '-Reason', 'managed_start') | Out-Null
+    $now = [DateTime]::UtcNow
+    $env:DT_TEST_CAPACITY = '1'
+    try {
+        $first = @(Invoke-Tick -NowUtc $now)[0]
+        $launchRows = @(Get-LaunchRecords $run.folder | Where-Object type -eq 'launch')
+        $stream = Join-Path $run.folder "coordinator-$($launchRows[-1].coordinator_id).log"
+        Assert-True ($first.action -eq 'launch' -and $launchRows.Count -eq 1 -and (Get-Content $stream -Raw).Contains('Selected model is at capacity')) 'launcher capacity refusal is captured as evidence'
+        $waiting = @(Invoke-Tick -NowUtc $now.AddMinutes(4))[0]
+        Assert-True ($waiting.action -eq 'none' -and $waiting.detail -match 'capacity backoff') 'first capacity refusal waits five minutes'
+        $second = @(Invoke-Tick -NowUtc $now.AddMinutes(5))[0]
+        Assert-True ($second.action -eq 'launch' -and @(Get-LaunchRecords $run.folder | Where-Object type -eq 'launch').Count -eq 2) 'capacity retry at five minutes spends no consecutive-thrash budget'
+        $waiting = @(Invoke-Tick -NowUtc $now.AddMinutes(14))[0]
+        Assert-True ($waiting.action -eq 'none' -and $waiting.detail -match 'capacity backoff') 'second refusal waits ten minutes'
+        $third = @(Invoke-Tick -NowUtc $now.AddMinutes(15))[0]
+        Assert-True ($third.action -eq 'launch') 'capacity retry at fifteen minutes remains runnable'
+        $waiting = @(Invoke-Tick -NowUtc $now.AddMinutes(34))[0]
+        Assert-True ($waiting.action -eq 'none' -and $waiting.detail -match 'capacity backoff') 'third refusal waits twenty minutes within the bounded episode'
+        $stopTick = @(Invoke-Tick -NowUtc $now.AddMinutes(35))[0]
+        $stop = @(Get-LaunchRecords $run.folder | Where-Object type -eq 'stopped')[-1]
+        Assert-True ($stopTick.action -eq 'stop' -and $stop.reason -eq 'capacity' -and (Get-RunState $run.state).run_status -eq 'awaiting_danny') 'capacity pauses distinctly at the thirty-five minute bound'
+        $dm = @(Get-Content $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.content.Contains('run capacity ') })[-1]
+        Assert-True ($dm.content.Contains('vendor is at capacity') -and $dm.content.Contains('/dt-build resume capacity')) 'bounded capacity stop sends a clear recovery alert'
+        Invoke-DtJob @('resume', '-RunFolder', $run.folder) | Out-Null
+        $restarted = @(Invoke-Tick -NowUtc $now.AddMinutes(36))[0]
+        Assert-True ($restarted.action -eq 'launch') 'operator resume re-arms the capacity budget'
+    } finally { Remove-Item Env:DT_TEST_CAPACITY -ErrorAction SilentlyContinue }
 
     # ---- fingerprint and command helpers, including older launch rows.
     Use-Scenario 'fingerprint'

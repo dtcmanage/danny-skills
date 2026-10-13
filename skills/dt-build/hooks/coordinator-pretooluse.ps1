@@ -97,7 +97,7 @@ $script:HookShellTools = @('Bash', 'PowerShell')
 # Past the hard limit each shell segment must be one of these: pwsh/powershell -File, or a & or . call, of
 # a dt-build state script; or git status, log, or rev-parse. A script name anywhere else in a segment (an
 # argument, a comment) does not count.
-$script:HookStateScript = '(?:dt-job|read-evidence|write-build-state)\.ps1'
+$script:HookStateScript = '(?:dt-job|read-evidence|write-build-state|write-resume-checkpoint)\.ps1'
 $script:HookScriptPath = "(?:`"(?:[^`"]*[\\/])?$($script:HookStateScript)`"|'(?:[^']*[\\/])?$($script:HookStateScript)'|(?:[^\s'`"]*[\\/])?$($script:HookStateScript))(?=\s|$)"
 $script:HookShellAllowed = @(
     "(?i)^\s*(?:pwsh|powershell)(?:\.exe)?(?:\s+(?:-NoProfile|-NonInteractive|-NoLogo|-nop|-noni|-ExecutionPolicy\s+\S+|-ep\s+\S+|-WindowStyle\s+\S+))*\s+-File\s+$($script:HookScriptPath)",

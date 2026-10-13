@@ -843,6 +843,50 @@ try {
     $postIdleAt = $postText.IndexOf("elseif (Test-HookIdle) { exit 0 }")
     Assert-True ($idleAt -gt 0 -and $idleAt -lt $preText.IndexOf($guardLoad) -and -not $preText.Contains($dtJobLoad) -and $postIdleAt -gt 0 -and $postIdleAt -lt $postText.IndexOf($guardLoad) -and $postIdleAt -lt $postText.IndexOf($dtJobLoad)) 'in both hooks the idle exit comes before context-guard.ps1 or dt-job.ps1 loads, and PreToolUse never loads dt-job.ps1'
 
+    # ---- FS-64: checkpoint installation stays available at the hard wall.
+    $installRun = New-Run -Name 'checkpoint-at-wall'
+    $candidate = Join-Path $tempRoot 'wall-candidate.md'
+    Write-Utf8 $candidate "run_status: finished`nlast_consumed_event_seq: 0`nBoundary: fixtures only.`n## Next step`nContinue in a fresh coordinator."
+    $installer = Join-Path $scriptDir 'write-resume-checkpoint.ps1'
+    $installCommand = "pwsh -NoProfile -File '$installer' -RunFolder '$($installRun.folder)' -BuildStatePath '$($installRun.state)' -ContentPath '$candidate'"
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'PowerShell' @{ command = $installCommand }))) 'checkpoint installer is allowed at the hard wall'
+    $installed = & pwsh -NoProfile -File $installer -RunFolder $installRun.folder -BuildStatePath $installRun.state -ContentPath $candidate
+    Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content $installRun.state -Raw).Contains('Continue in a fresh coordinator.') -and ($installed -join '') -match 'history') 'allowed checkpoint candidate installs and archives the old checkpoint'
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'PowerShell' @{ command = "Get-Content '$bigFile'; $installCommand" }))) 'checkpoint allowance does not permit a chained heavy read'
+
+    # ---- FS-64: both vendor transcript formats record a wall without a bootstrap baseline.
+    foreach ($wallHost in @('codex', 'claude')) {
+        $preRun = New-Run -Name "pre-bootstrap-$wallHost" -PinnedHost $wallHost -Managed
+        $preCwd = Split-Path -Parent $preRun.state
+        $preId = "unmarked-$wallHost"
+        $launchTime = [DateTime]::UtcNow.AddMinutes(-2)
+        $preT = if ($wallHost -eq 'codex') { Join-Path $env:CODEX_HOME "sessions/rollout-pre-$wallHost.jsonl" } else { Join-Path $env:CLAUDE_CONFIG_DIR "projects/$($preCwd -replace '[^A-Za-z0-9]', '-')/pre-$wallHost.jsonl" }
+        if ($wallHost -eq 'codex') {
+            New-CodexRollout -Path $preT -Inputs @(199999) -Cwd $preCwd
+            Add-Line $preT @{ type = 'response_item'; payload = @{ type = 'message'; role = 'user'; content = "Resume existing managed build as coordinator $preId on $wallHost." } }
+        } else {
+            New-ClaudeTranscript -Path $preT -Totals @(199999) -Cwd $preCwd
+            Add-Line $preT @{ type = 'user'; cwd = $preCwd; message = @{ content = "Resume existing managed build as coordinator $preId on $wallHost." } }
+        }
+        $late = [DateTime]::UtcNow.ToString('o')
+        if ($wallHost -eq 'codex') {
+            Add-Line $preT @{ timestamp = $late; type = 'response_item'; payload = @{ type = 'custom_tool_call'; call_id = 'pre-heavy'; input = "Get-Content 'D:/fixture/authority.md'" } }
+            Add-Line $preT @{ timestamp = $late; type = 'response_item'; payload = @{ type = 'custom_tool_call_output'; call_id = 'pre-heavy'; output = ('x' * 50000) } }
+        } else {
+            Add-Line $preT @{ timestamp = $late; type = 'assistant'; message = @{ content = @(@{ type = 'tool_use'; id = 'pre-heavy'; input = @{ file_path = 'D:/fixture/authority.md' } }) } }
+            Add-Line $preT @{ timestamp = $late; type = 'user'; message = @{ content = @(@{ type = 'tool_result'; tool_use_id = 'pre-heavy'; content = ('x' * 50000) }) } }
+        }
+        Add-Line (Join-Path $preRun.folder 'launches.jsonl') @{ type = 'launch'; coordinator_id = $preId; host = $wallHost; launched_utc = $launchTime.ToString('o'); trigger_seq = 1 }
+        $preWall = Join-Path $preRun.folder 'context-wall.json'
+        $measure = { & pwsh -NoProfile -Command ". '$watcher'; Update-WatcherContextWall -Folder '$($preRun.folder)' -NowUtc ([DateTime]::UtcNow)" | Out-Null }
+        & $measure
+        Assert-True (-not (Test-Path $preWall)) "$wallHost below the pre-bootstrap ceiling leaves no wall"
+        if ($wallHost -eq 'codex') { Add-CodexTokens -Path $preT -InputTokens 205562 } else { Add-ClaudeUsage -Path $preT -Total 205562 -Cwd $preCwd }
+        & $measure
+        $preDoc = if (Test-Path $preWall) { Get-Content $preWall -Raw | ConvertFrom-Json } else { $null }
+        Assert-True ($null -ne $preDoc -and $preDoc.pre_bootstrap -and $null -eq $preDoc.baseline -and $preDoc.tokens -eq 205562) "$wallHost wall records unmarked launch with null baseline"
+        Assert-True ($preDoc.reads.Count -eq 1 -and $preDoc.reads[0].path -eq 'D:/fixture/authority.md' -and $preDoc.reads[0].chars -eq 50000 -and ([DateTime]$preDoc.since_utc).ToUniversalTime().Ticks -eq $launchTime.Ticks) "$wallHost heavy authority reads are measured since launch"
+    }
     # ---- repeat walls: the files that filled a coordinator are named, recorded, and sent to a worker.
     $heavyPath = 'D:\fixture\refs\Big Ref.md'
     $claudeHeavy = Join-Path $fixtures 'heavy-claude.jsonl'

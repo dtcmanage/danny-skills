@@ -217,7 +217,7 @@ function Find-DtCtxTranscript {
     # $CODEX_HOME\sessions (default ~\.codex\sessions). Among the candidates Test-DtCtxCandidate accepts,
     # the newest one whose latest lines carry a mark-bootstrap call wins, else the newest. A discovered
     # transcript is a guess: its session is never recorded as a coordinator session for the hooks.
-    param([Parameter(Mandatory)][string]$TranscriptHost, [string]$Cwd = (Get-Location).ProviderPath)
+    param([Parameter(Mandatory)][string]$TranscriptHost, [string]$Cwd = (Get-Location).ProviderPath, [string]$CoordinatorId, [Nullable[DateTime]]$SinceUtc)
     if ($TranscriptHost -eq 'claude') {
         $base = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
         $root = Join-Path $base 'projects'
@@ -234,7 +234,14 @@ function Find-DtCtxTranscript {
     $candidates = @(Get-ChildItem -LiteralPath $searchRoot -Recurse -File -Filter $filter -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First $script:DtCtxDiscoveryCandidates)
     $newest = $null
     foreach ($file in $candidates) {
+        if ($null -ne $SinceUtc -and $file.LastWriteTimeUtc -lt $SinceUtc) { continue }
         if (-not (Test-DtCtxCandidate -TranscriptHost $TranscriptHost -Path $file.FullName -Cwd $Cwd)) { continue }
+        if ($CoordinatorId) {
+            # Match the managed launch prompt, not a marker in an unrelated newer session.
+            $launchPattern = [regex]::Escape("as coordinator $CoordinatorId on $TranscriptHost")
+            if (-not (Select-String -LiteralPath $file.FullName -Pattern $launchPattern -Quiet)) { continue }
+            return $file.FullName
+        }
         if (Test-DtCtxTailContains -Path $file.FullName -Text 'mark-bootstrap') { return $file.FullName }
         if ($null -eq $newest) { $newest = $file.FullName }
     }

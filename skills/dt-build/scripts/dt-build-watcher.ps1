@@ -28,6 +28,24 @@ $script:WatcherRunLaunchCap = 6
 $script:WatcherConsecutiveThrashLaunches = 2
 $script:WatcherAbsoluteLaunchCap = 30
 $script:WatcherRunLaunchWindowMin = 60
+$script:WatcherCapacityDelaysMin = @(5, 10, 20)
+$script:WatcherCapacityWaitMin = 35
+
+function Test-WatcherCapacityLaunch {
+    param([string]$RunFolder, $Launch)
+    if ($Launch.PSObject.Properties['failure_category'] -and $Launch.failure_category -eq 'capacity') { return $true }
+    if (-not $Launch.PSObject.Properties['coordinator_id'] -or -not $Launch.coordinator_id) { return $false }
+    $receipt = Join-Path $RunFolder "coordinator-$($Launch.coordinator_id).exit.json"
+    if (Test-Path -LiteralPath $receipt) {
+        try {
+            $exitRecord = Read-DtJobText -Path $receipt | ConvertFrom-Json
+            if ($exitRecord.coordinator_id -ceq $Launch.coordinator_id -and $exitRecord.failure_category -eq 'capacity' -and $exitRecord.exit_code -ne 0) { return $true }
+        } catch { } # A partial receipt falls back to the refusal stream.
+    }
+    $log = Join-Path $RunFolder "coordinator-$($Launch.coordinator_id).log"
+    if (-not (Test-Path -LiteralPath $log -PathType Leaf)) { return $false }
+    return (Read-DtJobText -Path $log) -match '(?i)Selected model is at capacity|(?:model|server) is (?:currently )?(?:at capacity|overloaded)|overloaded_error|insufficient model capacity'
+}
 # One retry of a failed registry read, this long after the first attempt, before it counts as an error.
 $script:WatcherRegistryRetryMs = 500
 # The same step error on this many consecutive ticks of a run sends Danny one DM.
@@ -209,6 +227,25 @@ function Get-WatcherDecision {
     }
 
     $rows = @(Get-WatcherLaunches -RunFolder $folder)
+    # Detached vendor exits are visible in the stream only after the PID is gone (checked above).
+    # Normalize historical launches too. Capacity episodes have a separate bounded wait budget.
+    $lastStop = -1
+    for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].type -in @('stopped', 'rearmed')) { $lastStop = $i } }
+    $episode = @($rows | Select-Object -Skip ($lastStop + 1) | Where-Object { $_.type -eq 'launch' })
+    $capacity = @()
+    foreach ($launch in $episode) {
+        if (Test-WatcherCapacityLaunch -RunFolder $folder -Launch $launch) { $capacity += $launch }
+        else { $capacity = @() }
+    }
+    if ($capacity.Count) {
+        $first = ConvertTo-DtJobUtc $capacity[0].launched_utc
+        if ($capacity.Count -gt $script:WatcherCapacityDelaysMin.Count -or $NowUtc -ge $first.AddMinutes($script:WatcherCapacityWaitMin)) {
+            return [pscustomobject]@{ action = 'stop'; stop_kind = 'capacity'; trigger_seq = $trigger; detail = "vendor capacity refused $($capacity.Count) launches; bounded capacity wait is $($script:WatcherCapacityWaitMin) minutes" }
+        }
+        $due = (ConvertTo-DtJobUtc $capacity[-1].launched_utc).AddMinutes($script:WatcherCapacityDelaysMin[$capacity.Count - 1])
+        if ($NowUtc -lt $due) { return [pscustomobject]@{ action = 'none'; detail = "capacity backoff: $(Format-RouterResumeAfterEt -AtUtc ([datetimeoffset]$due) -Source recheck)" } }
+    }
+    $rows = @($rows | Where-Object { $_.type -ne 'launch' -or -not (Test-WatcherCapacityLaunch -RunFolder $folder -Launch $_) })
     $history = @($rows | Where-Object { [int64]$_.trigger_seq -eq $trigger })
     $attempts = @($history | Where-Object { $_.type -eq 'launch' })
     if ($attempts.Count -ge $script:WatcherMaxAttempts) {
@@ -299,19 +336,29 @@ function Update-WatcherContextWall {
         if ($previous.Count -eq 0) { return }
         $previous = $previous[0]
         $baseline = (Get-DtJobContextBaselines -RunFolder $Folder).coordinators.PSObject.Properties[[string]$previous.coordinator_id]
-        if ($null -eq $baseline -or -not $baseline.Value.transcript_path -or $null -eq $baseline.Value.baseline_tokens) { return }
-        $entry = $baseline.Value
         $since = ConvertTo-DtJobUtc $previous.launched_utc
+        $preBootstrap = $null -eq $baseline -or -not $baseline.Value.transcript_path -or $null -eq $baseline.Value.baseline_tokens
+        if ($preBootstrap) {
+            $hostName = if ($previous.PSObject.Properties['host']) { [string]$previous.host } else { 'codex' }
+            $registration = @(Get-DtJobRegistryRuns | Where-Object { Test-DtCtxSamePath ([string]$_.run_folder) $Folder } | Select-Object -First 1)
+            if (-not $registration.Count) { return }
+            $transcript = Find-DtCtxTranscript -TranscriptHost $hostName -Cwd (Split-Path -Parent ([string]$registration[0].build_state_path)) -CoordinatorId ([string]$previous.coordinator_id) -SinceUtc $since
+            # Discovery never establishes session authority. Require the unique launch id in the
+            # transcript prompt, and only measure evidence at/after launch.
+            $entry = [pscustomobject]@{ transcript_path = $transcript; host = $hostName; baseline_tokens = $null }
+        }
+        else { $entry = $baseline.Value }
         $started = @(Get-DtJobEvents -RunFolder $Folder | Where-Object {
             $_.job_id -ne 'run' -and $_.type -in @('launched', 'process_started', 'started') -and
             (ConvertTo-DtJobUtc $_.ts_utc) -ge $since -and (ConvertTo-DtJobUtc $_.ts_utc) -le $NowUtc })
         if ($started.Count -gt 0) { & $clear; return }
         $transcriptHost = if ($entry.PSObject.Properties['host'] -and $entry.host) { [string]$entry.host } else { 'claude' }
         $tokens = Get-DtCtxTokens -TranscriptHost $transcriptHost -TranscriptPath ([string]$entry.transcript_path)
-        $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entry.baseline_tokens) -TranscriptHost $transcriptHost
+        if ($null -eq $tokens) { return } # No usage evidence (e.g. capacity refusal) must not erase a prior wall.
+        $report = Get-DtCtxState -Tokens $tokens -Baseline $entry.baseline_tokens -TranscriptHost $transcriptHost
         if ($report.state -eq 'ok') { & $clear; return }
         $marked = if ($entry.PSObject.Properties['marked_utc'] -and $entry.marked_utc) { ConvertTo-DtJobUtc $entry.marked_utc } else { $since }
-        $reads = @(Get-DtCtxHeavyReads -TranscriptPath ([string]$entry.transcript_path) -SinceUtc $marked)
+        $reads = @(Get-DtCtxHeavyReads -TranscriptPath ([string]$entry.transcript_path) -SinceUtc $marked -Top 1000)
         # Consecutive walls keep every earlier heavy file: the coordinator before may have hit a different one.
         $prior = $null
         if (Test-Path -LiteralPath $path) { try { $prior = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json } catch { $prior = $null } }
@@ -324,8 +371,8 @@ function Update-WatcherContextWall {
         $coordinators = @(@(if ($null -ne $prior -and $prior.PSObject.Properties['coordinators']) { @($prior.coordinators) }) + @([string]$previous.coordinator_id) | Select-Object -Unique)
         $record = [ordered]@{
             coordinator_id = [string]$previous.coordinator_id; coordinators = $coordinators; recorded_utc = $NowUtc.ToString('o')
-            tokens = $tokens; baseline = [long]$entry.baseline_tokens; soft = $report.soft
-            reads = @($merged.Values | Select-Object -First 8)
+            tokens = $tokens; baseline = $entry.baseline_tokens; pre_bootstrap = $preBootstrap; since_utc = $since.ToString('o'); soft = $report.soft
+            reads = @($merged.Values)
         }
         Write-DtJobAtomic -Path $path -Content ($record | ConvertTo-Json -Depth 6)
     }
@@ -364,8 +411,9 @@ function Invoke-WatcherLaunch {
     # The launcher runs under this tick's coordinator.lock, so its lease acquire must not wait on that lock.
     $env:DT_BUILD_COORDINATOR_LOCK_HELD = $folder
     try {
-        & pwsh -NoProfile -NonInteractive -File $script:WatcherLauncher -Host $chosen -RunId ([string]$Entry.run_id) -RunFolder $folder -BuildStatePath ([string]$Entry.build_state_path) -CoordinatorId $coordinatorId *> $null
+        $launcherOutput = & pwsh -NoProfile -NonInteractive -File $script:WatcherLauncher -Host $chosen -RunId ([string]$Entry.run_id) -RunFolder $folder -BuildStatePath ([string]$Entry.build_state_path) -CoordinatorId $coordinatorId 2>&1
         $launcherExit = $LASTEXITCODE
+        if ($launcherExit -ne 0) { [IO.File]::AppendAllText((Join-Path $folder "coordinator-$coordinatorId.log"), ($launcherOutput -join "`n") + "`n") }
     }
     catch { $launcherExit = -1 }
     finally { Remove-Item Env:DT_BUILD_COORDINATOR_LOCK_HELD -ErrorAction SilentlyContinue }
@@ -387,7 +435,7 @@ function Invoke-WatcherStop {
         if ($last -ne $Decision.trigger_seq -or $state.last_consumed_event_seq -ge $Decision.trigger_seq) {
             # Danny's resume beat a cap stop: restart the cap window so the next tick does not stop the run again.
             $resumed = @(Get-DtJobEvents -RunFolder $folder | Where-Object { [int64]$_.seq -gt [int64]$Decision.trigger_seq -and $_.type -eq 'continuation_requested' -and $_.PSObject.Properties['reason'] -and $_.reason -eq 'resume' })
-            if ($Decision.stop_kind -in @('cap', 'ceiling', 'thrash') -and $resumed.Count -gt 0) {
+            if ($Decision.stop_kind -in @('cap', 'ceiling', 'thrash', 'capacity') -and $resumed.Count -gt 0) {
                 Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'rearmed'; trigger_seq = $Decision.trigger_seq; rearmed_utc = $NowUtc.ToString('o'); reason = "resume at event $($resumed[-1].seq) beat the cap stop" })
             }
             return "event $last, cursor $($state.last_consumed_event_seq)"
@@ -398,7 +446,11 @@ function Invoke-WatcherStop {
     if ($blocker) { return "changed under run lock: $blocker" }
     Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'stopped'; trigger_seq = $Decision.trigger_seq; stopped_utc = $NowUtc.ToString('o'); reason = $Decision.stop_kind })
     $runId = [string]$Entry.run_id
-    if ($Decision.stop_kind -eq 'thrash') {
+    if ($Decision.stop_kind -eq 'capacity') {
+        $text = "dt-build run $runId is paused because the vendor is at capacity: $($Decision.detail). Capacity refusals do not count as coordinator thrash. Evidence: $folder (launches.jsonl and coordinator logs). Retry with: /dt-build resume $runId"
+        $key = "dt-build:${runId}:launch-capacity:$($Decision.trigger_seq)"
+    }
+    elseif ($Decision.stop_kind -eq 'thrash') {
         $ids = @($Decision.coordinator_ids)
         $lastId = $ids[-1]
         $commands = Get-WatcherLastCommands -RunFolder $folder -CoordinatorId $lastId -Count 5

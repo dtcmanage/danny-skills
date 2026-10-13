@@ -91,7 +91,11 @@ else {
     [System.IO.File]::WriteAllText($settings, $snippet.Replace('__DT_BUILD_HOOKS_DIR__', $hooksDir), [System.Text.UTF8Encoding]::new($false))
     $lines.Add("& claude -p --strict-mcp-config --mcp-config $(ConvertTo-SingleQuoted $mcpConfig) --settings $(ConvertTo-SingleQuoted $settings) --permission-mode bypassPermissions $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
 }
-$lines.Add('exit $LASTEXITCODE')
+$lines.Add('$coordinatorExit = $LASTEXITCODE')
+$lines.Add("`$capacityText = [IO.File]::ReadAllText($(ConvertTo-SingleQuoted $log))")
+$lines.Add("`$failureCategory = if (`$coordinatorExit -ne 0 -and `$capacityText -match '(?i)Selected model is at capacity|(?:model|server) is (?:currently )?(?:at capacity|overloaded)|overloaded_error|insufficient model capacity') { 'capacity' } else { `$null }")
+$lines.Add("[IO.File]::WriteAllText($(ConvertTo-SingleQuoted (Join-Path $runRoot "coordinator-$CoordinatorId.exit.json")), (([ordered]@{ coordinator_id = $(ConvertTo-SingleQuoted $CoordinatorId); exit_code = `$coordinatorExit; failure_category = `$failureCategory } | ConvertTo-Json -Compress)))")
+$lines.Add('exit $coordinatorExit')
 $encoded = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(($lines -join "`n")))
 
 # The watcher runs this launcher under coordinator.lock and sets DT_BUILD_COORDINATOR_LOCK_HELD, so this

@@ -1,0 +1,8 @@
+PASS: equivalent vendor overload stream is classified as capacity
+PASS: quota refusal remains separate from capacity
+PASS: detached launcher exit receipt classifies capacity
+PASS: capacity receipt does not consume the ordinary retry schedule
+PASS: thirty-five capacity failures spend none of the retry, thrash or absolute cap budgets
+PASS: a new trigger cannot reset the total capacity wait bound
+PASS: capacity transcript without usage cannot erase the prior context wall
+SUMMARY: 7 passed

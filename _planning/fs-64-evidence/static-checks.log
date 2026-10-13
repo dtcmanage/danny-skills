@@ -1,0 +1,3 @@
+PowerShell parse: 0 errors in 13 changed scripts
+git diff --check exit=0
+invoke-codex-chunk and version/changelog metadata untouched: exit=0
