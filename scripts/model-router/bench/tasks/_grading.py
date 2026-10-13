@@ -80,9 +80,14 @@ def _grade_python(task: Path, answer: Path, helper: Path) -> bool:
         with tempfile.TemporaryDirectory(prefix="router-pytest-result-") as directory:
             report = Path(directory) / "results.xml"
             pytest_args = ["-q", "test_hidden.py", "--junitxml=" + str(report)]
-            proc = subprocess.run([sys.executable, str(helper), "--", sys.executable, "-c", "import pytest; raise SystemExit(pytest.main("
+            # grade_python already owns (or verified its ancestor's) explicit
+            # lock. Launch the sealed pytest directly, with no guard plugin/path.
+            spec = importlib.util.spec_from_file_location('grading_child_environment', helper)
+            shared_lock = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(shared_lock)
+            proc = subprocess.run([sys.executable, "-c", "import pytest; raise SystemExit(pytest.main("
                                    + repr(pytest_args) + "))"],
-                                  cwd=work, env=env, capture_output=True, timeout=30)
+                                  cwd=work, env=shared_lock.sealed_environment(env), capture_output=True, timeout=30)
             if proc.returncode:
                 print('PYTEST_GRADER_FAILURE:', proc.returncode,
                       (proc.stdout + proc.stderr).decode('utf-8', errors='replace')[-4000:])

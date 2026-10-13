@@ -78,7 +78,7 @@ function Wait-DtJobProcess {
     # Waits for the job without a time limit unless the job has one, and every heartbeat records whether
     # it showed any sign of life: CPU in its process tree, output, or file changes in its working
     # directory outside the run folder. Returns $false only when a job time limit ran out.
-    param([Parameter(Mandatory)]$Process, [int]$TimeoutSec, [Parameter(Mandatory)][string]$WorkDir, [Parameter(Mandatory)][System.IO.Stream[]]$Outputs)
+    param([Parameter(Mandatory)]$Process, [int]$TimeoutSec, [Parameter(Mandatory)][string]$WorkDir, [Parameter(Mandatory)][System.IO.Stream[]]$Outputs, [string]$AdmissionReady)
     $heartbeatSec = Get-DtJobSettingSec -Name 'DT_JOB_HEARTBEAT_SEC' -Default $script:DtJobHeartbeatSec
     $beatPath = Join-Path $jobDir 'heartbeat.json'
     $runRoot = [System.IO.Path]::GetFullPath($paths.Root).TrimEnd('\', '/')
@@ -93,6 +93,7 @@ function Wait-DtJobProcess {
     }
     catch { $fsWatcher = $null }
     $started = [DateTime]::UtcNow
+    $executionStarted = if ($AdmissionReady) { $null } else { $started }
     $lastActivity = $started
     $lastCpu = $null; $lastBytes = [long]-1; $fileChanges = 0; $newFiles = 0
     $nextBeat = $started
@@ -106,6 +107,7 @@ function Wait-DtJobProcess {
                 }
             }
             $now = [DateTime]::UtcNow
+            if ($null -eq $executionStarted -and (Test-Path -LiteralPath $AdmissionReady)) { $executionStarted = $now }
             if ($now -ge $nextBeat) {
                 $cpu = try { Get-DtJobTreeCpuSeconds -RootPid $Process.Id } catch { $null }
                 $bytes = [long]0; foreach ($s in $Outputs) { try { $bytes += $s.Position } catch { } }
@@ -118,7 +120,7 @@ function Wait-DtJobProcess {
                 try { Write-DtJobAtomic -Path $beatPath -Content ($beat | ConvertTo-Json -Compress) } catch { }
                 $nextBeat = $now.AddSeconds($heartbeatSec)
             }
-            if ($TimeoutSec -gt 0 -and ($now - $started).TotalSeconds -ge $TimeoutSec) { return $false }
+            if ($TimeoutSec -gt 0 -and $null -ne $executionStarted -and ($now - $executionStarted).TotalSeconds -ge $TimeoutSec) { return $false }
         }
         return $true
     }
@@ -169,12 +171,17 @@ try {
 
     # Explicit pytest test jobs and commands share the machine lock, even
     # when the command launches a shell or a nested grader.
-    if (([string]$spec.command + ' ' + [string]$spec.script_path + ' ' + (@($spec.argument_list) -join ' ')) -match '(?i)pytest') {
+    $pytestReadyFile = $null
+    . (Join-Path $DtJobRepoRoot 'scripts/pytest-command.ps1')
+    if (Test-DannyPytestCommand -Command ([string]$spec.command) -Executable ([string]$spec.script_path) -ArgumentList @($spec.argument_list)) {
         $testExe = $psi.FileName
         $testArgs = @($psi.ArgumentList)
         $psi.ArgumentList.Clear()
         $psi.FileName = (Get-Command python -CommandType Application | Select-Object -First 1).Source
         $psi.ArgumentList.Add((Join-Path $DtJobRepoRoot 'scripts/pytest-lock.py'))
+        $pytestReadyFile = Join-Path $jobDir ('pytest-ready-' + [guid]::NewGuid().ToString('N'))
+        $psi.ArgumentList.Add('--ready-file')
+        $psi.ArgumentList.Add($pytestReadyFile)
         $psi.ArgumentList.Add('--')
         $psi.ArgumentList.Add($testExe)
         foreach ($arg in $testArgs) { $psi.ArgumentList.Add($arg) }
@@ -214,7 +221,7 @@ try {
         }
 
         $timeoutSec = [int]$spec.timeout_sec
-        $finished = Wait-DtJobProcess -Process $process -TimeoutSec $timeoutSec -WorkDir $psi.WorkingDirectory -Outputs @($stdoutFile, $stderrFile)
+        $finished = Wait-DtJobProcess -Process $process -TimeoutSec $timeoutSec -WorkDir $psi.WorkingDirectory -Outputs @($stdoutFile, $stderrFile) -AdmissionReady $pytestReadyFile
         if (-not $finished) {
             $process.Kill($true)
             $process.WaitForExit()

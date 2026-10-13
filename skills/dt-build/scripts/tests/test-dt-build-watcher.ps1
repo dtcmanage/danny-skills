@@ -1609,7 +1609,7 @@ try { $runs = @(Read-WatcherRegistry); $outcome = "ok:$($runs[0].run_id)" } catc
     Invoke-Tick | Out-Null
     $receipt = Get-Content -Raw (Join-Path $run.folder 'approval-queued.json') | ConvertFrom-Json
     $approval = Get-Content -Raw (Join-Path $run.folder 'approvals.json') | ConvertFrom-Json
-    Assert-True ($receipt.status -eq 'applied' -and $approval.approvals.Count -eq 1 -and $approval.approvals[0].operation -eq 'fixture-queue-review') 'watcher applies receipt after fixture exits'
+    Assert-True ($receipt.status -eq 'applied' -and $approval.approvals.Count -eq 1 -and $approval.approvals[0].status -eq 'applied' -and $approval.approvals[0].operation -eq 'fixture-queue-review') 'watcher persists applied receipt after fixture exits'
     Invoke-Tick | Out-Null
     Assert-True ((Get-Content -Raw (Join-Path $run.folder 'approvals.json') | ConvertFrom-Json).approvals.Count -eq 1) 'watcher receipt application is idempotent'
 

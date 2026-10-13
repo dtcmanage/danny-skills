@@ -1650,9 +1650,10 @@ function Invoke-DtJobApprove {
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder
         $queuePath = Join-Path $RunFolder 'approval-queued.json'
         if ($null -eq $approvals.awaiting) {
-            if (Test-Path -LiteralPath $queuePath) {
-                $previous = Read-DtJobText -Path $queuePath | ConvertFrom-Json
-                if ($previous.status -eq 'applied' -and $previous.operation -ceq $Operation) { return @{ approved = $Operation } }
+            $history = @($approvals.approvals)
+            if ($history.Count -gt 0 -and $history[-1].operation -ceq $Operation -and
+                (Get-DtJobRunState -BuildStatePath $ctx.build_state_path).run_status -eq 'runnable') {
+                return @{ approved = $Operation }
             }
             throw "DT_JOB_NOT_AWAITING: run $($ctx.run_id) is not waiting on an approval"
         }
@@ -1669,7 +1670,7 @@ function Invoke-DtJobApprove {
         if ($live) {
             if (Test-Path -LiteralPath $queuePath) {
                 $q = Read-DtJobText -Path $queuePath | ConvertFrom-Json
-                if ($q.status -eq 'queued' -and $q.await_seq -eq $receipt.await_seq -and $q.coordinator_id -ceq $lease.coordinator_id -and $q.coordinator_start_utc -eq $lease.pid_start_utc) {
+                if ($q.status -eq 'queued' -and $q.operation -ceq $receipt.operation -and $q.await_seq -eq $receipt.await_seq -and $q.coordinator_id -ceq $lease.coordinator_id -and $q.coordinator_start_utc -eq $lease.pid_start_utc) {
                     return @{ approval_queued = $Operation; message = "approval queued; applies when coordinator $($q.coordinator_pid) exits" }
                 }
             }

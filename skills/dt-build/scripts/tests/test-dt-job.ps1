@@ -769,9 +769,18 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $closing.WaitForExit()
     Invoke-DtJob @('status', '-RunFolder', $rf) | Out-Null
     $applied = Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json
-    Assert-True ($applied.approvals.Count -eq 1 -and $null -eq $applied.awaiting -and (Get-Content -LiteralPath $state -Raw) -match 'run_status: runnable') 'next invocation applies approval when original process identity exits'
+    Assert-True ($applied.approvals.Count -eq 1 -and $applied.approvals[0].status -eq 'applied' -and $null -eq $applied.awaiting -and (Get-Content -LiteralPath $state -Raw) -match 'run_status: runnable') 'next invocation applies durable applied receipt when original process identity exits'
     Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'fixture-review') | Out-Null
     Assert-True ((Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json).approvals.Count -eq 1) 'applied approval repeats without duplication'
+
+    # Immediate approvals have no queue file; repeat the latest exact approval.
+    Remove-Item -LiteralPath $queuePath
+    Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'immediate-review', '-Message', 'fixture only') | Out-Null
+    Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'immediate-review') | Out-Null
+    Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'immediate-review') | Out-Null
+    Assert-True ((Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json).approvals.Count -eq 2) 'immediate approve twice records only one new approval without a queue'
+    $wrongRepeat = & pwsh -NoProfile -File $dtJob approve -RunFolder $rf -Operation fixture-review -Json 2>&1
+    Assert-True ($LASTEXITCODE -ne 0 -and ($wrongRepeat -join ' ') -match 'DT_JOB_NOT_AWAITING') 'older operation is not accepted as a repeated latest approval'
 
     Write-Output 'PASS: dt-job suite'
 }

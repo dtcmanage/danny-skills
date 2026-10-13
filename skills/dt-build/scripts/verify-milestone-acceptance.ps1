@@ -195,10 +195,14 @@ function Invoke-NamedCommand {
     # Sequential pipe reads can deadlock when both buffers fill (observed with a
     # high-volume Vitest run). File redirection also keeps the retained JSON small.
     $effectiveCommand = Normalize-Command -Command $Command
-    if ($effectiveCommand -match '(?i)pytest') {
+    $lockReady = $null
+    . (Join-Path $PSScriptRoot '../../../scripts/pytest-command.ps1')
+    if (Test-DannyPytestCommand -Command $effectiveCommand) {
         $lockPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../scripts/pytest-lock.ps1')).Replace("'", "''")
+        $lockReady = Join-Path ([IO.Path]::GetTempPath()) ('pytest-ready-' + [guid]::NewGuid().ToString('N'))
+        $readyQuoted = $lockReady.Replace("'", "''")
         $testEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($effectiveCommand))
-        $effectiveCommand = "& '$lockPath' pwsh -NoProfile -EncodedCommand $testEncoded; exit `$LASTEXITCODE"
+        $effectiveCommand = "& '$lockPath' -ReadyFile '$readyQuoted' pwsh -NoProfile -EncodedCommand $testEncoded; exit `$LASTEXITCODE"
     }
     $stdoutFile = [System.IO.Path]::GetTempFileName()
     $stderrFile = [System.IO.Path]::GetTempFileName()
@@ -215,6 +219,15 @@ function Invoke-NamedCommand {
             -RedirectStandardError $stderrFile `
             -NoNewWindow -PassThru
 
+        if ($lockReady) {
+            # Admission has the helper's separate 1800s limit and diagnostics.
+            # The named check's execution timeout begins after its lock wait.
+            $admissionDeadline = [DateTime]::UtcNow.AddSeconds(1830)
+            while (-not $proc.HasExited -and -not (Test-Path -LiteralPath $lockReady)) {
+                if ([DateTime]::UtcNow -ge $admissionDeadline) { throw 'PYTEST_LOCK_WAIT_TIMEOUT: see holder diagnostics in stderr.' }
+                Start-Sleep -Milliseconds 100
+            }
+        }
         $completed = $proc.WaitForExit($TimeoutMs)
         $timedOut = -not $completed
         if ($timedOut) {
@@ -238,7 +251,9 @@ function Invoke-NamedCommand {
             stderr_tail        = ($stderr -split "`n" | Select-Object -Last 20) -join "`n"
         }
     } finally {
+        if ($proc -and -not $proc.HasExited) { $proc.Kill($true); [void]$proc.WaitForExit(5000) }
         if ($proc) { $proc.Dispose() }
+        if ($lockReady) { Remove-TempFileQuietly -Path $lockReady }
         Remove-TempFileQuietly -Path $stdoutFile
         Remove-TempFileQuietly -Path $stderrFile
     }
