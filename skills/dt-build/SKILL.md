@@ -228,10 +228,6 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   verifier surface/model, selection reason, and disclosure line. The builder never self-approves. The verifier also flags any diff content beyond
   the milestone's named artifacts and stated scope as an out-of-scope finding — built-but-unrequested work is
   a defect, not a bonus.
-  When the review uses mutable operator context, follow `references/review-inputs.md`: prepare a
-  tooling snapshot packet, pin its hash in the dispatch record, give the verifier its review paths,
-  and verify the packet before dispatch and before consuming the verdict. Report live context changes
-  as information. Existing run-authored authority pins and boundaries still govern adoption.
 - e. **Run the acceptance gate.** `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
 - f. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
 - g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and

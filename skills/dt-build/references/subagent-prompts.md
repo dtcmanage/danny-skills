@@ -16,6 +16,7 @@ Lane routing:
 - Follow `SKILL.md` "## Model routing" for category, protection, selection disclosure, and retry rules.
 - Use CLAUDE_DISPATCH and VERIFY_DISPATCH as defined in `SKILL.md`; stop each subagent after collecting its report.
 - A fresh non-builder verifier via VERIFY_DISPATCH must verify every load-bearing, security-sensitive, live-write, or agent-verification milestone before acceptance.
+- When a review uses mutable operator context, follow `review-inputs.md`: prepare a tooling snapshot packet, pin its hash in the dispatch record, give the verifier its review paths, and verify the packet before dispatch and before consuming the verdict. Report live context changes as information; existing run-authored authority pins and boundaries still govern adoption.
 
 Every build/fix prompt ends with:
 - Work only in the named worktree and milestone scope.
