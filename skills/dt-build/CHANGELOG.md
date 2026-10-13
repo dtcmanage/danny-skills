@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.38.1
+
+- Review-input guidance moved from SKILL.md into references/subagent-prompts.md to keep SKILL.md within its word cap (FS-56 follow-up).
+
 ## 2.38.0
 
 - Review-input snapshot packets (prepare/verify-review-packet.ps1, references/review-inputs.md) let reviews pin mutable operator context as a snapshot; shared path identity treats slash spelling, case and trailing separators as one path (FS-56).
