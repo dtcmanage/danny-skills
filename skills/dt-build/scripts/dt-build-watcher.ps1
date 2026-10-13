@@ -820,6 +820,7 @@ function Invoke-WatcherRunTick {
     param([Parameter(Mandatory)]$Entry)
     $folder = [string]$Entry.run_folder
     $runId = [string]$Entry.run_id
+    Receive-DtJobQueuedApproval -RunFolder $folder
     if (-not (Test-Path -LiteralPath $folder)) { return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = 'run folder missing' } }
     & pwsh -NoProfile -NonInteractive -File $script:WatcherDtJob reconcile -RunFolder $folder -Json *> $null
     $reconcileExit = $LASTEXITCODE

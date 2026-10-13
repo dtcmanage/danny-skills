@@ -21,6 +21,9 @@ class GraderEnvironment(BaseException):
 
 
 def main() -> int:
+    # A fixture/private task bank may copy _grading.py outside the repository.
+    # Resolve the shared lock from this authoritative runtime entry point.
+    os.environ['DANNY_PYTEST_HELPER'] = str(Path(__file__).resolve().parents[2] / 'pytest-lock.py')
     task, answer = (Path(value).resolve() for value in sys.argv[1:3])
     original_run = subprocess.run
 

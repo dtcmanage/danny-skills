@@ -167,6 +167,19 @@ try {
         foreach ($a in @($spec.argument_list)) { $psi.ArgumentList.Add([string]$a) }
     }
 
+    # Explicit pytest test jobs and commands share the machine lock, even
+    # when the command launches a shell or a nested grader.
+    if (([string]$spec.command + ' ' + [string]$spec.script_path + ' ' + (@($spec.argument_list) -join ' ')) -match '(?i)pytest') {
+        $testExe = $psi.FileName
+        $testArgs = @($psi.ArgumentList)
+        $psi.ArgumentList.Clear()
+        $psi.FileName = (Get-Command python -CommandType Application | Select-Object -First 1).Source
+        $psi.ArgumentList.Add((Join-Path $DtJobRepoRoot 'scripts/pytest-lock.py'))
+        $psi.ArgumentList.Add('--')
+        $psi.ArgumentList.Add($testExe)
+        foreach ($arg in $testArgs) { $psi.ArgumentList.Add($arg) }
+    }
+
     # Recheck under the lock before starting: a job cancelled after launch never runs.
     $proceed = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+import importlib.util
 from fractions import Fraction
 import itertools
 import json
@@ -33,6 +34,10 @@ JOBS = {'fast', 'coder', 'deep-thinker', 'writer', 'illustrator'}
 TRIGGERS = {'new-model', 'research', 'drift', 'manual'}
 # Graders are CPU-bound local subprocesses with a 30s clock; too many at once time each other out.
 GRADER_SLOTS = threading.BoundedSemaphore(8)
+PYTEST_GRADER_SLOT = threading.Lock()
+_lock_spec = importlib.util.spec_from_file_location('bench_pytest_lock', BENCH.parents[1] / 'pytest-lock.py')
+_pytest_lock = importlib.util.module_from_spec(_lock_spec)
+_lock_spec.loader.exec_module(_pytest_lock)
 
 
 def run_all(function: Callable[[Any], Any], items: list[Any], parallel: int) -> list[Any]:
@@ -105,6 +110,20 @@ def answer_body(answer: str, *, structured: bool = True) -> str:
 
 
 def grade_answer(task: Path, answer: str, *, timeout: float = 30) -> dict[str, Any]:
+    """Wait for pytest ownership before creating the timed candidate process."""
+    try:
+        metadata = task / 'task.json'
+        if metadata.exists() and json.loads(metadata.read_text(encoding='utf-8')).get('grader') == 'pytest':
+            # A suite can already own the machine lock. Serialize its grading
+            # threads too; inheritance permits descendants, not competing suites.
+            with PYTEST_GRADER_SLOT, _pytest_lock.pytest_lock():
+                return _grade_answer(task, answer, timeout=timeout)
+        return _grade_answer(task, answer, timeout=timeout)
+    except (OSError, subprocess.SubprocessError, ValueError, RuntimeError) as error:
+        return {'status': 'unknown', 'failure_category': 'environment', 'detail': str(error)}
+
+
+def _grade_answer(task: Path, answer: str, *, timeout: float) -> dict[str, Any]:
     """Always execute the repo grader in a fresh directory with scrubbed env."""
     env = {k: v for k, v in os.environ.items() if k.upper() not in
            {'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CLAUDE_CONFIG_DIR'}}

@@ -703,11 +703,16 @@ try {
     # A watcher-launched coordinator still closing out (this test process stands in for it) blocks approve, not hold.
     $leasePath = Join-Path $run.folder 'coordinator.lease'
     $savedLease = if (Test-Path -LiteralPath $leasePath) { Get-Content -Raw -LiteralPath $leasePath } else { $null }
-    $liveLease = [ordered]@{ coordinator_id = 'mc-closing'; host = 'codex'; session_id = $null; pid = $PID; pid_start_utc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(9).ToString('o'); released_utc = $null }
+    $closingFixtureScript = Join-Path $run.folder 'closing-fixture.ps1'
+    Write-Utf8 $closingFixtureScript 'Start-Sleep -Seconds 120'
+    $closingFixture = Start-Process pwsh -ArgumentList @('-NoProfile','-File', ('"' + $closingFixtureScript + '"')) -WindowStyle Hidden -PassThru
+    $liveLease = [ordered]@{ coordinator_id = 'mc-closing'; host = 'codex'; session_id = $null; pid = $closingFixture.Id; pid_start_utc = $closingFixture.StartTime.ToUniversalTime().ToString('o'); launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(9).ToString('o'); released_utc = $null }
     Write-Utf8 $leasePath ($liveLease | ConvertTo-Json)
-    $liveApprove = Invoke-DtJobExpectFail @('approve', '-RunFolder', $run.folder, '-Operation', 'parser-review')
-    Assert-True ($liveApprove.exit -ne 0 -and $liveApprove.text -match 'DT_JOB_OPERATOR_ONLY') 'approve still waits for a live watcher-launched coordinator to exit'
+    $liveApprove = Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'parser-review')
+    Assert-True ($liveApprove.approval_queued -eq 'parser-review') 'approve queues while watcher coordinator closes out'
     Invoke-DtJob @('hold', '-RunFolder', $run.folder, '-Operation', 'parser-review', '-Reason', 'waiting on the tooling fix for reviewer file access') | Out-Null
+    Remove-Item -LiteralPath (Join-Path $run.folder 'approval-queued.json') -Force
+    Stop-Process -Id $closingFixture.Id
     if ($null -ne $savedLease) { Write-Utf8 $leasePath $savedLease } else { Remove-Item -LiteralPath $leasePath -Force }
     $doc = Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json
     Assert-True ($doc.awaiting.held.reason -eq 'waiting on the tooling fix for reviewer file access') 'hold records the reason on the pending stop'
@@ -1434,7 +1439,7 @@ Get-WatcherDecision -Entry $entry -NowUtc $CheckAtUtc | ConvertTo-Json -Compress
     $liveCoordinator = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' -WindowStyle Hidden -PassThru
     try {
         Write-Lease -RunFolder $run.folder -LaunchedBy 'watcher' -LeasePid $liveCoordinator.Id -PidStartUtc $liveCoordinator.StartTime.ToUniversalTime().ToString('o') -ExpiresUtc ([DateTime]::UtcNow.AddMinutes(10)) -CoordinatorId 'mc-live'
-        $liveApprove = Invoke-DtJobExpectFail @('approve', '-RunFolder', $run.folder, '-Operation', 'merge')
+        $liveApprove = Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'merge')
         $liveResume = Invoke-DtJobExpectFail @('resume', '-RunFolder', $run.folder)
     }
     finally {
@@ -1442,7 +1447,7 @@ Get-WatcherDecision -Entry $entry -NowUtc $CheckAtUtc | ConvertTo-Json -Compress
         $liveCoordinator.WaitForExit(10000) | Out-Null
     }
     $liveApprovals = Get-Content -Raw -LiteralPath (Join-Path $run.folder 'approvals.json') | ConvertFrom-Json
-    Assert-True ($liveApprove.exit -ne 0 -and $liveApprove.text -match 'DT_JOB_OPERATOR_ONLY' -and $liveApprove.text -match 'mc-live' -and @($liveApprovals.approvals).Count -eq 0 -and (Get-RunState $run.state).run_status -eq 'awaiting_danny') "approve is refused while the watcher-launched coordinator lives ($($liveApprove.text))"
+    Assert-True ($liveApprove.approval_queued -eq 'merge' -and $liveApprove.message -match "coordinator $($liveCoordinator.Id) exits" -and @($liveApprovals.approvals).Count -eq 0 -and (Get-RunState $run.state).run_status -eq 'awaiting_danny') 'approve is queued while the watcher coordinator closes out'
     Assert-True ($liveResume.exit -ne 0 -and $liveResume.text -match 'DT_JOB_OPERATOR_ONLY' -and $liveResume.text -match 'mc-live') 'resume is refused while the watcher-launched coordinator lives'
     $goneApprove = Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'merge')
     $goneResume = Invoke-DtJob @('resume', '-RunFolder', $run.folder)
@@ -1585,6 +1590,28 @@ try { $runs = @(Read-WatcherRegistry); $outcome = "ok:$($runs[0].run_id)" } catc
     Assert-True ($twice.outcome -eq 'error:registry read failure 2' -and $twice.calls -eq 2) "two failed reads surface the error after exactly one retry ($($twice.outcome), $($twice.calls) calls)"
     $watcherText = Get-Content -Raw -LiteralPath $watcher
     Assert-True ($watcherText.Contains('try { $runs = @(Read-WatcherRegistry) }')) 'the watcher reads the registry through the retrying reader'
+
+    # FS-57 watcher consumes an operator receipt after the actual fixture exits.
+    Use-Scenario 'queued-approval-exit'
+    $run = New-Run 'queued-approval-exit'
+    Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'fixture-queue-review', '-Message', 'fixture only') | Out-Null
+    $releaseClosing = Join-Path $run.folder 'release-closing'
+    $closingScript = Join-Path $run.folder 'closing.ps1'
+    Write-Utf8 $closingScript "while (-not (Test-Path -LiteralPath '$releaseClosing')) { Start-Sleep -Milliseconds 100 }"
+    $closing = Start-Process pwsh -ArgumentList @('-NoProfile','-File', ('"' + $closingScript + '"')) -WindowStyle Hidden -PassThru
+    $script:spawned += $closing.Id
+    Write-Lease -RunFolder $run.folder -LeasePid $closing.Id -PidStartUtc $closing.StartTime.ToUniversalTime().ToString('o') -CoordinatorId 'closing-queue-fixture'
+    Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'fixture-queue-review') | Out-Null
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-Content -Raw (Join-Path $run.folder 'approval-queued.json') | ConvertFrom-Json).status -eq 'queued') 'watcher leaves receipt queued while correct process lives'
+    Write-Utf8 $releaseClosing 'release'
+    $closing.WaitForExit()
+    Invoke-Tick | Out-Null
+    $receipt = Get-Content -Raw (Join-Path $run.folder 'approval-queued.json') | ConvertFrom-Json
+    $approval = Get-Content -Raw (Join-Path $run.folder 'approvals.json') | ConvertFrom-Json
+    Assert-True ($receipt.status -eq 'applied' -and $approval.approvals.Count -eq 1 -and $approval.approvals[0].operation -eq 'fixture-queue-review') 'watcher applies receipt after fixture exits'
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-Content -Raw (Join-Path $run.folder 'approvals.json') | ConvertFrom-Json).approvals.Count -eq 1) 'watcher receipt application is idempotent'
 
     # ---- static: the default launcher and the task registration parse, and the task uses the shim.
     foreach ($file in @('launch-managed-coordinator.ps1', 'register-dt-build-watcher.ps1', 'dt-build-watcher.ps1')) {

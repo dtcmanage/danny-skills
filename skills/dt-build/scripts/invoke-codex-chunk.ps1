@@ -297,6 +297,9 @@ $selectionLabel = $Category + $(if ($isProtected) { ', protected' } else { '' })
 $disclosureLine = if ($Preflight) { $null } else {
     "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel, effort $Effort): $SelectionReason; router: $routerReason"
 }
+. (Join-Path $PSScriptRoot 'model-selection.ps1')
+Publish-DtJobModelSelection -Line $disclosureLine -Model $resolvedModel -Vendor 'codex' -Effort $Effort
+
 
 $temporaryOutput = $false
 if ($Preflight -and [string]::IsNullOrWhiteSpace($OutputPath)) {

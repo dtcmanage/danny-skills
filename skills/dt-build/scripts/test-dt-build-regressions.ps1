@@ -486,6 +486,7 @@ rationale: Framework limitation accepted with visible evidence.
     Write-Utf8 -Path $fakeCodex -Content @'
 if ($args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if ($args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path $env:CODEX_HOME 'models_cache.json'); exit 0 }
+if ($env:DT_FAKE_SELECTION_RELEASE) { while (-not (Test-Path -LiteralPath $env:DT_FAKE_SELECTION_RELEASE)) { Start-Sleep -Milliseconds 100 } }
 if ($env:DT_FAKE_CODEX_ARGS) { [IO.File]::WriteAllText($env:DT_FAKE_CODEX_ARGS, ($args -join '|')) }
 if ($env:DT_BUILD_LEAN_BOOTSTRAP) { throw 'worker inherited coordinator lean bootstrap' }
 $outIndex = [Array]::IndexOf([object[]]$args, '--output-last-message')
@@ -639,6 +640,7 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $fakeClaude = Join-Path $tempRoot 'fake-claude.ps1'
     Write-Utf8 -Path $fakeClaude -Content @'
 if ($args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
+if ($env:DT_FAKE_SELECTION_RELEASE) { while (-not (Test-Path -LiteralPath $env:DT_FAKE_SELECTION_RELEASE)) { Start-Sleep -Milliseconds 100 } }
 if ($env:DT_FAKE_CLAUDE_ARGS) { [System.IO.File]::WriteAllText($env:DT_FAKE_CLAUDE_ARGS, ($args -join '|')) }
 $receivedPrompt=[Console]::In.ReadToEnd()
 if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
@@ -966,6 +968,42 @@ $script:RouterDiagnosisHttp = {
     $claudeMalformedProv = Get-Content -Raw -LiteralPath "$claudeMalformed.provenance.json" | ConvertFrom-Json
     Assert-True (-not [bool]$claudeMalformedProv.pass) "malformed Claude-output failure provenance claimed PASS"
     Remove-Item Env:DT_FAKE_CLAUDE_MODE -ErrorAction SilentlyContinue
+
+    # FS-59: both real wrappers disclose their choice while fixture CLI is held.
+    foreach ($lane in @('codex','claude')) {
+        $selectionRun = Join-Path $tempRoot "selection-$lane"
+        New-Item -ItemType Directory -Path $selectionRun -Force | Out-Null
+        $releaseSelection = Join-Path $selectionRun 'release'
+        $env:DT_FAKE_SELECTION_RELEASE = $releaseSelection
+        $env:DT_FAKE_CODEX_MODE = 'success'; $env:DT_FAKE_CLAUDE_MODE = 'success'
+        $cli = if ($lane -eq 'codex') { $fakeCodex } else { $fakeClaude }
+        $model = if ($lane -eq 'codex') { 'gpt-6.1-sol' } else { 'claude-sonnet-5' }
+        $launcher = Join-Path $selectionRun 'launch.ps1'
+        $selectionReport = Join-Path $selectionRun 'report.md'
+        $wrapper = Join-Path $scriptDir "invoke-$lane-chunk.ps1"
+        Write-Utf8 $launcher "& '$wrapper' -ProjectPath '$workingTree' -PromptPath '$wrapperPrompt' -OutputPath '$selectionReport' -$($lane)CliPath '$cli' -Model '$model' -Category routine-coding -SelectionReason 'held selection fixture' -Effort medium -Json; exit `$LASTEXITCODE"
+        $dtJobScript = Join-Path $scriptDir 'dt-job.ps1'
+        try {
+            $startRaw = & pwsh -NoProfile -File $dtJobScript start -RunFolder $selectionRun -Kind worker -ScriptPath $launcher -Json
+            Assert-True ($LASTEXITCODE -eq 0) "$lane selection fixture starts"
+            $startJob = ($startRaw -join "`n") | ConvertFrom-Json
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+                Start-Sleep -Milliseconds 200
+                $statusRaw = & pwsh -NoProfile -File $dtJobScript status -RunFolder $selectionRun -JobId $startJob.job_id -Json
+                $liveStatus = ($statusRaw -join "`n") | ConvertFrom-Json
+            } while ($null -eq $liveStatus.model_selection -and [DateTime]::UtcNow -lt $deadline)
+            Assert-True ($liveStatus.status -eq 'running' -and $liveStatus.model_selection.model -eq $model -and $liveStatus.model_selection.disclosure_line -match '^MODEL_SELECTION:' -and -not (Test-Path "$selectionReport.provenance.json")) "$lane running job exposes selection before completion"
+            $allRaw = & pwsh -NoProfile -File $dtJobScript status -RunFolder $selectionRun -Json
+            $allStatus = ($allRaw -join "`n") | ConvertFrom-Json
+            Assert-True ($allStatus.jobs[0].model_selection.vendor -eq $lane) "$lane run status exposes running selection"
+        } finally {
+            Write-Utf8 $releaseSelection 'release'
+            Remove-Item Env:DT_FAKE_SELECTION_RELEASE -ErrorAction SilentlyContinue
+        }
+        $waitRaw = & pwsh -NoProfile -File $dtJobScript wait -RunFolder $selectionRun -JobId $startJob.job_id -All -TimeoutSec 30 -Json
+        Assert-True ($LASTEXITCODE -eq 0) "$lane selection fixture finishes"
+    }
 
     Write-Output 'PASS: dt-build regression suite'
     Write-Output "SUMMARY: $script:passed passed"

@@ -140,6 +140,7 @@ $script:DtJobContextReserveBytes = 256
 
 . (Join-Path $PSScriptRoot 'context-guard.ps1')
 . (Join-Path $PSScriptRoot 'report-contract.ps1')
+. (Join-Path $PSScriptRoot 'model-selection.ps1')
 
 function Get-DtJobPaths {
     param([Parameter(Mandatory)][string]$RunFolder)
@@ -599,6 +600,7 @@ function New-DtJobEnvelope {
     if (Test-Path -LiteralPath $blockersPath) { $evidence.blockers = $blockersPath }
 
     $envelope = [ordered]@{
+        model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $Record.job_id)
         job_id        = $Record.job_id
         status        = $Record.status
         verdict       = $verdict
@@ -649,7 +651,7 @@ function New-DtJobRunEnvelope {
     $stalled = [System.Collections.Generic.List[string]]::new()
     foreach ($r in $source) {
         $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $r
-        $entry = [ordered]@{ job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)); report_verdict = $outcome.report_verdict; failure_category = $(if ($null -ne $outcome.failure_category) { Limit-DtJobLine $outcome.failure_category ([ref]$cut) } else { $null }) }
+        $entry = [ordered]@{ model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $r.job_id); job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)); report_verdict = $outcome.report_verdict; failure_category = $(if ($null -ne $outcome.failure_category) { Limit-DtJobLine $outcome.failure_category ([ref]$cut) } else { $null }) }
         if ($r.status -eq 'running') {
             $activity = Get-DtJobActivity -RunFolder $RunFolder -Record $r
             $entry.activity = Limit-DtJobLine $activity.line ([ref]$cut)
@@ -700,7 +702,13 @@ function Write-DtJobOutput {
         if ($null -ne $script:DtJobContext -and $null -ne $Object) { $Object | Add-Member -NotePropertyName context -NotePropertyValue $script:DtJobContext.line -Force }
         $Object | ConvertTo-Json -Depth 8 -Compress
     }
-    else { $Object }
+    else {
+        $Object
+        $selections = @()
+        if ($null -ne $Object -and $Object.PSObject.Properties['model_selection']) { $selections += $Object.model_selection }
+        if ($null -ne $Object -and $Object.PSObject.Properties['jobs']) { $selections += @($Object.jobs | ForEach-Object { $_.model_selection }) }
+        foreach ($selection in $selections) { if ($null -ne $selection) { $selection.disclosure_line } }
+    }
 }
 
 function Invoke-DtJobStart {
@@ -782,8 +790,18 @@ function Invoke-DtJobStart {
         Invoke-DtJobSchedule -RunFolder $RunFolder
         $newId
     }
+    # Give a newly launched worker a bounded opportunity to disclose its choice.
+    # Queued dependency jobs still return immediately; status reads the sidecar later.
+    if ($Kind -eq 'worker') {
+        $selectionDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        do {
+            $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $id
+            if ($record.status -ne 'running' -or $null -ne (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $id)) { break }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $selectionDeadline)
+    }
     $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $id
-    Write-DtJobOutput -Object ([pscustomobject][ordered]@{ job_id = $id; status = $record.status; status_reason = $record.status_reason; job_file = (Join-Path $paths.Jobs "$id.json") }) -AsJson:$Json
+    Write-DtJobOutput -Object ([pscustomobject][ordered]@{ job_id = $id; model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $id); status = $record.status; status_reason = $record.status_reason; job_file = (Join-Path $paths.Jobs "$id.json") }) -AsJson:$Json
 }
 
 function Get-DtJobConsumedSeq {
@@ -1154,7 +1172,7 @@ function Resolve-DtJobRunContext {
     $statePath = [System.IO.Path]::GetFullPath($statePath)
     if (-not (Test-Path -LiteralPath $statePath)) { throw "DT_JOB_BUILD_STATE_MISSING: $statePath" }
     $resolvedRunId = if ($RunId) { $RunId } elseif ($null -ne $entry) { [string]$entry.run_id } else { Split-Path -Leaf (Get-DtJobPaths -RunFolder $RunFolder).Root }
-    return [pscustomobject]@{ run_id = $resolvedRunId; build_state_path = $statePath; entry = $entry }
+    return [pscustomobject]@{ run_id = $resolvedRunId; run_folder = (Get-DtJobPaths -RunFolder $RunFolder).Root; build_state_path = $statePath; entry = $entry }
 }
 
 function Get-DtJobApprovals {
@@ -1558,6 +1576,24 @@ function Assert-DtJobOperator {
     param([Parameter(Mandatory)][string]$VerbName, [Parameter(Mandatory)][string]$RunFolder, [switch]$AllowLiveCoordinator)
     if ($env:DT_BUILD_COORDINATOR_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; coordinator $env:DT_BUILD_COORDINATOR_ID cannot run it" }
     if ($env:DT_JOB_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; it cannot run inside dt-job job $env:DT_JOB_ID" }
+    $callerLease = Get-DtJobLease -RunFolder $RunFolder
+    if ($VerbName -in @('approve','resume') -and $null -ne $callerLease -and $callerLease.launched_by -eq 'watcher' -and $callerLease.pid -and
+        (Test-DtJobProcessIdentity $callerLease.pid $callerLease.pid_start_utc)) {
+        # Clearing DT_* must not let a coordinator (or its shell child) approve itself.
+        $ancestor = $PID
+        $seen = @{}
+        while ($ancestor -gt 0 -and -not $seen.ContainsKey($ancestor)) {
+            if ($ancestor -eq [int]$callerLease.pid) { throw "DT_JOB_OPERATOR_ONLY: $VerbName cannot run from the watcher coordinator process tree" }
+            $seen[$ancestor] = $true
+            if ($IsWindows) {
+                $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$ancestor" -ErrorAction Stop
+                $ancestor = if ($parent) { [int]$parent.ParentProcessId } else { 0 }
+            } else {
+                $parent = & ps -o ppid= -p $ancestor
+                $ancestor = if ($parent) { [int]([string]$parent).Trim() } else { 0 }
+            }
+        }
+    }
     # hold only adds a reason to Danny's DM and releases nothing, so it may run while the coordinator closes out.
     if ($AllowLiveCoordinator) { return }
     # The env checks can be bypassed by clearing a variable; a live watcher-launched coordinator cannot hide its process.
@@ -1568,24 +1604,87 @@ function Assert-DtJobOperator {
     }
 }
 
+function Complete-DtJobApproval {
+    param($Context, $Approvals, $Receipt)
+    $Receipt | Add-Member -NotePropertyName approved_utc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
+    $Approvals.approvals = @($Approvals.approvals) + @($Receipt)
+    $Approvals.awaiting = $null
+    Save-DtJobApprovals -RunFolder $Context.run_folder -Approvals $Approvals
+    Set-DtJobRunState -BuildStatePath $Context.build_state_path -RunStatus 'runnable'
+    Add-DtJobEvent -RunFolder $Context.run_folder -JobId 'run' -Type 'continuation_requested' -Status 'runnable' -Reason "approved $($Receipt.operation)"
+}
+
+function Receive-DtJobQueuedApproval {
+    param([string]$RunFolder)
+    $queuePath = Join-Path $RunFolder 'approval-queued.json'
+    if (-not (Test-Path -LiteralPath $queuePath)) { return }
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $q = Read-DtJobText -Path $queuePath | ConvertFrom-Json
+        if ($q.status -ne 'queued' -or (Test-DtJobProcessIdentity $q.coordinator_pid $q.coordinator_start_utc)) { return }
+        $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $q.build_state_path -RunId $q.run_id
+        $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+        $pending = $approvals.awaiting
+        if ($null -eq $pending -or $pending.operation -cne $q.operation -or $pending.seq -ne $q.await_seq -or
+            (Get-DtJobRunState -BuildStatePath $ctx.build_state_path).run_status -ne 'awaiting_danny') {
+            $recorded = @($approvals.approvals | Where-Object { $_.PSObject.Properties['requested_utc'] -and $_.requested_utc -ceq $q.requested_utc -and $_.operation -ceq $q.operation })
+            if ($recorded.Count -eq 1 -and $null -eq $pending) {
+                Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'runnable'
+                $existingEvent = @(Get-DtJobEvents -RunFolder $RunFolder | Where-Object { $_.type -eq 'continuation_requested' -and $_.reason -eq "approved $($q.operation)" -and [int64]$_.seq -gt [int64]$q.await_seq })
+                if ($existingEvent.Count -eq 0) { Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status 'runnable' -Reason "approved $($q.operation)" }
+                $q.status = 'applied'
+            } else { $q.status = 'superseded' }
+        } else {
+            $q.status = 'applied'
+            Complete-DtJobApproval -Context $ctx -Approvals $approvals -Receipt $q
+        }
+        Write-DtJobAtomic -Path $queuePath -Content ($q | ConvertTo-Json -Depth 6)
+    }
+}
+
 function Invoke-DtJobApprove {
     if (-not $Operation) { throw 'DT_JOB_USAGE: approve requires -Operation.' }
-    Assert-DtJobOperator -VerbName 'approve' -RunFolder $RunFolder
+    Assert-DtJobOperator -VerbName 'approve' -RunFolder $RunFolder -AllowLiveCoordinator
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
-    Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+    $result = Invoke-DtJobCoordinatorLocked -RunFolder $RunFolder -Action {
+      Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder
-        if ($null -eq $approvals.awaiting) { throw "DT_JOB_NOT_AWAITING: run $($ctx.run_id) is not waiting on an approval" }
+        $queuePath = Join-Path $RunFolder 'approval-queued.json'
+        if ($null -eq $approvals.awaiting) {
+            if (Test-Path -LiteralPath $queuePath) {
+                $previous = Read-DtJobText -Path $queuePath | ConvertFrom-Json
+                if ($previous.status -eq 'applied' -and $previous.operation -ceq $Operation) { return @{ approved = $Operation } }
+            }
+            throw "DT_JOB_NOT_AWAITING: run $($ctx.run_id) is not waiting on an approval"
+        }
         if ([string]$approvals.awaiting.operation -cne $Operation) {
             throw "DT_JOB_APPROVE_MISMATCH: run $($ctx.run_id) waits on '$($approvals.awaiting.operation)', not '$Operation'; nothing recorded"
         }
+        $lease = Get-DtJobLease -RunFolder $RunFolder
+        $live = $null -ne $lease -and $lease.launched_by -eq 'watcher' -and (Test-DtJobProcessIdentity $lease.pid $lease.pid_start_utc)
+        if ($live -and ((Get-DtJobRunState -BuildStatePath $ctx.build_state_path).run_status -ne 'awaiting_danny' -or -not $lease.pid_start_utc)) {
+            throw 'DT_JOB_OPERATOR_ONLY: coordinator is not closing out an approval boundary'
+        }
         $delegatedTo = if ($approvals.awaiting.PSObject.Properties['delegated_to']) { [string]$approvals.awaiting.delegated_to } else { $null }
-        $approvals.approvals = @($approvals.approvals) + @([pscustomobject][ordered]@{ operation = $Operation; approved_utc = [DateTime]::UtcNow.ToString('o'); delegated_to = $delegatedTo })
-        $approvals.awaiting = $null
-        Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
-        Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'runnable'
-        Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'continuation_requested' -Status 'runnable' -Reason "approved $Operation"
+        $receipt = [pscustomobject][ordered]@{ operation = $Operation; await_seq = $approvals.awaiting.seq; run_id = $ctx.run_id; build_state_path = $ctx.build_state_path; requested_by = [Environment]::UserName; requested_pid = $PID; requested_utc = [DateTime]::UtcNow.ToString('o'); delegated_to = $delegatedTo }
+        if ($live) {
+            if (Test-Path -LiteralPath $queuePath) {
+                $q = Read-DtJobText -Path $queuePath | ConvertFrom-Json
+                if ($q.status -eq 'queued' -and $q.await_seq -eq $receipt.await_seq -and $q.coordinator_id -ceq $lease.coordinator_id -and $q.coordinator_start_utc -eq $lease.pid_start_utc) {
+                    return @{ approval_queued = $Operation; message = "approval queued; applies when coordinator $($q.coordinator_pid) exits" }
+                }
+            }
+            $receipt | Add-Member -NotePropertyName status -NotePropertyValue 'queued'
+            $receipt | Add-Member -NotePropertyName coordinator_id -NotePropertyValue $lease.coordinator_id
+            $receipt | Add-Member -NotePropertyName coordinator_pid -NotePropertyValue $lease.pid
+            $receipt | Add-Member -NotePropertyName coordinator_start_utc -NotePropertyValue $lease.pid_start_utc
+            Write-DtJobAtomic -Path $queuePath -Content ($receipt | ConvertTo-Json -Depth 6)
+            return @{ approval_queued = $Operation; message = "approval queued; applies when coordinator $($lease.pid) exits" }
+        }
+        Complete-DtJobApproval -Context $ctx -Approvals $approvals -Receipt $receipt
+        return @{ approved = $Operation }
+      }
     }
-    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ approved = $Operation }) -AsJson:$Json
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra $result) -AsJson:$Json
 }
 
 function Test-DtJobMustNotifyDanny {
@@ -1951,6 +2050,7 @@ if ($Verb -eq 'can-reuse') {
 if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb is required (start, status, wait, cancel, reconcile, lease, register-run, unregister-run, consume, request-continuation, await-danny, approve, resume, finish, mark-bootstrap, irreversible, tree-hash, can-reuse).' }
 if (-not $RunFolder) { throw 'DT_JOB_USAGE: -RunFolder is required.' }
 $script:DtJobExplicitParams = @($PSBoundParameters.Keys)
+Receive-DtJobQueuedApproval -RunFolder $RunFolder
 
 # Under `pwsh -File`, `-Mutates a,b` arrives as the single string 'a,b'; split every list on commas.
 $DependsOn = Split-DtJobList $DependsOn

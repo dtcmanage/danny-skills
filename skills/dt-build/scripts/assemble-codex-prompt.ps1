@@ -224,6 +224,7 @@ foreach ($row in $entryRows) {
 
 # Workers compute tree hashes with this script's sibling dt-job.ps1, named by absolute path.
 $dtJobPath = Join-Path $PSScriptRoot 'dt-job.ps1'
+$pytestLockPath = Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) 'scripts/pytest-lock.ps1'
 
 $assembled = @(
     ($headerLines -join "`n")
@@ -236,6 +237,7 @@ $assembled = @(
     ""
     @"
 Standing execution rules (context discipline):
+- Run every pytest command through ``pwsh -NoProfile -File "$pytestLockPath" python -m pytest <args>`` (Bash/Python may call the sibling pytest-lock.py). The machine lock waits for existing tests and releases automatically. Never bypass a live pytest or kill another caller.
 - Do not spawn subagents, nested agents, or parallel workers. Search and read with your own tools.
 - Keep command output out of your context: redirect test, build, install, and log output to a file, then read only the summary or the last 40 lines. Read file ranges, not whole large files. Never print a full diff or log you do not need.
 - Never sit idle on a long command. Run it with a bounded timeout and output redirected to a file.

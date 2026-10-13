@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 
 import pytest
@@ -77,6 +78,18 @@ def test_deterministic_positive_negative(task_id: str):
         result = subprocess.run([sys.executable, str(task / "grader.py"), str(path)],
                                 capture_output=True, text=True, timeout=40)
         assert result.returncode == expected, (task_id, path.name, result.stdout[-1000:], result.stderr[-1000:])
+
+
+def test_copied_python_bank_uses_shared_lock(tmp_path: Path):
+    bank = tmp_path / 'copied-bank'
+    task = bank / 'routine-coding-endpoint'
+    shutil.copytree(TASKS / task.name, task)
+    shutil.copyfile(TASKS / '_grading.py', bank / '_grading.py')
+    result = subprocess.run([sys.executable, str(BENCH / 'grader-runner.py'),
+                             str(task), str(task / 'known-good.txt')],
+                            capture_output=True, text=True, timeout=40)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['status'] == 'pass', result.stdout
 
 
 @pytest.mark.parametrize("variant, expected", [

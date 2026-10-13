@@ -422,9 +422,13 @@ exit 0
     $env:DT_JOB_HEARTBEAT_SEC = '1'; $env:DT_JOB_STALL_SEC = '4'
     try {
         $quietRelease = Join-Path $rf 'quiet-release.txt'; $busyRelease = Join-Path $rf 'busy-release.txt'
+        # Watch only this fixture directory; concurrent verification logs are not worker activity.
+        Push-Location $rf
+        try {
         $quiet = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', ((New-HeldJobCommand $quietRelease) + ' # invoke-codex-chunk.ps1'), '-TimeoutSec', '5')
         $busyCommand = (New-HeldJobCommand $busyRelease).Replace('Start-Sleep -Milliseconds 100', "Write-Output 'step'; Start-Sleep -Milliseconds 100")
         $busy = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', ($busyCommand + ' # invoke-codex-chunk.ps1'))
+        } finally { Pop-Location }
         Start-Sleep -Seconds 7
         $checkin = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', "$($quiet.job_id),$($busy.job_id)", '-Any', '-TimeoutSec', '1')
         $q = @($checkin.progress | Where-Object { $_.job_id -eq $quiet.job_id })[0]
@@ -724,6 +728,50 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $parsed = @(Get-Content -LiteralPath $eventsPath | ForEach-Object { try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { } })
     $after = @($parsed | Where-Object { $_.job_id -eq $job2.job_id } | ForEach-Object { [int]$_.seq })
     Assert-True ($after.Count -ge 1 -and $after[0] -eq $lastSeq + 1 -and (($after -join ',') -eq (($lastSeq + 1)..($lastSeq + $after.Count) -join ','))) "events continue at the next seq ($lastSeq -> $($after -join ','))"
+
+    # FS-57: external approval queues only an exact boundary, survives repeats,
+    # and applies after the recorded coordinator identity exits (including PID reuse).
+    $rf = New-RunFolder 'approval-queue'
+    $state = Join-Path $rf '_build-state.md'
+    Write-Utf8 $state "run_status: awaiting_danny`nlast_consumed_event_seq: 0`nupdated_utc: fixture`n"
+    Invoke-DtJob @('register-run', '-RunFolder', $rf, '-RunId', 'approval-queue', '-BuildStatePath', $state, '-PinnedHost', 'codex', '-Managed') | Out-Null
+    $pendingPath = Join-Path $rf 'approvals.json'
+    $queuePath = Join-Path $rf 'approval-queued.json'
+    Write-Utf8 $pendingPath '{"awaiting":{"operation":"fixture-review","seq":1},"approvals":[],"delegate":null}'
+    $closingRelease = Join-Path $rf 'closing-release'
+    $closingScript = Join-Path $rf 'closing.ps1'
+    Write-Utf8 $closingScript (New-HeldJobCommand $closingRelease)
+    $closing = Start-Process pwsh -ArgumentList @('-NoProfile','-File', $closingScript) -WindowStyle Hidden -PassThru
+    $lease = [ordered]@{ coordinator_id = 'closing-fixture'; launched_by = 'watcher'; pid = $closing.Id; pid_start_utc = $closing.StartTime.ToUniversalTime().ToString('o'); released_utc = $null }
+    Write-Utf8 (Join-Path $rf 'coordinator.lease') ($lease | ConvertTo-Json)
+    foreach ($refusal in @('wrong-operation','coordinator','job','wrong-state')) {
+        $op = 'fixture-review'
+        if ($refusal -eq 'wrong-operation') { $op = 'different' }
+        if ($refusal -eq 'coordinator') { $env:DT_BUILD_COORDINATOR_ID = 'closing-fixture' }
+        if ($refusal -eq 'job') { $env:DT_JOB_ID = 'fixture-job' }
+        if ($refusal -eq 'wrong-state') { Write-Utf8 $state "run_status: runnable`nlast_consumed_event_seq: 0`nupdated_utc: fixture`n" }
+        try {
+            $raw = & pwsh -NoProfile -File $dtJob approve -RunFolder $rf -Operation $op -Json 2>&1
+            Assert-True ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $queuePath)) "$refusal preserves refusal without queuing"
+        } finally {
+            Remove-Item Env:DT_BUILD_COORDINATOR_ID,Env:DT_JOB_ID -ErrorAction SilentlyContinue
+            Write-Utf8 $state "run_status: awaiting_danny`nlast_consumed_event_seq: 0`nupdated_utc: fixture`n"
+        }
+    }
+    $queued = Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'fixture-review')
+    Assert-True ($queued.approval_queued -eq 'fixture-review' -and $queued.message -eq "approval queued; applies when coordinator $($closing.Id) exits") 'external operator queues while closing out'
+    $firstReceipt = Get-Content -LiteralPath $queuePath -Raw
+    Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'fixture-review') | Out-Null
+    Assert-True ((Get-Content -LiteralPath $queuePath -Raw) -ceq $firstReceipt) 'repeated queued approve preserves original who what when identity'
+    Invoke-DtJob @('status', '-RunFolder', $rf) | Out-Null
+    Assert-True ((Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json).approvals.Count -eq 0) 'live identity does not apply queued approval'
+    Write-Utf8 $closingRelease 'release'
+    $closing.WaitForExit()
+    Invoke-DtJob @('status', '-RunFolder', $rf) | Out-Null
+    $applied = Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json
+    Assert-True ($applied.approvals.Count -eq 1 -and $null -eq $applied.awaiting -and (Get-Content -LiteralPath $state -Raw) -match 'run_status: runnable') 'next invocation applies approval when original process identity exits'
+    Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'fixture-review') | Out-Null
+    Assert-True ((Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json).approvals.Count -eq 1) 'applied approval repeats without duplication'
 
     Write-Output 'PASS: dt-job suite'
 }

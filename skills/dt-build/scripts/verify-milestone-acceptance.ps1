@@ -195,6 +195,11 @@ function Invoke-NamedCommand {
     # Sequential pipe reads can deadlock when both buffers fill (observed with a
     # high-volume Vitest run). File redirection also keeps the retained JSON small.
     $effectiveCommand = Normalize-Command -Command $Command
+    if ($effectiveCommand -match '(?i)pytest') {
+        $lockPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../scripts/pytest-lock.ps1')).Replace("'", "''")
+        $testEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($effectiveCommand))
+        $effectiveCommand = "& '$lockPath' pwsh -NoProfile -EncodedCommand $testEncoded; exit `$LASTEXITCODE"
+    }
     $stdoutFile = [System.IO.Path]::GetTempFileName()
     $stderrFile = [System.IO.Path]::GetTempFileName()
     $started = Get-Date

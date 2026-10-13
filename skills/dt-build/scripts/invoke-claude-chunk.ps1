@@ -252,6 +252,9 @@ $selectionLabel = $Category + $(if ($isProtected) { ', protected' } else { '' })
 $disclosureLine = if ($Preflight) { $null } else {
     "MODEL_SELECTION: $promptChunkId -> $resolvedModel ($selectionLabel, effort $Effort): $SelectionReason; router: $routerReason"
 }
+. (Join-Path $PSScriptRoot 'model-selection.ps1')
+Publish-DtJobModelSelection -Line $disclosureLine -Model $resolvedModel -Vendor 'claude' -Effort $Effort
+
 $claudeCli = Get-ClaudeCliPath
 # The exact model version the CLI reports; null until a run is parsed.
 $actualModel = $null
