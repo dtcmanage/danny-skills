@@ -4,7 +4,7 @@ StateDir is the router state root. No implicit live state, alerts, or approvals.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from fractions import Fraction
 import itertools
@@ -46,7 +46,7 @@ def run_all(function: Callable[[Any], Any], items: list[Any], parallel: int) -> 
         wait(futures)
     errors = [future.exception() for future in futures if future.exception() is not None]
     if errors:
-        raise next((error for error in errors if isinstance(error, SpendHalted)), errors[0])
+        raise next((error for error in errors if isinstance(error, (QuotaDeferred, SpendHalted))), errors[0])
     return [future.result() for future in futures]
 
 # Explicit input contract: fixture directories also contain grader-only data.
@@ -631,12 +631,41 @@ class ComparisonSpend:
                 'baseline_max_age_minutes': self.baseline_max_age / 60}
 
 
+class QuotaDeferred(Exception):
+    def __init__(self, vendor: str, quota: dict[str, Any]):
+        super().__init__(f'{vendor} quota guard blocked dispatch')
+        self.vendor, self.quota = vendor, quota
+
+
+class DispatchGuard:
+    """Latch a guard refusal across queued calls and comparison tiers."""
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.deferred: QuotaDeferred | None = None
+        self.current: dict[str, Any] = {}
+        self.completed: list[dict[str, Any]] = []
+
+    def check(self, limits: Callable[[str], dict[str, Any]], vendor: str) -> dict[str, Any]:
+        with self.lock:
+            if self.deferred:
+                raise self.deferred
+            try:
+                quota = limits(vendor)
+            except Exception as error:
+                quota = {'blocked': True, 'detail': str(error), 'measurement': 'unavailable'}
+            if quota.get('blocked'):
+                self.deferred = QuotaDeferred(vendor, quota)
+                raise self.deferred
+            return quota
+
+
 def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
               **arguments: Any) -> dict[str, Any]:
     """Host-injected weekly readings and a comparison-wide stop; no live calls here."""
     spend = ComparisonSpend(spend_check, arguments['config']) if spend_check else None
+    guard = DispatchGuard()
     try:
-        result = _run_bench(**arguments, spend=spend)
+        result = _run_bench(**arguments, spend=spend, guard=guard)
         if spend:
             spend.check(final=True)
             result['spend'] = spend.figures()
@@ -647,6 +676,35 @@ def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
                     report.write('\nComparison spend: ' + json.dumps(result['spend']) + '\n')
             Path(result['report_paths']['json']).write_text(json.dumps(result, indent=2), encoding='utf-8')
         append_ledger(arguments['state_dir'] / 'bench', result)
+    except QuotaDeferred as error:
+        quota = error.quota
+        resume = quota.get('resume_after_utc') or (quota.get('usage') or {}).get('resets_at_utc')
+        source = quota.get('resume_after_source') or ('usage-reset' if resume else 'recheck')
+        if not resume:
+            resume = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        result = dict(guard.current)
+        result.update(status='deferred', halted=True, halt_reason=str(error),
+                      blocked_vendor=error.vendor, quota=quota, resume_after_utc=resume,
+                      resume_after_source=source, gate='unknown', raw_gate='unknown', shadow=True,
+                      effort_down_qualified=False, effort_up_qualified=False,
+                      swap_qualified=False, tie_qualified=False, tied=False, better=None,
+                      finished_at_utc=datetime.now(timezone.utc).isoformat())
+        result['telemetry'] = summarize_calls(result.get('calls', []), arguments.get('prices') or {})
+        if spend:
+            result['spend'] = spend.figures()
+        # Completed tiers are retained as evidence, but cannot publish proposals for this comparison.
+        for completed in guard.completed:
+            completed.update(halted=True, status='deferred', halt_reason=str(error),
+                             blocked_vendor=error.vendor, resume_after_utc=resume, resume_after_source=source,
+                             effort_down_qualified=False, effort_up_qualified=False,
+                             swap_qualified=False, tie_qualified=False, tied=False, better=None)
+            Path(completed['report_paths']['json']).write_text(json.dumps(completed, indent=2), encoding='utf-8')
+            append_ledger(arguments['state_dir'] / 'bench', completed)
+        Path(result['report_paths']['json']).write_text(json.dumps(result, indent=2), encoding='utf-8')
+        Path(result['report_paths']['markdown']).write_text(
+            f'Comparison deferred: {error}\n\nResume time: {resume} ({source}).\n', encoding='utf-8')
+        append_ledger(arguments['state_dir'] / 'bench', result)
+        return result
     except SpendHalted as error:
         # A completed tier is still part of the halted job comparison, never history evidence.
         for completed in spend.completed_reports:
@@ -683,7 +741,9 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
               effort_override: bool = True,
               renderer: Callable[..., dict[str, Any]] = render_ranked,
               spend: Any = None,
+              guard: DispatchGuard | None = None,
               _tier: str | None = None) -> dict[str, Any]:
+    guard = guard or DispatchGuard()
     if _tier is None and job in {'coder', 'deep-thinker'}:
         entry = roster_entry
         if entry is None:
@@ -703,7 +763,7 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                 results.append(_run_bench(job=job, candidate=candidate, incumbent=incumbent,
                     trigger=trigger, effort=effort, state_dir=state_dir, tasks=tasks, config=config,
                     dispatch=dispatch, limits=limits, envelope=envelope, outcome=outcome,
-                    grade=grade, prices=prices, roster_entry=entry, effort_override=effort_override, renderer=renderer, spend=spend, _tier=tier))
+                    grade=grade, prices=prices, roster_entry=entry, effort_override=effort_override, renderer=renderer, spend=spend, guard=guard, _tier=tier))
         if not results:
             raise ValueError('No tasks for job')
         combined = dict(results[0])
@@ -790,40 +850,40 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     judges = config['judges']
     parallel = max(1, int(config.get('max_parallel_calls', 1)))
     slots = threading.BoundedSemaphore(parallel)
+    guard.current = {'job': job, 'tier': tier, 'trigger': trigger, 'outcomes': rows, 'calls': calls,
+                     'configurations': {'candidate': {'model': candidate, 'effort': candidate_effort},
+                                        'incumbent': {'model': incumbent, 'effort': incumbent_effort}},
+                     'started_at_utc': tier_started.isoformat(),
+                     'report_paths': {'json': str(run / 'report.json'), 'markdown': str(run / 'report.md')}}
 
     def call(model: str, level: str | None, prompt: str, purpose: str,
              images: list[str] | None = None) -> dict[str, Any]:
-        if spend:
-            spend.before_call()
         vendor = 'claude' if model.startswith('claude-') else 'codex'
-        try:
-            quota = limits(vendor)
-        except Exception as error:
-            quota = {'blocked': True, 'detail': str(error), 'measurement': 'unavailable'}
-        if quota.get('blocked'):
-            result = {'status': 'unknown', 'failure_category': 'environment',
-                      'detail': 'quota blocked', 'quota': quota}
-        elif model == 'gpt-image-2':
-            result = {'status': 'unknown', 'failure_category': 'environment',
-                      'detail': 'Image invocation unsupported by text CLI', 'quota': quota}
-        else:
+        with slots:
+            quota = guard.check(limits, vendor)
+            if spend:
+                spend.before_call()
+            if model == 'gpt-image-2':
+                result = {'status': 'unknown', 'failure_category': 'environment',
+                          'detail': 'Image invocation unsupported by text CLI', 'quota': quota}
+                calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result, 'effort': level})
+                return result
             if spend:
                 spend.count_call()
             request = {'model': model, 'vendor': vendor, 'effort': level,
                        'prompt': prompt, 'purpose': purpose}
             if images:
                 request['images'] = images
-            with slots:
-                started = datetime.now(timezone.utc).isoformat()
-                clock = time.perf_counter()
-                try:
-                    result = dispatch(request)
-                    if not isinstance(result, dict) or (result.get('status') == 'ok' and not isinstance(result.get('answer'), str)):
-                        raise ValueError('Invalid dispatch payload')
-                except Exception as error:
-                    result = {'status': 'unknown', 'failure_category': 'unclassified',
-                              'root_cause': 'unverified', 'detail': str(error)}
-                duration = round((time.perf_counter() - clock) * 1000)
+            started = datetime.now(timezone.utc).isoformat()
+            clock = time.perf_counter()
+            try:
+                result = dispatch(request)
+                if not isinstance(result, dict) or (result.get('status') == 'ok' and not isinstance(result.get('answer'), str)):
+                    raise ValueError('Invalid dispatch payload')
+            except Exception as error:
+                result = {'status': 'unknown', 'failure_category': 'unclassified',
+                          'root_cause': 'unverified', 'detail': str(error)}
+            duration = round((time.perf_counter() - clock) * 1000)
             # Wall-clock per call feeds the bench ledger (performance over time, not just cost).
             result = {**result, 'quota': quota, 'started_at_utc': started, 'duration_ms': duration}
         calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result, 'effort': level})
@@ -1097,8 +1157,8 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         fabrications = sum(bool(r.get('grading', {}).get('fabrication', False)) for r in side_rows)
         result['fabrications'][side] = fabrications
         first_attempts = summarize_first_attempts(side_rows).get(row_side, {})
-        failures = sum(first_attempts.get(key, 0) for key in
-                       ('answer_quality_failures', 'answer_dispatch_failures', 'grader_unknowns'))
+        # Dispatch/grader unknowns remain telemetry, never answer-quality tie breakers.
+        failures = first_attempts.get('answer_quality_failures', 0)
         quality[side] = (score_table['passed'], -fabrications, -failures)
     known = not pass_insufficient and not candidate_table['unknown'] and not incumbent_table['unknown']
     result['tied'] = tier != 'beyond' and known and quality['candidate'] == quality['incumbent']
@@ -1124,7 +1184,7 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     lines += ['', '| Vendor | Measured calls | Partial calls | Unmeasured calls | Priced subtotal USD | Unpriced calls | Quota before / after |', '| --- | --- | --- | --- | --- | --- | --- |']
     for vendor, data in result['telemetry'].items():
         lines.append(f"| {vendor} | {data['measured_calls']} | {data['partial_calls']} | {data['unmeasured_calls']} | {data['priced_subtotal_usd']} | {data['unpriced_calls']} | {data['quota_before']} / {data['quota_after']} |")
-    lines += ['', 'First attempts only; answer repetitions include blocked calls. Judge denominators count calls made for first-attempt answers.',
+    lines += ['', 'First attempts only; guard-blocked calls are deferred, not answer repetitions. Judge denominators count calls made for first-attempt answers.',
               'Fabrications count every graded answer whose grader flagged invented content.',
               '| Lane | Model | Effort | Answer reps | Quality failures | Dispatch failures | Grader unknowns | Fabrications | Judge calls | Judge dispatch failures | Invalid judge scores |',
               '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
@@ -1144,6 +1204,7 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
     (run / 'report.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
     if spend:
         spend.completed_reports.append(result)
+    guard.completed.append(result)
     return result
 
 

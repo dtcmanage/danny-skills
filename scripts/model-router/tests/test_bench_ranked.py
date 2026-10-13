@@ -287,12 +287,12 @@ def test_pytest_exit_without_result_fails(tmp_path: Path, task_id: str) -> None:
 @pytest.mark.parametrize('format', ['svg', 'html', 'blocked-key'])
 def test_real_svg_render(tmp_path: Path, format: str) -> None:
     harness = BENCH / 'tasks/ui-frontend-card/harness'
-    if not (harness / 'node_modules').is_dir():
-        pytest.skip('Repo harness node_modules absent')
     # No install or download: an absent Chromium harness is a clean skip.
+    resolved = subprocess.run(['node', '-e', "require.resolve('playwright')"],
+                              cwd=harness, capture_output=True, timeout=10)
     smoke = next((p / '00_Resources/tools/browser-smoke/node_modules/playwright'
                   for p in BENCH.parents if (p / '00_Resources/tools/browser-smoke/node_modules/playwright').is_dir()), None)
-    if not smoke and not (harness / 'node_modules/playwright').is_dir():
+    if not smoke and resolved.returncode != 0:
         pytest.skip('Installed Chromium harness absent')
     task = BENCH / 'tasks' / ('ranked-pelican-svg' if format == 'svg' else 'ranked-single-file-game')
     png = tmp_path / 'render.png'

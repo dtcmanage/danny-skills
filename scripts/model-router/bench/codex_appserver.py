@@ -9,7 +9,9 @@ from pathlib import Path
 import queue
 import re
 import signal
+import shutil
 import subprocess
+import sys
 import threading
 import time
 import tempfile
@@ -43,7 +45,7 @@ class BoundaryError(Exception):
 
 
 def failure_category(message: str) -> str:
-    if re.search(r'timeout|timed out|transport fail(?:ed|ure)|codex error: (?:responseStream|httpConnectionFailed|serverOverloaded|internalServerError|responseTooManyFailedAttempts|flexUnavailable)', message, re.I):
+    if re.search(r'timeout|timed out|transport fail(?:ed|ure)|server closed before protocol response|codex error: (?:responseStream|httpConnectionFailed|serverOverloaded|internalServerError|responseTooManyFailedAttempts|flexUnavailable)', message, re.I):
         return 'transport'
     if any(text in message for text in ('model or effort mismatch', 'model rerouted', 'actual settings changed')):
         return 'identity'
@@ -56,6 +58,25 @@ def failure_category(message: str) -> str:
     return 'unclassified'
 
 
+def cleanup_native_home(directory: Path, attempts: int = 6, delay: float = .2) -> None:
+    """SQLite handles can outlive server exit. Cleanup never replaces an answer/error."""
+    for attempt in range(attempts):
+        try:
+            link = directory / 'auth.json'
+            if link.is_symlink():
+                link.unlink()
+            shutil.rmtree(directory)
+            return
+        except FileNotFoundError:
+            if not directory.exists():
+                return
+        except OSError:
+            pass
+        if attempt + 1 < attempts:
+            time.sleep(delay)
+    print(f'Bench temp cleanup deferred; retained directory: {directory}', file=sys.stderr)
+
+
 @contextmanager
 def native_config_home(cwd: Path):
     """Reference the one native auth file; never copy tokens or implement refresh."""
@@ -66,22 +87,20 @@ def native_config_home(cwd: Path):
     environment = {k: v for k, v in os.environ.items()
                    if not k.upper().startswith(('CODEX_', 'OPENAI_', 'CLAUDE_', 'ANTHROPIC_'))
                    and k.upper() != 'CLAUDECODE'}
-    with tempfile.TemporaryDirectory(prefix='router-bench-native-home-', dir=cwd) as directory:
+    directory = tempfile.mkdtemp(prefix='router-bench-native-home-', dir=cwd)
+    try:
         link = Path(directory) / 'auth.json'
         try:
-            try:
-                link.symlink_to(source)
-                same = os.path.samefile(link, source)
-            except OSError:
-                raise BoundaryError('native auth reference unavailable for clean config') from None
-            if not same:
-                raise BoundaryError('native auth reference verification failed')
-            environment['CODEX_HOME'] = directory
-            yield environment
-        finally:
-            # Unlink the reference before recursive cleanup; never touch its target.
-            if link.is_symlink():
-                link.unlink()
+            link.symlink_to(source)
+            same = os.path.samefile(link, source)
+        except OSError:
+            raise BoundaryError('native auth reference unavailable for clean config') from None
+        if not same:
+            raise BoundaryError('native auth reference verification failed')
+        environment['CODEX_HOME'] = directory
+        yield environment
+    finally:
+        cleanup_native_home(Path(directory))
 
 
 def verify_clean_layers(response: dict[str, Any]) -> None:

@@ -504,6 +504,11 @@ def test_two_public_runs_match_head(tmp_path: Path, monkeypatch):
                 for field in ('calls', 'answer_calls', 'judge_calls', 'dispatch_failures', 'duration_ms'):
                     lane.pop(field, None)
         assert result == old
+        # Guard-blocked dispatches now defer the comparison instead of counting
+        # as answer repetitions. Preserve the rest of the report replay exactly.
+        old_report = old_report.replace(
+            'First attempts only; answer repetitions include blocked calls.',
+            'First attempts only; guard-blocked calls are deferred, not answer repetitions.')
         assert report == old_report
     assert not review.private_bank_path(state).exists()
 

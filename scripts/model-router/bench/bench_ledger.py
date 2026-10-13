@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from bench_outcomes import score_counts
+
 
 def _percent(reading: Any) -> float | None:
     if not isinstance(reading, dict):
@@ -61,13 +63,18 @@ def ledger_row(result: dict[str, Any]) -> dict[str, Any]:
         'bank_sha256': result.get('task_bank_sha256'),
         'judges': result.get('judge_pair'), 'judge_effort': result.get('judge_effort'),
         'shadow': result.get('shadow'), 'halted': bool(result.get('halted')),
+        'status': result.get('status', 'completed'), 'halt_reason': result.get('halt_reason'),
+        'blocked_vendor': result.get('blocked_vendor'),
+        'resume_after_utc': result.get('resume_after_utc'),
+        'resume_after_source': result.get('resume_after_source'),
         'gate': result.get('gate'), 'raw_gate': result.get('raw_gate'),
         'tied': result.get('tied'), 'better': result.get('better'),
         'shortfall_tasks': result.get('shortfall_tasks'),
         'effort_down_qualified': result.get('effort_down_qualified'),
         'effort_up_qualified': result.get('effort_up_qualified'),
         'quality_verdict': quality.get('verdict') if isinstance(quality, dict) else None,
-        'tasks': {name: {'passed': table.get('passed'), 'unknown': table.get('unknown'), 'count': len(table.get('tasks', []))}
+        'tasks': {name: {**score_counts(t for t in table.get('tasks', []) if not t.get('uninformative')),
+                         'unknown': table.get('unknown'), 'count': len(table.get('tasks', []))}
                   for name, table in tables.items() if isinstance(table, dict)},
         'answer_reps': len(rows),
         'private_reps': sum(bool(r.get('private')) for r in rows),

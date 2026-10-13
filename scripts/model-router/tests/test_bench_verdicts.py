@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from test_bench_runner import BENCH, engine, prompt_rubric, run, writer_judges
+from test_bench_runner import BENCH, engine, prompt_rubric, run, serial_config, writer_judges
 
 
 def task_subset(tmp_path: Path, names: list[str], job: str) -> Path:
@@ -80,16 +80,22 @@ def test_unknown_never_ties_or_selects_better(tmp_path: Path) -> None:
     assert not result['tied'] and result['better'] is None
 
 
-def test_recovered_first_attempt_breaks_tie(tmp_path: Path) -> None:
+@pytest.mark.parametrize('category', ['environment', 'protocol', 'transport', 'unclassified'])
+def test_recovered_dispatch_failure_preserves_quality_tie(tmp_path: Path, category: str) -> None:
     tasks = task_subset(tmp_path, ['mechanical-extract-table'], 'fast')
     calls = 0
     def dispatch(request: dict) -> dict:
         nonlocal calls
         calls += 1
-        return {'status': 'unknown'} if calls == 1 else {'status': 'ok', 'answer': '{}'}
-    result = run(tmp_path, tasks=tasks, dispatch=dispatch)
+        return ({'status': 'unknown', 'failure_category': category} if calls == 1
+                else {'status': 'ok', 'answer': '{}'})
+    result = run(tmp_path, tasks=tasks, dispatch=dispatch, config=serial_config())
     assert result['candidate']['passed'] == result['incumbent']['passed'] == 1
-    assert result['better'] == 'incumbent' and not result['tied']
+    assert result['better'] is None and result['tied']
+    assert result['outcomes'][0]['side'] == 'candidate'
+    assert result['outcomes'][0]['unknown'] and result['outcomes'][0]['failure_category'] == category
+    assert result['outcomes'][1]['attempt'] == 2 and result['outcomes'][1]['passed']
+    assert result['telemetry']['codex']['dispatch_failures'] == 1
 
 
 def test_recovered_judge_failure_is_not_an_answer_model_failure(tmp_path: Path) -> None:

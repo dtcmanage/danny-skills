@@ -281,8 +281,8 @@ def test_environment_retry_and_quota(tmp_path: Path) -> None:
     result = run(tmp_path, limits=lambda vendor: {'blocked': True},
                  dispatch=lambda request: calls.append(request))
     assert not calls and result['raw_gate'] == 'unknown' and result['gate'] == 'unknown'
-    assert len(result['outcomes']) == 36
-    assert not json.loads((tmp_path / 'bench/baseline.json').read_text())
+    assert result['status'] == 'deferred' and result['outcomes'] == []
+    assert not (tmp_path / 'bench/baseline.json').exists()
     counts = {}
     def grade(task: Path, answer: str) -> dict:
         counts[task.name] = counts.get(task.name, 0) + 1
@@ -865,3 +865,154 @@ def test_codex_final_error_named_by_fixed_code(tmp_path, scenario, detail, categ
         _fake_run(tmp_path, scenario)
     assert str(raised.value) == detail and 'SECRET_SENTINEL' not in str(raised.value)
     assert transport.failure_category(str(raised.value)) == category
+
+
+@pytest.mark.parametrize('parallel', [1, 6])
+def test_quota_guard_defers_without_outcome_and_stops_queue(tmp_path, parallel):
+    from bench_ledger import read_ledger
+    checks, dispatched, outcomes = [], [], []
+    reset = '2026-10-19T12:00:00+00:00'
+    def limits(vendor):
+        checks.append(vendor)
+        return {'blocked': True, 'resume_after_utc': reset, 'resume_after_source': 'refusal-reset'}
+    result = run(tmp_path, config={**serial_config(), 'max_parallel_calls': parallel},
+                 candidate='gpt-6.1-sol', incumbent='claude-opus-5-5', limits=limits,
+                 dispatch=lambda r: dispatched.append(r), outcome=outcomes.append)
+    assert result['status'] == 'deferred' and result['halted']
+    assert len(checks) == 1 and not dispatched and not outcomes and not result['calls']
+    ledger = read_ledger(tmp_path / 'bench')
+    assert len(ledger) == 1 and ledger[0]['status'] == 'deferred'
+    assert ledger[0]['blocked_vendor'] in {'codex', 'claude'}
+    assert ledger[0]['resume_after_utc'] == reset
+    assert ledger[0]['resume_after_source'] == 'refusal-reset'
+    assert ledger[0]['answer_reps'] == 0
+    assert not list(tmp_path.glob('*proposals/*.json'))
+
+
+def test_guard_after_completed_call_preserves_only_real_outcome(tmp_path):
+    outcomes, requests = [], []
+    def dispatch(request):
+        requests.append(request)
+        return {'status': 'ok', 'answer': '{}'}
+    result = run(tmp_path, config=serial_config(), dispatch=dispatch, outcome=outcomes.append,
+                 limits=lambda v: {'blocked': bool(requests)})
+    assert result['status'] == 'deferred' and len(requests) == len(outcomes) == 1
+    assert outcomes[0]['status'] == 'pass' and result['outcomes'] == outcomes
+    assert result['resume_after_source'] == 'recheck' and result['resume_after_utc']
+
+
+def test_guard_after_completed_tier_suppresses_proposals_and_defers_all_ledger_rows(tmp_path, monkeypatch):
+    from bench_ledger import read_ledger
+    tasks = tmp_path / 'tasks'
+    for tier in ('standard', 'hard'):
+        task = tasks / ('synthetic-' + tier)
+        task.mkdir(parents=True)
+        (task / 'task.json').write_text(json.dumps(dict(
+            job='coder', grader='exact', category='mechanical', difficulty=tier)))
+        (task / 'prompt.md').write_text('Synthetic ' + tier + ' task')
+        monkeypatch.setitem(engine.CANDIDATE_INPUTS, task.name, ())
+    completed = []
+    def limits(vendor):
+        reports = list((tmp_path / 'bench/runs').glob('*/report.json'))
+        completed[:] = [json.loads(path.read_text()) for path in reports]
+        return {'blocked': bool(completed)}
+    result = run(tmp_path, job='coder', tasks=tasks, config=serial_config(), limits=limits)
+    assert len(completed) == 1 and completed[0]['tier'] == 'standard'
+    assert completed[0]['raw_gate'] == 'pass' and completed[0]['tie_qualified']
+    assert result['tier'] == 'hard' and result['status'] == 'deferred'
+    assert not result['calls'] and not result['outcomes']
+    reports = [json.loads(path.read_text()) for path in (tmp_path / 'bench/runs').glob('*/report.json')]
+    assert {report['tier'] for report in reports} == {'standard', 'hard'}
+    for report in reports:
+        assert report['status'] == 'deferred' and report['halted']
+        assert report['better'] is None and not report['tied']
+        assert not any(report[field] for field in (
+            'swap_qualified', 'tie_qualified', 'effort_down_qualified', 'effort_up_qualified'))
+    ledger = read_ledger(tmp_path / 'bench')
+    assert len(ledger) == 2 and {row['tier'] for row in ledger} == {'standard', 'hard'}
+    assert all(row['status'] == 'deferred' and row['halted'] for row in ledger)
+    assert next(row for row in ledger if row['tier'] == 'standard')['answer_reps'] > 0
+    assert not list(tmp_path.glob('*proposals/*.json'))
+
+
+def test_guard_during_rubric_judging_creates_no_outcome_for_blocked_unit(tmp_path):
+    requests, outcomes = [], []
+    def dispatch(request):
+        requests.append(request)
+        return {'status': 'ok', 'answer': 'Synthetic rubric answer'}
+    result = run(tmp_path, job='writer', effort='medium', config=serial_config(),
+                 dispatch=dispatch, outcome=outcomes.append,
+                 limits=lambda vendor: {'blocked': bool(requests)})
+    assert result['status'] == 'deferred' and result['halted']
+    assert len(requests) == 1 and requests[0]['purpose'] == 'answer'
+    assert len(result['calls']) == 1 and result['calls'][0]['purpose'] == 'answer'
+    assert not outcomes and not result['outcomes']
+    assert not list(tmp_path.glob('*proposals/*.json'))
+
+
+@pytest.mark.parametrize('persistent', [False, True])
+def test_locked_native_sqlite_cleanup_preserves_answer(tmp_path, monkeypatch, capsys, persistent):
+    import codex_appserver as transport
+    remove, attempts, delays = transport.shutil.rmtree, [], []
+    def locked(directory):
+        directory = Path(directory)
+        assert not (directory / 'auth.json').exists()
+        (directory / 'goals_1.sqlite').touch()
+        attempts.append(directory)
+        if persistent or len(attempts) <= 2:
+            raise PermissionError('goals_1.sqlite is being used by another process')
+        remove(directory)
+    monkeypatch.setattr(transport.shutil, 'rmtree', locked)
+    monkeypatch.setattr(transport.time, 'sleep', delays.append)
+    result = _fake_run(tmp_path, 'error-retry')
+    assert result['status'] == 'ok' and result['answer'] == 'synthetic answer'
+    assert len(attempts) == (6 if persistent else 3)
+    assert delays == [.2] * (len(attempts) - 1)
+    assert attempts[0].exists() == persistent
+    assert ('retained directory:' in capsys.readouterr().err) == persistent
+    if persistent:
+        remove(attempts[0])
+
+
+@pytest.mark.parametrize('category', ['environment', 'protocol', 'transport', 'unclassified'])
+def test_unknowns_excluded_from_pass_rate_and_do_not_decide_verdict(category):
+    from bench_outcomes import score_counts
+    from bench_ledger import ledger_row
+    rows = [{'status': 'pass'}, {'status': 'fail'}, {'status': 'unknown', 'failure_category': category},
+            {'status': 'ungraded'}]
+    counts = score_counts(rows)
+    assert counts == {'passed': 1, 'failed': 1, 'scored': 2, 'excluded': 2, 'pass_rate': .5}
+    assert score_counts(rows[2:])['pass_rate'] is None
+    table = {'passed': 1, 'unknown': 1, 'tasks': rows}
+    assert ledger_row({'candidate': table})['tasks']['candidate']['pass_rate'] == .5
+    assert engine.compare(table, {'passed': 0, 'unknown': 0, 'tasks': []}) == 'unknown'
+
+
+def test_recovered_dispatch_unknown_is_not_quality_failure(tmp_path):
+    seen = set()
+    def dispatch(request):
+        key = request['model'], request['prompt']
+        if request['model'] == 'candidate' and key not in seen:
+            seen.add(key)
+            return {'status': 'unknown', 'failure_category': 'transport'}
+        return {'status': 'ok', 'answer': '{}'}
+    result = run(tmp_path, config=serial_config(), dispatch=dispatch)
+    assert result['tied'] and result['better'] is None
+    assert result['first_attempt_failures']['candidate']['answer_dispatch_failures'] > 0
+
+
+def test_historical_quota_listing_read_only_and_exact(tmp_path):
+    from bench_outcomes import quota_blocked
+    matching = {'source': 'bench', 'model': 'gpt-6.1-sol', 'status': 'unknown',
+                'response': {'failure_category': 'environment', 'detail': 'quota blocked'}}
+    others = [dict(matching, source='dt-build'), dict(matching, status='fail'),
+              dict(matching, response={'failure_category': 'protocol', 'detail': 'quota blocked'}),
+              dict(matching, response={'failure_category': 'environment', 'detail': 'transport or cleanup failure'})]
+    assert quota_blocked(matching) and not any(map(quota_blocked, others))
+    path = tmp_path / 'outcomes.jsonl'
+    path.write_text('\n'.join(map(json.dumps, [*others, matching])) + '\n', encoding='utf-8')
+    before = path.read_bytes()
+    result = subprocess.run([sys.executable, str(BENCH / 'bench_outcomes.py'), '--state', str(tmp_path),
+                             '--quota-blocked'], capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == {'line': 5, 'row': matching}
+    assert path.read_bytes() == before

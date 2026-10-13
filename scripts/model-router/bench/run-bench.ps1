@@ -203,7 +203,19 @@ function Invoke-BenchCli {
             $doc=$resultJson | ConvertFrom-Json -AsHashtable
             return @{status='ok';answer=$parsed.result;resolved_model=$parsed.resolved_model;usage=$usage;cli=$cli;arguments=$args;tools='disabled';raw=$doc}
         } finally {if(-not $process.HasExited){$process.Kill($true)};$process.Dispose()}
-    } finally {Remove-CodexTempDirectory -Path $work -ExpectedLeafPrefix 'router-bench-call-'}
+    } finally {
+        # A released answer must survive a delayed SQLite handle in the native home.
+        for($cleanupAttempt=0;$cleanupAttempt -lt 6;$cleanupAttempt++) {
+            try {
+                Remove-CodexTempDirectory -Path $work -ExpectedLeafPrefix 'router-bench-call-'
+                break
+            } catch {
+                if($cleanupAttempt -eq 5) {
+                    Write-Warning "Bench temp cleanup deferred; retained directory: $work" -WarningAction Continue
+                } else { Start-Sleep -Milliseconds 200 }
+            }
+        }
+    }
 }
 
 function Get-BenchFailureCategory {
@@ -304,7 +316,18 @@ function Invoke-RouterBench {
         $TimeoutMs=[int]$config.call_timeout_ms_by_job[$Job]
     }
     if(-not $CliInvoker){$CliInvoker={param($r) Invoke-BenchCli -Request $r -TimeoutMs $TimeoutMs}}
-    if(-not $Limits){$Limits={param($v) $u=if($v -eq 'claude'){Get-RouterClaudeUsage}else{Get-RouterCodexUsage -Weekly}; @{blocked=(Get-RouterVendorBlocked -Vendor $v);usage=$u}}}
+    if(-not $Limits){$Limits={
+        param($v)
+        $u=if($v -eq 'claude'){Get-RouterClaudeUsage}else{Get-RouterCodexUsage -Weekly}
+        $blocked=Get-RouterVendorBlocked -Vendor $v
+        $reading=@{blocked=$blocked;usage=$u}
+        if($blocked){
+            $resume=Get-RouterResumeAfter -Vendors @($v)
+            $reading.resume_after_utc=$resume.resume_after_utc
+            $reading.resume_after_source=$resume.resume_after_source
+        }
+        $reading
+    }}
     if(-not $Diagnosis){$Diagnosis={param($v,$e) Resolve-RouterDispatchFailure -Vendor $v -ErrorText $e}}
     if(-not $Envelope){$Envelope={param($a) New-PromptEnvelope -Label 'BENCH ANSWER EVIDENCE' -Content $a}}
     if(-not $Outcome){$Outcome={param($r) Add-RouterOutcome -Row $r -StateDir $benchStateRoot}}
@@ -368,7 +391,7 @@ function Invoke-RouterBench {
             $message=$line | ConvertFrom-Json -AsHashtable
             if($message.operation -eq 'result'){
                 $result = [pscustomobject]$message.payload
-                if ($Trigger -eq 'manual') {
+                if ($Trigger -eq 'manual' -and -not ($message.payload.ContainsKey('halted') -and $message.payload.halted)) {
                     $request = [pscustomobject]@{job=$Job;candidate=$Candidate;incumbent=$Incumbent;effort=$effort}
                     Use-RouterOutcomeMutex -StateDir $benchStateRoot -Action { Save-RouterEffortProposal $request $result } | Out-Null
                     if (-not $NoAlerts) { Send-RouterEffortAlerts }

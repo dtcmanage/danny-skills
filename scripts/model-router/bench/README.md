@@ -14,6 +14,18 @@ This checks behavior and computed layout rules, not pixel appearance in Chromium
 
 Windows alone owns benchmark/research execution, approvals and reporting; Mac is an observer.
 
+Quota guard refusals halt the comparison with `status: deferred` in the bench ledger,
+including the blocked vendor and `resume_after_utc`. If no reset is known, that time
+is a one-hour recheck (`resume_after_source: recheck`), not permission to bypass the guard.
+Calls already in flight may finish; queued calls stop and blocked calls create no outcomes.
+
+For read-only historical analysis, run `python scripts/model-router/bench/bench_outcomes.py
+--state <router-state> --quota-blocked` to emit JSONL line numbers and complete rows matching
+the old environment / `quota blocked` pattern. `--summary` instead reports pass/fail-only
+rates by job, tier, model and effort. Unknown and ungraded rows are excluded from those
+denominators; an all-unknown group has a null rate. Neither command edits history.
+Comparative verdicts remain conservative: unresolved unknowns prevent a decision or proposal.
+
 Research, eligible new-model detection and observed performance drift automatically request comparisons. Benchmark execution generates the golden-review page and pending state. The weekly report surfaces pending approval. To review the actual Windows bank, use the permanent router bench state:
 
 ```powershell
