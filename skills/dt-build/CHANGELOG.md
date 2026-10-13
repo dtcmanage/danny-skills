@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.36.1
+
+- Watcher trusts a matching coordinator exit receipt over log text when classifying capacity refusals; a clean exit no longer stops a run as capacity (FS-67).
+
 ## 2.36.0
 
 - dt-job approval queue applies and records correctly (FS-57); MODEL_SELECTION prints when the model resolves (FS-59); optional machine test lock that a job or acceptance entry opts into with exclusive_reason, never by default (FS-58)

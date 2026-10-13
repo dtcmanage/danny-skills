@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.24.32",
+  "version": "0.24.33",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.24.33 dt-build 2.36.1: watcher capacity classification trusts the coordinator exit receipt (FS-67); with 2.36.0 (model router, pytest serialization, version policy ownership updated).",
       "0.24.32 dt-build 2.36.0: dt-job approval-queue fix, early MODEL_SELECTION, and an opt-in machine test lock (model router, pytest serialization, version policy ownership updated) that runs only with a documented exclusive_reason; the always-on pytest guard was dropped.",
       "0.24.31 dt-build 2.35.1, dt-review 1.16.30, dt-image-gen 0.3.30, dt-writing-draft 0.2.30, dt-writing-edit 0.3.30: Codex capacity refusals back off and retry the same model. Process wrapper capacity detection, model router outcome recording of capacity as vendor availability, and the version policy shared-owner entry for the new capacity suite.",
       "0.24.30 dt-build 2.35.0: bounded managed-resume authority bootstrap via a verified authority digest, pre-bootstrap context-wall detection, and capacity backoff for coordinator launches.",
