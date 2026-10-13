@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.37.1
+
+- Usage collection and the machine test lock use a shared Eastern-time helper that works without the tzdata package; test dependencies are declared in requirements-test.txt and preflighted by the ship gate (FS-66).
+
 ## 2.37.0
 
 - New read-only resolve-tooling-revision.ps1 maps a tooling file's exact bytes to the danny-skills main commit that published it, so pinned runs can accept releases automatically and stop only on unpublished edits (FS-68).
