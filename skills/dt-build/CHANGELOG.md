@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.35.0
+
+- Managed resume reads a hash-verified authority digest at bootstrap and each governing original in full right before its action (32,000-character target, 96,000 ceiling); discovery handles compressed checkpoints (aliases, glued prose, brace lists, inherited_boundary enumeration). The watcher records context walls for coordinators that never marked bootstrap, the checkpoint installer stays allowed past the wall, and coordinator launches refused for vendor capacity back off 5/10/20 minutes without spending thrash or cap budgets.
+
 ## 2.34.2
 
 - Routing-compliance counter counts router wrapper calls (no -Model) as routed, taking category from -Category or -Tier; cache version 4 re-tallies history.
