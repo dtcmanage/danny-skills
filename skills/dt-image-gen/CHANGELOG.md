@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.33 (2026-10-13): Model router bench (shared component): bench tests use a fake renderer, and the ranked renderer finds browser-smoke through DANNY_BROWSER_SMOKE_DIR outside the workspace tree; the task bank is unchanged (FS-69).
+
 - 0.3.32 (2026-10-13): Read-only Codex reviewers run in the real MXC sandbox (shared process wrapper); a blocked sandbox read is reported as a blocked review, not a pass.
 
 - 0.3.31 (2026-10-13): Model router bench (shared component): broken or quota-blocked Codex calls stay out of bench results; recovered dispatch failures no longer break quality ties.

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.38.5
+
+- Model router bench (shared component): bench tests use a fake renderer, and the ranked renderer finds browser-smoke through DANNY_BROWSER_SMOKE_DIR outside the workspace tree; the task bank is unchanged (FS-69).
+
 ## 2.38.4
 
 - Read-only Codex reviewers run in the real MXC sandbox (shared process wrapper); a blocked sandbox read is reported as a blocked review, not a pass.
