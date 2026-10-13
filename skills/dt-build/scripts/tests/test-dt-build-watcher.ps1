@@ -1262,6 +1262,41 @@ $result | ConvertTo-Json -Compress
         Assert-True ($restarted.action -eq 'launch') 'operator resume re-arms the capacity budget'
     } finally { Remove-Item Env:DT_TEST_CAPACITY -ErrorAction SilentlyContinue }
 
+    # ---- FS-67 matching exit receipts are authoritative over launch metadata and log text.
+    $capacityProbe = Join-Path $tempRoot 'capacity-receipts.ps1'
+    Write-Utf8 $capacityProbe @'
+param([string]$WatcherScript, [string]$Root)
+. $WatcherScript
+$cases = @(
+    @{ name = 'clean receipt with capacity log'; receipt = '{"coordinator_id":"fixture","exit_code":0,"failure_category":null}'; category = $null; expected = $false },
+    @{ name = 'capacity receipt overrides tool_error launch'; receipt = '{"coordinator_id":"fixture","exit_code":1,"failure_category":"capacity"}'; category = 'tool_error'; expected = $true },
+    @{ name = 'capacity receipt with zero exit'; receipt = '{"coordinator_id":"fixture","exit_code":0,"failure_category":"capacity"}'; category = $null; expected = $false },
+    @{ name = 'tool_error receipt with capacity log overrides capacity launch'; receipt = '{"coordinator_id":"fixture","exit_code":1,"failure_category":"tool_error"}'; category = 'capacity'; expected = $false },
+    @{ name = 'clean receipt overrides capacity launch'; receipt = '{"coordinator_id":"fixture","exit_code":0,"failure_category":null}'; category = 'capacity'; expected = $false },
+    @{ name = 'no receipt real refusal'; receipt = $null; category = $null; expected = $true },
+    @{ name = 'partial unparseable receipt refusal'; receipt = '{"coordinator_id":"fixture",'; category = $null; expected = $true },
+    @{ name = 'missing receipt ID refusal'; receipt = '{"exit_code":0,"failure_category":null}'; category = $null; expected = $true },
+    @{ name = 'mismatched receipt ID refusal'; receipt = '{"coordinator_id":"other","exit_code":0,"failure_category":null}'; category = $null; expected = $true },
+    @{ name = 'matching receipt missing outcome fields'; receipt = '{"coordinator_id":"fixture"}'; category = 'capacity'; expected = $false }
+)
+$index = 0
+$results = @(foreach ($case in $cases) {
+    $folder = Join-Path $Root "capacity-receipt-$index"
+    New-Item -ItemType Directory -Path $folder | Out-Null
+    [IO.File]::WriteAllText((Join-Path $folder 'coordinator-fixture.log'), 'Selected model is at capacity')
+    if ($null -ne $case.receipt) { [IO.File]::WriteAllText((Join-Path $folder 'coordinator-fixture.exit.json'), $case.receipt) }
+    $launch = [pscustomobject]@{ coordinator_id = 'fixture'; failure_category = $case.category }
+    $actual = Test-WatcherCapacityLaunch -RunFolder $folder -Launch $launch
+    [ordered]@{ name = $case.name; passed = ($actual -eq $case.expected) }
+    $index++
+})
+ConvertTo-Json -InputObject $results -Compress
+'@
+    $capacityResults = (& pwsh -NoProfile -File $capacityProbe -WatcherScript $watcher -Root $tempRoot | Select-Object -Last 1) | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { throw 'capacity receipt probe failed' }
+    Assert-True (@($capacityResults).Count -eq 10) 'capacity receipt probe returns every fixture'
+    foreach ($result in $capacityResults) { Assert-True $result.passed "capacity classification: $($result.name)" }
+
     # ---- fingerprint and command helpers, including older launch rows.
     Use-Scenario 'fingerprint'
     $helperProbe = Join-Path $tempRoot 'fingerprint.ps1'

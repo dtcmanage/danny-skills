@@ -33,17 +33,24 @@ $script:WatcherCapacityWaitMin = 35
 
 function Test-WatcherCapacityLaunch {
     param([string]$RunFolder, $Launch)
-    if ($Launch.PSObject.Properties['failure_category'] -and $Launch.failure_category -eq 'capacity') { return $true }
-    if (-not $Launch.PSObject.Properties['coordinator_id'] -or -not $Launch.coordinator_id) { return $false }
-    $receipt = Join-Path $RunFolder "coordinator-$($Launch.coordinator_id).exit.json"
-    if (Test-Path -LiteralPath $receipt) {
-        try {
-            $exitRecord = Read-DtJobText -Path $receipt | ConvertFrom-Json
-            if ($exitRecord.coordinator_id -ceq $Launch.coordinator_id -and $exitRecord.failure_category -eq 'capacity' -and $exitRecord.exit_code -ne 0) { return $true }
-        } catch { } # A partial receipt falls back to the refusal stream.
+    $hasCoordinatorId = $Launch.PSObject.Properties['coordinator_id'] -and $Launch.coordinator_id
+    if ($hasCoordinatorId) {
+        $receipt = Join-Path $RunFolder "coordinator-$($Launch.coordinator_id).exit.json"
+        if (Test-Path -LiteralPath $receipt) {
+            try {
+                $exitRecord = Read-DtJobText -Path $receipt | ConvertFrom-Json
+                if ($null -ne $exitRecord -and $exitRecord.PSObject.Properties['coordinator_id'] -and $exitRecord.coordinator_id -ceq $Launch.coordinator_id) {
+                    return ($exitRecord.PSObject.Properties['failure_category'] -and $exitRecord.failure_category -eq 'capacity' -and
+                        $exitRecord.PSObject.Properties['exit_code'] -and $null -ne $exitRecord.exit_code -and $exitRecord.exit_code -ne 0)
+                }
+            } catch { } # A partial receipt falls back to the refusal stream.
+        }
     }
+    if ($Launch.PSObject.Properties['failure_category'] -and $Launch.failure_category -eq 'capacity') { return $true }
+    if (-not $hasCoordinatorId) { return $false }
     $log = Join-Path $RunFolder "coordinator-$($Launch.coordinator_id).log"
     if (-not (Test-Path -LiteralPath $log -PathType Leaf)) { return $false }
+    # The launcher merges plain CLI output and stderr without structured events, so refusal fields cannot be isolated reliably.
     return (Read-DtJobText -Path $log) -match '(?i)Selected model is at capacity|(?:model|server) is (?:currently )?(?:at capacity|overloaded)|overloaded_error|insufficient model capacity'
 }
 # One retry of a failed registry read, this long after the first attempt, before it counts as an error.
