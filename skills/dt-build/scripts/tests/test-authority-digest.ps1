@@ -124,6 +124,112 @@ try {
     Assert-True (($built.text | ConvertFrom-Json).bootstrap_chars -le 32000 -and (Get-Content (Join-Path $root 'authority-digest.md') -Raw).Contains('[clipped]')) 'ninety-nine-source mechanical index remains within bootstrap budget'
     Write-Text $checkpoint (([IO.File]::ReadAllText($checkpoint)).Replace('run_status: awaiting_danny', 'run_status: runnable').Replace('last_consumed_event_seq: 7', 'last_consumed_event_seq: 12345'))
     Assert-True ((Invoke-Fixture 'verify-authority-digest.ps1').code -eq 0) 'ninety-nine-source digest survives the operator resume field changes'
+    # Sanitized real checkpoint: spaced absolute aliases, forward alias references,
+    # prose glue, sibling filenames, braces and a counted structured inheritance chain.
+    . (Join-Path $scripts 'authority-digest.ps1')
+    $liveRoot = Join-Path $root 'live shape with spaces'
+    New-Item -ItemType Directory -Path $liveRoot | Out-Null
+    $liveCheckpoint = Join-Path $liveRoot '_build-state.md'
+    $fixtureShape = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'fixtures/authority-checkpoint-compressed.md')).Replace('__RUN__', $liveRoot.Replace('\', '/'))
+    Write-Text $liveCheckpoint $fixtureShape
+    $baseDirectory = Join-Path $liveRoot 'milestones/M05/base/local-stop-base'
+    $parentDirectory = Join-Path $liveRoot 'milestones/M05/parent-work/local-stop-parent'
+    $stopDirectory = Join-Path $liveRoot 'milestones/M05/parent-work/local-stop-current'
+    $workDirectory = Join-Path $liveRoot 'milestones/M05/current-work'
+    foreach ($directory in @($baseDirectory, $parentDirectory, $stopDirectory, $workDirectory)) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
+    $baseOriginals = @()
+    for ($i = 1; $i -le 87; $i++) {
+        $original = Join-Path $baseDirectory "inherited-$i.md"
+        Write-Text $original ("Only fixture authority. Never deploy.`n" + ('inherited history ' * 500))
+        $baseOriginals += $original
+    }
+    function Write-Stop([string]$Directory, [int]$Count, [string]$InheritedBoundary, [string[]]$InheritedSources = @()) {
+        foreach ($name in @('source-disposition.json', 'next-scope.md', 'next-approval.md')) { Write-Text (Join-Path $Directory $name) 'Only fixture authority; no deployment.' }
+        $boundary = [ordered]@{ scope = (Join-Path $Directory 'next-scope.md'); source_disposition = (Join-Path $Directory 'source-disposition.json'); approval_text = (Join-Path $Directory 'next-approval.md'); required_original_records = $Count; original_inherited_record_count = ($Count - 4) }
+        if ($InheritedBoundary) { $boundary.inherited_boundary = $InheritedBoundary } else { $boundary.inherited_authority_sources = $InheritedSources }
+        Write-Text (Join-Path $Directory 'next-operation-boundary.json') ($boundary | ConvertTo-Json -Depth 5)
+    }
+    Write-Stop $baseDirectory 91 '' $baseOriginals
+    Write-Stop $parentDirectory 95 (Join-Path $baseDirectory 'next-operation-boundary.json')
+    Write-Stop $stopDirectory 99 (Join-Path $parentDirectory 'next-operation-boundary.json')
+    foreach ($name in @('approvals.json', 'operator-notes.json', 'build-state.md', 'build-plan.md')) { Write-Text (Join-Path $liveRoot $name) 'Only fixture authority.' }
+    foreach ($name in @('coordinator-metadata-disposition.md', 'coordinator-full-failure-disposition.md', 'coordinator-notes-locator-disposition.md', 'coordinator-report-path-metadata-disposition.md')) { Write-Text (Join-Path (Split-Path $stopDirectory -Parent) $name) 'Metadata clarification; grants no authority.' }
+    foreach ($name in @('vendor-capacity-stop.md', 'session-audit.md')) { Write-Text (Join-Path $workDirectory $name) 'Current stop: no redispatch.' }
+    $dryOutput = Join-Path $root 'external dryrun output'
+    function Invoke-LiveShape([string]$Script, [string[]]$Extra = @()) {
+        $raw = & pwsh -NoProfile -File (Join-Path $scripts $Script) -RunFolder $liveRoot -BuildStatePath $liveCheckpoint @Extra 2>&1
+        return [pscustomobject]@{ code = $LASTEXITCODE; text = ($raw -join "`n") }
+    }
+    $built = Invoke-LiveShape 'build-authority-digest.ps1' @('-DryRun', '-OutputDirectory', $dryOutput)
+    Assert-True ($built.code -eq 0) 'sanitized compressed live checkpoint builds externally in DryRun'
+    $liveManifest = Get-Content (Join-Path $dryOutput 'authority-digest.json') -Raw | ConvertFrom-Json
+    $liveResult = $built.text | ConvertFrom-Json
+    Assert-True ($liveManifest.enumerated_paths.Count -eq 99 -and $liveManifest.originals.Count -eq 109) 'structured chain covers STOP four plus inherited ninety-five and ten supplements exactly'
+    Assert-True (-not (Test-Path (Join-Path $liveRoot 'authority-digest.json')) -and -not (Test-Path (Join-Path $liveRoot 'authority-digest.md'))) 'DryRun writes neither digest nor pin in source run'
+    Assert-True ($liveResult.unresolved_candidates.Count -eq 1 -and $liveResult.unresolved_candidates[0].candidate -eq 'WORK/absent-evidence.md' -and -not $liveResult.unresolved_candidates[0].required) 'non-authority absent evidence is reported without failing the build'
+    Assert-True (([IO.File]::ReadAllText((Join-Path $dryOutput 'authority-digest.md'))).Contains('WORK/absent-evidence.md')) 'Markdown diagnostics retains every unresolved non-authority candidate'
+    Assert-True ($liveManifest.originals.path -contains (Join-Path $liveRoot 'operator-notes.json')) 'glued solelyRUN resolves to the real standing notes'
+    Assert-True (@($liveManifest.originals | Where-Object { $_.path -like '*coordinator-*-disposition.md' }).Count -eq 4) 'directory-inherited comma siblings resolve all four metadata records'
+    Assert-True ($liveResult.bootstrap_chars -le 32000 -and $liveResult.deferred_original_bytes -gt 700000) 'compressed path table fits budget while retaining large inherited originals'
+    $aliases = Get-AuthorityAliases $fixtureShape
+    Assert-True ((Resolve-AuthorityLiteral 'PARENT/record.md' $liveCheckpoint $liveRoot $aliases) -eq (Join-Path $liveRoot 'milestones/M05/parent-work/successor-3/record.md')) 'forward alias references resolve recursively with spaces preserved'
+    Assert-True ((Resolve-AuthorityLiteral 'SPACED/record.md' $liveCheckpoint $liveRoot $aliases) -eq (Join-Path $liveRoot 'milestones/M05/parent-work/folder with spaces/record.md')) 'relative alias values retain embedded spaces to end of their list item'
+    $brace = @(Get-AuthorityCandidates $fixtureShape $aliases | Where-Object literal -like 'RUN/milestones/M05/base/local-stop-base/*')
+    Assert-True ($brace.Count -eq 4) 'brace list expands to four distinct known-alias file paths'
+    Assert-True ((Invoke-LiveShape 'verify-authority-digest.ps1' @('-DigestDirectory', $dryOutput)).code -eq 0) 'verifier accepts the external digest location'
+    # Independently decode the published navigation notation to prove it loses no paths.
+    $decodedDirectories = @{}; $decodedFiles = @{}; $decodedPaths = @(); $pathPrefix = ''
+    foreach ($line in ([IO.File]::ReadAllText((Join-Path $dryOutput 'authority-digest.md')) -split '\n')) {
+        if ($line -match '^P=(.*)$') { $pathPrefix = $Matches[1] }
+        elseif ($line -match '^(D\d+)=(.*)$') {
+            $name = $Matches[1]; $value = $Matches[2]
+            if ($value -match '^(D\d+)\[:(\d+)\](.*)$') { $value = $decodedDirectories[$Matches[1]].Substring(0, [int]$Matches[2]) + $Matches[3] }
+            elseif ($value.StartsWith('P/')) { $value = $pathPrefix + '/' + $value.Substring(2) }
+            $decodedDirectories[$name] = $value
+        } elseif ($line -match '^(F\d+)=(.*)$') { $decodedFiles[$Matches[1]] = $Matches[2] }
+        elseif ($line -match '^(D\d+):(F\d+(?:,F\d+)*)$') {
+            $directory = $decodedDirectories[$Matches[1]]
+            foreach ($member in ($Matches[2] -split ',')) { $decodedPaths += [IO.Path]::GetFullPath((Join-Path $liveRoot (Join-Path $directory $decodedFiles[$member]))) }
+        }
+    }
+    Assert-True (($decodedPaths | Sort-Object) -join "`n" -ceq (($liveManifest.originals.path | Sort-Object) -join "`n")) 'independent Markdown path decoder reconstructs all 109 manifest originals exactly'
+    $liveManifest.diagnostics = @()
+    Write-Text (Join-Path $dryOutput 'authority-digest.json') ($liveManifest | ConvertTo-Json -Depth 8)
+    Write-Text (Join-Path $dryOutput 'authority-digest.json.sha256') (Get-FileHash (Join-Path $dryOutput 'authority-digest.json')).Hash.ToLowerInvariant()
+    $bad = Invoke-LiveShape 'verify-authority-digest.ps1' @('-DigestDirectory', $dryOutput)
+    Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_DISCOVERY')) 'repinning cannot conceal an unresolved candidate diagnostic'
+    $bad = Invoke-LiveShape 'build-authority-digest.ps1' @('-DryRun')
+    Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_DRYRUN_OUTPUT')) 'DryRun requires an explicit external destination'
+    $bad = Invoke-LiveShape 'build-authority-digest.ps1' @('-DryRun', '-OutputDirectory', (Join-Path $liveRoot 'output'))
+    Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_DRYRUN_OUTPUT') -and -not (Test-Path (Join-Path $liveRoot 'output'))) 'DryRun rejects writes anywhere under the source run'
+    $redirect = Join-Path $root 'external junction into live source'
+    $linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
+    New-Item -ItemType $linkType -Path $redirect -Target $liveRoot | Out-Null
+    try {
+        $bad = Invoke-LiveShape 'build-authority-digest.ps1' @('-DryRun', '-OutputDirectory', (Join-Path $redirect 'output'))
+        Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_DRYRUN_OUTPUT') -and -not (Test-Path (Join-Path $liveRoot 'output'))) 'DryRun resolves junctions before rejecting disguised source-run output'
+    } finally { (Get-Item -LiteralPath $redirect -Force).Delete() }
+    Remove-Item -LiteralPath (Join-Path $liveRoot 'approvals.json')
+    $bad = Invoke-LiveShape 'build-authority-digest.ps1' @('-DryRun', '-OutputDirectory', $dryOutput)
+    Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_MISSING') -and $bad.text.Contains('approvals.json')) 'missing mandatory current approvals fail closed even without a literal checkpoint locator'
+    Write-Text (Join-Path $liveRoot 'approvals.json') 'Only fixture authority.'
+    Write-Text $liveCheckpoint ($fixtureShape + "`n- Beforebootstrap read WORK/missing-authority.md IN FULL.")
+    Remove-Item -LiteralPath $baseOriginals[0], $baseOriginals[1]
+    $bad = Invoke-LiveShape 'build-authority-digest.ps1' @('-DryRun', '-OutputDirectory', $dryOutput)
+    $failureDiagnostics = Get-Content (Join-Path $dryOutput 'authority-diagnostics.json') -Raw | ConvertFrom-Json
+    Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_MISSING')) 'missing enumerated or checkpoint-required originals fail closed'
+    Assert-True (@($failureDiagnostics | Where-Object required).Count -eq 3) 'failure diagnostics reports both missing inherited originals and the missing named current original'
+    Write-Text $liveCheckpoint $fixtureShape
+    foreach ($original in $baseOriginals[0..1]) { Write-Text $original 'Only fixture authority.' }
+    $boundaryJson = Get-Content (Join-Path $stopDirectory 'next-operation-boundary.json') -Raw | ConvertFrom-Json
+    $boundaryJson.required_original_records = 98
+    Write-Text (Join-Path $stopDirectory 'next-operation-boundary.json') ($boundaryJson | ConvertTo-Json -Depth 5)
+    $bad = Invoke-LiveShape 'build-authority-digest.ps1' @('-DryRun', '-OutputDirectory', $dryOutput)
+    Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_ENUMERATION_COUNT')) 'declared source-count mismatch fails closed'
+    $cyclicAliases = @{ A = 'B/root'; B = 'A/root' }
+    $cycleFailed = $false
+    try { Resolve-AuthorityLiteral 'A/record.md' $liveCheckpoint $liveRoot $cyclicAliases | Out-Null } catch { $cycleFailed = $_.Exception.Message.Contains('AUTHORITY_ALIAS_CYCLE') }
+    Assert-True $cycleFailed 'cyclic alias definitions fail closed without an unbounded resolver loop'
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {

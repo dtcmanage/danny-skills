@@ -1,6 +1,59 @@
 # FS-64 authority bootstrap digest and FS-63 coordinator capacity handling
 
-Implemented only in `fix/bootstrap-authority-digest`, based on main `dfe60f09f5c2a69f87e0dcce04bd8882219e9c2a`. No model delegation, version bump, merge, push or ship. No live run folder was read or written. Incident details below are Danny's supplied observations, not a new live inspection. All executable verification used fixtures.
+Implemented only in `fix/bootstrap-authority-digest`, based on main `dfe60f09f5c2a69f87e0dcce04bd8882219e9c2a`, with this follow-up committed on top of `f7a16bb`. No model delegation, version bump, merge, push or ship. The original commit used fixtures only. This follow-up reads the explicitly authorized live run/checkpoint; every acceptance write is under this worktree's `_planning/fs-64-live-dryrun/`. No live run or checkpoint writes, Python or pytest execution occurred.
+
+## Real-data discovery follow-up (2026-10-13)
+
+The original tokenizer treated `solelyRUN/operator-notes.json` as a literal relative path and missed alias definitions, sibling filenames and brace lists. The live inherited set also does not come from prose: STOP's `inherited_boundary` links six predecessors, whose base `inherited_authority_sources` array enumerates 71 originals. The chain contributes seven four-record STOP bundles: **71 + 7 x 4 = 99**, equivalently the current four plus 95 inherited originals. Each boundary's declared inherited/required counts are checked against the resolved, deduplicated set. Missing originals, missing enumeration fields, count mismatches and cycles fail closed.
+
+Discovery now retains spaced absolute and relative alias values, resolves forward/recursive aliases, recognizes known aliases after glued prose, inherits directories across comma siblings, and expands brace lists. The structured enumeration controls inherited coverage; incidental evidence inside those originals does not recursively expand that controlling set. Legacy literal graphs still recurse. Checkpoint references explicitly requiring reads supplement the enumerated set. Unresolved non-authority references are reported in Markdown and manifest diagnostics; named required originals fail the build, with all discovered missing candidates written to `authority-diagnostics.json` in the output folder. The regression includes two missing inherited originals plus a missing checkpoint-required original and checks that all three appear.
+
+Mandatory reads are the checkpoint, complete run approvals/notes, build-state/build-plan, explicit current STOP boundary, and the current WORK stop records. The checkpoint's four metadata clarifications expressly granting no new authority are retained as supplemental originals for full reads before dependent actions. Historical `next-approval.md` proposal texts are indexed originals rather than 99 repeated mandatory approval reads; the complete current `approvals.json` remains mandatory. Original kind classification uses filenames/approval directories, so a folder containing `after-approval` does not turn every source into an approval.
+
+Repeated long paths also exceeded the budget. Markdown now uses reversible directory/filename tables and shared directory prefixes. Structured sets retain every source path there and the mechanical extracts in JSON. An independent fixture decoder reconstructs every manifest path from the Markdown. Current authority remains full reads; paths, hashes and originals are never omitted to fit.
+
+### Live read-only acceptance
+
+Executed the reproducible probe:
+
+```powershell
+cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills-bootstrap-authority-digest"
+pwsh -NoProfile -File _planning/fs-64-live-acceptance.ps1
+```
+
+It invokes the builder with `-DryRun -OutputDirectory _planning/fs-64-live-dryrun` and independently invokes the verifier with `-DigestDirectory` pointing there. DryRun rejects missing output, output under either protected source directory, and a junction disguising source-run output. Normal operator publication commands below remain unchanged.
+
+| Claim/change | Action and exact check | Evidence/result |
+| --- | --- | --- |
+| Complete inherited authority | Resolve structured chain and check every declared count | **99**: current STOP four + inherited 95 |
+| Complete discovery | Independently rediscover and verify every original hash/byte/character size | **109 originals**: 99 + four run records + four metadata clarifications + two WORK stop records; checkpoint is the separate root |
+| Candidate diagnostics | Compare rebuilt diagnostics to pinned manifest; inspect Markdown diagnostics | **0 unresolved live candidates** |
+| Digest size | Measure emitted Markdown and full mandatory authority text | **3,833 Markdown characters; 31,968 combined bootstrap authority characters / 32,000**; 32-character headroom |
+| Original reads deferred | Sum byte lengths of the 102 indexed originals outside mandatory paths | **466,400 bytes** moved out of authority bootstrap, still required before dependent actions |
+| Mandatory full authority reads | Sum checkpoint plus seven pinned mandatory originals | **28,137 bytes**; 28,135 characters (build-plan has two extra UTF-8 bytes) |
+| Mutable identity read | Keep registered run/lease verification separate from immutable authority pin | Lease **338 bytes**; registration/lease/resume-record reads remain required and outside this authority-only byte metric/budget |
+| Read-only live sources | Compare all 109 original hashes/sizes/extracts, complete checkpoint hash and run-root filenames/lengths/write timestamps before/after probe | All unchanged; external pair build and independent verification both **PASS** |
+
+Live checkpoint is **7,998 bytes**. Total indexed authority plus checkpoint is 494,531 characters. The full original bytes are 494,537 = 466,400 deferred + 28,137 mandatory; the six-byte character delta is UTF-8 encoding (two in build-plan, four in deferred originals). This is a character-budget/discovery proof, not a tokenizer or actual coordinator-bootstrap measurement. The mandatory current set is close to its budget; additions must pass verification again.
+
+Evidence: `_planning/fs-64-live-dryrun/acceptance.json`, external digest pair/pin, and `_planning/fs-64-evidence/followup-live-acceptance.log`. The acceptance JSON/log and probe are committed; the generated live pair remains local and untracked because it contains live authority extracts and becomes stale when those sources change. The sanitized fixture is `skills/dt-build/scripts/tests/fixtures/authority-checkpoint-compressed.md`.
+
+### Fully rerun PowerShell suites
+
+All six suites from the original report are rerun in full, with isolated fixture registry/transcript/router/launcher/alert state. No pytest/Python/model process runs. Counts compare this follow-up to `f7a16bb` (and the original main baseline).
+
+| Suite | Main | f7a16bb | Follow-up | Delta from f7a16bb and evidence |
+| --- | ---: | ---: | ---: | --- |
+| `test-dt-job.ps1` | 244 | 244 | 244 | 0; `followup-test-dt-job.log` |
+| `test-context-guard.ps1` | 172 | 181 | 181 | 0; `followup-test-context-guard.log` |
+| `test-dt-build-watcher.ps1` | 266 | 275 | 275 | 0; `followup-test-dt-build-watcher.log` |
+| `test-host-adapters.ps1` | 142 | 142 | 142 | 0; `followup-test-host-adapters.log` |
+| `test-authority-digest.ps1` | 0 | 29 | 51 | +22; `followup-test-authority-digest.log` |
+| `test-coordinator-capacity.ps1` | 0 | 7 | 7 | 0; `followup-test-coordinator-capacity.log` |
+
+**Total: 900 passing assertions; +22 from f7a16bb's 878 and +76 from main's 824.** All 29 original digest assertions remain. The 22 additions are: eight sanitized-shape/discovery/diagnostic/budget checks; recursive and spaced-relative alias resolution; brace expansion; alternate-location verification; independent Markdown decoding; forged diagnostics rejection; two DryRun destination checks plus junction protection; missing mandatory approvals; missing-original failure and all-three diagnostics; count mismatch and alias cycle rejection. Logs live under `_planning/fs-64-evidence/`. PowerShell AST parsing covers five touched `.ps1` files with zero errors; whitespace and unchanged wrapper/version/changelog checks pass (`followup-static-checks.log`).
+
+The first follow-up runs caught two corrected PowerShell issues: array concatenation precedence had suppressed legacy candidate patterns, and summing an empty deferred set under StrictMode lacked a `Sum` property. Final complete logs supersede those failed attempts. The budget rejection during development was a real finding: mandatory current reads remain intact; reversible path tables and deferred expressly non-authorizing metadata resolved it.
 
 ## Root causes and changes
 
@@ -11,7 +64,7 @@ Implemented only in `fix/bootstrap-authority-digest`, based on main `dfe60f09f5c
 
 ## Authority contract and implementation
 
-`build-authority-digest.ps1` publishes `authority-digest.md`, `authority-digest.json` and the manifest SHA256 pin. The JSON records each original's absolute path, full-file SHA256, byte size, character size, kind and quoted mechanical extract. Discovery follows literal code-span paths, Markdown links, JSON strings, bare absolute paths and authority-like relative paths, recursively from the checkpoint and current run authority. Sources resolve beside their naming record, then beside the run. Referenced evidence is conservatively covered too; no workspace search or model call occurs.
+`build-authority-digest.ps1` publishes `authority-digest.md`, `authority-digest.json` and the manifest SHA256 pin. The JSON records each original's absolute path, full-file SHA256, byte size, character size, kind and quoted mechanical extract, plus enumeration and diagnostics. Structured checkpoint discovery is described above; legacy literal graphs follow code spans, Markdown links, JSON strings, bare absolute and relative paths recursively. Sources resolve beside their naming record, then beside the run. No workspace search or model call occurs.
 
 `verify-authority-digest.ps1` verifies the manifest pin and Markdown hash, rediscovers the source graph, recomputes all original hashes/sizes, rejects missing/uncovered/duplicate originals and compares the Markdown with deterministic original extracts. Re-pinning a forged digest cannot change its mechanical contents. Every governing original remains controlling. Missing or contradictory authority stops the dependent action; failed verification requires original full reads before bootstrap, rather than silently skipping authorization.
 
@@ -32,7 +85,7 @@ The 99-original fixture includes long source names and large inherited records. 
 
 `invoke-codex-chunk.ps1` is unchanged. The FS-63 job-wrapper change remains owned by `fix/codex-readonly-review-reads`. No skill/plugin version or changelog metadata changed; the release coordinator owns those gates and release.
 
-## Verification
+## Original f7a16bb fixture verification
 
 All commands below run from this worktree:
 
@@ -81,11 +134,11 @@ cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills-bootstrap-authority-
 python -m pytest scripts/model-router/tests/test_routing_compliance.py -q
 ```
 
-Live launch, actual bootstrap token measurement and operator recovery are **UNVERIFIED / NOT EXECUTED** under fixture-only authorization. Version-policy/release gates await the coordinator's requested version bumps; no merge/push/deploy was attempted.
+Live coordinator launch, actual bootstrap token measurement and operator recovery remain **UNVERIFIED / NOT EXECUTED**. The authorized live discovery/verification dry run is proven above. Version-policy/release gates await the coordinator's requested version bumps; no merge/push/deploy was attempted.
 
 ## Exact operator recovery: core-durability-20260922
 
-Run only after the coordinator releases and installs the fix. These are operator commands, not commands executed in this development session. The supplied live folder remains untouched. Resolve the checkpoint from its existing registry entry; do not guess or recursively search:
+Run only after the coordinator releases and installs the fix. These live publication commands were not executed in development; this follow-up used only external DryRun output. Resolve the checkpoint from its existing registry entry; do not guess or recursively search:
 
 ```powershell
 cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"
@@ -103,6 +156,8 @@ Then issue `/dt-build resume core-durability-20260922` in the operator session. 
 
 ## Close-out and retained artifacts
 
-Session audit: the quiet window, fixtures-only scope, branch, release ownership and no-delegation instruction are task-specific and already captured here. No durable policy or memory changes are warranted; no scaffold writes or workspace sync occurred.
+Session audit (`dt-session-audit`): the quiet window, read-only live acceptance scope, branch, release ownership and no-delegation instruction are task-specific and captured here. Discovery findings belong in the implementation/report, not canonical scaffold memory. No durable policy/memory changes are warranted; no scaffold writes occurred. Workspace upload/sync is skipped under Danny's explicit no-push instruction.
+
+Follow-up cleanup: automatic approval review rejected deletion of `_planning/fs-64-parser-probe/` with `blocked by policy` and no additional explanation. The temporary development probe is retained untracked and excluded from this commit. No approval request or alternate deletion was attempted.
 
 Automatic approval review rejected deletion of the temporary main-source fixture directory with `blocked by policy` and no further explanation. `_planning/fs-64-evidence/main-fixture/`, its ZIP and `_planning/fs-64-capacity-probe.ps1` are retained untracked and excluded from the commit. The pre-existing `_planning/fs-64-task.txt` and `_planning/fs-64-wrapper.log` are also excluded and preserved.

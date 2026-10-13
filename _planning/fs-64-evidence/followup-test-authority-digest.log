@@ -1,0 +1,52 @@
+PASS: deterministic build verifies its published pair
+PASS: small authority set retains full-original bootstrap
+PASS: recursive boundary references, bare relative approval paths and complete approvals are covered once
+PASS: current boundary, approvals and checkpoint always remain full reads
+PASS: every original has a hash, byte size, kind and mechanical extract
+PASS: action reader emits the complete original, including non-operative detail
+PASS: operator resume and cursor changes leave authority verification intact
+PASS: checkpoint authority changes still fail closed
+PASS: changed original fails verification closed
+PASS: stale authority stops action-time reading
+PASS: bootstrap fallback reads changed original in full
+PASS: large inherited authority uses the verified budget path
+PASS: digest plus mandatory originals fits the authority bootstrap budget
+PASS: missing original fails closed
+PASS: re-pinned manifest omitting a checkpoint original still fails coverage
+PASS: digest content tampering is rejected
+PASS: re-pinning a forged digest cannot change the mechanical extracts
+PASS: manifest content is hash pinned
+PASS: context wall forces digest routing even with a small set
+PASS: digest reader emits the verified index in full
+PASS: read-authority-original.ps1 remains allowed despite a prior authority wall
+PASS: read-authority-original.ps1 requires handoff at the hard wall
+PASS: read-authority-digest.ps1 remains allowed despite a prior authority wall
+PASS: read-authority-digest.ps1 requires handoff at the hard wall
+PASS: oversized current authority cannot be silently omitted
+PASS: entry contract names budget, action-time originals and script-only authorship
+PASS: ninety-nine authority originals build and verify without full bootstrap reads
+PASS: ninety-nine-source mechanical index remains within bootstrap budget
+PASS: ninety-nine-source digest survives the operator resume field changes
+PASS: sanitized compressed live checkpoint builds externally in DryRun
+PASS: structured chain covers STOP four plus inherited ninety-five and ten supplements exactly
+PASS: DryRun writes neither digest nor pin in source run
+PASS: non-authority absent evidence is reported without failing the build
+PASS: Markdown diagnostics retains every unresolved non-authority candidate
+PASS: glued solelyRUN resolves to the real standing notes
+PASS: directory-inherited comma siblings resolve all four metadata records
+PASS: compressed path table fits budget while retaining large inherited originals
+PASS: forward alias references resolve recursively with spaces preserved
+PASS: relative alias values retain embedded spaces to end of their list item
+PASS: brace list expands to four distinct known-alias file paths
+PASS: verifier accepts the external digest location
+PASS: independent Markdown path decoder reconstructs all 109 manifest originals exactly
+PASS: repinning cannot conceal an unresolved candidate diagnostic
+PASS: DryRun requires an explicit external destination
+PASS: DryRun rejects writes anywhere under the source run
+PASS: DryRun resolves junctions before rejecting disguised source-run output
+PASS: missing mandatory current approvals fail closed even without a literal checkpoint locator
+PASS: missing enumerated or checkpoint-required originals fail closed
+PASS: failure diagnostics reports both missing inherited originals and the missing named current original
+PASS: declared source-count mismatch fails closed
+PASS: cyclic alias definitions fail closed without an unbounded resolver loop
+SUMMARY: 51 passed
