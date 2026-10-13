@@ -1,0 +1,829 @@
+Source: _planning/fs-63-consumer-baseline.log
+PASS: tier complex maps to complex-coding:True
+PASS: tier standard maps to routine-coding:False
+PASS: tier light maps to mechanical:False
+PASS: tier complex resolves complex-coding protected (strongest eligible)
+PASS: tier standard resolves routine-coding through the approved roster
+PASS: tier light resolves mechanical through the approved roster
+PASS: category planning resolves through the approved roster
+PASS: category planning -Protected keeps the roster member
+PASS: category ui-frontend resolves through the router
+PASS: -PreferredModel override honored
+PASS: -PreferredModel still selectable-checked under -Strict
+PASS: router pick the catalog cannot select fails closed under -Strict
+PASS: Resolve-CodexModel has no generation-ranking pick
+PASS: approved roster model and effort routine-coding/codex
+PASS: approved roster model and effort routine-coding/claude
+PASS: approved roster model and effort complex-coding/codex
+PASS: approved roster model and effort complex-coding/claude
+PASS: approved roster model and effort ui-frontend/codex
+PASS: approved roster model and effort ui-frontend/claude
+PASS: approved roster model and effort mechanical/codex
+PASS: approved roster model and effort mechanical/claude
+PASS: approved roster model and effort code-review/codex
+PASS: approved roster model and effort code-review/claude
+PASS: approved roster model and effort planning/codex
+PASS: approved roster model and effort planning/claude
+PASS: approved roster model and effort deep-research/codex
+PASS: approved roster model and effort deep-research/claude
+PASS: approved roster model and effort math/codex
+PASS: approved roster model and effort math/claude
+PASS: approved roster model and effort analysis/codex
+PASS: approved roster model and effort analysis/claude
+PASS: approved roster model and effort long-form-writing/codex
+PASS: approved roster model and effort long-form-writing/claude
+PASS: missing roster falls back to default with its alert
+PASS: Codex substantive wrapper without -Effort fails closed
+PASS: Codex hard resolves and persists difficulty and reason
+PASS: Codex hard retry keeps failed model
+PASS: Codex hard without reason refused
+PASS: codex wrapper -Tier standard resolves through the router
+PASS: codex provenance carries category, protected, escalated_from
+PASS: codex provenance carries router reason and null retired table fields
+PASS: codex disclosure line puts router reason after selection reason
+PASS: codex wrapper -EscalateFrom moves one step up
+PASS: codex escalation disclosed
+PASS: codex wrapper -Model override honored and disclosed
+PASS: codex wrapper unselectable -Model fails closed
+PASS: codex refusal records vendor block and environment failure
+PASS: Codex chunk limit reason shows used/left and Eastern resume time
+PASS: blocked vendor stops explicit Codex override
+PASS: Codex failed output with limit identifiers does not block vendor
+PASS: Codex input_too_large is a tooling failure with both sizes
+PASS: Codex input_too_large is not retried
+PASS: Codex input_too_large alert names the sizes
+PASS: echoed input_too_large text before the last line does not classify
+PASS: Claude substantive wrapper without -Effort fails closed
+PASS: Claude hard resolves and persists difficulty and reason
+PASS: Claude hard without reason refused
+PASS: claude wrapper -Tier standard resolves through the router Claude lane
+PASS: claude provenance carries router fields
+PASS: claude disclosure line puts router reason after selection reason
+PASS: claude wrapper -Tier complex maps to complex-coding protected
+PASS: claude wrapper -EscalateFrom moves one step up
+PASS: claude wrapper -Model override honored and disclosed
+PASS: claude refusal records vendor block and environment failure
+PASS: Claude chunk limit reason shows used/left and Eastern resume time
+PASS: blocked vendor stops explicit Claude override
+PASS: Claude max-turns result mentioning rate limit does not block vendor
+PASS: Claude JSON error result records vendor block
+PASS: claude wrapper -Json keeps stdout one JSON object
+PASS: wrapper passes -SendAlerts and prints the ROUTER_ALERT line (fake transport)
+PASS: test transport seam writes its stderr marker once per process
+PASS: claude wrapper has no fixed tier map
+PASS: stamped Claude report parses
+PASS: stamped Claude OK passes preflight
+PASS: codex complex-coding time limit is 2700000 ms by default
+PASS: codex code-review time limit is 1800000 ms by default
+PASS: codex mechanical time limit is 600000 ms by default
+PASS: codex complex-coding time limit is 120000 ms when set explicitly
+PASS: codex -AdHoc runs a headerless prompt through the router (exit 0)
+PASS: codex without -AdHoc still refuses a headerless prompt
+PASS: codex refuses an oversized prompt before dispatch (exit 1)
+PASS: a read-only Codex review runs with the unchanged-tree check (exit 0; sandbox: danger-full-access (windows: read-only enforced by an unchanged-tree check); DT_BUILD_DISPATCH_SEAMS_ACTIVE
+)
+PASS: a read-only Codex reviewer that writes into the project is rejected (exit 1; DT_BUILD_DISPATCH_SEAMS_ACTIVE
+Exception: D:\Claude\_Claude-Workspace\Skill Creation\danny-skills-codex-capacity-backoff\_planning\fs-63-main\skills\dt-build\scripts\invoke-codex-chunk.ps1:664
+Line |
+ 664 |      if (-not $result.pass) { throw $failureReason }
+     |                               ~~~~~~~~~~~~~~~~~~~~
+     | CODEX_READONLY_VIOLATION: the read-only worker changed files under
+     | C:\Users\Danny\AppData\Local\Temp\model-router-wiring-67e92cbf8c6e455992ce84316b6ec497\project: ??
+     | reviewer-wrote-this.txt; 2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881. Its report is
+     | rejected. Redacted stream:
+     | C:\Users\Danny\AppData\Local\Temp\model-router-wiring-67e92cbf8c6e455992ce84316b6ec497\codex-readonly-writes.md.stream.log
+)
+PASS: codex has no time limit under dt-job (2147483647)
+PASS: claude complex-coding time limit is 2700000 ms by default
+PASS: claude code-review time limit is 1800000 ms by default
+PASS: claude mechanical time limit is 600000 ms by default
+PASS: claude complex-coding time limit is 120000 ms when set explicitly
+PASS: claude -AdHoc runs a headerless prompt through the router (exit 0)
+PASS: claude without -AdHoc still refuses a headerless prompt
+PASS: claude refuses an oversized prompt before dispatch (exit 1)
+PASS: claude has no time limit under dt-job (2147483647)
+PASS: codex offline-resume result and final category
+PASS: codex offline-resume diagnosis in provenance
+PASS: codex offline-resume bounded launch count
+PASS: codex offline-resume seam marker on stderr
+PASS: codex offline-resume returns diagnosis as one JSON result
+PASS: codex offline-resume waits only in bounded 60-second offline intervals
+PASS: codex offline-resume identical arguments and prompt on retry
+PASS: codex offline-resume sends alert on reconnect or second failure
+PASS: codex offline-resume alert key
+PASS: codex offline-resume chat copy on stderr
+PASS: codex offline-resume only nonterminal wrapper events
+PASS: codex offline-resume event repo name and diagnosis
+PASS: codex offline-timeout result and final category
+PASS: codex offline-timeout diagnosis in provenance
+PASS: codex offline-timeout bounded launch count
+PASS: codex offline-timeout seam marker on stderr
+PASS: codex offline-timeout returns diagnosis as one JSON result
+PASS: codex offline-timeout waits only in bounded 60-second offline intervals
+PASS: codex offline-timeout exact termination string
+PASS: codex offline-timeout sends no premature alert
+PASS: codex offline-timeout only nonterminal wrapper events
+PASS: codex offline-timeout event repo name and diagnosis
+PASS: codex incident result and final category
+PASS: codex incident diagnosis in provenance
+PASS: codex incident bounded launch count
+PASS: codex incident seam marker on stderr
+PASS: codex incident returns diagnosis as one JSON result
+PASS: codex incident waits only in bounded 60-second offline intervals
+PASS: codex incident exact termination string
+PASS: codex incident carries other-vendor backup and incident
+PASS: codex incident result carries backup pick
+PASS: codex incident persists A5 record
+PASS: codex incident sends no premature alert
+PASS: codex incident only nonterminal wrapper events
+PASS: codex incident event repo name and diagnosis
+PASS: codex offline-incident result and final category
+PASS: codex offline-incident diagnosis in provenance
+PASS: codex offline-incident bounded launch count
+PASS: codex offline-incident seam marker on stderr
+PASS: codex offline-incident returns diagnosis as one JSON result
+PASS: codex offline-incident waits only in bounded 60-second offline intervals
+PASS: codex offline-incident exact termination string
+PASS: codex incident carries other-vendor backup and incident
+PASS: codex incident result carries backup pick
+PASS: codex incident persists A5 record
+PASS: codex offline-incident sends alert on reconnect or second failure
+PASS: codex offline-incident alert key
+PASS: codex offline-incident chat copy on stderr
+PASS: codex offline-incident only nonterminal wrapper events
+PASS: codex offline-incident event repo name and diagnosis
+PASS: codex unexplained-invalid result and final category
+PASS: codex unexplained-invalid diagnosis in provenance
+PASS: codex unexplained-invalid bounded launch count
+PASS: codex unexplained-invalid seam marker on stderr
+PASS: codex unexplained-invalid returns diagnosis as one JSON result
+PASS: codex unexplained-invalid waits only in bounded 60-second offline intervals
+PASS: codex unexplained-invalid identical arguments and prompt on retry
+PASS: codex unexplained-invalid sends no premature alert
+PASS: codex unexplained-invalid only nonterminal wrapper events
+PASS: codex unexplained-invalid event repo name and diagnosis
+PASS: codex invalid retry keeps normal throw and provenance
+PASS: codex unexplained-success result and final category
+PASS: codex unexplained-success diagnosis in provenance
+PASS: codex unexplained-success bounded launch count
+PASS: codex unexplained-success seam marker on stderr
+PASS: codex unexplained-success returns diagnosis as one JSON result
+PASS: codex unexplained-success waits only in bounded 60-second offline intervals
+PASS: codex unexplained-success identical arguments and prompt on retry
+PASS: codex unexplained-success sends no premature alert
+PASS: codex unexplained-success only nonterminal wrapper events
+PASS: codex unexplained-success event repo name and diagnosis
+PASS: codex unexplained-fail result and final category
+PASS: codex unexplained-fail diagnosis in provenance
+PASS: codex unexplained-fail bounded launch count
+PASS: codex unexplained-fail seam marker on stderr
+PASS: codex unexplained-fail returns diagnosis as one JSON result
+PASS: codex unexplained-fail waits only in bounded 60-second offline intervals
+PASS: codex unexplained-fail identical arguments and prompt on retry
+PASS: codex unexplained-fail exact termination string
+PASS: codex unexplained-fail sends alert on reconnect or second failure
+PASS: codex unexplained-fail alert key
+PASS: codex unexplained-fail chat copy on stderr
+PASS: codex unexplained-fail only nonterminal wrapper events
+PASS: codex unexplained-fail event repo name and diagnosis
+PASS: codex stopped provenance updater passes
+PASS: codex stopped piece has one wrapper row and one derived row with matching repo
+PASS: claude offline-resume result and final category
+PASS: claude offline-resume diagnosis in provenance
+PASS: claude offline-resume bounded launch count
+PASS: claude offline-resume seam marker on stderr
+PASS: claude offline-resume returns diagnosis as one JSON result
+PASS: claude offline-resume waits only in bounded 60-second offline intervals
+PASS: claude offline-resume identical arguments and prompt on retry
+PASS: claude offline-resume sends alert on reconnect or second failure
+PASS: claude offline-resume alert key
+PASS: claude offline-resume chat copy on stderr
+PASS: claude offline-resume only nonterminal wrapper events
+PASS: claude offline-resume event repo name and diagnosis
+PASS: claude offline-timeout result and final category
+PASS: claude offline-timeout diagnosis in provenance
+PASS: claude offline-timeout bounded launch count
+PASS: claude offline-timeout seam marker on stderr
+PASS: claude offline-timeout returns diagnosis as one JSON result
+PASS: claude offline-timeout waits only in bounded 60-second offline intervals
+PASS: claude offline-timeout exact termination string
+PASS: claude offline-timeout sends no premature alert
+PASS: claude offline-timeout only nonterminal wrapper events
+PASS: claude offline-timeout event repo name and diagnosis
+PASS: claude incident result and final category
+PASS: claude incident diagnosis in provenance
+PASS: claude incident bounded launch count
+PASS: claude incident seam marker on stderr
+PASS: claude incident returns diagnosis as one JSON result
+PASS: claude incident waits only in bounded 60-second offline intervals
+PASS: claude incident exact termination string
+PASS: claude incident carries other-vendor backup and incident
+PASS: claude incident result carries backup pick
+PASS: claude incident persists A5 record
+PASS: claude incident sends no premature alert
+PASS: claude incident only nonterminal wrapper events
+PASS: claude incident event repo name and diagnosis
+PASS: claude offline-incident result and final category
+PASS: claude offline-incident diagnosis in provenance
+PASS: claude offline-incident bounded launch count
+PASS: claude offline-incident seam marker on stderr
+PASS: claude offline-incident returns diagnosis as one JSON result
+PASS: claude offline-incident waits only in bounded 60-second offline intervals
+PASS: claude offline-incident exact termination string
+PASS: claude incident carries other-vendor backup and incident
+PASS: claude incident result carries backup pick
+PASS: claude incident persists A5 record
+PASS: claude offline-incident sends alert on reconnect or second failure
+PASS: claude offline-incident alert key
+PASS: claude offline-incident chat copy on stderr
+PASS: claude offline-incident only nonterminal wrapper events
+PASS: claude offline-incident event repo name and diagnosis
+PASS: claude unexplained-invalid result and final category
+PASS: claude unexplained-invalid diagnosis in provenance
+PASS: claude unexplained-invalid bounded launch count
+PASS: claude unexplained-invalid seam marker on stderr
+PASS: claude unexplained-invalid returns diagnosis as one JSON result
+PASS: claude unexplained-invalid waits only in bounded 60-second offline intervals
+PASS: claude unexplained-invalid identical arguments and prompt on retry
+PASS: claude unexplained-invalid sends no premature alert
+PASS: claude unexplained-invalid only nonterminal wrapper events
+PASS: claude unexplained-invalid event repo name and diagnosis
+PASS: claude invalid retry keeps normal throw and provenance
+PASS: claude unexplained-success result and final category
+PASS: claude unexplained-success diagnosis in provenance
+PASS: claude unexplained-success bounded launch count
+PASS: claude unexplained-success seam marker on stderr
+PASS: claude unexplained-success returns diagnosis as one JSON result
+PASS: claude unexplained-success waits only in bounded 60-second offline intervals
+PASS: claude unexplained-success identical arguments and prompt on retry
+PASS: claude unexplained-success sends no premature alert
+PASS: claude unexplained-success only nonterminal wrapper events
+PASS: claude unexplained-success event repo name and diagnosis
+PASS: claude unexplained-fail result and final category
+PASS: claude unexplained-fail diagnosis in provenance
+PASS: claude unexplained-fail bounded launch count
+PASS: claude unexplained-fail seam marker on stderr
+PASS: claude unexplained-fail returns diagnosis as one JSON result
+PASS: claude unexplained-fail waits only in bounded 60-second offline intervals
+PASS: claude unexplained-fail identical arguments and prompt on retry
+PASS: claude unexplained-fail exact termination string
+PASS: claude unexplained-fail sends alert on reconnect or second failure
+PASS: claude unexplained-fail alert key
+PASS: claude unexplained-fail chat copy on stderr
+PASS: claude unexplained-fail only nonterminal wrapper events
+PASS: claude unexplained-fail event repo name and diagnosis
+PASS: claude stopped provenance updater passes
+PASS: claude stopped piece has one wrapper row and one derived row with matching repo
+PASS: dispatch category list has all 11 including math and analysis
+PASS: Resolve-CodexModel accepts complex-coding
+PASS: codex wrapper accepts complex-coding and records roster job/vendor
+PASS: claude wrapper accepts complex-coding and records roster job/vendor
+PASS: Resolve-CodexModel accepts routine-coding
+PASS: codex wrapper accepts routine-coding and records roster job/vendor
+PASS: claude wrapper accepts routine-coding and records roster job/vendor
+PASS: Resolve-CodexModel accepts code-review
+PASS: codex wrapper accepts code-review and records roster job/vendor
+PASS: claude wrapper accepts code-review and records roster job/vendor
+PASS: Resolve-CodexModel accepts ui-frontend
+PASS: codex wrapper accepts ui-frontend and records roster job/vendor
+PASS: claude wrapper accepts ui-frontend and records roster job/vendor
+PASS: Resolve-CodexModel accepts planning
+PASS: codex wrapper accepts planning and records roster job/vendor
+PASS: claude wrapper accepts planning and records roster job/vendor
+PASS: Resolve-CodexModel accepts deep-research
+PASS: codex wrapper accepts deep-research and records roster job/vendor
+PASS: claude wrapper accepts deep-research and records roster job/vendor
+PASS: Resolve-CodexModel accepts math
+PASS: codex wrapper accepts math and records roster job/vendor
+PASS: claude wrapper accepts math and records roster job/vendor
+PASS: Resolve-CodexModel accepts analysis
+PASS: codex wrapper accepts analysis and records roster job/vendor
+PASS: claude wrapper accepts analysis and records roster job/vendor
+PASS: Resolve-CodexModel accepts long-form-writing
+PASS: codex wrapper accepts long-form-writing and records roster job/vendor
+PASS: claude wrapper accepts long-form-writing and records roster job/vendor
+PASS: Resolve-CodexModel accepts mechanical
+PASS: codex wrapper accepts mechanical and records roster job/vendor
+PASS: claude wrapper accepts mechanical and records roster job/vendor
+PASS: escalation stops at top non-frontier model on both lanes
+PASS: wrappers cannot retry past top non-frontier model
+PASS: explicit overrides bypass constrained roster drift waits
+PASS: codex wrapper accepts complex-coding and fails closed on wait
+PASS: claude wrapper accepts complex-coding and fails closed on wait
+PASS: codex wrapper accepts routine-coding and fails closed on wait
+PASS: claude wrapper accepts routine-coding and fails closed on wait
+PASS: codex wrapper accepts code-review and fails closed on wait
+PASS: claude wrapper accepts code-review and fails closed on wait
+PASS: codex wrapper accepts ui-frontend and fails closed on wait
+PASS: claude wrapper accepts ui-frontend and fails closed on wait
+PASS: codex wrapper accepts planning and fails closed on wait
+PASS: claude wrapper accepts planning and fails closed on wait
+PASS: codex wrapper accepts deep-research and fails closed on wait
+PASS: claude wrapper accepts deep-research and fails closed on wait
+PASS: codex wrapper accepts math and fails closed on wait
+PASS: claude wrapper accepts math and fails closed on wait
+PASS: codex wrapper accepts analysis and fails closed on wait
+PASS: claude wrapper accepts analysis and fails closed on wait
+PASS: codex wrapper accepts long-form-writing and fails closed on wait
+PASS: claude wrapper accepts long-form-writing and fails closed on wait
+PASS: codex wrapper accepts mechanical and fails closed on wait
+PASS: claude wrapper accepts mechanical and fails closed on wait
+PASS: codex wrapper accepts image-generation and fails closed on wait
+PASS: claude wrapper accepts image-generation and fails closed on wait
+PASS: blocked wrappers did not launch a model process
+PASS: Resolve-CodexModel accepts image-generation category
+PASS: dt-build uses roster dispatch without family lane default
+PASS: dt-review rounds and preflight use planning with matching protection
+PASS: long-form-writing is protected by construction
+PASS: dt-writing-draft routes model dispatch as long-form-writing
+PASS: dt-writing-edit routes model dispatch as long-form-writing
+PASS: dt-image-gen records the advisory image-generation pick
+PASS: alias claude-opus-5-5 -> opus
+PASS: alias claude-fable-5-1 -> fable
+PASS: alias claude-haiku-4-5-20251001 -> haiku
+PASS: alias claude-sonnet-5 -> sonnet
+PASS: non-Claude model has no Agent alias
+PASS: router result carries agent_alias on the Claude lane only
+PASS: frontier-spend alert message shows remaining work
+PASS: codex frontier points attributed from rate_limits.primary.used_percent
+PASS: frontier spend reads a Codex log held open for writing
+PASS: frontier-spend alert fires at 10 points
+PASS: frontier-spend alert fires once per run
+PASS: below 10 points no alert
+PASS: claude lane estimated from frontier weighted tokens
+PASS: ledger shows category and escalated when present
+PASS: ledger tolerates rows without category
+SUMMARY: 343 passed
+
+Source: _planning/fs-63-consumer.log
+PASS: tier complex maps to complex-coding:True
+PASS: tier standard maps to routine-coding:False
+PASS: tier light maps to mechanical:False
+PASS: tier complex resolves complex-coding protected (strongest eligible)
+PASS: tier standard resolves routine-coding through the approved roster
+PASS: tier light resolves mechanical through the approved roster
+PASS: category planning resolves through the approved roster
+PASS: category planning -Protected keeps the roster member
+PASS: category ui-frontend resolves through the router
+PASS: -PreferredModel override honored
+PASS: -PreferredModel still selectable-checked under -Strict
+PASS: router pick the catalog cannot select fails closed under -Strict
+PASS: Resolve-CodexModel has no generation-ranking pick
+PASS: approved roster model and effort routine-coding/codex
+PASS: approved roster model and effort routine-coding/claude
+PASS: approved roster model and effort complex-coding/codex
+PASS: approved roster model and effort complex-coding/claude
+PASS: approved roster model and effort ui-frontend/codex
+PASS: approved roster model and effort ui-frontend/claude
+PASS: approved roster model and effort mechanical/codex
+PASS: approved roster model and effort mechanical/claude
+PASS: approved roster model and effort code-review/codex
+PASS: approved roster model and effort code-review/claude
+PASS: approved roster model and effort planning/codex
+PASS: approved roster model and effort planning/claude
+PASS: approved roster model and effort deep-research/codex
+PASS: approved roster model and effort deep-research/claude
+PASS: approved roster model and effort math/codex
+PASS: approved roster model and effort math/claude
+PASS: approved roster model and effort analysis/codex
+PASS: approved roster model and effort analysis/claude
+PASS: approved roster model and effort long-form-writing/codex
+PASS: approved roster model and effort long-form-writing/claude
+PASS: missing roster falls back to default with its alert
+PASS: Codex substantive wrapper without -Effort fails closed
+PASS: Codex hard resolves and persists difficulty and reason
+PASS: Codex hard retry keeps failed model
+PASS: Codex hard without reason refused
+PASS: codex wrapper -Tier standard resolves through the router
+PASS: codex provenance carries category, protected, escalated_from
+PASS: codex provenance carries router reason and null retired table fields
+PASS: codex disclosure line puts router reason after selection reason
+PASS: codex wrapper -EscalateFrom moves one step up
+PASS: codex escalation disclosed
+PASS: codex wrapper -Model override honored and disclosed
+PASS: codex wrapper unselectable -Model fails closed
+PASS: codex refusal records vendor block and environment failure
+PASS: Codex chunk limit reason shows used/left and Eastern resume time
+PASS: blocked vendor stops explicit Codex override
+PASS: Codex failed output with limit identifiers does not block vendor
+PASS: Codex input_too_large is a tooling failure with both sizes
+PASS: Codex input_too_large is not retried
+PASS: Codex input_too_large alert names the sizes
+PASS: echoed input_too_large text before the last line does not classify
+PASS: Claude substantive wrapper without -Effort fails closed
+PASS: Claude hard resolves and persists difficulty and reason
+PASS: Claude hard without reason refused
+PASS: claude wrapper -Tier standard resolves through the router Claude lane
+PASS: claude provenance carries router fields
+PASS: claude disclosure line puts router reason after selection reason
+PASS: claude wrapper -Tier complex maps to complex-coding protected
+PASS: claude wrapper -EscalateFrom moves one step up
+PASS: claude wrapper -Model override honored and disclosed
+PASS: claude refusal records vendor block and environment failure
+PASS: Claude chunk limit reason shows used/left and Eastern resume time
+PASS: blocked vendor stops explicit Claude override
+PASS: Claude max-turns result mentioning rate limit does not block vendor
+PASS: Claude JSON error result records vendor block
+PASS: claude wrapper -Json keeps stdout one JSON object
+PASS: wrapper passes -SendAlerts and prints the ROUTER_ALERT line (fake transport)
+PASS: test transport seam writes its stderr marker once per process
+PASS: claude wrapper has no fixed tier map
+PASS: stamped Claude report parses
+PASS: stamped Claude OK passes preflight
+PASS: codex complex-coding time limit is 2700000 ms by default
+PASS: codex code-review time limit is 1800000 ms by default
+PASS: codex mechanical time limit is 600000 ms by default
+PASS: codex complex-coding time limit is 120000 ms when set explicitly
+PASS: codex -AdHoc runs a headerless prompt through the router (exit 0)
+PASS: codex without -AdHoc still refuses a headerless prompt
+PASS: codex refuses an oversized prompt before dispatch (exit 1)
+PASS: a read-only Codex review runs with the unchanged-tree check (exit 0; sandbox: danger-full-access (windows: read-only enforced by an unchanged-tree check); DT_BUILD_DISPATCH_SEAMS_ACTIVE
+)
+PASS: a read-only Codex reviewer that writes into the project is rejected (exit 1; DT_BUILD_DISPATCH_SEAMS_ACTIVE
+Exception: D:\Claude\_Claude-Workspace\Skill Creation\danny-skills-codex-capacity-backoff\skills\dt-build\scripts\invoke-codex-chunk.ps1:726
+Line |
+ 726 |      if (-not $result.pass) { throw $failureReason }
+     |                               ~~~~~~~~~~~~~~~~~~~~
+     | CODEX_READONLY_VIOLATION: the read-only worker changed files under
+     | C:\Users\Danny\AppData\Local\Temp\model-router-wiring-dd79ca5389cc4cbbaa4f4fa141c5510e\project: ??
+     | reviewer-wrote-this.txt; 2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881. Its report is
+     | rejected. Redacted stream:
+     | C:\Users\Danny\AppData\Local\Temp\model-router-wiring-dd79ca5389cc4cbbaa4f4fa141c5510e\codex-readonly-writes.md.stream.log
+)
+PASS: codex has no time limit under dt-job (2147483647)
+PASS: claude complex-coding time limit is 2700000 ms by default
+PASS: claude code-review time limit is 1800000 ms by default
+PASS: claude mechanical time limit is 600000 ms by default
+PASS: claude complex-coding time limit is 120000 ms when set explicitly
+PASS: claude -AdHoc runs a headerless prompt through the router (exit 0)
+PASS: claude without -AdHoc still refuses a headerless prompt
+PASS: claude refuses an oversized prompt before dispatch (exit 1)
+PASS: claude has no time limit under dt-job (2147483647)
+PASS: codex offline-resume result and final category
+PASS: codex offline-resume diagnosis in provenance
+PASS: codex offline-resume bounded launch count
+PASS: codex offline-resume seam marker on stderr
+PASS: codex offline-resume returns diagnosis as one JSON result
+PASS: codex offline-resume waits only in bounded 60-second offline intervals
+PASS: codex offline-resume identical arguments and prompt on retry
+PASS: codex offline-resume sends alert on reconnect or second failure
+PASS: codex offline-resume alert key
+PASS: codex offline-resume chat copy on stderr
+PASS: codex offline-resume only nonterminal wrapper events
+PASS: codex offline-resume event repo name and diagnosis
+PASS: codex offline-timeout result and final category
+PASS: codex offline-timeout diagnosis in provenance
+PASS: codex offline-timeout bounded launch count
+PASS: codex offline-timeout seam marker on stderr
+PASS: codex offline-timeout returns diagnosis as one JSON result
+PASS: codex offline-timeout waits only in bounded 60-second offline intervals
+PASS: codex offline-timeout exact termination string
+PASS: codex offline-timeout sends no premature alert
+PASS: codex offline-timeout only nonterminal wrapper events
+PASS: codex offline-timeout event repo name and diagnosis
+PASS: codex incident result and final category
+PASS: codex incident diagnosis in provenance
+PASS: codex incident bounded launch count
+PASS: codex incident seam marker on stderr
+PASS: codex incident returns diagnosis as one JSON result
+PASS: codex incident waits only in bounded 60-second offline intervals
+PASS: codex incident exact termination string
+PASS: codex incident carries other-vendor backup and incident
+PASS: codex incident result carries backup pick
+PASS: codex incident persists A5 record
+PASS: codex incident sends no premature alert
+PASS: codex incident only nonterminal wrapper events
+PASS: codex incident event repo name and diagnosis
+PASS: codex offline-incident result and final category
+PASS: codex offline-incident diagnosis in provenance
+PASS: codex offline-incident bounded launch count
+PASS: codex offline-incident seam marker on stderr
+PASS: codex offline-incident returns diagnosis as one JSON result
+PASS: codex offline-incident waits only in bounded 60-second offline intervals
+PASS: codex offline-incident exact termination string
+PASS: codex incident carries other-vendor backup and incident
+PASS: codex incident result carries backup pick
+PASS: codex incident persists A5 record
+PASS: codex offline-incident sends alert on reconnect or second failure
+PASS: codex offline-incident alert key
+PASS: codex offline-incident chat copy on stderr
+PASS: codex offline-incident only nonterminal wrapper events
+PASS: codex offline-incident event repo name and diagnosis
+PASS: codex unexplained-invalid result and final category
+PASS: codex unexplained-invalid diagnosis in provenance
+PASS: codex unexplained-invalid bounded launch count
+PASS: codex unexplained-invalid seam marker on stderr
+PASS: codex unexplained-invalid returns diagnosis as one JSON result
+PASS: codex unexplained-invalid waits only in bounded 60-second offline intervals
+PASS: codex unexplained-invalid identical arguments and prompt on retry
+PASS: codex unexplained-invalid sends no premature alert
+PASS: codex unexplained-invalid only nonterminal wrapper events
+PASS: codex unexplained-invalid event repo name and diagnosis
+PASS: codex invalid retry keeps normal throw and provenance
+PASS: codex unexplained-success result and final category
+PASS: codex unexplained-success diagnosis in provenance
+PASS: codex unexplained-success bounded launch count
+PASS: codex unexplained-success seam marker on stderr
+PASS: codex unexplained-success returns diagnosis as one JSON result
+PASS: codex unexplained-success waits only in bounded 60-second offline intervals
+PASS: codex unexplained-success identical arguments and prompt on retry
+PASS: codex unexplained-success sends no premature alert
+PASS: codex unexplained-success only nonterminal wrapper events
+PASS: codex unexplained-success event repo name and diagnosis
+PASS: codex unexplained-fail result and final category
+PASS: codex unexplained-fail diagnosis in provenance
+PASS: codex unexplained-fail bounded launch count
+PASS: codex unexplained-fail seam marker on stderr
+PASS: codex unexplained-fail returns diagnosis as one JSON result
+PASS: codex unexplained-fail waits only in bounded 60-second offline intervals
+PASS: codex unexplained-fail identical arguments and prompt on retry
+PASS: codex unexplained-fail exact termination string
+PASS: codex unexplained-fail sends alert on reconnect or second failure
+PASS: codex unexplained-fail alert key
+PASS: codex unexplained-fail chat copy on stderr
+PASS: codex unexplained-fail only nonterminal wrapper events
+PASS: codex unexplained-fail event repo name and diagnosis
+PASS: codex stopped provenance updater passes
+PASS: codex stopped piece has one wrapper row and one derived row with matching repo
+PASS: claude offline-resume result and final category
+PASS: claude offline-resume diagnosis in provenance
+PASS: claude offline-resume bounded launch count
+PASS: claude offline-resume seam marker on stderr
+PASS: claude offline-resume returns diagnosis as one JSON result
+PASS: claude offline-resume waits only in bounded 60-second offline intervals
+PASS: claude offline-resume identical arguments and prompt on retry
+PASS: claude offline-resume sends alert on reconnect or second failure
+PASS: claude offline-resume alert key
+PASS: claude offline-resume chat copy on stderr
+PASS: claude offline-resume only nonterminal wrapper events
+PASS: claude offline-resume event repo name and diagnosis
+PASS: claude offline-timeout result and final category
+PASS: claude offline-timeout diagnosis in provenance
+PASS: claude offline-timeout bounded launch count
+PASS: claude offline-timeout seam marker on stderr
+PASS: claude offline-timeout returns diagnosis as one JSON result
+PASS: claude offline-timeout waits only in bounded 60-second offline intervals
+PASS: claude offline-timeout exact termination string
+PASS: claude offline-timeout sends no premature alert
+PASS: claude offline-timeout only nonterminal wrapper events
+PASS: claude offline-timeout event repo name and diagnosis
+PASS: claude incident result and final category
+PASS: claude incident diagnosis in provenance
+PASS: claude incident bounded launch count
+PASS: claude incident seam marker on stderr
+PASS: claude incident returns diagnosis as one JSON result
+PASS: claude incident waits only in bounded 60-second offline intervals
+PASS: claude incident exact termination string
+PASS: claude incident carries other-vendor backup and incident
+PASS: claude incident result carries backup pick
+PASS: claude incident persists A5 record
+PASS: claude incident sends no premature alert
+PASS: claude incident only nonterminal wrapper events
+PASS: claude incident event repo name and diagnosis
+PASS: claude offline-incident result and final category
+PASS: claude offline-incident diagnosis in provenance
+PASS: claude offline-incident bounded launch count
+PASS: claude offline-incident seam marker on stderr
+PASS: claude offline-incident returns diagnosis as one JSON result
+PASS: claude offline-incident waits only in bounded 60-second offline intervals
+PASS: claude offline-incident exact termination string
+PASS: claude incident carries other-vendor backup and incident
+PASS: claude incident result carries backup pick
+PASS: claude incident persists A5 record
+PASS: claude offline-incident sends alert on reconnect or second failure
+PASS: claude offline-incident alert key
+PASS: claude offline-incident chat copy on stderr
+PASS: claude offline-incident only nonterminal wrapper events
+PASS: claude offline-incident event repo name and diagnosis
+PASS: claude unexplained-invalid result and final category
+PASS: claude unexplained-invalid diagnosis in provenance
+PASS: claude unexplained-invalid bounded launch count
+PASS: claude unexplained-invalid seam marker on stderr
+PASS: claude unexplained-invalid returns diagnosis as one JSON result
+PASS: claude unexplained-invalid waits only in bounded 60-second offline intervals
+PASS: claude unexplained-invalid identical arguments and prompt on retry
+PASS: claude unexplained-invalid sends no premature alert
+PASS: claude unexplained-invalid only nonterminal wrapper events
+PASS: claude unexplained-invalid event repo name and diagnosis
+PASS: claude invalid retry keeps normal throw and provenance
+PASS: claude unexplained-success result and final category
+PASS: claude unexplained-success diagnosis in provenance
+PASS: claude unexplained-success bounded launch count
+PASS: claude unexplained-success seam marker on stderr
+PASS: claude unexplained-success returns diagnosis as one JSON result
+PASS: claude unexplained-success waits only in bounded 60-second offline intervals
+PASS: claude unexplained-success identical arguments and prompt on retry
+PASS: claude unexplained-success sends no premature alert
+PASS: claude unexplained-success only nonterminal wrapper events
+PASS: claude unexplained-success event repo name and diagnosis
+PASS: claude unexplained-fail result and final category
+PASS: claude unexplained-fail diagnosis in provenance
+PASS: claude unexplained-fail bounded launch count
+PASS: claude unexplained-fail seam marker on stderr
+PASS: claude unexplained-fail returns diagnosis as one JSON result
+PASS: claude unexplained-fail waits only in bounded 60-second offline intervals
+PASS: claude unexplained-fail identical arguments and prompt on retry
+PASS: claude unexplained-fail exact termination string
+PASS: claude unexplained-fail sends alert on reconnect or second failure
+PASS: claude unexplained-fail alert key
+PASS: claude unexplained-fail chat copy on stderr
+PASS: claude unexplained-fail only nonterminal wrapper events
+PASS: claude unexplained-fail event repo name and diagnosis
+PASS: claude stopped provenance updater passes
+PASS: claude stopped piece has one wrapper row and one derived row with matching repo
+PASS: dispatch category list has all 11 including math and analysis
+PASS: Resolve-CodexModel accepts complex-coding
+PASS: codex wrapper accepts complex-coding and records roster job/vendor
+PASS: claude wrapper accepts complex-coding and records roster job/vendor
+PASS: Resolve-CodexModel accepts routine-coding
+PASS: codex wrapper accepts routine-coding and records roster job/vendor
+PASS: claude wrapper accepts routine-coding and records roster job/vendor
+PASS: Resolve-CodexModel accepts code-review
+PASS: codex wrapper accepts code-review and records roster job/vendor
+PASS: claude wrapper accepts code-review and records roster job/vendor
+PASS: Resolve-CodexModel accepts ui-frontend
+PASS: codex wrapper accepts ui-frontend and records roster job/vendor
+PASS: claude wrapper accepts ui-frontend and records roster job/vendor
+PASS: Resolve-CodexModel accepts planning
+PASS: codex wrapper accepts planning and records roster job/vendor
+PASS: claude wrapper accepts planning and records roster job/vendor
+PASS: Resolve-CodexModel accepts deep-research
+PASS: codex wrapper accepts deep-research and records roster job/vendor
+PASS: claude wrapper accepts deep-research and records roster job/vendor
+PASS: Resolve-CodexModel accepts math
+PASS: codex wrapper accepts math and records roster job/vendor
+PASS: claude wrapper accepts math and records roster job/vendor
+PASS: Resolve-CodexModel accepts analysis
+PASS: codex wrapper accepts analysis and records roster job/vendor
+PASS: claude wrapper accepts analysis and records roster job/vendor
+PASS: Resolve-CodexModel accepts long-form-writing
+PASS: codex wrapper accepts long-form-writing and records roster job/vendor
+PASS: claude wrapper accepts long-form-writing and records roster job/vendor
+PASS: Resolve-CodexModel accepts mechanical
+PASS: codex wrapper accepts mechanical and records roster job/vendor
+PASS: claude wrapper accepts mechanical and records roster job/vendor
+PASS: escalation stops at top non-frontier model on both lanes
+PASS: wrappers cannot retry past top non-frontier model
+PASS: explicit overrides bypass constrained roster drift waits
+PASS: codex wrapper accepts complex-coding and fails closed on wait
+PASS: claude wrapper accepts complex-coding and fails closed on wait
+PASS: codex wrapper accepts routine-coding and fails closed on wait
+PASS: claude wrapper accepts routine-coding and fails closed on wait
+PASS: codex wrapper accepts code-review and fails closed on wait
+PASS: claude wrapper accepts code-review and fails closed on wait
+PASS: codex wrapper accepts ui-frontend and fails closed on wait
+PASS: claude wrapper accepts ui-frontend and fails closed on wait
+PASS: codex wrapper accepts planning and fails closed on wait
+PASS: claude wrapper accepts planning and fails closed on wait
+PASS: codex wrapper accepts deep-research and fails closed on wait
+PASS: claude wrapper accepts deep-research and fails closed on wait
+PASS: codex wrapper accepts math and fails closed on wait
+PASS: claude wrapper accepts math and fails closed on wait
+PASS: codex wrapper accepts analysis and fails closed on wait
+PASS: claude wrapper accepts analysis and fails closed on wait
+PASS: codex wrapper accepts long-form-writing and fails closed on wait
+PASS: claude wrapper accepts long-form-writing and fails closed on wait
+PASS: codex wrapper accepts mechanical and fails closed on wait
+PASS: claude wrapper accepts mechanical and fails closed on wait
+PASS: codex wrapper accepts image-generation and fails closed on wait
+PASS: claude wrapper accepts image-generation and fails closed on wait
+PASS: blocked wrappers did not launch a model process
+PASS: Resolve-CodexModel accepts image-generation category
+PASS: dt-build uses roster dispatch without family lane default
+PASS: dt-review rounds and preflight use planning with matching protection
+PASS: long-form-writing is protected by construction
+PASS: dt-writing-draft routes model dispatch as long-form-writing
+PASS: dt-writing-edit routes model dispatch as long-form-writing
+PASS: dt-image-gen records the advisory image-generation pick
+PASS: alias claude-opus-5-5 -> opus
+PASS: alias claude-fable-5-1 -> fable
+PASS: alias claude-sonnet-5 -> sonnet
+PASS: alias claude-haiku-4-5-20251001 -> haiku
+PASS: non-Claude model has no Agent alias
+PASS: router result carries agent_alias on the Claude lane only
+PASS: frontier-spend alert message shows remaining work
+PASS: codex frontier points attributed from rate_limits.primary.used_percent
+PASS: frontier spend reads a Codex log held open for writing
+PASS: frontier-spend alert fires at 10 points
+PASS: frontier-spend alert fires once per run
+PASS: below 10 points no alert
+PASS: claude lane estimated from frontier weighted tokens
+PASS: ledger shows category and escalated when present
+PASS: ledger tolerates rows without category
+SUMMARY: 343 passed
+
+Source: _planning/fs-63-host-baseline.log
+SUMMARY: 142 passed
+PASS: host adapter suite
+
+Source: _planning/fs-63-host.log
+SUMMARY: 142 passed
+PASS: host adapter suite
+
+Source: _planning/fs-63-capacity.log
+PASS: capacity diagnostic: Selected model is at capacity
+PASS: capacity diagnostic: ERROR: Model is currently overloaded
+PASS: capacity diagnostic: Error: server temporarily at capacity
+PASS: capacity diagnostic: ERROR: service overloaded
+PASS: capacity diagnostic: ERROR: overloaded_error
+PASS: capacity diagnostic: ERROR: model gpt-6.1-sol is overloaded
+PASS: capacity diagnostic: Error: selected model is over capacity
+PASS: capacity diagnostic: ERROR: at-capacity refusal
+PASS: capacity diagnostic: ERROR: vendor overload
+PASS: capacity diagnostic: {"type":"error","message":"Selected model is at capacity"}
+PASS: capacity diagnostic: ERROR: Selected model is at capacity
+Warning: no last agent message
+PASS: non-capacity diagnostic: ERROR: usage limit reached: model is at capacity
+PASS: non-capacity diagnostic: ERROR: insufficient_quota; server overloaded
+PASS: non-capacity diagnostic: ERROR: rate limit reached; service overloaded
+PASS: non-capacity diagnostic: quoted: Selected model is at capacity
+PASS: non-capacity diagnostic: Source model_overloaded.ps1 failed
+PASS: non-capacity diagnostic:
+PASS: recover removes stale and partial output before every exec
+PASS: recover identical model effort prompt and output argv
+PASS: recover honors run pin without escalation or vendor switch
+PASS: recover actual CLI argv honors pinned model and effort
+PASS: recover records every dispatch attempt
+PASS: recover avoids unexplained and degraded diagnosis
+PASS: recover retains matched capacity signal per failed attempt
+PASS: recover persists each backoff before sleep
+PASS: recover logs every wait to stderr
+PASS: recover wait includes ET times and retained selection
+PASS: recover wait includes ET times and retained selection
+PASS: recover uses exact bounded backoff schedule
+PASS: recover later success replaces partial output cleanly
+PASS: recover stream retains all refusal attempts
+PASS: recovery stops at first successful attempt
+PASS: exhaust removes stale and partial output before every exec
+PASS: exhaust identical model effort prompt and output argv
+PASS: exhaust honors run pin without escalation or vendor switch
+PASS: exhaust actual CLI argv honors pinned model and effort
+PASS: exhaust records every dispatch attempt
+PASS: exhaust avoids unexplained and degraded diagnosis
+PASS: exhaust retains matched capacity signal per failed attempt
+PASS: exhaust persists each backoff before sleep
+PASS: exhaust logs every wait to stderr
+PASS: exhaust wait includes ET times and retained selection
+PASS: exhaust wait includes ET times and retained selection
+PASS: exhaust wait includes ET times and retained selection
+PASS: exhaust uses exact bounded backoff schedule
+PASS: exhaust exhaustion reports capacity and retains no partial output
+PASS: exhaust stream retains all refusal attempts
+PASS: exhaustion is bounded to three waits and four calls
+PASS: default removes stale and partial output before every exec
+PASS: default identical model effort prompt and output argv
+PASS: default honors run pin without escalation or vendor switch
+PASS: default actual CLI argv honors pinned model and effort
+PASS: default records every dispatch attempt
+PASS: default avoids unexplained and degraded diagnosis
+PASS: default retains matched capacity signal per failed attempt
+PASS: default persists each backoff before sleep
+PASS: default logs every wait to stderr
+PASS: default wait includes ET times and retained selection
+PASS: default wait includes ET times and retained selection
+PASS: default wait includes ET times and retained selection
+PASS: default uses exact bounded backoff schedule
+PASS: default exhaustion reports capacity and retains no partial output
+PASS: default stream retains all refusal attempts
+PASS: production schedule totals exactly 35 minutes
+PASS: disabled removes stale and partial output before every exec
+PASS: disabled identical model effort prompt and output argv
+PASS: disabled honors run pin without escalation or vendor switch
+PASS: disabled actual CLI argv honors pinned model and effort
+PASS: disabled records every dispatch attempt
+PASS: disabled avoids unexplained and degraded diagnosis
+PASS: disabled retains matched capacity signal per failed attempt
+PASS: disabled persists each backoff before sleep
+PASS: disabled logs every wait to stderr
+PASS: disabled uses exact bounded backoff schedule
+PASS: disabled exhaustion reports capacity and retains no partial output
+PASS: disabled stream retains all refusal attempts
+PASS: empty schedule fails capacity without immediate retry
+PASS: long-job removes stale and partial output before every exec
+PASS: long-job identical model effort prompt and output argv
+PASS: long-job honors run pin without escalation or vendor switch
+PASS: long-job actual CLI argv honors pinned model and effort
+PASS: long-job records every dispatch attempt
+PASS: long-job avoids unexplained and degraded diagnosis
+PASS: long-job retains matched capacity signal per failed attempt
+PASS: long-job persists each backoff before sleep
+PASS: long-job logs every wait to stderr
+PASS: long-job wait includes ET times and retained selection
+PASS: long-job wait includes ET times and retained selection
+PASS: long-job uses exact bounded backoff schedule
+PASS: long-job later success replaces partial output cleanly
+PASS: long-job stream retains all refusal attempts
+PASS: 74-minute prior work cannot consume fresh capacity attempt timeout
+PASS: quota removes stale and partial output before every exec
+PASS: quota identical model effort prompt and output argv
+PASS: quota honors run pin without escalation or vendor switch
+PASS: quota actual CLI argv honors pinned model and effort
+PASS: quota records every dispatch attempt
+PASS: quota avoids unexplained and degraded diagnosis
+PASS: quota quota retains vendor-block path without capacity retry
+PASS: shared process returns capacity and matched failure_detail
+PASS: outcome import retains ten capacity provenance events and one acceptance event
+PASS: capacity mining preserves failure_detail and drops unexplained diagnosis on both paths
+PASS: capacity vendor availability events leave 100-percent quality rate without drift
+PASS: capacity outcome import remains idempotent
+SUMMARY: 104 passed

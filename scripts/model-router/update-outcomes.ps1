@@ -123,6 +123,7 @@ function Update-RouterOutcomesLocked {
                     if ($failureCategory -ne 'environment' -or $diagnosis -cnotin @('offline','vendor_incident','unexplained')) { $diagnosis = $null }
                     $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier $file.Name); attempt=(ConvertTo-RouterOutcomeAttempt $attempt); pass=($pass -eq $true -or [string]$pass -eq 'true'); escalated=($file.Name -match '(?i)(?:-|_)(retry|fix|resume)'); failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
                     $records[$key] | Add-Member -NotePropertyName provenance_path -NotePropertyValue $file.FullName
+                    $records[$key] | Add-Member -NotePropertyName failure_detail -NotePropertyValue $(if ($failureCategory -in @('environment','capacity')) { Get-RouterOutcomeValue $item @('failure_detail') } else { $null })
                     $records[$key] | Add-Member -NotePropertyName workstation -NotePropertyValue $(if ([string]$scanRoot.path -match '[/\\]_Claude-Workspace[/\\]([^/\\]+)') { $Matches[1] } else { Split-Path -Leaf (Split-Path -Parent $scanRoot.path) })
 
                     $newCount++
@@ -151,6 +152,7 @@ function Update-RouterOutcomesLocked {
                     $diagnosis = Get-RouterOutcomeValue $item @('diagnosis')
                     if ($failureCategory -ne 'environment' -or $diagnosis -cnotin @('offline','vendor_incident','unexplained')) { $diagnosis = $null }
                     $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier ([string]$chunk)); attempt=(ConvertTo-RouterOutcomeAttempt $attempt); pass=([string](Get-RouterOutcomeValue $item @('status')) -eq 'PASS'); escalated=$false; failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
+                    $records[$key] | Add-Member -NotePropertyName failure_detail -NotePropertyValue $(if ($failureCategory -in @('environment','capacity')) { Get-RouterOutcomeValue $item @('failure_detail') } else { $null })
                     $newCount++
                 }
             }
@@ -171,7 +173,7 @@ function Update-RouterOutcomesLocked {
         } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
     }
     $nowUtc = $Now.ToUniversalTime()
-    $eligible = @($values | Where-Object { (Get-RouterOutcomeValue $_ 'source') -notin @('canary','bench') -and $_.attempt -eq 1 -and $_.failure_category -notin @('environment','tooling') })
+    $eligible = @($values | Where-Object { (Get-RouterOutcomeValue $_ 'source') -notin @('canary','bench') -and $_.attempt -eq 1 -and $_.failure_category -notin @('environment','tooling','capacity') })
     if ($rosterRead.source -ne 'state') { return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; alerts=@(); proposal=$null } }
     $roster = $rosterRead.roster
     $marksPath = Join-Path $state 'drift-marks.json'

@@ -3,6 +3,23 @@
 
 Set-StrictMode -Version Latest
 
+function Get-CodexCapacitySignal {
+    param([AllowEmptyString()][string]$ErrorText)
+    # Non-JSON exec sends errors to stderr (stdout is model text). Inspect the
+    # diagnostic lines so a quoted prompt or progress message cannot trigger retries.
+    $lines = @($ErrorText -split '\r?\n' | Where-Object { $_.Trim() })
+    if (-not $lines.Count) { return $null }
+    $pattern = '(?i)\b(?:selected\s+)?model\s+(?:is\s+)?(?:currently\s+|temporarily\s+)?(?:at\s+capacity|overloaded)\b|\b(?:server|service|system|provider)\s+(?:is\s+)?(?:currently\s+|temporarily\s+)?(?:overloaded|at\s+capacity)\b|\b(?:overloaded_error|model_overloaded|server_overloaded|over_capacity)\b|\b(?:overload(?:ed)?|at[\s-]+capacity|over[\s-]+capacity)\b'
+    foreach ($line in $lines) {
+        # Usage/quota refusals retain their existing path, even with overload wording.
+        if ($line -match '(?i)quota|usage[ _-]*limit|rate[ _-]*limit|insufficient_quota') { continue }
+        if ($line -notmatch '(?i)^\s*(?:error\s*:|(?:(?:selected|the)\s+)?(?:model|server|service|system|provider)\b|\{.*"(?:type|error)"\s*:)') { continue }
+        $match = [regex]::Match($line, $pattern)
+        if ($match.Success) { return $match.Value }
+    }
+    return $null
+}
+
 function Get-Utf8PowerShellArguments {
     param([Parameter(Mandatory)][string]$ScriptPath)
     # The child PS1 shim must share the parent's UTF-8 pipe contract. Keep paths
@@ -192,6 +209,7 @@ function Invoke-CodexProcess {
         $stdout = Get-CompletedStringTask -Task $stdoutTask
         $stderr = Get-CompletedStringTask -Task $stderrTask
         $durationMs = [int]([DateTimeOffset]::UtcNow - $started).TotalMilliseconds
+        $capacitySignal = if (-not $timedOut -and $process.ExitCode -ne 0) { Get-CodexCapacitySignal -ErrorText $stderr } else { $null }
 
         [pscustomobject]@{
             exit_code = if ($timedOut) { -1 } else { $process.ExitCode }
@@ -199,6 +217,8 @@ function Invoke-CodexProcess {
             duration_ms = $durationMs
             stdout = $stdout
             stderr = $stderr
+            failure_category = if ($capacitySignal) { 'capacity' } else { $null }
+            failure_detail = $capacitySignal
         }
     }
     finally {

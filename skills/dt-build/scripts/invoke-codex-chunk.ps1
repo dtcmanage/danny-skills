@@ -17,6 +17,9 @@ param(
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
     [ValidateRange(1, 2)][int]$Attempt = 1,
     [ValidateRange(1000, 2147483647)][int]$TimeoutMs = 600000,
+    # Vendor capacity is transient: retry the identical invocation after 5/10/20 minutes.
+    # Milliseconds permit fast fixtures; an empty array disables capacity retries.
+    [AllowEmptyCollection()][ValidateRange(0, 2147483647)][int[]]$CapacityBackoffMs = @(300000, 600000, 1200000),
     [switch]$Preflight,
     [switch]$ReadOnly,
     [switch]$Scrutiny,
@@ -358,6 +361,8 @@ $diagnosis = $null
 $dispatchDiagnosis = $null
 $backupPick = $null
 $unexplainedRetried = $false
+$dispatchAttempts = [System.Collections.Generic.List[object]]::new()
+$capacityBackoffs = [System.Collections.Generic.List[object]]::new()
 $started = Get-Date
 $proc = $null
 $completedSuccessfully = $false
@@ -398,6 +403,7 @@ try {
 
     $readOnlyBefore = if ($verifyReadOnly) { Get-ReadOnlyTreeSnapshot -Root $projectRoot -IgnoreDir (Split-Path -Parent $OutputPath) } else { $null }
     :dispatch do {
+    $attemptStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
     $diagnosis = $null
     $dispatchDiagnosis = $null
     if ($proc) { $proc.Dispose() }
@@ -435,7 +441,16 @@ try {
     $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
     $streamText = Invoke-SecretRedaction -Text (($stdout, $stderr) -join "`n")
 
-    [System.IO.File]::WriteAllText($streamPath, $streamText)
+    if ($dispatchAttempts.Count -eq 0) { [System.IO.File]::WriteAllText($streamPath, $streamText) }
+    else { [System.IO.File]::AppendAllText($streamPath, "`n--- dispatch attempt $($dispatchAttempts.Count + 1) ---`n" + $streamText) }
+    $attemptRecord = [pscustomobject]@{
+        dispatch_attempt = $dispatchAttempts.Count + 1
+        started_at_utc = $attemptStarted.ToUniversalTime().ToString('o')
+        duration_ms = [long](([datetimeoffset](& $script:RouterDiagnosisClock)) - $attemptStarted).TotalMilliseconds
+        exit_code = $exitCode; timed_out = $timedOut
+        model = $resolvedModel; effort = $Effort; failure_category = $null; failure_detail = $null
+    }
+    $dispatchAttempts.Add($attemptRecord)
 
     $lastMessage = if (Test-Path -LiteralPath $OutputPath) {
         Get-Content -Raw -LiteralPath $OutputPath
@@ -451,6 +466,7 @@ try {
 
     $failureReason = ''
     $failureCategory = $null
+    $failureDetail = $null
     $shapeErrors = @()
     $reportVersionWarning = $null
     if ($timedOut) {
@@ -492,6 +508,7 @@ try {
         $codexErrorText = $stderr
         $refusal = Test-RouterLimitRefusal -Vendor codex -Text $codexErrorText
         $tooLarge = Test-RouterInputTooLarge -Vendor codex -Text $codexErrorText
+        $capacitySignal = Get-CodexCapacitySignal -ErrorText $codexErrorText
         if ($tooLarge.too_large) {
             # The caller's prompt is over Codex's input cap: no vendor diagnosis, no retry, and the alert names the sizes.
             $failureReason = "CODEX_INPUT_TOO_LARGE: prompt is $($tooLarge.actual_chars) characters; Codex accepts at most $($tooLarge.max_chars). Split the prompt. Redacted stream: $streamPath"
@@ -509,12 +526,52 @@ try {
             if (-not $quotaPercent) { $quotaPercent = 'unknown% used / unknown% left' }
             $failureReason = "ROUTER_LIMIT: codex at its usage limit ($quotaPercent); $(Format-RouterResumeAfterEt -AtUtc ([datetimeoffset]$limitBlock.reset_at_utc) -Source $limitBlock.resume_after_source)"
             $failureCategory = 'environment'
+            $failureDetail = 'quota'
         }
-
+        elseif ($capacitySignal) {
+            $failureCategory = 'capacity'
+            $failureDetail = Invoke-SecretRedaction -Text $capacitySignal
+            $attemptRecord.failure_category = 'capacity'
+            $attemptRecord.failure_detail = $failureDetail
+            # A refusal can follow substantial work. Discard its partial final message;
+            # each retry starts a fresh exec with the same prompt, argv and output path.
+            Remove-Item -LiteralPath $OutputPath -Force -ErrorAction SilentlyContinue
+            if ($capacityBackoffs.Count -lt $CapacityBackoffMs.Count) {
+                $waitMs = $CapacityBackoffMs[$capacityBackoffs.Count]
+                $waitStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
+                $etZone = [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')
+                $waitEt = [TimeZoneInfo]::ConvertTime($waitStarted, $etZone).ToString('yyyy-MM-dd HH:mm:ss.fff') + ' ET'
+                $resumeEt = [TimeZoneInfo]::ConvertTime($waitStarted.AddMilliseconds($waitMs), $etZone).ToString('yyyy-MM-dd HH:mm:ss.fff') + ' ET'
+                $waitMessage = "CODEX_CAPACITY_WAIT: $failureDetail; wait ${waitMs}ms from $waitEt until $resumeEt; retry $($capacityBackoffs.Count + 1)/$($CapacityBackoffMs.Count), same model $resolvedModel and effort $Effort."
+                $capacityBackoffs.Add([pscustomobject]@{ after_dispatch_attempt = $dispatchAttempts.Count; wait_ms = $waitMs; wait_started_et = $waitEt; resume_after_et = $resumeEt; failure_detail = $failureDetail; message = $waitMessage })
+                [Console]::Error.WriteLine($waitMessage)
+                [System.IO.File]::AppendAllText($streamPath, "`n$waitMessage`n")
+                # Persist before sleeping so an interrupted wait still has capacity evidence.
+                if (-not $temporaryOutput) {
+                    $waiting = [ordered]@{
+                        pass = $false; lane = 'codex'; vendor = 'codex'; tier = $Tier; category = $Category
+                        attempt = $Attempt; resolved_model = $resolvedModel; effort = $Effort
+                        failure_category = 'capacity'; failure_detail = $failureDetail; diagnosis = $null
+                        output_path = $null; stream_log_path = $streamPath; termination_reason = $waitMessage
+                        dispatched_at_utc = $started.ToUniversalTime().ToString('o')
+                        dispatch_attempts = @($dispatchAttempts.ToArray()); capacity_backoffs = @($capacityBackoffs.ToArray())
+                    }
+                    [IO.File]::WriteAllText($provenancePath, ($waiting | ConvertTo-Json -Depth 8))
+                }
+                & $script:RouterDispatchSleep $waitMs
+                # Capacity wait and earlier work must not consume the fresh attempt's timeout.
+                $dispatchStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
+                continue dispatch
+            }
+            $totalWaitMs = [long]0
+            foreach ($backoff in $capacityBackoffs) { $totalWaitMs += $backoff.wait_ms }
+            $failureReason = "CODEX_CAPACITY_EXHAUSTED: $failureDetail; vendor capacity unavailable after $($dispatchAttempts.Count) dispatch attempts and ${totalWaitMs}ms of bounded backoff. Same model $resolvedModel and effort $Effort retained. Redacted stream: $streamPath"
+        }
         else {
             $dispatchDiagnosis = Resolve-RouterDispatchFailure -Vendor codex -ErrorText $codexErrorText
             $diagnosis = $dispatchDiagnosis.verdict
             $failureCategory = 'environment'
+            $attemptRecord.failure_category = $failureCategory
             # Only nonterminal events need a wrapper row; terminal events come from provenance.
             $appendEvent = {
                 $row = [ordered]@{
@@ -567,6 +624,8 @@ try {
         }
     }
 
+    $attemptRecord.failure_category = $failureCategory
+    $attemptRecord.failure_detail = $failureDetail
     break
     } while ($true)
     if ($failureReason -in @('ROUTER_OFFLINE','ROUTER_VENDOR_INCIDENT','ROUTER_UNEXPLAINED')) {
@@ -641,6 +700,9 @@ try {
         output_path            = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
         stream_log_path        = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }
         failure_category       = $failureCategory
+        failure_detail         = $failureDetail
+        dispatch_attempts      = @($dispatchAttempts.ToArray())
+        capacity_backoffs      = @($capacityBackoffs.ToArray())
         diagnosis              = $diagnosis
         dispatch_diagnosis     = $dispatchDiagnosis
         backup_pick            = $backupPick
@@ -683,6 +745,7 @@ catch {
             duration_ms = $durationMs; timeout_ms = $TimeoutMs; prompt_sha256 = $promptSha256
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }
             failure_category = 'tooling'; termination_reason = (Invoke-SecretRedaction -Text $_.Exception.Message)
+            dispatch_attempts = @($dispatchAttempts.ToArray()); capacity_backoffs = @($capacityBackoffs.ToArray())
         }
         [System.IO.File]::WriteAllText($provenancePath, ($fallback | ConvertTo-Json -Depth 5))
     }
