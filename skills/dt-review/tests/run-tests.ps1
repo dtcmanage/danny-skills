@@ -151,6 +151,23 @@ try {
     Assert-True ((Get-DtReviewDefaultEffort -RouterEffort low -Round 3) -eq 'low') 'effort stepped below low'
     $preflightText = Get-Content -Raw -LiteralPath (Join-Path $SkillRoot 'scripts\preflight-codex.ps1')
     Assert-True ($preflightText -notmatch 'mechanical') 'Codex preflight still maps light to mechanical'
+    . (Join-Path $RepoRoot 'scripts/invoke-codex-process.ps1')
+    foreach ($invokerName in @('preflight-codex.ps1','invoke-codex-round.ps1')) {
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $SkillRoot "scripts/$invokerName"), [ref]$tokens, [ref]$parseErrors)
+        Assert-True ($parseErrors.Count -eq 0) "$invokerName parses"
+        $assignment = @($ast.FindAll({ param($node)
+            $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$arguments'
+        }, $true))
+        Assert-True ($assignment.Count -eq 1) "$invokerName has one launch argument assembly"
+        $assembledArgs = @(& {
+            $Model = 'fixture-model'; $ReasoningEffort = 'high'; $schemaPath = 'schema.json'; $tmpJson = 'review.json'
+            Invoke-Expression $assignment[0].Right.Extent.Text
+        })
+        $launch = $assembledArgs -join '|'
+        Assert-True ($launch -match '--sandbox\|read-only\|' -and $launch -match 'web_search="disabled"' -and $launch -notmatch 'workspace-write|danger-full-access|--ignore-rules|--dangerously-bypass') "$invokerName keeps read-only execution and disables web search"
+        if ($env:OS -eq 'Windows_NT') { Assert-True ($assembledArgs -contains 'windows.sandbox="mxc"') "$invokerName selects MXC on Windows" }
+    }
 
     # Evaluate the invoker's actual argument expressions without invoking a model CLI.
     $claudeInvoker = Join-Path $SkillRoot 'scripts\invoke-claude-round.ps1'

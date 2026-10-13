@@ -20,6 +20,35 @@ function Get-CodexCapacitySignal {
     return $null
 }
 
+function Get-CodexReadOnlySandboxArguments {
+    param([bool]$OnWindows = ($env:OS -eq 'Windows_NT'))
+    # --ignore-user-config also removes the Windows implementation selection.
+    # Select MXC explicitly (verified with CLI 0.162.1); unsupported hosts fail closed. Do not
+    # fall back to full access, workspace-write, or the weaker unelevated sandbox.
+    $result = @('--sandbox', 'read-only', '-c', 'web_search="disabled"')
+    if ($OnWindows) { $result += @('-c', 'windows.sandbox="mxc"') }
+    return $result
+}
+
+function Get-CodexBlockedReportDetail {
+    param([AllowEmptyString()][string]$Text)
+    # Inspect the final report only, never echoed prompts or successful tool
+    # probes in the stream. A denied write in a successful review is expected.
+    $hasVerdict = $Text -match '(?m)^VERDICT:'
+    $blocked = if ($hasVerdict) {
+        $Text -match '(?m)^VERDICT:[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?BLOCKED\b'
+    } else { $Text -match '(?im)^\s*BLOCKED\b' }
+    $legacyBlocker = [regex]::Match($Text, '(?ims)^UNRESOLVED_BLOCKERS:[^\S\r\n]*\r?\n(.*?)(?=^[A-Z_]+:|\z)')
+    $evidence = if ($blocked) { $Text } elseif (-not $hasVerdict -and $legacyBlocker.Success) { $legacyBlocker.Groups[1].Value } else { '' }
+    if ($evidence -match '(?is)(?:CreateProcess.{0,500}(?:blocked by policy|rejected|denied)|(?:command|process|shell|file.read|Get-Content|Get-FileHash).{0,200}(?:blocked by policy|before process launch))') {
+        return 'sandbox_process_blocked'
+    }
+    if ($evidence -match '(?is)(?:sandbox|tool|permission|environment).{0,200}(?:denied|blocked|unavailable|not supported)|(?:denied|blocked).{0,200}(?:sandbox|tool|permission|environment)') {
+        return 'sandbox_tool_denied'
+    }
+    return $null
+}
+
 function Get-Utf8PowerShellArguments {
     param([Parameter(Mandatory)][string]$ScriptPath)
     # The child PS1 shim must share the parent's UTF-8 pipe contract. Keep paths

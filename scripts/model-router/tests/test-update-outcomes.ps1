@@ -10,11 +10,11 @@ function Assert-True([bool]$Condition, [string]$Name) {
     $script:passed++
     Write-Output "PASS: $Name"
 }
-function Write-Provenance([string]$Run, [string]$Chunk, [int]$Attempt, [string]$Model, [bool]$Pass, [string]$At, [string]$Tier = 'standard', [string]$Failure = '', [string]$Category = '', [string]$Diagnosis = '') {
+function Write-Provenance([string]$Run, [string]$Chunk, [int]$Attempt, [string]$Model, [bool]$Pass, [string]$At, [string]$Tier = 'standard', [string]$Failure = '', [string]$Category = '', [string]$Diagnosis = '', [string]$Detail = '') {
     $dir = Join-Path $script:repo ".dt-build/$Run/milestones/$Chunk"
     [IO.Directory]::CreateDirectory($dir) | Out-Null
     $name = if ($Attempt -gt 1) { "output-$Attempt-retry.md.provenance.json" } else { 'output-1.md.provenance.json' }
-    @{ pass=$Pass; tier=$Tier; resolved_model=$Model; attempt=$Attempt; at=$At; failure_category=$Failure; diagnosis=$Diagnosis; category=$Category; chunk_id=$Chunk } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir $name)
+    @{ pass=$Pass; tier=$Tier; resolved_model=$Model; attempt=$Attempt; at=$At; failure_category=$Failure; failure_detail=$Detail; diagnosis=$Diagnosis; category=$Category; chunk_id=$Chunk } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dir $name)
 }
 function Run-Update { Initialize-TestBenchEvidence; Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) } }
 function Read-Records { @(Get-Content -LiteralPath (Join-Path $script:state 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json -DateKind String }) }
@@ -66,6 +66,12 @@ try {
     Run-Update | Out-Null
     $accepted = @(Read-Records | Where-Object { $_.key -eq 'acceptance:M04:1' })
     Assert-True ($accepted.Count -eq 1 -and $accepted[0].pass -and $accepted[0].category -eq 'code-review' -and $accepted[0].model -eq $aliasModel) 'acceptance row mining'
+    Write-Provenance 'sandbox-blocked' 'review' 1 'gpt-6.1-sol' $false $at 'standard' 'environment' 'code-review' '' 'sandbox_process_blocked'
+    @{ milestone_id='blocked'; model='gpt-6.1-sol'; status='FAIL'; at=$at; category='code-review'; failure_category='environment'; failure_detail='sandbox_process_blocked' } | ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $acceptanceDir 'acceptance-rows.jsonl')
+    Run-Update | Out-Null
+    $blockedRows = @(Read-Records | Where-Object { $_.key -in @('sandbox-blocked:review:1','acceptance:blocked:1') })
+    Assert-True ($blockedRows.Count -eq 2 -and @($blockedRows | Where-Object { -not $_.pass -and $_.failure_category -eq 'environment' -and $_.failure_detail -eq 'sandbox_process_blocked' -and -not $_.diagnosis }).Count -eq 2) 'both outcome import paths preserve sandbox failure detail without vendor diagnosis'
+    Assert-True ((Run-Update).new_records -eq 0 -and @(Read-Records | Where-Object { $_.failure_detail -eq 'sandbox_process_blocked' }).Count -eq 2) 'specific sandbox outcome details survive idempotent import'
 
     $rosterState = Join-Path $temp 'roster-state'; $rosterRepo = Join-Path $temp 'roster-repo'
     [IO.Directory]::CreateDirectory($rosterState) | Out-Null
@@ -200,9 +206,9 @@ try {
     Assert-True ($offsetAt -ceq '2026-07-16T21:52:00.0000000Z') 'DateTimeOffset preserves its offset'
 
     $env:DT_MODEL_ROUTER_STATE = Join-Path $temp 'live-state'
-    $real = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/outcome-sources.json') -Raw | ConvertFrom-Json
-    $liveFiles = [System.Collections.Generic.List[string]]::new()
-    foreach ($root in $real) {
+    # Prove source mining is read-only without inspecting another checkout or live build run.
+    $sourceFiles = [System.Collections.Generic.List[string]]::new()
+    foreach ($root in @($script:repo)) {
         $build = Join-Path $root '.dt-build'
         if (-not (Test-Path -LiteralPath $build -PathType Container)) { continue }
         foreach ($run in @(Get-ChildItem -LiteralPath $build -Directory)) {
@@ -210,16 +216,16 @@ try {
             $milestones = Join-Path $run.FullName 'milestones'
             if (Test-Path -LiteralPath $milestones -PathType Container) { $folders += @(Get-ChildItem -LiteralPath $milestones -Directory | ForEach-Object FullName) }
             foreach ($folder in $folders) {
-                foreach ($file in @(Get-ChildItem -LiteralPath $folder -File | Where-Object { $_.Name -like '*.provenance.json' -or $_.Name -eq 'acceptance-rows.jsonl' })) { $liveFiles.Add($file.FullName) }
+                foreach ($file in @(Get-ChildItem -LiteralPath $folder -File | Where-Object { $_.Name -like '*.provenance.json' -or $_.Name -eq 'acceptance-rows.jsonl' })) { $sourceFiles.Add($file.FullName) }
             }
         }
     }
     $before = @{}
-    foreach ($file in $liveFiles) { $before[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
-    $liveResult = Update-RouterOutcomes -Now $script:now -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) }
+    foreach ($file in $sourceFiles) { $before[$file] = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
+    $sourceResult = Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -BenchInvoker { param($r) (Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})) }
     $unchanged = $true
-    foreach ($file in $liveFiles) { if ($before[$file] -ne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash) { $unchanged = $false; break } }
-    Assert-True ($liveResult.total_records -gt 0 -and $unchanged) 'LIVE bounded source mining is read-only'
+    foreach ($file in $sourceFiles) { if ($before[$file] -ne (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash) { $unchanged = $false; break } }
+    Assert-True ($sourceFiles.Count -gt 0 -and $sourceResult.total_records -gt 0 -and $unchanged) 'bounded fixture source mining is read-only'
 
     # dt-build runs inside a linked worktree: its provenance is mined under the main checkout's repo name.
     $stateBeforeWorktree = $env:DT_MODEL_ROUTER_STATE

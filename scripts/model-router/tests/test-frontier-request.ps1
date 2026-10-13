@@ -252,6 +252,7 @@ $usage=@{}; $usage[[string]$args[$modelIndex+1]]=@{inputTokens=1;outputTokens=1;
         Check ($calls.Count -eq 2) 'exactly one production wrapper model call per scrutiny'
         Check ($calls[0] -notmatch 'Bash|bypassPermissions' -and $calls[0] -match 'default' -and (($calls[0] | ConvertFrom-Json)[[array]::IndexOf([object[]]($calls[0] | ConvertFrom-Json),'--tools')+1] -ceq '')) 'Claude scrutiny uses no tools and default permissions'
         Check ($calls[1] -match 'read-only' -and $calls[1] -notmatch 'danger-full-access') 'Codex scrutiny uses read-only sandbox'
+        if ($env:OS -eq 'Windows_NT') { Check (($calls[1] | ConvertFrom-Json) -contains 'windows.sandbox="mxc"') 'Codex scrutiny explicitly selects MXC on Windows' }
         Check (@(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-dms.jsonl')).Count -eq $dmsBefore) 'production decompose scrutiny sends no alert'
         # pwsh -File binds comma-separated paths as a single string.
         $priorNeeds = $env:DT_FRONTIER_FAKE_NEEDS

@@ -499,6 +499,10 @@ $receivedPrompt=[Console]::In.ReadToEnd()
 if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
 if ($mode -eq 'preflight') { [System.IO.File]::WriteAllText($outPath, 'OK'); exit 0 }
 if ($mode -eq 'malformed') { [System.IO.File]::WriteAllText($outPath, 'I cannot do that.'); exit 0 }
+if ($mode -eq 'blocked') {
+    $report = "DT_BUILD_REPORT_VERSION: 3`nRUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nVERDICT:`nBLOCKED`nCHANGED_FILES:`nNONE`nCOMMANDS_AND_RESULTS:`nGet-Content failed: CreateProcess: blocked by policy`nEVIDENCE_PATHS:`nNONE`nUNRESOLVED_BLOCKERS:`nRequired bootstrap read denied by sandbox`nDISCOVERED_ENHANCEMENTS:`nNONE`nCONTINUATION_STATE:`nNONE"
+    [IO.File]::WriteAllText($outPath, $report); exit 0
+}
 $report = @"
 DT_BUILD_REPORT_VERSION: 2
 RUN_ID: fixture-run
@@ -597,6 +601,29 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $missingEffortLog = Join-Path $tempRoot 'codex-missing-effort.log'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowCodexOutput -CodexCliPath $fakeCodex -SelectionReason 'effort argument fixture' -Json *> $missingEffortLog
     Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw -LiteralPath $missingEffortLog) -match '-Effort' -and @(Get-Content -LiteralPath $missingEffortLog).Count -eq 1) 'Codex missing -Effort fails closed with one line'
+    foreach ($reviewMode in @('ReadOnly','Scrutiny','Preflight')) {
+        $extra = if ($reviewMode -eq 'Preflight') { @{Preflight=$true} } else { @{ReadOnly=$true; Scrutiny=($reviewMode -eq 'Scrutiny')} }
+        $env:DT_FAKE_CODEX_MODE = if ($reviewMode -eq 'Preflight') { 'preflight' } else { 'success' }
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowCodexOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'read-only launch fixture' @extra -Json *> $null
+        $launch = Get-Content -Raw -LiteralPath $codexArgsLog
+        Assert-True ($LASTEXITCODE -eq 0 -and $launch -match '--sandbox\|read-only\|' -and $launch -match 'web_search="disabled"') "$reviewMode keeps read-only permissions and disables web search"
+        Assert-True ($launch -notmatch 'danger-full-access|workspace-write|--add-dir|--approve-for-me|--dangerously-bypass|--ignore-rules') "$reviewMode never selects writable or unsandboxed execution"
+        if ($env:OS -eq 'Windows_NT') { Assert-True ($launch -match 'windows.sandbox="mxc"') "$reviewMode explicitly selects MXC on Windows" }
+    }
+    $env:DT_FAKE_CODEX_MODE = 'blocked'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowCodexOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'blocked report fixture' -ReadOnly -Json *> $null
+    $blockedExit = $LASTEXITCODE
+    $blockedProv = Get-Content -Raw -LiteralPath "$lowCodexOutput.provenance.json" | ConvertFrom-Json
+    Assert-True ($blockedExit -ne 0 -and -not $blockedProv.pass -and $blockedProv.failure_category -eq 'environment' -and $blockedProv.failure_detail -eq 'sandbox_process_blocked') 'valid BLOCKED report with zero CLI exit becomes a specific environment failure'
+    Assert-True ($null -eq $blockedProv.diagnosis -and $null -eq $blockedProv.backup_pick) 'sandbox denial does not enter vendor diagnosis or switch models'
+    . (Join-Path $repoRoot 'scripts/invoke-codex-process.ps1')
+    Assert-True ($null -eq (Get-CodexBlockedReportDetail "VERDICT: PASS`nCOMMANDS_AND_RESULTS:`nWrite probe: CreateProcess blocked by policy`nUNRESOLVED_BLOCKERS:`nNONE")) 'successful denial probe is not a blocked review'
+    Assert-True ($null -eq (Get-CodexBlockedReportDetail "VERDICT: PASS`nCOMMANDS_AND_RESULTS:`nBLOCKED: write probe CreateProcess blocked by policy`nUNRESOLVED_BLOCKERS:`nNONE")) 'PASS verdict wins over an expected BLOCKED write-probe line'
+    Assert-True ((Get-CodexBlockedReportDetail "BLOCKED: required bootstrap Get-Content failed with CreateProcess: blocked by policy") -eq 'sandbox_process_blocked') 'ad-hoc bootstrap denial is classified'
+    Assert-True ((Get-CodexBlockedReportDetail "UNRESOLVED_BLOCKERS:`nGet-FileHash rejected: blocked by policy`nDISCOVERED_ENHANCEMENTS:`nNONE") -eq 'sandbox_process_blocked') 'legacy unresolved read denial is classified'
+    Assert-True ((Get-CodexBlockedReportDetail "VERDICT: BLOCKED`nRequired tool unavailable in sandbox") -eq 'sandbox_tool_denied') 'other required sandbox tool denials are environment failures'
+    Assert-True ($null -eq (Get-CodexBlockedReportDetail "VERDICT: BLOCKED`nDesign decision needed")) 'non-environment blockers retain their existing treatment'
+    Assert-True ((@(Get-CodexReadOnlySandboxArguments -OnWindows $false) -join '|') -eq '--sandbox|read-only|-c|web_search="disabled"') 'non-Windows reviews do not receive a Windows implementation override'
     Remove-Item Env:DT_FAKE_CODEX_ARGS
 
     $env:DT_FAKE_CODEX_MODE = 'preflight'

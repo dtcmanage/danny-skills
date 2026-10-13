@@ -155,8 +155,8 @@ try {
         '-c', 'forced_login_method="chatgpt"',
         '-c', 'project_doc_max_bytes=0',
         'exec',
-        '--ignore-user-config',
-        '--sandbox', 'read-only',
+        '--ignore-user-config'
+    ) + @(Get-CodexReadOnlySandboxArguments) + @(
         '--skip-git-repo-check',
         '--ephemeral',
         '--color', 'never',

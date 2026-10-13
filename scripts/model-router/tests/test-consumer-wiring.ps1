@@ -150,6 +150,7 @@ $script:RouterDiagnosisHttp = {
 if (`$args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if (`$args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path `$env:CODEX_HOME 'models_cache.json'); exit 0 }
 [IO.File]::AppendAllText('$launchLog', "codex`n")
+[IO.File]::WriteAllText('$launchLog.args.json', (ConvertTo-Json -InputObject @(`$args)))
 if (`$env:DT_FAKE_DISPATCH_COUNTER) {
     `$n = if (Test-Path `$env:DT_FAKE_DISPATCH_COUNTER) { [int](Get-Content `$env:DT_FAKE_DISPATCH_COUNTER) } else { 0 }
     `$n++; [IO.File]::WriteAllText(`$env:DT_FAKE_DISPATCH_COUNTER, [string]`$n)
@@ -370,10 +371,12 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
         $launchesAfter = if (Test-Path -LiteralPath $launchLog) { @(Get-Content -LiteralPath $launchLog).Count } else { 0 }
         Assert-True ($bigExit -ne 0 -and $bigErr -match 'PROMPT_TOO_LARGE' -and $bigErr -match 'sha256 pins' -and $launchesAfter -eq $launchesBefore) "$lane refuses an oversized prompt before dispatch (exit $bigExit)"
         if ($lane -eq 'codex') {
-            # A read-only Codex reviewer on Windows runs unsandboxed (the read-only sandbox blocks every
-            # command) and is rejected if it changes the project tree.
+            # Reviewers use a real sandbox; the unchanged-tree check remains a backstop.
             $ro = Invoke-CodexWrapper 'codex-readonly' @('-Category','code-review','-ReadOnly')
-            Assert-True ($ro.exit -eq 0 -and $ro.prov.sandbox -match 'read-only enforced by an unchanged-tree check') "a read-only Codex review runs with the unchanged-tree check (exit $($ro.exit); sandbox: $($ro.prov.sandbox); $($ro.stderr))"
+            Assert-True ($ro.exit -eq 0 -and $ro.prov.sandbox -eq 'read-only') "a read-only Codex review uses the real sandbox (exit $($ro.exit); sandbox: $($ro.prov.sandbox); $($ro.stderr))"
+            $readOnlyArgs = @(Get-Content -Raw -LiteralPath "$launchLog.args.json" | ConvertFrom-Json)
+            Assert-True (($readOnlyArgs -join '|') -match '--sandbox\|read-only\|' -and ($readOnlyArgs -join '|') -notmatch 'danger-full-access|workspace-write') 'read-only launch never selects writable permissions'
+            if ($env:OS -eq 'Windows_NT') { Assert-True ($ro.prov.windows_sandbox -eq 'mxc' -and $readOnlyArgs -contains 'windows.sandbox="mxc"') 'Windows read-only launch and provenance select MXC' }
             $env:DT_FAKE_CODEX_MODE = 'touch-project'
             try { $roBad = Invoke-CodexWrapper 'codex-readonly-writes' @('-Category','code-review','-ReadOnly') }
             finally { $env:DT_FAKE_CODEX_MODE = $null; Remove-Item -LiteralPath (Join-Path $project 'reviewer-wrote-this.txt') -Force -ErrorAction SilentlyContinue }
@@ -504,6 +507,7 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     # 4. Other consumers pass their fixed categories.
     $reviewRound = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/invoke-codex-round.ps1')
     $reviewPreflight = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/preflight-codex.ps1')
+    Assert-True ($reviewRound -match 'Get-CodexReadOnlySandboxArguments' -and $reviewPreflight -match 'Get-CodexReadOnlySandboxArguments') 'dt-review round and preflight share the read-only sandbox arguments'
     $claudeReviewRound = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/invoke-claude-round.ps1')
     Assert-True ($reviewRound -match 'Resolve-CodexModel -Category planning' -and $reviewPreflight -match 'Resolve-CodexModel -Category planning -Protected:\(\$Tier -eq ''complex''\)' -and $reviewPreflight -notmatch 'mechanical' -and $claudeReviewRound -match 'Resolve-RouterModel -Category planning -Lane claude') 'dt-review rounds and preflight use planning with matching protection'
     $writing = Resolve-RouterModel -Category long-form-writing -Lane claude -SkipModelCheck
