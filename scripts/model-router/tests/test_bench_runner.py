@@ -15,6 +15,7 @@ import pytest
 BENCH = Path(__file__).resolve().parents[1] / 'bench'
 sys.path.insert(0, str(BENCH))
 import bench_engine as engine
+from bench_test_renderer import fake_renderer
 from codex_appserver import usage
 
 
@@ -251,7 +252,8 @@ def run(tmp_path: Path, **overrides: object) -> dict:
                      effort='low', state_dir=tmp_path, tasks=BENCH / 'tasks', config=config,
                      dispatch=lambda request: {'status': 'ok', 'answer': '{}'},
                      limits=lambda vendor: {'blocked': False}, envelope=lambda answer: answer,
-                     outcome=lambda row: None, grade=lambda task, answer: {'status': 'pass'})
+                     outcome=lambda row: None, grade=lambda task, answer: {'status': 'pass'},
+                     renderer=fake_renderer)
     arguments.update(overrides)
     return engine.run_bench(**arguments)
 

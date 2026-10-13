@@ -12,6 +12,7 @@ import pytest
 BENCH = Path(__file__).resolve().parents[1] / 'bench'
 sys.path.insert(0, str(BENCH))
 import bench_engine as engine
+from bench_test_renderer import fake_renderer
 from review import Review
 
 
@@ -91,7 +92,7 @@ def run(tmp_path: Path, job: str = 'coder', preference: str = 'higher',
         roster_entry={'first': 'incumbent', 'backup': 'candidate',
             'first_efforts': {'standard': 'medium', 'hard': 'high'},
             'backup_efforts': {'standard': 'medium', 'hard': 'high'}},
-        effort_override=False, spend_check=spend_check)
+        effort_override=False, spend_check=spend_check, renderer=fake_renderer)
 
 
 @pytest.mark.parametrize('preference,allowed', [('incumbent', False), ('candidate', True), ('no_difference', True)])

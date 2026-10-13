@@ -4,7 +4,15 @@ $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Temporary = Join-Path ([System.IO.Path]::GetTempPath()) ('fs66-preflight-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $Temporary | Out-Null
 $PriorPythonPath = $env:PYTHONPATH
+$PriorSmokeDir = $env:DANNY_BROWSER_SMOKE_DIR
 try {
+    # Resolve Chromium through a synthetic external installation; never launch a browser.
+    $Smoke = Join-Path $Temporary 'browser-smoke'
+    $Playwright = Join-Path $Smoke 'node_modules/playwright'
+    New-Item -ItemType Directory -Path $Playwright -Force | Out-Null
+    '' | Set-Content -LiteralPath (Join-Path $Smoke 'smoke.mjs')
+    "exports.chromium = { executablePath: () => __filename };" | Set-Content -LiteralPath (Join-Path $Playwright 'index.js')
+    $env:DANNY_BROWSER_SMOKE_DIR = $Smoke
     $Requirements = Join-Path $Temporary 'requirements.txt'
     'fs66-nonexistent-package==0.0.0' | Set-Content -LiteralPath $Requirements
     $Output = & pwsh -NoProfile -File (Join-Path $Root 'scripts/test-preflight.ps1') -RequirementsPath $Requirements 2>&1
@@ -67,8 +75,18 @@ root = Path(__file__).parent.parent
         throw "Full fix did not install the full manifest: $PipArgs"
     }
     Write-Output 'PASS: default full -Fix installs the full requirements manifest and rechecks.'
+
+    "exports.chromium = { executablePath: () => __filename + '.missing' };" | Set-Content -LiteralPath (Join-Path $Playwright 'index.js')
+    $Output = & pwsh -NoProfile -File (Join-Path $Root 'scripts/test-preflight.ps1') -RequirementsPath $Requirements -HarnessPath $Harness 2>&1
+    $RendererFix = 'Ranked renderer Chromium unavailable; fix: set DANNY_BROWSER_SMOKE_DIR to an installed browser-smoke folder, or run npm ci and npx playwright install chromium in that folder.'
+    if ($LASTEXITCODE -ne 1 -or $RendererFix -notin $Output) { throw "Missing Chromium was not reported: $($Output -join [Environment]::NewLine)" }
+    Write-Output 'PASS: full scope rejects a resolved package with a missing Chromium executable and prints the fix.'
+    $Output = & pwsh -NoProfile -File (Join-Path $Root 'scripts/test-preflight.ps1') -Scope gate -RequirementsPath $Requirements -HarnessPath $Harness 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Gate checked Chromium: $($Output -join [Environment]::NewLine)" }
+    Write-Output 'PASS: gate scope ignores missing Chromium.'
 } finally {
     $env:PYTHONPATH = $PriorPythonPath
+    $env:DANNY_BROWSER_SMOKE_DIR = $PriorSmokeDir
     $ResolvedTemporary = [IO.Path]::GetFullPath($Temporary)
     $TempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
     if (-not $ResolvedTemporary.StartsWith($TempPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture cleanup escaped temp root.' }

@@ -205,5 +205,6 @@ pwsh -NoProfile -File scripts/test-preflight.ps1 -Fix
 This installs the pinned Python packages in `requirements-test.txt` and runs `npm ci`
 in the UI benchmark harness. The gate checks only its own needs (`-Scope gate`); `-Fix` in the default full scope prepares a machine for every suite.
 Missing dependencies produce a fix command and exit immediately.
+For clones outside the workspace tree, set `DANNY_BROWSER_SMOKE_DIR` to an installed browser-smoke directory containing `smoke.mjs` and Playwright Chromium.
 
 Each skill lives in `skills/<skill-name>/SKILL.md`. To use them in Claude Code, copy or symlink the `skills/` subfolders into your user-level skills directory (`~/.agents/skills/` on this machine — note: not `~/.claude/skills/`).

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BENCH = ROOT / 'scripts/model-router/bench'
 sys.path.insert(0, str(BENCH))
 import bench_engine as engine
+from bench_test_renderer import fake_renderer
 
 
 def roster(job: str) -> dict:
@@ -41,7 +42,7 @@ def run(state: Path, *, job: str = 'coder', grade=None, dispatch=None, entry=Non
         config=json.loads((BENCH / 'bench-config.json').read_text()),
         dispatch=dispatch or (lambda request: {'status': 'ok', 'answer': '{}'}),
         limits=lambda vendor: {'blocked': False}, envelope=lambda answer: answer,
-        outcome=lambda row: None, grade=grade or (lambda task, answer: {'status': 'pass'}))
+        outcome=lambda row: None, renderer=fake_renderer, grade=grade or (lambda task, answer: {'status': 'pass'}))
 
 
 @pytest.mark.parametrize('job', ['coder', 'deep-thinker'])

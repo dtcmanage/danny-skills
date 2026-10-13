@@ -14,6 +14,7 @@ import pytest
 BENCH = Path(__file__).resolve().parents[1] / 'bench'
 sys.path.insert(0, str(BENCH))
 import bench_engine as engine
+from bench_test_renderer import fake_renderer
 import codex_appserver as transport
 import review
 
@@ -200,7 +201,8 @@ def test_tiers_counts_parity_relabels_and_informative_evidence(tmp_path: Path) -
         effort='medium', state_dir=tmp_path / 'state', tasks=root,
         config={'judges': {'claude': 'claude-judge', 'codex': 'codex-judge'}, 'judge_effort': 'high'},
         dispatch=dispatch, limits=lambda vendor: {'blocked': False}, envelope=lambda a: a,
-        outcome=lambda r: None, grade=lambda t, a: {'status': 'pass'}, roster_entry=roster, effort_override=False)
+        outcome=lambda r: None, grade=lambda t, a: {'status': 'pass'}, roster_entry=roster, effort_override=False,
+        renderer=fake_renderer)
     result = engine.run_bench(**args)
     assert len(result['tiers']) == 2
     assert result['quality_verdict'] is None
@@ -287,13 +289,37 @@ def test_pytest_exit_without_result_fails(tmp_path: Path, task_id: str) -> None:
 @pytest.mark.parametrize('format', ['svg', 'html', 'blocked-key'])
 def test_real_svg_render(tmp_path: Path, format: str) -> None:
     harness = BENCH / 'tasks/ui-frontend-card/harness'
-    # No install or download: an absent Chromium harness is a clean skip.
-    resolved = subprocess.run(['node', '-e', "require.resolve('playwright')"],
-                              cwd=harness, capture_output=True, timeout=10)
-    smoke = next((p / '00_Resources/tools/browser-smoke/node_modules/playwright'
-                  for p in BENCH.parents if (p / '00_Resources/tools/browser-smoke/node_modules/playwright').is_dir()), None)
-    if not smoke and resolved.returncode != 0:
-        pytest.skip('Installed Chromium harness absent')
+    # Mirror the renderer resolver and require an installed executable, not just a package.
+    probe = r"""
+const fs = require('node:fs'), path = require('node:path');
+const {createRequire} = require('node:module');
+const harness = path.resolve(process.argv[1]);
+function chromium() {
+  try { return createRequire(path.join(harness, 'render-ranked.cjs'))('playwright').chromium; }
+  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
+  if (process.env.DANNY_BROWSER_SMOKE_DIR) {
+    const smoke = path.resolve(process.env.DANNY_BROWSER_SMOKE_DIR, 'smoke.mjs');
+    if (!fs.existsSync(smoke)) throw new Error('smoke.mjs missing');
+    return createRequire(smoke)('playwright').chromium;
+  }
+  for (let root = harness; ; root = path.dirname(root)) {
+    const smoke = path.join(root, '00_Resources', 'tools', 'browser-smoke', 'smoke.mjs');
+    if (fs.existsSync(smoke)) return createRequire(smoke)('playwright').chromium;
+    if (path.dirname(root) === root) throw new Error('No parent browser-smoke folder found');
+  }
+}
+try {
+  if (!fs.existsSync(chromium().executablePath())) throw new Error('Chromium executable missing');
+} catch (error) { console.error(error.message); process.exitCode = 1; }
+"""
+    fix = 'set DANNY_BROWSER_SMOKE_DIR to installed browser-smoke, or install its Playwright Chromium'
+    try:
+        resolved = subprocess.run(['node', '-e', probe, str(harness)],
+                                  capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as error:
+        pytest.skip(f'Ranked renderer Chromium cannot be resolved: {error}; {fix}')
+    if resolved.returncode != 0:
+        pytest.skip(f'Ranked renderer Chromium cannot be resolved: {resolved.stderr.strip()}; {fix}')
     task = BENCH / 'tasks' / ('ranked-pelican-svg' if format == 'svg' else 'ranked-single-file-game')
     png = tmp_path / 'render.png'
     answer = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="red"/></svg>'

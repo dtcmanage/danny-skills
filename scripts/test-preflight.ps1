@@ -96,6 +96,36 @@ print(json.dumps(missing))
     if ($Scope -eq 'full' -and -not (Test-Path -LiteralPath (Join-Path $Harness 'node_modules') -PathType Container)) {
         "UI harness node_modules missing; fix: $NpmCommand"
     }
+    if ($Scope -eq 'full' -and $Node) {
+        # Mirror render-ranked.cjs: harness-local Playwright, explicit smoke folder,
+        # then workspace parents. Resolving a package alone does not prove Chromium exists.
+        $ChromiumProbe = @'
+const fs = require('node:fs'), path = require('node:path');
+const {createRequire} = require('node:module');
+const harness = path.resolve(process.argv[1]);
+function chromium() {
+  try { return createRequire(path.join(harness, 'render-ranked.cjs'))('playwright').chromium; }
+  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
+  if (process.env.DANNY_BROWSER_SMOKE_DIR) {
+    const smoke = path.resolve(process.env.DANNY_BROWSER_SMOKE_DIR, 'smoke.mjs');
+    if (!fs.existsSync(smoke)) throw new Error('smoke.mjs missing');
+    return createRequire(smoke)('playwright').chromium;
+  }
+  for (let root = harness; ; root = path.dirname(root)) {
+    const smoke = path.join(root, '00_Resources', 'tools', 'browser-smoke', 'smoke.mjs');
+    if (fs.existsSync(smoke)) return createRequire(smoke)('playwright').chromium;
+    if (path.dirname(root) === root) throw new Error('No parent browser-smoke folder found');
+  }
+}
+try {
+  if (!fs.existsSync(chromium().executablePath())) throw new Error('Chromium executable missing');
+} catch (error) { console.error(error.message); process.exitCode = 1; }
+'@
+        $null = & $Node.Source -e $ChromiumProbe $Harness 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            'Ranked renderer Chromium unavailable; fix: set DANNY_BROWSER_SMOKE_DIR to an installed browser-smoke folder, or run npm ci and npx playwright install chromium in that folder.'
+        }
+    }
 }
 
 $Missing = @(Get-MissingItems)

@@ -15,6 +15,7 @@ sys.path.insert(0, str(BENCH))
 sys.path.insert(0, str(BENCH.parent))
 import add_task
 import bench_engine as engine
+from bench_test_renderer import fake_renderer
 import review
 
 
@@ -35,7 +36,7 @@ def run(tmp_path: Path, tasks: Path, *, job: str = 'fast') -> dict:
         config={'judges': {'claude': 'claude-judge', 'codex': 'gpt-judge'}, 'judge_effort': 'high'},
         dispatch=lambda request: {'status': 'ok', 'answer': '{"value": 7}'},
         limits=lambda vendor: {'blocked': False}, envelope=lambda text: text, outcome=lambda row: None,
-        grade=lambda task, answer: {'status': 'pass'})
+        grade=lambda task, answer: {'status': 'pass'}, renderer=fake_renderer)
 
 
 def test_baseline_fixture_and_empty_private(tmp_path: Path):

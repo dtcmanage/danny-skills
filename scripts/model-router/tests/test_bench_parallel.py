@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BENCH = ROOT / 'scripts/model-router/bench'
 sys.path.insert(0, str(BENCH))
 import bench_engine as engine
+from bench_test_renderer import fake_renderer
 
 
 def bank(tmp_path: Path) -> Path:
@@ -36,7 +37,7 @@ def run(state: Path, tasks: Path, parallel: int, dispatch) -> dict:
     return engine.run_bench(job='deep-thinker', candidate=entry['backup'], incumbent=entry['first'],
         trigger='manual', effort=entry['first_effort'], state_dir=state, tasks=tasks, config=config,
         dispatch=dispatch, limits=lambda vendor: {'blocked': False}, envelope=lambda answer: answer,
-        outcome=lambda row: None, grade=grade)
+        outcome=lambda row: None, renderer=fake_renderer, grade=grade)
 
 
 def content_dispatch(delay: float, gauge: dict):
@@ -109,6 +110,6 @@ def test_spend_halt_stops_every_parallel_lane(tmp_path: Path):
     result = engine.run_bench(spend_check=spend, job='deep-thinker', candidate=entry['backup'],
         incumbent=entry['first'], trigger='manual', effort=entry['first_effort'], state_dir=tmp_path / 's',
         tasks=tasks, config=config, dispatch=dispatch, limits=lambda vendor: {'blocked': False},
-        envelope=lambda answer: answer, outcome=lambda row: None, grade=lambda task, answer: {'status': 'pass'})
+        envelope=lambda answer: answer, outcome=lambda row: None, renderer=fake_renderer, grade=lambda task, answer: {'status': 'pass'})
     assert result['halted'] and 'weekly use moved' in result['halt_reason']
     assert count['calls'] <= 8  # only calls already in flight finish after the halt
