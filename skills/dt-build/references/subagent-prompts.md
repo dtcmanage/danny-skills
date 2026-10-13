@@ -27,7 +27,7 @@ Every build/fix prompt ends with:
   `DISCOVERED_ENHANCEMENTS`, never in the diff. Out-of-scope diff content is a
   defect the verifier will flag.
 - Do not commit, merge, push, deploy, or edit `.dt-build/`.
-- Run the milestone's named checks before returning.
+- Run the milestone's named checks before returning. Run the full named test selection without early-stop flags (no --maxfail, -x or --exitfirst); classify every failure, fix them together, then rerun once. The two-attempt limit counts fix rounds, not individual failing tests.
 - Return changed files, exact commands/results, unresolved blockers, discovered
   enhancements, and no freeform completion claim.
 - Both lanes use the exact `DT_BUILD_REPORT_VERSION: 3` report appended by
