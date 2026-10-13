@@ -2,6 +2,12 @@ param()
 # Keep native flags (-c, -v, -q) in $args; advanced parameter binding would
 # consume abbreviations/common parameters belonging to the child command.
 $forward = @($args)
+# CommandWithArgs wrappers may supply their argv tail as one array expression
+# instead of splatting a variable. Normalize that one container before parsing
+# helper options; keep each child argument (including spaces/flags) intact.
+if ($forward.Count -eq 1 -and $forward[0] -is [array]) {
+    $forward = @($forward[0])
+}
 $lockWaitSec = 1800
 $readyFile = $null
 while ($forward.Count -ge 2 -and $forward[0] -in @('-TimeoutSec', '--timeout', '-ReadyFile', '--ready-file')) {

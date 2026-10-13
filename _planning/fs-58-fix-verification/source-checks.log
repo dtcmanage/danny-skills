@@ -1,0 +1,5 @@
+PASS: PowerShell parse scripts/pytest-lock.ps1
+PASS: PowerShell parse scripts/tests/test-pytest-lock-adapter.ps1
+PASS: PowerShell parse _planning/fs-58-fix-verification/native-api-smoke.ps1
+PASS: git diff --check
+PASS: git diff --cached --check (includes newly tracked reports/fixtures)

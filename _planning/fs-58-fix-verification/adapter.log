@@ -1,0 +1,5 @@
+PASS: File forwards timeout=1 and 7 intact child arguments
+PASS: InlineArray forwards timeout=1 and 7 intact child arguments
+PASS: VariableSplat forwards timeout=1 and 7 intact child arguments
+REPRODUCED: WIP CommandWithArgs inline-array failure; File and variable-splat forms preserve argv
+SUMMARY: 12 passed; no Python started

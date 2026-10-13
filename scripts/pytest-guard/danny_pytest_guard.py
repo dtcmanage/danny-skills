@@ -26,7 +26,10 @@ def pytest_configure(config: pytest.Config) -> None:
     spec = importlib.util.spec_from_file_location('danny_pytest_guard_lock', helper)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    ownership = module.pytest_lock()
+    # Pytest projects may forbid all child processes. Only native identity /
+    # ancestry queries belong here; legacy-suite inventory stays in the explicit
+    # helper, which runs before launching pytest.
+    ownership = module.pytest_lock(inventory=False)
     try:
         ownership.__enter__()
     except (OSError, ValueError, RuntimeError) as error:

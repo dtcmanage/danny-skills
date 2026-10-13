@@ -67,11 +67,11 @@ class LockTests(unittest.TestCase):
         self.holder_identity = (pid, owner.get('CreationDate'))
         return child
 
-    def caller(self, timeout=15, code='pass', env=None, ready=None):
+    def caller(self, timeout=15, code='pass', env=None, ready=None, stderr=subprocess.DEVNULL):
         args = ['--ready-file', str(ready)] if ready is not None else []
         return subprocess.Popen([sys.executable, str(HELPER), '--timeout', str(timeout), *args, '--',
                                  sys.executable, '-c', code], stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, env=env)
+                                stderr=stderr, env=env)
 
     def test_second_caller_waits(self):
         self.holder()
@@ -116,15 +116,31 @@ class LockTests(unittest.TestCase):
                               f'import sys,json; from pathlib import Path; Path({str(argv)!r}).write_text(json.dumps(sys.argv[1:]))',
                               '-v', '-q']
             code = f'import subprocess; raise SystemExit(subprocess.call({command!r}))'
-            child = self.caller(code=code); self.children.append(child)
-            self.assertEqual(child.wait(timeout=20), 0)
-            self.assertEqual(json.loads(argv.read_text()), ['-v', '-q'])
+            with self.subTest(entry=entry):
+                child = self.caller(code=code, stderr=subprocess.PIPE); self.children.append(child)
+                _, diagnostics = child.communicate(timeout=20)
+                self.assertEqual(child.returncode, 0, diagnostics.decode(errors='replace'))
+                self.assertEqual(json.loads(argv.read_text()), ['-v', '-q'])
 
     def test_process_inventory_is_bounded(self):
         with mock.patch.object(lock.subprocess, 'run', side_effect=subprocess.TimeoutExpired('inventory', 10)) as run:
             with self.assertRaises(subprocess.TimeoutExpired):
                 lock.processes()
             self.assertEqual(run.call_args.kwargs['timeout'], 10)
+
+    def test_guard_mode_uses_only_native_queries(self):
+        with mock.patch.object(lock, 'processes', side_effect=AssertionError('legacy inventory in guard')), \
+             mock.patch.object(lock.subprocess, 'Popen', side_effect=AssertionError('child in guard')):
+            identity = lock.process_identity(os.getpid())
+            self.assertIsNotNone(identity)
+            self.assertEqual(lock.process_identity(os.getpid()), identity)
+            self.assertIn(os.getpid(), lock.ancestors(lock.family_processes()))
+            with lock.pytest_lock(inventory=False):
+                holder = json.loads(lock.STATUS.read_text())
+                self.assertEqual(holder['process_start'], identity)
+                self.assertTrue(holder['admitted'])
+                self.assertEqual(holder['token'], os.environ['DANNY_PYTEST_OWNER'])
+            self.assertEqual(json.loads(lock.STATUS.read_text())['state'], 'released')
 
     def test_waiter_identity_and_python_manager(self):
         rows = [dict(ProcessId=1, ParentProcessId=0, CreationDate='parent', Name='python.exe', CommandLine='python -m pytest same.py'),

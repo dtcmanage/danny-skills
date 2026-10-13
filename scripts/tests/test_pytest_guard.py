@@ -14,6 +14,7 @@ import unittest
 SCRIPTS = Path(__file__).resolve().parents[1]
 HELPER = SCRIPTS / 'pytest-lock.py'
 GUARD = SCRIPTS / 'pytest-guard'
+NO_CHILDREN = SCRIPTS / 'tests/fixtures/pytest_guard_no_children'
 spec = importlib.util.spec_from_file_location('fixture_lock', HELPER)
 lock = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(lock)
@@ -111,6 +112,21 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stderr, '')
 
+    def test_guard_never_spawns_children(self) -> None:
+        (self.work / 'conftest.py').write_bytes((NO_CHILDREN / 'conftest.py').read_bytes())
+        (self.work / 'test_fixture.py').write_bytes((NO_CHILDREN / 'probe.py').read_bytes())
+        env = dict(self.guarded, FIXTURE_LOCK_HELPER=str(HELPER), FIXTURE_NO_CHILDREN='1')
+        code = (f'import importlib.util,subprocess; s=importlib.util.spec_from_file_location("parent",{str(HELPER)!r}); '
+                'm=importlib.util.module_from_spec(s);s.loader.exec_module(m)\n'
+                'with m.pytest_lock():\n'
+                '    raise SystemExit(subprocess.call([__import__("sys").executable,"-m","pytest","-q","test_fixture.py"]))\n')
+        for entry in (None, [sys.executable, '-c', code]):
+            with self.subTest(entry='standalone' if entry is None else 'verified-ancestor'):
+                result = self.run_pytest(env, command=entry)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, '')
+                self.assertEqual(json.loads(lock.STATUS.read_text())['state'], 'released')
+
     def test_nonpytest_python_only_sees_path_and_env(self) -> None:
         code = 'import sys,json,os; print(json.dumps({"loaded":"danny_pytest_guard" in sys.modules,"path":sys.path,"plugins":os.environ["PYTEST_PLUGINS"]}))'
         result = subprocess.run([sys.executable, '-c', code], env=self.guarded, capture_output=True, text=True, timeout=10)
@@ -121,6 +137,8 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(result.stderr, '')
 
     def test_failure_and_collection_error_release(self) -> None:
+        self.guarded['FIXTURE_NO_CHILDREN'] = '1'
+        (self.work / 'conftest.py').write_bytes((NO_CHILDREN / 'conftest.py').read_bytes())
         for source, expected in [('def test_fixture(): assert False\n', 1), ('raise ValueError("collection fixture")\n', 2)]:
             (self.work / 'test_fixture.py').write_text(source)
             result = self.run_pytest(self.guarded)
@@ -133,6 +151,8 @@ class GuardTests(unittest.TestCase):
     def test_two_guarded_processes_serialize(self) -> None:
         # Both are visible as actual pytest before configure. Neither may treat
         # the other's verified waiting guard as an unguarded running suite.
+        self.guarded['FIXTURE_NO_CHILDREN'] = '1'
+        (self.work / 'conftest.py').write_bytes((NO_CHILDREN / 'conftest.py').read_bytes())
         (self.work / 'test_fixture.py').write_text(
             'import os,time\nfrom pathlib import Path\n'
             'def test_fixture():\n'

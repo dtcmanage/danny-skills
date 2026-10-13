@@ -1,0 +1,7 @@
+PASS: 64-bit PROCESSENTRY32W layout is 568 bytes
+PASS: native creation identity is present and stable
+PASS: GetProcessTimes equals independent .NET StartTime
+PASS: Toolhelp parent equals independent CIM parent
+PASS: parent identity is older than child identity
+PASS: nonexistent PID cannot supply an identity
+SUMMARY: 6 passed; native API smoke only; Python backend deferred
