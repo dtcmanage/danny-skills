@@ -22,6 +22,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'path-identity.ps1')
+
 $script:DtCtxBlockBytes = 65536
 # Working room after startup: wrap up and hand off past 250k, handoff steps only past 280k. Startup
 # (the bootstrap baseline) never counts. Both stay under the host's window cap, so a coordinator never
@@ -139,9 +141,7 @@ function Read-DtCtxHeadLines {
 
 function Test-DtCtxSamePath {
     param([string]$Left, [string]$Right)
-    if (-not $Left -or -not $Right) { return $false }
-    try { return ([System.IO.Path]::GetFullPath($Left).TrimEnd('\', '/') -ieq [System.IO.Path]::GetFullPath($Right).TrimEnd('\', '/')) }
-    catch { return $false }
+    return Test-DtPathEqual $Left $Right
 }
 
 function Test-DtCtxTailContains {

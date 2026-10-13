@@ -148,7 +148,7 @@ $script:DtJobContextReserveBytes = 256
 
 function Get-DtJobPaths {
     param([Parameter(Mandatory)][string]$RunFolder)
-    $root = [System.IO.Path]::GetFullPath($RunFolder).TrimEnd('\', '/')
+    $root = ConvertTo-DtNormalizedPath $RunFolder
     $jobs = Join-Path $root 'jobs'
     [pscustomobject]@{
         Root   = $root
@@ -1134,7 +1134,7 @@ function Save-DtJobRegistryRuns {
 function Get-DtJobRegistryEntry {
     param([Parameter(Mandatory)][string]$RunFolder)
     $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
-    return (Get-DtJobRegistryRuns | Where-Object { [string]$_.run_folder -ieq $root } | Select-Object -First 1)
+    return (Get-DtJobRegistryRuns | Where-Object { Test-DtPathEqual ([string]$_.run_folder) $root } | Select-Object -First 1)
 }
 
 function Get-DtJobRunPin {
@@ -1159,7 +1159,7 @@ function Invoke-DtJobPin {
     $entry = Invoke-DtJobRegistryLocked -Body {
         $runs = @(Get-DtJobRegistryRuns)
         $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
-        $registered = $runs | Where-Object { [string]$_.run_folder -ieq $root } | Select-Object -First 1
+        $registered = $runs | Where-Object { Test-DtPathEqual ([string]$_.run_folder) $root } | Select-Object -First 1
         if ($null -eq $registered) { throw 'DT_JOB_USAGE: the run is not registered.' }
         if ($Clear) { $registered.PSObject.Properties.Remove('pin') }
         else {
@@ -1382,7 +1382,7 @@ function Test-DtJobCoordinatorLockHeldByCaller {
     param([Parameter(Mandatory)][string]$RunFolder)
     $held = $env:DT_BUILD_COORDINATOR_LOCK_HELD
     if (-not $held) { return $false }
-    return ([System.IO.Path]::GetFullPath($held).TrimEnd('\', '/') -ieq (Get-DtJobPaths -RunFolder $RunFolder).Root)
+    return Test-DtPathEqual $held (Get-DtJobPaths -RunFolder $RunFolder).Root
 }
 
 function Invoke-DtJobLease {
@@ -1476,7 +1476,7 @@ function Invoke-DtJobRegisterRun {
     Invoke-DtJobRegistryLocked -Body {
         $previous = Get-DtJobRunPin -RunFolder $RunFolder
         if (-not $PinVendor -and $null -ne $previous) { $entry.pin = $previous }
-        $runs = @(Get-DtJobRegistryRuns | Where-Object { [string]$_.run_folder -ine $root -and [string]$_.run_id -cne $RunId })
+        $runs = @(Get-DtJobRegistryRuns | Where-Object { -not (Test-DtPathEqual ([string]$_.run_folder) $root) -and [string]$_.run_id -cne $RunId })
         Save-DtJobRegistryRuns -Runs (@($runs) + @([pscustomobject]$entry))
     }
     Write-DtJobOutput -Object ([pscustomobject]$entry) -AsJson:$Json
@@ -1487,7 +1487,7 @@ function Remove-DtJobRegistryEntry {
     $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
     return (Invoke-DtJobRegistryLocked -Body {
         $runs = @(Get-DtJobRegistryRuns)
-        $kept = @($runs | Where-Object { [string]$_.run_folder -ine $root })
+        $kept = @($runs | Where-Object { -not (Test-DtPathEqual ([string]$_.run_folder) $root) })
         if ($kept.Count -ne $runs.Count) { Save-DtJobRegistryRuns -Runs $kept }
         ($runs.Count - $kept.Count)
     })

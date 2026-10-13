@@ -35,6 +35,8 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-review-inputs.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'review input snapshot and path identity regressions pass'
     $rulebook = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -CoordinatorHost codex) -join "`n"
     Assert-True ($LASTEXITCODE -eq 0 -and $rulebook.Contains('## Model routing') -and $rulebook.Contains('## Context discipline') -and $rulebook.Contains('6. Execute milestones') -and $rulebook.Contains('7. Guardrails:')) 'rulebook contains all resume execution sections'
     Assert-True (-not $rulebook.Contains('1. Intake in one question') -and -not $rulebook.Contains('## Usage telemetry') -and $rulebook.Contains('grants no permission')) 'rulebook omits intake and retains the authority boundary'

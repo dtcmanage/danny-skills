@@ -56,7 +56,7 @@ if ($JobId) {
         }
     }
 }
-$fullPath = [System.IO.Path]::GetFullPath($Path)
+$fullPath = ConvertTo-DtNormalizedPath $Path
 if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
     $message = "READ_EVIDENCE_MISSING: $fullPath"
     $relative = [System.IO.Path]::GetRelativePath($jobsDir, $fullPath)
@@ -156,7 +156,7 @@ if (Test-Path -LiteralPath $logPath) {
     foreach ($entry in ((Read-DtJobText -Path $logPath) -split "\r?\n")) {
         if (-not $entry.Trim()) { continue }
         try { $prior = $entry | ConvertFrom-Json -ErrorAction Stop } catch { continue }
-        if ($prior.path -eq $fullPath -and $prior.sha256 -eq $sha256 -and ($prior.selector | ConvertTo-Json -Compress) -eq $selectorKey) { $repeat = $true; break }
+        if ((Test-DtPathEqual $prior.path $fullPath) -and $prior.sha256 -eq $sha256 -and ($prior.selector | ConvertTo-Json -Compress) -eq $selectorKey) { $repeat = $true; break }
     }
 }
 $warnings = @()

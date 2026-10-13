@@ -11,8 +11,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$candidateFull = [System.IO.Path]::GetFullPath($CandidatePath)
-$rootFull = [System.IO.Path]::GetFullPath($AllowedRoot)
+. (Join-Path $PSScriptRoot 'path-identity.ps1')
+
+$candidateFull = ConvertTo-DtPathIdentity $CandidatePath
+$rootFull = ConvertTo-DtPathIdentity $AllowedRoot
 
 $rootWithSep = if ($rootFull.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
     $rootFull
@@ -21,8 +23,8 @@ else {
     $rootFull + [System.IO.Path]::DirectorySeparatorChar
 }
 
-$pass = $candidateFull.StartsWith($rootWithSep, [System.StringComparison]::OrdinalIgnoreCase) -or
-    ($candidateFull -eq $rootFull)
+$pass = $candidateFull.StartsWith($rootWithSep, [System.StringComparison]::Ordinal) -or
+    (Test-DtPathEqual $candidateFull $rootFull)
 
 $result = [pscustomobject]@{
     pass = $pass
