@@ -10,7 +10,7 @@ try {
     $Smoke = Join-Path $Temporary 'browser-smoke'
     $Playwright = Join-Path $Smoke 'node_modules/playwright'
     New-Item -ItemType Directory -Path $Playwright -Force | Out-Null
-    '' | Set-Content -LiteralPath (Join-Path $Smoke 'smoke.mjs')
+    # No smoke.mjs: the explicit installation must resolve through NODE_PATH.
     "exports.chromium = { executablePath: () => __filename };" | Set-Content -LiteralPath (Join-Path $Playwright 'index.js')
     $env:DANNY_BROWSER_SMOKE_DIR = $Smoke
     $Requirements = Join-Path $Temporary 'requirements.txt'

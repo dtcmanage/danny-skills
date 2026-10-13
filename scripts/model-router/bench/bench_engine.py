@@ -223,6 +223,16 @@ def ranked_prompt(task: Path, outputs: list[str]) -> tuple[str, str]:
     return prompt, token
 
 
+def ranked_render_env() -> dict[str, str]:
+    """Resolve external Playwright through Node's child-only module search path."""
+    env = os.environ.copy()
+    if smoke := env.get('DANNY_BROWSER_SMOKE_DIR'):
+        modules = Path(smoke).resolve() / 'node_modules'
+        if modules.is_dir():
+            env['NODE_PATH'] = str(modules) + (os.pathsep + env['NODE_PATH'] if env.get('NODE_PATH') else '')
+    return env
+
+
 def render_ranked(task: Path, answer: str, png: Path) -> dict[str, Any]:
     metadata = json.loads((task / 'task.json').read_text(encoding='utf-8'))
     source = png.with_suffix('.' + metadata['render'])
@@ -230,7 +240,7 @@ def render_ranked(task: Path, answer: str, png: Path) -> dict[str, Any]:
         source.write_text(answer_body(answer), encoding='utf-8')
         result = subprocess.run(['node', str(BENCH / 'tasks/ui-frontend-card/harness/render-ranked.cjs'),
             str(source), str(png), metadata['render'], json.dumps(metadata.get('key_presses', []))],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30, env=ranked_render_env())
         if result.returncode or not png.is_file():
             raise ValueError((result.stderr or result.stdout)[-2000:])
         return {'status': 'ok', 'path': str(png)}

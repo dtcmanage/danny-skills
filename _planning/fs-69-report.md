@@ -124,3 +124,23 @@ The tier/count parity engine test supplies the fake renderer for its synthetic r
 ## Session audit
 
 Used dt-session-audit for the close-out review. The no-local-Python-suite constraint and no-version/push/merge boundaries are scoped to this task and retained here. No new durable preferences or terminology require scaffold writes; workspace sync was omitted to honor the explicit no-push instruction.
+
+## Follow-up: bank unchanged
+
+The original renderer edit changed the public bank identity and would reset Danny's bank approval from 2026-10-05. This follow-up supersedes the earlier "Bank identity fixture" paragraph: restored `render-ranked.cjs` and `fixtures/bench-bank-sha256.txt` exactly with `git checkout main -- <paths>`. The public bank hash is again `4294cac621bba4ba6738928d4e0eaf8d18b92e1d67c26ef37f92a9901ad64a29`, equal to main's committed fixture. The bank's parent-walk fallback is untouched.
+
+`bench_engine.ranked_render_env()` copies the parent environment and, when `DANNY_BROWSER_SMOKE_DIR/node_modules` exists, prepends its absolute path to the renderer child's `NODE_PATH`, preserving existing entries. The only production launcher of `render-ranked.cjs` supplies this environment. The real-render skip probe uses the same helper. Full-scope preflight mirrors this environment setup, restores its prior `NODE_PATH` in `finally`, and probes normal Playwright require before the existing parent walk. README describes the dependency directory. The preflight fixture deliberately has no `smoke.mjs`, proving external resolution uses `NODE_PATH`.
+
+All fake-renderer changes from 4458be6 remain. `test_baseline_fixture_and_empty_private` already asserts the public bank hash equals the committed fixture; it is retained without another regression test.
+
+| Claim/change | Action | Exact check | Evidence |
+| --- | --- | --- | --- |
+| Bank and fixture unchanged from main | Restore both files | `python -c` imports `review`, prints `bank_hash(public_tasks)` and fixture, asserts equality; fixture diff against main | Both hashes equal `4294cac621bba4ba6738928d4e0eaf8d18b92e1d67c26ef37f92a9901ad64a29`; fixture diff empty |
+| No task-bank changes | Compare complete bank | `git diff main --stat -- scripts/model-router/bench/tasks` | Empty output |
+| Preflight follows external Node resolution | Run synthetic preflight checks | `pwsh -NoProfile -File scripts/tests/test-test-preflight.ps1` | Exit 0; all seven PASS assertions |
+| Child environment preserves existing search paths | Python stdin snippet with temporary Node package and mocked renderer subprocess | Verify external require, prefix order, unchanged parent environment, absent variable/directory, and actual launcher env argument | PASS; no browser launched |
+| Edited Python syntax valid | Parse both changed Python files | `python -c` with `ast.parse` on `bench_engine.py` and `test_bench_ranked.py` | Passed |
+| Diff formatting valid | Check patch | `git diff --check` | Passed |
+| Real-browser suite | Respect process-command constraint | No Python suite or real Chromium launch | Not run; runtime validation above uses a synthetic Node package |
+
+Session audit: the approval-preservation correction is captured in this report and the existing fixture regression; remaining constraints are session-only. No scaffold writes or workspace sync. No version bumps, push, or merge. No launched process command line contains the forbidden test-runner text.

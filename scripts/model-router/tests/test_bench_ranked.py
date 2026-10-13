@@ -297,11 +297,6 @@ const harness = path.resolve(process.argv[1]);
 function chromium() {
   try { return createRequire(path.join(harness, 'render-ranked.cjs'))('playwright').chromium; }
   catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
-  if (process.env.DANNY_BROWSER_SMOKE_DIR) {
-    const smoke = path.resolve(process.env.DANNY_BROWSER_SMOKE_DIR, 'smoke.mjs');
-    if (!fs.existsSync(smoke)) throw new Error('smoke.mjs missing');
-    return createRequire(smoke)('playwright').chromium;
-  }
   for (let root = harness; ; root = path.dirname(root)) {
     const smoke = path.join(root, '00_Resources', 'tools', 'browser-smoke', 'smoke.mjs');
     if (fs.existsSync(smoke)) return createRequire(smoke)('playwright').chromium;
@@ -315,7 +310,7 @@ try {
     fix = 'set DANNY_BROWSER_SMOKE_DIR to installed browser-smoke, or install its Playwright Chromium'
     try:
         resolved = subprocess.run(['node', '-e', probe, str(harness)],
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10, env=engine.ranked_render_env())
     except (OSError, subprocess.SubprocessError) as error:
         pytest.skip(f'Ranked renderer Chromium cannot be resolved: {error}; {fix}')
     if resolved.returncode != 0:

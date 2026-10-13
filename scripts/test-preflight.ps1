@@ -97,8 +97,8 @@ print(json.dumps(missing))
         "UI harness node_modules missing; fix: $NpmCommand"
     }
     if ($Scope -eq 'full' -and $Node) {
-        # Mirror render-ranked.cjs: harness-local Playwright, explicit smoke folder,
-        # then workspace parents. Resolving a package alone does not prove Chromium exists.
+        # Mirror the engine child environment: external node_modules via NODE_PATH,
+        # then the renderer's normal require and workspace-parent fallback.
         $ChromiumProbe = @'
 const fs = require('node:fs'), path = require('node:path');
 const {createRequire} = require('node:module');
@@ -106,11 +106,6 @@ const harness = path.resolve(process.argv[1]);
 function chromium() {
   try { return createRequire(path.join(harness, 'render-ranked.cjs'))('playwright').chromium; }
   catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
-  if (process.env.DANNY_BROWSER_SMOKE_DIR) {
-    const smoke = path.resolve(process.env.DANNY_BROWSER_SMOKE_DIR, 'smoke.mjs');
-    if (!fs.existsSync(smoke)) throw new Error('smoke.mjs missing');
-    return createRequire(smoke)('playwright').chromium;
-  }
   for (let root = harness; ; root = path.dirname(root)) {
     const smoke = path.join(root, '00_Resources', 'tools', 'browser-smoke', 'smoke.mjs');
     if (fs.existsSync(smoke)) return createRequire(smoke)('playwright').chromium;
@@ -121,7 +116,19 @@ try {
   if (!fs.existsSync(chromium().executablePath())) throw new Error('Chromium executable missing');
 } catch (error) { console.error(error.message); process.exitCode = 1; }
 '@
-        $null = & $Node.Source -e $ChromiumProbe $Harness 2>$null
+        $PriorNodePath = $env:NODE_PATH
+        try {
+            if ($env:DANNY_BROWSER_SMOKE_DIR) {
+                $ModulesPath = Join-Path ([IO.Path]::GetFullPath($env:DANNY_BROWSER_SMOKE_DIR)) 'node_modules'
+                if (Test-Path -LiteralPath $ModulesPath -PathType Container) {
+                    $env:NODE_PATH = $ModulesPath
+                    if ($PriorNodePath) { $env:NODE_PATH += [IO.Path]::PathSeparator + $PriorNodePath }
+                }
+            }
+            $null = & $Node.Source -e $ChromiumProbe $Harness 2>$null
+        } finally {
+            $env:NODE_PATH = $PriorNodePath
+        }
         if ($LASTEXITCODE -ne 0) {
             'Ranked renderer Chromium unavailable; fix: set DANNY_BROWSER_SMOKE_DIR to an installed browser-smoke folder, or run npm ci and npx playwright install chromium in that folder.'
         }

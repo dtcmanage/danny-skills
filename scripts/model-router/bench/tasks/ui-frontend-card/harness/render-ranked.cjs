@@ -5,24 +5,14 @@ const path = require('node:path');
 const {createRequire} = require('node:module');
 
 function chromium() {
-  const unavailable = 'Installed browser-smoke Chromium unavailable: set DANNY_BROWSER_SMOKE_DIR '
-    + 'to a directory containing smoke.mjs, or install browser-smoke under '
-    + '00_Resources/tools/browser-smoke in a parent directory';
-  try {
-    try { return require('playwright').chromium; } catch (error) {
-      if (error.code !== 'MODULE_NOT_FOUND') throw error;
-    }
-    if (process.env.DANNY_BROWSER_SMOKE_DIR) {
-      const smoke = path.resolve(process.env.DANNY_BROWSER_SMOKE_DIR, 'smoke.mjs');
-      if (!fs.existsSync(smoke)) throw new Error('smoke.mjs missing: ' + smoke);
-      return createRequire(smoke)('playwright').chromium;
-    }
-    for (let root = __dirname; ; root = path.dirname(root)) {
-      const smoke = path.join(root, '00_Resources', 'tools', 'browser-smoke', 'smoke.mjs');
-      if (fs.existsSync(smoke)) return createRequire(smoke)('playwright').chromium;
-      if (path.dirname(root) === root) throw new Error('No parent browser-smoke folder found');
-    }
-  } catch (error) { throw new Error(unavailable + ': ' + error.message); }
+  try { return require('playwright').chromium; } catch (error) {
+    if (error.code !== 'MODULE_NOT_FOUND') throw error;
+  }
+  for (let root = __dirname; ; root = path.dirname(root)) {
+    const smoke = path.join(root, '00_Resources', 'tools', 'browser-smoke', 'smoke.mjs');
+    if (fs.existsSync(smoke)) return createRequire(smoke)('playwright').chromium;
+    if (path.dirname(root) === root) throw new Error('Installed browser-smoke Chromium unavailable');
+  }
 }
 
 async function main() {
