@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.38.2
+
+- Worker standing rules: run the full named test selection without early-stop flags, classify and fix every failure per round; the two-attempt limit counts rounds, not failing tests (FS-60).
+
 ## 2.38.1
 
 - Review-input guidance moved from SKILL.md into references/subagent-prompts.md to keep SKILL.md within its word cap (FS-56 follow-up).
