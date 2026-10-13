@@ -169,16 +169,17 @@ try {
         foreach ($a in @($spec.argument_list)) { $psi.ArgumentList.Add([string]$a) }
     }
 
-    # Explicit pytest test jobs and commands share the machine lock, even
-    # when the command launches a shell or a nested grader.
+    # Only a caller-documented suite opts into serialization.
     $pytestReadyFile = $null
-    . (Join-Path $DtJobRepoRoot 'scripts/pytest-command.ps1')
-    if (Test-DannyPytestCommand -Command ([string]$spec.command) -Executable ([string]$spec.script_path) -ArgumentList @($spec.argument_list)) {
+    $exclusiveReason = if ($spec.PSObject.Properties['exclusive_reason'] -and $spec.exclusive_reason -is [string]) { $spec.exclusive_reason } else { $null }
+    if (-not [string]::IsNullOrWhiteSpace($exclusiveReason)) {
         $testExe = $psi.FileName
         $testArgs = @($psi.ArgumentList)
         $psi.ArgumentList.Clear()
         $psi.FileName = (Get-Command python -CommandType Application | Select-Object -First 1).Source
         $psi.ArgumentList.Add((Join-Path $DtJobRepoRoot 'scripts/pytest-lock.py'))
+        $psi.ArgumentList.Add('--reason')
+        $psi.ArgumentList.Add($exclusiveReason)
         $pytestReadyFile = Join-Path $jobDir ('pytest-ready-' + [guid]::NewGuid().ToString('N'))
         $psi.ArgumentList.Add('--ready-file')
         $psi.ArgumentList.Add($pytestReadyFile)

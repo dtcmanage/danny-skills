@@ -71,7 +71,10 @@ function Parse-MarkdownTableRows {
     $rows = @()
     for ($i = 2; $i -lt $lines.Count; $i++) {
         $cells = ($lines[$i] -split '\|') | ForEach-Object { $_.Trim() }
-        $cells = @($cells | Where-Object { $_ -ne '' })
+        # Preserve empty optional cells (including exclusive_reason); discard
+        # only the table's leading and trailing delimiters.
+        $cells = @($cells | Select-Object -Skip 1)
+        if ($lines[$i].TrimEnd().EndsWith('|')) { $cells = @($cells | Select-Object -SkipLast 1) }
         if ($cells.Count -eq 0) { continue }
         if ($cells.Count -lt $headerCells.Count) { continue }
         $row = [ordered]@{}
@@ -190,19 +193,19 @@ function Remove-TempFileQuietly {
 }
 
 function Invoke-NamedCommand {
-    param([string]$WorkingTree, [string]$Command, [int]$TimeoutMs)
+    param([string]$WorkingTree, [string]$Command, [int]$TimeoutMs, [string]$ExclusiveReason)
     # Redirect to files instead of synchronously draining stdout and then stderr.
     # Sequential pipe reads can deadlock when both buffers fill (observed with a
     # high-volume Vitest run). File redirection also keeps the retained JSON small.
     $effectiveCommand = Normalize-Command -Command $Command
     $lockReady = $null
-    . (Join-Path $PSScriptRoot '../../../scripts/pytest-command.ps1')
-    if (Test-DannyPytestCommand -Command $effectiveCommand) {
+    if (-not [string]::IsNullOrWhiteSpace($ExclusiveReason)) {
         $lockPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../scripts/pytest-lock.ps1')).Replace("'", "''")
         $lockReady = Join-Path ([IO.Path]::GetTempPath()) ('pytest-ready-' + [guid]::NewGuid().ToString('N'))
         $readyQuoted = $lockReady.Replace("'", "''")
+        $reasonQuoted = $ExclusiveReason.Replace("'", "''")
         $testEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($effectiveCommand))
-        $effectiveCommand = "& '$lockPath' -ReadyFile '$readyQuoted' pwsh -NoProfile -EncodedCommand $testEncoded; exit `$LASTEXITCODE"
+        $effectiveCommand = "& '$lockPath' -Reason '$reasonQuoted' -ReadyFile '$readyQuoted' pwsh -NoProfile -EncodedCommand $testEncoded; exit `$LASTEXITCODE"
     }
     $stdoutFile = [System.IO.Path]::GetTempFileName()
     $stderrFile = [System.IO.Path]::GetTempFileName()
@@ -241,6 +244,7 @@ function Invoke-NamedCommand {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         return [pscustomobject]@{
             command            = $Command
+            exclusive_reason   = $ExclusiveReason
             effective_command  = $effectiveCommand
             exit_code          = $exitCode
             timed_out          = $timedOut
@@ -330,6 +334,7 @@ foreach ($m in $acceptancePresence.missing) {
 foreach ($vRow in $matchingVerificationRows) {
     $checkId = [string]$vRow.'check-id'
     $procedureText = [string]$vRow.procedure
+    $exclusiveReason = if ($vRow.PSObject.Properties['exclusive_reason'] -and $vRow.exclusive_reason -is [string]) { $vRow.exclusive_reason } else { $null }
     $procedureTexts.Add($procedureText) | Out-Null
 
     $extracted = Extract-NamedArtifacts -Text $procedureText
@@ -352,7 +357,7 @@ foreach ($vRow in $matchingVerificationRows) {
         } else {
             $anyFailedHere = $false
             foreach ($cmd in $checkCommands) {
-                $r = Invoke-NamedCommand -WorkingTree $WorkingTree -Command $cmd -TimeoutMs $CommandTimeoutMs
+                $r = Invoke-NamedCommand -WorkingTree $WorkingTree -Command $cmd -TimeoutMs $CommandTimeoutMs -ExclusiveReason $exclusiveReason
                 $r | Add-Member -NotePropertyName "check_id" -NotePropertyValue $checkId -Force
                 $checkCommandResults += $r
                 $allCommandResults.Add($r) | Out-Null

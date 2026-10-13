@@ -7,7 +7,6 @@ This is an accident guard, not filesystem containment under the local account.
 from __future__ import annotations
 
 import json
-import importlib.util
 import math
 import os
 from pathlib import Path
@@ -37,17 +36,6 @@ def rubric_score(rubric: dict[str, Any], result: dict[str, Any]) -> float:
 
 
 def grade_python(task: Path, answer: Path) -> bool:
-    helper = Path(os.environ.get('DANNY_PYTEST_HELPER', str(Path(__file__).resolve().parents[3] / 'pytest-lock.py')))
-    spec = importlib.util.spec_from_file_location('grading_pytest_lock', helper)
-    shared_lock = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(shared_lock)
-    # Direct task graders also wait before their execution timeout. Copy the
-    # acquired ownership into the child environment inside this context.
-    with shared_lock.pytest_lock():
-        return _grade_python(task, answer, helper)
-
-
-def _grade_python(task: Path, answer: Path, helper: Path) -> bool:
     with tempfile.TemporaryDirectory(prefix="router-bench-") as name:
         work = Path(name)
         shutil.copyfile(answer, work / "answer.py")
@@ -80,17 +68,9 @@ def _grade_python(task: Path, answer: Path, helper: Path) -> bool:
         with tempfile.TemporaryDirectory(prefix="router-pytest-result-") as directory:
             report = Path(directory) / "results.xml"
             pytest_args = ["-q", "test_hidden.py", "--junitxml=" + str(report)]
-            # grade_python already owns (or verified its ancestor's) explicit
-            # lock. Launch the sealed pytest directly, with no guard plugin/path.
-            spec = importlib.util.spec_from_file_location('grading_child_environment', helper)
-            shared_lock = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(shared_lock)
             proc = subprocess.run([sys.executable, "-c", "import pytest; raise SystemExit(pytest.main("
                                    + repr(pytest_args) + "))"],
-                                  cwd=work, env=shared_lock.sealed_environment(env), capture_output=True, timeout=30)
-            if proc.returncode:
-                print('PYTEST_GRADER_FAILURE:', proc.returncode,
-                      (proc.stdout + proc.stderr).decode('utf-8', errors='replace')[-4000:])
+                                  cwd=work, env=env, capture_output=True, timeout=30)
             try:
                 cases = list(ET.parse(report).getroot().iter("testcase"))
                 return (proc.returncode == 0 and bool(cases)

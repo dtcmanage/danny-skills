@@ -224,8 +224,7 @@ def test_repo_dependency_preflight_is_environment(tmp_path: Path) -> None:
                                   'routine-coding-endpoint', 'complex-coding-ledger'])
 def test_real_graders(task: str) -> None:
     directory = BENCH / 'tasks' / task
-    outcome = engine.grade_answer(directory, (directory / 'known-good.txt').read_text(encoding='utf-8'))
-    assert outcome['status'] == 'pass', outcome
+    assert engine.grade_answer(directory, (directory / 'known-good.txt').read_text(encoding='utf-8'))['status'] == 'pass'
     assert engine.grade_answer(directory, (directory / 'known-bad.txt').read_text(encoding='utf-8'))['status'] == 'fail'
 
 
@@ -360,8 +359,7 @@ def test_executable_python_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
              "    try: operation()\n"
              "    except RuntimeError: pass\n"
              "    else: raise AssertionError('network allowed')\n")
-    outcome = engine.grade_answer(task, guard + good)
-    assert outcome['status'] == 'pass', outcome
+    assert engine.grade_answer(task, guard + good)['status'] == 'pass'
 
 
 def test_real_ui_boundary(monkeypatch: pytest.MonkeyPatch) -> None:

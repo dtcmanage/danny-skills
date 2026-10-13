@@ -10,7 +10,6 @@ import tempfile
 import time
 import unittest
 from unittest import mock
-import threading
 
 HELPER = Path(__file__).resolve().parents[1] / 'pytest-lock.py'
 spec = importlib.util.spec_from_file_location('pytest_lock', HELPER)
@@ -19,6 +18,28 @@ spec.loader.exec_module(lock)
 
 
 class LockTests(unittest.TestCase):
+    def test_reason_required(self):
+        for args in ([], ['--reason'], ['--reason', ''], ['--reason', '   ']):
+            result = subprocess.run([sys.executable, str(HELPER), *args, '--',
+                                     sys.executable, '-c', "raise AssertionError('must not run')"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('EXCLUSIVE_REASON_REQUIRED', result.stderr)
+        with self.assertRaisesRegex(ValueError, 'EXCLUSIVE_REASON_REQUIRED'):
+            with lock.pytest_lock():
+                self.fail('must not acquire')
+
+    def test_wait_reports_reason_and_holder(self):
+        self.holder()
+        with self.assertRaises(TimeoutError), mock.patch.object(lock.sys, 'stderr') as error:
+            with lock.pytest_lock(timeout=0, reason='caller suite: fixture contention; workaround tested'):
+                self.fail('must wait')
+        diagnostic = ''.join(str(call.args[0]) for call in error.write.call_args_list)
+        self.assertIn('caller suite', diagnostic)
+        self.assertIn('holder=', diagnostic)
+        self.assertIn('exclusive_reason', diagnostic)
+        self.assertIn('lock fixtures', diagnostic)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.marker = Path(self.temp.name) / 'held'
@@ -52,7 +73,7 @@ class LockTests(unittest.TestCase):
         error_path = Path(self.temp.name) / 'holder.stderr.log'
         error = error_path.open('w')
         self.stderr_files.append(error)
-        child = subprocess.Popen([sys.executable, str(HELPER), '--', sys.executable, '-c', code],
+        child = subprocess.Popen([sys.executable, str(HELPER), '--reason', 'lock fixtures: deliberate contention; separate temp paths cannot test shared ownership', '--', sys.executable, '-c', code],
                                  stdout=subprocess.DEVNULL, stderr=error)
         self.children.append(child)
         deadline = time.monotonic() + 20
@@ -69,7 +90,7 @@ class LockTests(unittest.TestCase):
 
     def caller(self, timeout=15, code='pass', env=None, ready=None, stderr=subprocess.DEVNULL):
         args = ['--ready-file', str(ready)] if ready is not None else []
-        return subprocess.Popen([sys.executable, str(HELPER), '--timeout', str(timeout), *args, '--',
+        return subprocess.Popen([sys.executable, str(HELPER), '--reason', 'lock fixtures: deliberate contention; separate temp paths cannot test shared ownership', '--timeout', str(timeout), *args, '--',
                                  sys.executable, '-c', code], stdout=subprocess.DEVNULL,
                                 stderr=stderr, env=env)
 
@@ -106,11 +127,11 @@ class LockTests(unittest.TestCase):
         self.assertTrue(lock.actual_pytest(dict(Name='pytest.exe', CommandLine='"C:/tools/pytest.exe"')))
         self.assertFalse(lock.actual_pytest(dict(Name='pwsh.exe', CommandLine='Get-CimInstance Win32_Process pytest')))
         self.assertFalse(lock.actual_pytest(dict(Name='python.exe', CommandLine='python scripts/pytest-lock.py -- python -m pytest')))
-        for entry in ([sys.executable, str(HELPER), '--timeout', '1', '--'],
-                      ['pwsh', '-NoProfile', '-File', str(HELPER.with_suffix('.ps1')), '-TimeoutSec', '1'],
+        for entry in ([sys.executable, str(HELPER), '--reason', 'lock fixtures: deliberate contention; separate temp paths cannot test shared ownership', '--timeout', '1', '--'],
+                      ['pwsh', '-NoProfile', '-File', str(HELPER.with_suffix('.ps1')), '-Reason', 'nested argv fixture: inherited ownership must avoid deadlock; isolated locks cannot test reuse', '-TimeoutSec', '1'],
                       ['pwsh', '-NoProfile', '-CommandWithArgs',
                        '& $args[0] @($args | Select-Object -Skip 1); exit $LASTEXITCODE',
-                       str(HELPER.with_suffix('.ps1')), '-TimeoutSec', '1']):
+                       str(HELPER.with_suffix('.ps1')), '-Reason', 'nested argv fixture: inherited ownership must avoid deadlock; isolated locks cannot test reuse', '-TimeoutSec', '1']):
             argv = Path(self.temp.name) / 'argv.json'
             command = entry + [sys.executable, '-c',
                               f'import sys,json; from pathlib import Path; Path({str(argv)!r}).write_text(json.dumps(sys.argv[1:]))',
@@ -128,20 +149,6 @@ class LockTests(unittest.TestCase):
                 lock.processes()
             self.assertEqual(run.call_args.kwargs['timeout'], 10)
 
-    def test_guard_mode_uses_only_native_queries(self):
-        with mock.patch.object(lock, 'processes', side_effect=AssertionError('legacy inventory in guard')), \
-             mock.patch.object(lock.subprocess, 'Popen', side_effect=AssertionError('child in guard')):
-            identity = lock.process_identity(os.getpid())
-            self.assertIsNotNone(identity)
-            self.assertEqual(lock.process_identity(os.getpid()), identity)
-            self.assertIn(os.getpid(), lock.ancestors(lock.family_processes()))
-            with lock.pytest_lock(inventory=False):
-                holder = json.loads(lock.STATUS.read_text())
-                self.assertEqual(holder['process_start'], identity)
-                self.assertTrue(holder['admitted'])
-                self.assertEqual(holder['token'], os.environ['DANNY_PYTEST_OWNER'])
-            self.assertEqual(json.loads(lock.STATUS.read_text())['state'], 'released')
-
     def test_waiter_identity_and_python_manager(self):
         rows = [dict(ProcessId=1, ParentProcessId=0, CreationDate='parent', Name='python.exe', CommandLine='python -m pytest same.py'),
                 dict(ProcessId=2, ParentProcessId=1, CreationDate='child', Name='python.exe', CommandLine='runtime -m pytest same.py'),
@@ -150,51 +157,6 @@ class LockTests(unittest.TestCase):
         self.assertEqual(lock.waiting_pytest_pids(rows, {(2, 'stale')}), set())
         rows[0]['CommandLine'] = 'python -m pytest parent.py'
         self.assertEqual(lock.waiting_pytest_pids(rows, {(2, 'child')}), {2})
-
-    def grade_behind_holder(self, task, answer, timeout=8):
-        self.holder()
-        bench = HELPER.parent / 'model-router/bench'
-        ready = Path(self.temp.name) / 'grading-ready'
-        code = (f'import sys,json; from pathlib import Path; sys.path.insert(0,{str(bench)!r}); '
-                f'import bench_engine; Path({str(ready)!r}).touch(); '
-                f'print(json.dumps(bench_engine.grade_answer(Path({str(task)!r}),{answer!r},timeout={timeout})))')
-        child = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True)
-        self.children.append(child)
-        deadline = time.monotonic() + 15
-        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
-            time.sleep(.05)
-        self.assertTrue(ready.exists(), 'grading child must reach engine before the delayed release')
-        # Waiting exceeds the candidate's entire execution budget.
-        started = time.monotonic()
-        release = threading.Timer(timeout + 4, self.release.touch)
-        release.start()
-        try:
-            # Admission has its own bounded 1800s wait; it is not candidate
-            # execution. An unrelated legacy suite may start after preflight.
-            stdout, stderr = child.communicate(timeout=1800 + timeout + 15)
-        except subprocess.TimeoutExpired as error:
-            print('CONTENTION_TIMEOUT_DIAGNOSTICS:', repr(error.stdout), repr(error.stderr), flush=True)
-            raise
-        finally:
-            release.cancel()
-            self.release.touch()
-        self.assertEqual(child.returncode, 0, stderr)
-        outcome = json.loads(stdout.splitlines()[-1])
-        print('CONTENTION_OUTCOME:', json.dumps(dict(outcome=outcome, diagnostics=stderr,
-              elapsed_seconds=round(time.monotonic() - started, 2))), flush=True)
-        self.assertIn('PYTEST_LOCK waiting:', stderr)
-        self.assertGreaterEqual(time.monotonic() - started, timeout + 4)
-        return outcome
-
-    def test_grader_budget_starts_after_lock_release(self):
-        # Isolate admission timing from variable FastAPI/golden suite startup.
-        task = Path(self.temp.name) / 'bench-private-bank/quick-candidate'
-        task.mkdir(parents=True)
-        (task / 'task.json').write_text(json.dumps(dict(grader='pytest', solution_file='solution.py')))
-        (task / 'hidden_tests.py').write_text('import solution\ndef test_fixture(): assert solution.value == 42\n')
-        outcome = self.grade_behind_holder(task, 'value = 42\n')
-        self.assertEqual(outcome['status'], 'pass', outcome)
 
     def test_stdlib_eastern_fallback(self):
         from datetime import datetime, timezone
@@ -207,18 +169,7 @@ class LockTests(unittest.TestCase):
                                    ('2026-11-01T06:00:00', '01:00:00-05:00')]:
                 self.assertTrue(lock.eastern_time(datetime.fromisoformat(date).replace(tzinfo=timezone.utc)).endswith(expected + ' ET'))
 
-    def test_private_candidate_timeout_after_lock_release(self):
-        task = Path(self.temp.name) / 'bench-private-bank/delayed-candidate'
-        task.mkdir(parents=True)
-        (task / 'task.json').write_text(json.dumps(dict(grader='pytest', solution_file='solution.py')))
-        (task / 'hidden_tests.py').write_text('import solution\ndef test_fixture(): assert True\n')
-        outcome = self.grade_behind_holder(task, 'import time\ntime.sleep(60)\n')
-        self.assertEqual(outcome['status'], 'fail', outcome)
-        self.assertEqual(outcome['detail'], 'Candidate timed out', outcome)
 
 
 if __name__ == '__main__':
-    # Do not begin contention fixtures while somebody else's actual pytest runs.
-    with lock.pytest_lock():
-        pass
     unittest.main()

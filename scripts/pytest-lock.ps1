@@ -10,14 +10,20 @@ if ($forward.Count -eq 1 -and $forward[0] -is [array]) {
 }
 $lockWaitSec = 1800
 $readyFile = $null
-while ($forward.Count -ge 2 -and $forward[0] -in @('-TimeoutSec', '--timeout', '-ReadyFile', '--ready-file')) {
+$reason = $null
+while ($forward.Count -ge 2 -and $forward[0] -in @('-TimeoutSec', '--timeout', '-ReadyFile', '--ready-file', '-Reason', '--reason')) {
     if ($forward[0] -in @('-TimeoutSec','--timeout')) { $lockWaitSec = [int]$forward[1] }
+    elseif ($forward[0] -in @('-Reason','--reason')) { $reason = [string]$forward[1] }
     else { $readyFile = [string]$forward[1] }
     $forward = @($forward | Select-Object -Skip 2)
 }
+if ([string]::IsNullOrWhiteSpace($reason)) {
+    [Console]::Error.WriteLine('EXCLUSIVE_REASON_REQUIRED: name the suite, overlap evidence and attempted workaround.')
+    exit 2
+}
 if ($forward.Count -eq 0) { throw 'PYTEST_LOCK_USAGE: supply an executable and its arguments.' }
 # All callers use the same Python OS lock, including Git Bash and sandbox children.
-$lockArgs = @('--timeout', [string]$lockWaitSec)
+$lockArgs = @('--timeout', [string]$lockWaitSec, '--reason', $reason)
 if ($readyFile) { $lockArgs += @('--ready-file', $readyFile) }
 & python (Join-Path $PSScriptRoot 'pytest-lock.py') @lockArgs -- @forward
 exit $LASTEXITCODE

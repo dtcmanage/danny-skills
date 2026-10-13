@@ -75,7 +75,7 @@ try {
         $stderr = Join-Path $evidence ($name + '.stderr.log')
         $unexpectedAlert = Join-Path $sandbox 'unexpected-alert.log'
         $process = [Diagnostics.Process]::new()
-        $outFile = $null; $errFile = $null; $timedOut = $false; $lockTimedOut = $false; $exitCode = -1
+        $outFile = $null; $errFile = $null; $timedOut = $false; $exitCode = -1
         $failure = $null; $started = $false
         Write-Output "RUN: $suite (timeout ${SuiteTimeoutSeconds}s)"
         try {
@@ -103,9 +103,8 @@ try {
             $info.Environment['PYTHONDONTWRITEBYTECODE'] = '1'
             $info.Environment['PYTEST_DISABLE_PLUGIN_AUTOLOAD'] = '1'
             # Never alter HOME or LOCALAPPDATA (Windows Python manager shim).
-            $lockReady = Join-Path $sandbox 'pytest-lock-ready'
             $arguments = if ($python) {
-                @((Join-Path $repo 'scripts/pytest-lock.py'),'--ready-file',$lockReady,'--',$exe,'-B','-m','pytest',$suite,'-q','-p','no:cacheprovider','--basetemp',(Join-Path $sandbox 'pytest'))
+                @('-B','-m','pytest',$suite,'-q','-p','no:cacheprovider','--basetemp',(Join-Path $sandbox 'pytest'))
             } else {
                 @('-NoProfile','-NonInteractive','-File',$wrapper,'-Fixture',(Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1'),'-Suite',(Join-Path $repo $suite))
             }
@@ -117,17 +116,6 @@ try {
             $started = $true
             $outCopy = $process.StandardOutput.BaseStream.CopyToAsync($outFile)
             $errCopy = $process.StandardError.BaseStream.CopyToAsync($errFile)
-            if ($python) {
-                $lockDeadline = [DateTime]::UtcNow.AddSeconds(1820)
-                while (-not $process.HasExited -and -not (Test-Path -LiteralPath $lockReady)) {
-                    if ([DateTime]::UtcNow -ge $lockDeadline) {
-                        $lockTimedOut = $true
-                        throw 'PYTEST_LOCK_WAIT_TIMEOUT: see holder diagnostics in stderr.'
-                    }
-                    Start-Sleep -Milliseconds 100
-                }
-            }
-            # The suite's execution budget starts only after machine admission.
             if (-not $process.WaitForExit($SuiteTimeoutSeconds * 1000)) {
                 $timedOut = $true; $process.Kill($true)
                 if (-not $process.WaitForExit(10000)) { throw 'Child tree did not exit after termination.' }
@@ -152,7 +140,7 @@ try {
         $ok = $exitCode -eq 0 -and -not $timedOut -and -not $failure -and $null -ne $count -and $count -gt 0 -and -not (Test-Path -LiteralPath $unexpectedAlert)
         if ($output -match '(?m)^SUMMARY: .*\b[1-9]\d* failed' -or ($suite.EndsWith('.py') -and $output -match '\b[1-9]\d* failed\b')) { $ok = $false }
         $status = if ($ok) { 'PASS' } else { 'FAIL' }
-        $results.Add([pscustomobject]@{ suite=$suite; status=$status; passed=$count; exit_code=$exitCode; timed_out=$timedOut; lock_timed_out=$lockTimedOut; error=$failure; stdout=$stdout; stderr=$stderr })
+        $results.Add([pscustomobject]@{ suite=$suite; status=$status; passed=$count; exit_code=$exitCode; timed_out=$timedOut; error=$failure; stdout=$stdout; stderr=$stderr })
         Write-Output "${status}: $suite; passed=$count; exit=$exitCode; timed_out=$timedOut"
         # Keep every warning visible, with full output retained in evidence logs.
         $output -split "`n" | Where-Object { $_ -match 'WARNING:|^WARN:' } | ForEach-Object { Write-Output $_ }

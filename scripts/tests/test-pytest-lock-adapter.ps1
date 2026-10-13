@@ -39,45 +39,43 @@ exit ([int]$env:FS58_CHILD_EXIT)
     $inline = '& $args[0] @($args | Select-Object -Skip 1); exit $LASTEXITCODE'
     $splat = '$target=$args[0]; $tail=@($args | Select-Object -Skip 1); & $target @tail; exit $LASTEXITCODE'
     $childArgs = @('pwsh', '-c', 'exit 0', '-v', '-q', 'path with spaces', 'literal $() and `ticks')
+    $reason = 'argv suite: deliberate shared lock; separate paths cannot test nested forwarding'
     $ready = Join-Path $fixture 'ready with spaces'
     foreach ($entry in @('File', 'InlineArray', 'VariableSplat')) {
         if ($entry -eq 'File') {
-            & $pwsh -NoProfile -File $adapter -TimeoutSec 1 -ReadyFile $ready @childArgs
+            & $pwsh -NoProfile -File $adapter -TimeoutSec 1 -Reason $reason -ReadyFile $ready @childArgs
         } else {
             $wrapper = if ($entry -eq 'InlineArray') { $inline } else { $splat }
-            & $pwsh -NoProfile -CommandWithArgs $wrapper $adapter -TimeoutSec 1 -ReadyFile $ready @childArgs
+            & $pwsh -NoProfile -CommandWithArgs $wrapper $adapter -TimeoutSec 1 -Reason $reason -ReadyFile $ready @childArgs
         }
         Assert-True ($LASTEXITCODE -eq 0) "$entry exits successfully without starting Python"
         $actual = Read-Argv
         # The PowerShell script shim consumes native '--' as end-of-parameters.
-        $expected = @((Join-Path (Split-Path $adapter) 'pytest-lock.py'), '--timeout', '1', '--ready-file', $ready) + $childArgs
+        $expected = @((Join-Path (Split-Path $adapter) 'pytest-lock.py'), '--timeout', '1', '--reason', $reason, '--ready-file', $ready) + $childArgs
         Assert-True (($actual | ConvertTo-Json -Compress) -ceq ($expected | ConvertTo-Json -Compress)) "$entry preserves options, flags and literal argv"
         Write-Output "PASS: $entry forwards timeout=1 and $($childArgs.Count) intact child arguments"
     }
-    & $pwsh -NoProfile -CommandWithArgs $inline $adapter @childArgs
+    & $pwsh -NoProfile -CommandWithArgs $inline $adapter -Reason $reason @childArgs
     $actual = Read-Argv
     Assert-True ($LASTEXITCODE -eq 0 -and $actual[2] -eq '1800') 'default lock wait survives inline-array forwarding'
     $env:FS58_CHILD_EXIT = '7'
-    & $pwsh -NoProfile -File $adapter @childArgs
+    & $pwsh -NoProfile -File $adapter -Reason $reason @childArgs
     Assert-True ($LASTEXITCODE -eq 7) 'adapter retains child failure exit code'
     $env:FS58_CHILD_EXIT = '0'
 
-    # Reproduce the WIP defect using only the old adapter and the same shim.
-    $legacy = Join-Path $fixture 'legacy.ps1'
-    $source = Get-Content -LiteralPath $adapter -Raw
-    $source = $source -replace '(?s)if \(\$forward.Count -eq 1 -and \$forward\[0\] -is \[array\]\) \{.*?\r?\n\}', ''
-    [IO.File]::WriteAllText($legacy, $source)
-    & $pwsh -NoProfile -CommandWithArgs $inline $legacy -TimeoutSec 1 @childArgs
-    $actual = Read-Argv
-    Assert-True ($LASTEXITCODE -eq 1 -and $actual[2] -eq '1800' -and $actual[3] -is [array]) 'old adapter reproducibly misses timeout and forwards one nested array (exit 1)'
-    # Native binding flattens the nested array again, but too late: the helper
-    # options have already been placed after '--' as part of the child command.
-    $nested = @(,$actual[3])
-    $nativeJson = & $pwsh -NoProfile -CommandWithArgs 'ConvertTo-Json -InputObject @($args) -Compress' @nested
-    $nativeArgv = @($nativeJson | ConvertFrom-Json)
-    Assert-True ($LASTEXITCODE -eq 0 -and $nativeArgv[0] -eq '-TimeoutSec' -and
-        ($nativeArgv | ConvertTo-Json -Compress) -ceq ($actual[3] | ConvertTo-Json -Compress)) 'native boundary flattens argv but leaves -TimeoutSec as the attempted executable'
-    Write-Output 'REPRODUCED: WIP CommandWithArgs inline-array failure; File and variable-splat forms preserve argv'
+    foreach ($entry in @('File','InlineArray','VariableSplat')) {
+        foreach ($reasonArgs in @(@(), @('-Reason',''), @('-Reason','   '))) {
+            Remove-Item -LiteralPath $env:FS58_ARGV_CAPTURE -ErrorAction SilentlyContinue
+            $output = if ($entry -eq 'File') {
+                & $pwsh -NoProfile -File $adapter @reasonArgs @childArgs 2>&1
+            } else {
+                $wrapper = if ($entry -eq 'InlineArray') { $inline } else { $splat }
+                & $pwsh -NoProfile -CommandWithArgs $wrapper $adapter @reasonArgs @childArgs 2>&1
+            }
+            Assert-True ($LASTEXITCODE -eq 2 -and ($output -join ' ') -match 'EXCLUSIVE_REASON_REQUIRED' -and -not (Test-Path $env:FS58_ARGV_CAPTURE)) "$entry requires a reason before starting any child"
+        }
+    }
+
     Write-Output "SUMMARY: $passed passed; no Python started"
 } finally {
     $env:PATH = $savedPath

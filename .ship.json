@@ -1,5 +1,5 @@
 {
-  "gateCommand": "pwsh -NoProfile -File scripts/pytest-lock.ps1 pwsh -NoProfile -File scripts/ship-gate.ps1; exit $LASTEXITCODE",
+  "gateCommand": "pwsh -NoProfile -File scripts/verify-versioning-policy.ps1 -BaseRef auto; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File scripts/test-versioning-policy.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File skills/dt-review/tests/run-tests.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File skills/dt-review/tests/run-final-draft-tests.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File skills/dt-build/scripts/tests/test-host-adapters.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File skills/dt-build/scripts/tests/test-context-guard.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File skills/dt-build/scripts/tests/test-dt-job.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File skills/dt-build/scripts/test-dt-build-regressions.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File tools/build-plugin.ps1 -BaseRef auto -ValidateOnly; if ($LASTEXITCODE -ne 0) { exit 1 }; exit 0",
   "deployCommand": "pwsh -NoProfile -File tools/build-plugin.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; pwsh -NoProfile -File scripts/verify-skill-junctions.ps1; if ($LASTEXITCODE -ne 0) { exit 1 }; exit 0",
   "deployCwd": ".",
   "prodCommitProbe": {

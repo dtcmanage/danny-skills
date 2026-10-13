@@ -9,6 +9,10 @@ param(
 
     [string]$Command,
 
+    # Optional spec field exclusive_reason; default jobs run directly.
+    # See dt-job-usage.md for policy and examples.
+    [string]$ExclusiveReason,
+
     [string]$ScriptPath,
 
     [string[]]$ArgumentList = @(),
@@ -600,6 +604,7 @@ function New-DtJobEnvelope {
     if (Test-Path -LiteralPath $blockersPath) { $evidence.blockers = $blockersPath }
 
     $envelope = [ordered]@{
+        exclusive_reason = if ($Record.PSObject.Properties['exclusive_reason']) { $Record.exclusive_reason } else { $null }
         model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $Record.job_id)
         job_id        = $Record.job_id
         status        = $Record.status
@@ -652,6 +657,7 @@ function New-DtJobRunEnvelope {
     foreach ($r in $source) {
         $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $r
         $entry = [ordered]@{ model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $r.job_id); job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)); report_verdict = $outcome.report_verdict; failure_category = $(if ($null -ne $outcome.failure_category) { Limit-DtJobLine $outcome.failure_category ([ref]$cut) } else { $null }) }
+        $entry.exclusive_reason = if ($r.PSObject.Properties['exclusive_reason']) { Limit-DtJobLine ([string]$r.exclusive_reason) ([ref]$cut) } else { $null }
         if ($r.status -eq 'running') {
             $activity = Get-DtJobActivity -RunFolder $RunFolder -Record $r
             $entry.activity = Limit-DtJobLine $activity.line ([ref]$cut)
@@ -724,7 +730,7 @@ function Invoke-DtJobStart {
     # only a stall the coordinator confirms ends a job.
     $expectedSec = $TimeoutSec
     $TimeoutSec = 0
-    $spec = [ordered]@{ command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec; environment = (Get-DtJobEnvironment -Extra $PassEnv) }
+    $spec = [ordered]@{ exclusive_reason = $ExclusiveReason; command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec; environment = (Get-DtJobEnvironment -Extra $PassEnv) }
     if ($Command) { $spec.command = $Command; $identity = $Command }
     else {
         $spec.script_path = [System.IO.Path]::GetFullPath($ScriptPath)
@@ -758,6 +764,7 @@ function Invoke-DtJobStart {
         Write-DtJobAtomic -Path (Join-Path $jobDir 'spec.json') -Content ($spec | ConvertTo-Json -Depth 4)
         $record = [ordered]@{
             job_id            = $newId
+            exclusive_reason  = $ExclusiveReason
             run_id            = $resolvedRunId
             kind              = $Kind
             category          = $Category
@@ -801,7 +808,7 @@ function Invoke-DtJobStart {
         } while ([DateTime]::UtcNow -lt $selectionDeadline)
     }
     $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $id
-    Write-DtJobOutput -Object ([pscustomobject][ordered]@{ job_id = $id; model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $id); status = $record.status; status_reason = $record.status_reason; job_file = (Join-Path $paths.Jobs "$id.json") }) -AsJson:$Json
+    Write-DtJobOutput -Object ([pscustomobject][ordered]@{ job_id = $id; exclusive_reason = $record.exclusive_reason; model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $id); status = $record.status; status_reason = $record.status_reason; job_file = (Join-Path $paths.Jobs "$id.json") }) -AsJson:$Json
 }
 
 function Get-DtJobConsumedSeq {

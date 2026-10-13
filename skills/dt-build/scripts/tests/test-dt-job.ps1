@@ -782,6 +782,42 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $wrongRepeat = & pwsh -NoProfile -File $dtJob approve -RunFolder $rf -Operation fixture-review -Json 2>&1
     Assert-True ($LASTEXITCODE -ne 0 -and ($wrongRepeat -join ' ') -match 'DT_JOB_NOT_AWAITING') 'older operation is not accepted as a repeated latest approval'
 
+    # FS-58: exercise the real unwrapped runner with a PS pytest stand-in,
+    # then inspect the opt-in runner argv without starting Python.
+    $rf = New-RunFolder 'exclusive-reason'
+    $direct = Invoke-DtJob @('start','-RunFolder',$rf,'-Kind','test','-Command', "function pytest { 'pytest direct fixture' }; pytest")
+    Assert-True ((Wait-JobTerminal -RunFolder $rf -JobId $direct.job_id).status -eq 'succeeded') 'pytest job without exclusive_reason runs directly'
+    Assert-True ((Get-Content -Raw (Join-Path $rf "jobs/$($direct.job_id)/stdout.log")) -match 'pytest direct fixture') 'unwrapped pytest stand-in actually executed'
+    $held = Invoke-DtJob @('start','-RunFolder',$rf,'-Command',(New-HeldJobCommand (Join-Path $rf 'release')),'-Mutates','exclusive-fixture')
+    $reason = "fixture suite: simultaneous shared-device writes (fixture evidence); separate paths failed"
+    $wrapped = Invoke-DtJob @('start','-RunFolder',$rf,'-Kind','test','-Command','pytest fixture-selection','-ExclusiveReason',$reason,'-Mutates','exclusive-fixture')
+    $record = Get-JobRecord -RunFolder $rf -JobId $wrapped.job_id
+    $jobDir = Join-Path $rf "jobs/$($wrapped.job_id)"
+    $spec = Get-Content -Raw (Join-Path $jobDir 'spec.json') | ConvertFrom-Json
+    Assert-True ($wrapped.status -eq 'queued' -and $wrapped.exclusive_reason -ceq $reason -and $record.exclusive_reason -ceq $reason -and $spec.exclusive_reason -ceq $reason) 'opt-in reason retained exactly in spec, job record and start receipt'
+    $status = Invoke-DtJob @('status','-RunFolder',$rf,'-JobId',$wrapped.job_id)
+    Assert-True ($status.exclusive_reason -ceq $reason) 'job status receipt retains the reason'
+    $runner = Get-Content -Raw (Join-Path $scriptDir 'dt-job-runner.ps1')
+    $wrapping = [regex]::Match($runner, '(?s)    # Only a caller-documented suite.*?(?=    # Recheck under the lock)').Value
+    Assert-True ([bool]$wrapping) 'runner opt-in argv block found'
+    # Substitute only executable discovery; construction uses product code.
+    $wrapping = $wrapping.Replace('(Get-Command python -CommandType Application | Select-Object -First 1).Source', "'fixture-python-never-launched'")
+    $DtJobRepoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $scriptDir))
+    foreach ($value in @($null, '', '   ', $reason)) {
+        $spec = [pscustomobject]@{ command = 'pytest fixture-selection'; exclusive_reason = $value }
+        $psi = [Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = 'pwsh'
+        foreach ($arg in @('-NoProfile','-Command','pytest fixture-selection')) { $psi.ArgumentList.Add($arg) }
+        & ([scriptblock]::Create($wrapping))
+        if ($value -eq $reason) {
+            Assert-True ($psi.FileName -eq 'fixture-python-never-launched' -and $psi.ArgumentList[0].EndsWith('pytest-lock.py') -and $psi.ArgumentList[1] -eq '--reason' -and $psi.ArgumentList[2] -ceq $reason -and $psi.ArgumentList[5] -eq '--' -and $psi.ArgumentList[6] -eq 'pwsh' -and $psi.ArgumentList[9] -eq 'pytest fixture-selection') 'documented pytest job is wrapped with exact original argv and reason'
+        } else {
+            Assert-True ($psi.FileName -eq 'pwsh' -and $psi.ArgumentList.Count -eq 3) 'null empty and whitespace reason do not wrap pytest'
+        }
+    }
+    Invoke-DtJob @('cancel','-RunFolder',$rf,'-JobId',$wrapped.job_id) | Out-Null
+    Invoke-DtJob @('cancel','-RunFolder',$rf,'-JobId',$held.job_id) | Out-Null
+
     Write-Output 'PASS: dt-job suite'
 }
 catch {

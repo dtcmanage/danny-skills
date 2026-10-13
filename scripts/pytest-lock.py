@@ -1,6 +1,8 @@
-"""Machine-wide pytest serialization. Callable from Python, PowerShell or Bash.
+# Opt-in only, for a named suite with a documented overlap reason and an
+# attempted workaround. Default test runs never take this lock.
+"""Explicit pytest serialization. Callable from Python, PowerShell or Bash.
 
-Use: python scripts/pytest-lock.py -- python -m pytest ...
+Use: python scripts/pytest-lock.py --reason "suite: overlap evidence; workaround tried" -- python -m pytest ...
 Nested graders reuse only a verified ancestor's OS-held lock, never env alone.
 """
 from __future__ import annotations
@@ -23,7 +25,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 ROOT = Path('C:/ProgramData/DannyPytest') if os.name == 'nt' else Path('/tmp/danny-pytest-machine')
 LOCK = ROOT / 'exclusive.lock'
 STATUS = ROOT / 'holder.json'
-GUARD_MODULE = 'danny_pytest_guard'
 
 
 def eastern_time(now: datetime | None = None) -> str:
@@ -50,28 +51,6 @@ def write_json(path: Path, value: dict) -> None:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def sealed_environment(source: dict[str, str]) -> dict[str, str]:
-    """Remove only the installer-owned plugin/path from an explicit gate child."""
-    env = dict(source)
-    plugins = source.get('PYTEST_PLUGINS', '').split(',')
-    if GUARD_MODULE in plugins:
-        remaining = [p for p in plugins if p != GUARD_MODULE]
-        if remaining:
-            env['PYTEST_PLUGINS'] = ','.join(remaining)
-        else:
-            env.pop('PYTEST_PLUGINS', None)
-    directory = source.get('DANNY_PYTEST_GUARD_DIR')
-    if directory and 'PYTHONPATH' in source:
-        normalized = os.path.normcase(os.path.abspath(directory))
-        remaining = [p for p in source['PYTHONPATH'].split(os.pathsep)
-                     if os.path.normcase(os.path.abspath(p)) != normalized]
-        if remaining:
-            env['PYTHONPATH'] = os.pathsep.join(remaining)
-        else:
-            env.pop('PYTHONPATH', None)
-    return env
 
 
 def processes() -> list[dict]:
@@ -133,7 +112,7 @@ def _posix_process(pid: int) -> tuple[int, int] | None:
 
 
 def process_identity(pid: int) -> int | None:
-    """Native creation identity shared by explicit helpers and silent guards."""
+    """Native creation identity shared by explicit helpers."""
     if os.name != 'nt':
         info = _posix_process(pid)
         return info[1] if info is not None else None
@@ -153,7 +132,7 @@ def process_identity(pid: int) -> int | None:
 
 
 def family_processes() -> list[dict]:
-    """Only identity/ancestry for guard reuse. Never launch a child process."""
+    """Only identity/ancestry for nested helper reuse. Never launch a child process."""
     parents = {}
     if os.name == 'nt':
         from ctypes import wintypes
@@ -238,7 +217,7 @@ def actual_pytest(row: dict) -> bool:
 
 
 def waiting_pytest_pids(rows: list[dict], waiting: set[tuple[int, str]]) -> set[int]:
-    """Exclude verified guard waiters and a Python manager forwarding that suite."""
+    """Exclude verified helper waiters and a Python manager forwarding that suite."""
     by_id = {row['ProcessId']: row for row in rows}
     result = {row['ProcessId'] for row in rows
               if (row['ProcessId'], row.get('CreationDate')) in waiting}
@@ -262,7 +241,9 @@ def waiting_pytest_pids(rows: list[dict], waiting: set[tuple[int, str]]) -> set[
 
 
 @contextmanager
-def pytest_lock(timeout: float = 1800, *, inventory: bool = True):
+def pytest_lock(timeout: float = 1800, *, reason: str = '', inventory: bool = True):
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError('EXCLUSIVE_REASON_REQUIRED')
     if timeout < 0 or not math.isfinite(timeout):
         raise ValueError('lock timeout must be finite and nonnegative')
     ROOT.mkdir(parents=True, exist_ok=True)
@@ -276,7 +257,7 @@ def pytest_lock(timeout: float = 1800, *, inventory: bool = True):
     old_token = os.environ.get('DANNY_PYTEST_OWNER')
     waiter = ROOT / f'waiting-{os.getpid()}-{uuid.uuid4().hex}.json'
     try:
-        # The auto-loaded guard must never call subprocess, even for inventory.
+        # Native family lookup supports explicit callers that skip legacy inventory.
         query = processes if inventory else family_processes
         rows = query() if inventory or old_token else []
         identity = process_identity(os.getpid())
@@ -302,7 +283,7 @@ def pytest_lock(timeout: float = 1800, *, inventory: bool = True):
                 except (OSError, ValueError, KeyError):
                     pass
                 if time.monotonic() - last_notice >= 30:
-                    print('PYTEST_LOCK waiting: ' + json.dumps(holder or {'holder': 'unavailable'}), file=sys.stderr, flush=True)
+                    print('PYTEST_LOCK waiting: reason=' + reason + '; holder=' + json.dumps(holder or {'holder': 'unavailable'}), file=sys.stderr, flush=True)
                     last_notice = time.monotonic()
                 if time.monotonic() >= deadline:
                     raise TimeoutError('PYTEST_LOCK_TIMEOUT: holder ' +
@@ -313,7 +294,7 @@ def pytest_lock(timeout: float = 1800, *, inventory: bool = True):
         if not inherited:
             token = uuid.uuid4().hex
             write_json(STATUS, dict(state='held', admitted=False, pid=os.getpid(), command=' '.join(sys.argv)[:800],
-                start_et=eastern_time(), process_start=identity, token=token))
+                start_et=eastern_time(), process_start=identity, token=token, exclusive_reason=reason))
             os.environ['DANNY_PYTEST_OWNER'] = token
         # Before ANY pytest, inspect actual test processes. Verified family ancestors
         # are the outer pytest grader, not a competing run. Never terminate a caller.
@@ -324,7 +305,7 @@ def pytest_lock(timeout: float = 1800, *, inventory: bool = True):
             for path in ROOT.glob('waiting-*.json'):
                 try:
                     row = json.loads(path.read_text(encoding='utf-8'))
-                    # Native identities also verify guard waiters whose path
+                    # Native identities also verify helper waiters whose path
                     # cannot invoke the explicit helper's CIM/ps inventory.
                     if process_identity(row['pid']) == row['process_start']:
                         process = next((r for r in rows if r['ProcessId'] == row['pid']), None)
@@ -337,7 +318,7 @@ def pytest_lock(timeout: float = 1800, *, inventory: bool = True):
                     and r['ProcessId'] not in waiters and actual_pytest(r)]
             if not live:
                 break
-            print('PYTEST_LOCK live pytest; recheck in 30 sec: ' + json.dumps(live), file=sys.stderr, flush=True)
+            print('PYTEST_LOCK live pytest; reason=' + reason + '; holder=' + json.dumps(live) + '; recheck in 30 sec', file=sys.stderr, flush=True)
             if time.monotonic() >= deadline:
                 raise TimeoutError('PYTEST_LOCK_TIMEOUT: live pytest ' + json.dumps(live))
             time.sleep(min(30, max(0, deadline - time.monotonic())))
@@ -371,15 +352,19 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--timeout', type=float, default=1800)
     parser.add_argument('--ready-file', type=Path)
+    parser.add_argument('--reason', nargs='?', const='', default='')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if not args.reason.strip():
+        print('EXCLUSIVE_REASON_REQUIRED: name the suite, overlap evidence and attempted workaround.', file=sys.stderr)
+        return 2
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
     if not command:
         parser.error('a command is required after --')
-    with pytest_lock(args.timeout):
+    with pytest_lock(args.timeout, reason=args.reason):
         if args.ready_file is not None:
             args.ready_file.write_text('acquired', encoding='utf-8')
-        return subprocess.call(command, env=sealed_environment(dict(os.environ)))
+        return subprocess.call(command, env=dict(os.environ))
 
 
 if __name__ == '__main__':

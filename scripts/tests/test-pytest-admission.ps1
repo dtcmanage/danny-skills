@@ -25,6 +25,11 @@ function Load-Functions([string]$path, [string[]]$names, [string]$scriptRoot) {
 }
 try {
     New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+    Load-Functions (Join-Path $repo 'skills/dt-build/scripts/verify-milestone-acceptance.ps1') @('Parse-MarkdownTableRows') ''
+    $rows = @(Parse-MarkdownTableRows -SectionText "| check-id | procedure | exclusive_reason |`n| --- | --- | --- |`n| direct | pytest fixture | |`n| opted | pytest fixture | documented evidence |")
+    Assert-True ($rows.Count -eq 2 -and $rows[0].exclusive_reason -eq '' -and $rows[1].exclusive_reason -eq 'documented evidence') 'optional acceptance reason column preserves blank entries'
+    $rows = @(Parse-MarkdownTableRows -SectionText "| check-id | procedure | exclusive_reason |`n| --- | --- | --- |`n| opted | pytest fixture | documented evidence")
+    Assert-True ($rows.Count -eq 1 -and $rows[0].exclusive_reason -eq 'documented evidence') 'optional reason survives a Markdown row without a trailing delimiter'
     Load-Functions (Join-Path $repo 'skills/dt-build/scripts/dt-job-runner.ps1') @('Get-DtJobTreeCpuSeconds','Wait-DtJobProcess') ''
     function Get-DtJobSettingSec { param($Name,$Default) return 1 }
     function Write-DtJobAtomic { param($Path,$Content) [IO.File]::WriteAllText($Path,$Content) }
@@ -50,20 +55,26 @@ try {
     $stubRoot = Join-Path $fixture 'skills/dt-build/scripts'
     $stubScripts = Join-Path $fixture 'scripts'
     New-Item -ItemType Directory -Path $stubRoot,$stubScripts -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $repo 'scripts/pytest-command.ps1') -Destination $stubScripts
     [IO.File]::WriteAllText((Join-Path $stubScripts 'pytest-lock.ps1'), @'
 param()
 # Deliberately ignore forwarded candidate command; this is a PS-only fixture.
-if ($args[0] -ne '-ReadyFile') { throw 'missing admission marker argument' }
+if ($args[0] -ne '-Reason' -or $args[2] -ne '-ReadyFile') { throw 'missing documented admission arguments' }
 Start-Sleep -Seconds 4
-[IO.File]::WriteAllText([string]$args[1], 'acquired')
+[IO.File]::WriteAllText([string]$args[3], 'acquired')
 Start-Sleep -Milliseconds 200
 Write-Output 'PS admission fixture'
 exit 0
 '@)
     Load-Functions (Join-Path $repo 'skills/dt-build/scripts/verify-milestone-acceptance.ps1') @('Normalize-Command','Remove-TempFileQuietly','Invoke-NamedCommand') $stubRoot
-    $result = Invoke-NamedCommand -WorkingTree $fixture -Command 'pytest fixture-selection' -TimeoutMs 2000
+    $reason = "fixture suite: deliberate contention; shared 'marker' required for timing evidence"
+    $result = Invoke-NamedCommand -WorkingTree $fixture -Command 'pytest fixture-selection' -TimeoutMs 2000 -ExclusiveReason $reason
     Assert-True ($result.exit_code -eq 0 -and -not $result.timed_out -and $result.duration_ms -ge 4000 -and $result.stdout_tail -match 'PS admission fixture') 'acceptance execution budget excludes PS stub lock admission'
+    Assert-True ($result.exclusive_reason -ceq $reason -and $result.effective_command -match '-Reason') 'acceptance records the exact documented reason'
+    $direct = "function pytest { 'direct fixture' }; pytest"
+    foreach ($emptyReason in @($null, '', '   ')) {
+        $result = Invoke-NamedCommand -WorkingTree $fixture -Command $direct -TimeoutMs 2000 -ExclusiveReason $emptyReason
+        Assert-True ($result.exit_code -eq 0 -and $result.effective_command -ceq $direct -and $result.stdout_tail -match 'direct fixture') 'pytest acceptance without a nonempty reason runs directly'
+    }
     $result = Invoke-NamedCommand -WorkingTree $fixture -Command 'Start-Sleep -Seconds 10' -TimeoutMs 200
     Assert-True ($result.exit_code -eq 124 -and $result.timed_out) 'acceptance still enforces non-pytest execution timeout'
     Write-Output "PASS: PowerShell admission fixtures; SUMMARY: $passed passed"
