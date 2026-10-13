@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.16.30 (2026-10-13): Shared process wrapper classifies Codex capacity refusals as capacity, and model router outcome recording treats them as vendor availability, not model quality.
+
 - 1.16.29 (2026-10-11): model router: read-only Codex workers on Windows can read files (unsandboxed with an unchanged-tree check); the ad-hoc wiring test uses the fixture Claude CLI.
 
 - 1.16.28 (2026-10-11): model router: chunk wrappers refuse prompts over 400,000 characters (PROMPT_TOO_LARGE) and point to path-plus-sha256 references.

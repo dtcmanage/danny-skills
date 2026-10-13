@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.35.1
+
+- Codex jobs refused for vendor capacity are classified capacity (not ROUTER_UNEXPLAINED) and retry the same model and effort after 5, 10 and 20 minutes (35-minute bound), with attempts and waits in provenance; outcome mining excludes capacity from model quality.
+
 ## 2.35.0
 
 - Managed resume reads a hash-verified authority digest at bootstrap and each governing original in full right before its action (32,000-character target, 96,000 ceiling); discovery handles compressed checkpoints (aliases, glued prose, brace lists, inherited_boundary enumeration). The watcher records context walls for coordinators that never marked bootstrap, the checkpoint installer stays allowed past the wall, and coordinator launches refused for vendor capacity back off 5/10/20 minutes without spending thrash or cap budgets.
