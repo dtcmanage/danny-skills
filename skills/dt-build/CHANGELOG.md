@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.34.2
+
+- Routing-compliance counter counts router wrapper calls (no -Model) as routed, taking category from -Category or -Tier; cache version 4 re-tallies history.
+
 ## 2.34.1
 
 - The dt-job test suite holds in-flight jobs on release files instead of Start-Sleep timers, so its queue, dependency, mutation-key, cancel and check-in scenarios no longer race the clock under load (two flakes seen on Oct 12 during concurrent suite runs; three concurrent runs pass after the change).

@@ -910,7 +910,7 @@ def test_routing_week_split_rollup_and_cost_isolation(tmp_path):
         assert "Routing compliance by workstation" in rendered
         assert "Delegations by category and job" in rendered
         assert "workspace root" in rendered and "other" in rendered
-    assert cr.render_html(report).count("<table>") == 2
+    assert cr.render_html(report).count("<table>") == 3  # Existing tables plus the epoch split.
     _, message = cr.render_discord_summary(reports, date(2026, 10, 5), tmp_path)
     assert "rule started Wed Sep 30" in message
     assert "36% of 22 delegations" in message
@@ -1179,3 +1179,71 @@ def test_codex_usage_shows_used_and_left(tmp_path):
                                              "resets Oct 17, 1:54 PM ET")
     assert cr.render_codex_usage(None) == "Codex usage: no Codex usage reading yet"
     assert cr.used_left(104) == "104% used / 0% left"
+
+
+def epoch_report(day: str, epochs_path: Path = cr.ROUTER_EPOCHS_PATH, routing_rows: list[dict] | None = None) -> dict:
+    rows = routing_rows or [{'kind': 'routing', 'host': 'claude', 'session_id': 'epoch-test',
+        'workstation': 'Skill Creation', 'date_et': day, 'delegations': 1, 'routed': 1,
+        'unrouted': 0, 'by_category': {'analysis': 1}, 'by_job': {'deep-thinker': 1}}]
+    return cr.build_weekly_reports([], [], SYNTH_PRICES, date.fromisoformat(day),
+        routing_rows=rows, epochs_path=epochs_path)[0]
+
+
+def test_epoch_in_effect_and_every_change_in_week() -> None:
+    report = epoch_report('2026-09-30')
+    lines = report['router_version']['lines']
+    assert lines[0].startswith("In effect at week's end: difficulty-tiers")
+    assert len([line for line in lines if line.startswith('Started this week:')]) == 4
+    for render in (cr.render_markdown, cr.render_html):
+        text = render(report)
+        assert text.index('Router version') < text.index('Work by model')
+        assert '2026-09-30 16:29 ET' in text
+        assert '2026-10-04 19:11 ET' in text
+        assert 'UTC' not in text
+
+
+def test_epoch_straddling_week_split_uses_latest_epoch_and_start_day_after() -> None:
+    base = {'kind': 'routing', 'host': 'claude', 'workstation': 'Skill Creation',
+            'session_id': 's', 'by_category': {}, 'by_job': {}}
+    rows = [{**base, 'date_et': day, 'delegations': total, 'routed': routed, 'unrouted': total-routed}
+            for day, total, routed in [('2026-10-05', 2, 1), ('2026-10-10', 3, 1), ('2026-10-11', 4, 4)]]
+    report = epoch_report('2026-10-11', routing_rows=rows)
+    split = report['router_version']['split']
+    assert split[0][1:] == ['5', '2', '3', '40.0%']
+    assert split[1][1:] == ['4', '4', '0', '100.0%']
+    assert all('all-sessions-wrappers' in row[0] for row in split)
+    for render in (cr.render_markdown, cr.render_html):
+        text = render(report)
+        assert 'Routing compliance by workstation' in text
+        assert 'Routing compliance before/after latest epoch' in text
+        assert '2026-10-11 16:17 ET' in text
+    next_week = epoch_report('2026-10-12')
+    assert next_week['router_version']['split'] == []
+    assert next_week['router_version']['lines'][0].startswith("In effect at week's end: all-sessions-wrappers")
+    assert any('Re-tallied retroactively' in line for line in next_week['router_version']['lines'])
+    assert not any('Re-tallied retroactively' in line for line in report['router_version']['lines'])
+
+
+@pytest.mark.parametrize('content', [None, '{bad', '[]', '{}', '{"schema_version":1,"epochs":[{}],"notes":[]}',
+    '{"schema_version":1,"epochs":[{"id":"x","start_et":"2026-9-28T00:00","label":"x"}],"notes":[]}',
+    '{"schema_version":1,"epochs":[],"notes":[{"date_et":"2026-W42-1","text":"x"}]}',
+    '{"schema_version":1,"epochs":[],"notes":[{"date_et":"bad","text":"x"}]}'])
+def test_epochs_missing_or_malformed_one_line_notice(tmp_path: Path, content: str | None) -> None:
+    path = tmp_path / 'router-epochs.json'
+    if content is not None:
+        path.write_text(content, encoding='utf-8')
+    report = epoch_report('2026-10-12', path)
+    assert report['router_version'] == {'lines': ['Router epochs unavailable.'], 'split': []}
+    for render in (cr.render_markdown, cr.render_html):
+        assert render(report).count('Router epochs unavailable.') == 1
+
+
+def test_epochs_et_week_boundary(tmp_path: Path) -> None:
+    path = tmp_path / 'epochs.json'
+    path.write_text(json.dumps({'schema_version': 1, 'epochs': [
+        {'id': 'sunday', 'start_et': '2026-10-11T23:59', 'label': 'Sunday'},
+        {'id': 'monday', 'start_et': '2026-10-12T00:00', 'label': 'Monday'}], 'notes': []}), encoding='utf-8')
+    report = epoch_report('2026-10-11', path)
+    assert 'sunday' in report['router_version']['lines'][0]
+    assert not any('monday' in line for line in report['router_version']['lines'])
+    assert 'monday' in epoch_report('2026-10-12', path)['router_version']['lines'][0]

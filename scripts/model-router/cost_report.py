@@ -33,6 +33,58 @@ UTC = timezone.utc
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PRICES_PATH = REPO_ROOT / "references" / "model-router" / "api-prices.json"
 FRONTIER_MODELS_PATH = REPO_ROOT / "references" / "model-router" / "frontier-models.json"
+ROUTER_EPOCHS_PATH = REPO_ROOT / "references" / "model-router" / "router-epochs.json"
+
+
+def load_router_epochs(path: Path) -> dict | None:
+    """Read the repo's ET timeline; a bad optional timeline never blocks reporting."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data["schema_version"] != 1 or not isinstance(data["epochs"], list) or not isinstance(data["notes"], list):
+            return None
+        for epoch in data["epochs"]:
+            start = datetime.strptime(epoch["start_et"], "%Y-%m-%dT%H:%M")
+            if start.isoformat(timespec="minutes") != epoch["start_et"]:
+                return None
+            if not all(isinstance(epoch[key], str) and epoch[key] for key in ("id", "label")):
+                return None
+        for note in data["notes"]:
+            if date.fromisoformat(note["date_et"]).isoformat() != note["date_et"]:
+                return None
+            if not isinstance(note["text"], str):
+                return None
+        return data
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def router_version_for_week(data: dict | None, year: int, week: int, rows: list[dict]) -> dict:
+    if data is None:
+        return {"lines": ["Router epochs unavailable."], "split": []}
+    monday, sunday = week_bounds_et(year, week)
+    end = datetime.combine(sunday + timedelta(days=1), datetime.min.time())
+    epochs = sorted(data["epochs"], key=lambda item: item["start_et"])
+    active = [item for item in epochs if datetime.fromisoformat(item["start_et"]) < end]
+    started = [item for item in active if date.fromisoformat(item["start_et"][:10]) >= monday]
+    def describe(item: dict) -> str:
+        return f"{item['id']} — {item['label']} ({item['start_et'].replace('T', ' ')} ET)"
+    lines = ["In effect at week's end: " + (describe(active[-1]) if active else "no epoch recorded.")]
+    lines.extend("Started this week: " + describe(item) for item in started)
+    lines.extend(f"Note {item['date_et']} ET: {item['text']}" for item in data["notes"]
+                 if monday.isoformat() <= item["date_et"] <= sunday.isoformat())
+    split = []
+    if started:
+        latest = started[-1]
+        day = latest["start_et"][:10]
+        for label, after in (("Before", False), ("After", True)):
+            selected = [row for row in rows if (row["date_et"] >= day) == after]
+            total = sum(row.get("delegations", 0) for row in selected)
+            routed = sum(row.get("routed", 0) for row in selected)
+            split.append([f"{label} {latest['id']} ({day} ET; start day counts after)",
+                          str(total), str(routed), str(total - routed),
+                          f"{100 * routed / total:.1f}%" if total else "n/a"])
+    return {"lines": lines, "split": split}
+
 
 # host (as recorded by collect-usage.py) -> report vendor label and the pricing-vendor tag
 # used in api-prices.json.
@@ -348,11 +400,13 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
                           today_et: date | None = None,
                           frontier_path: Path = FRONTIER_MODELS_PATH,
                           routing_rows: list[dict] | None = None,
-                          dispatch_rows: list[dict] | None = None) -> list[dict]:
+                          dispatch_rows: list[dict] | None = None,
+                          epochs_path: Path = ROUTER_EPOCHS_PATH) -> list[dict]:
     """One report dict per ISO week seen in either the usage rows or the codex rate-limit
     readings, each holding a VendorWeek per vendor that had any signal that week."""
     today_et = today_et or datetime.now(tz=ET_ZONE).date()
     frontier_models = json.loads(frontier_path.read_text(encoding="utf-8"))
+    epochs = load_router_epochs(epochs_path)
     week_keys: set[tuple[int, int]] = set()
     rows_by_week_host: dict[tuple[int, int, str], list[dict]] = {}
     routing_by_week: dict[tuple[int, int], list[dict]] = {}
@@ -427,6 +481,8 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
         reports.append({"iso_year": iso_year, "iso_week": iso_week, "label": week_label(iso_year, iso_week),
                         "vendors": vendors, "work_by_model": work_by_model,
                         "routing": summarize_routing(routing_by_week.get((iso_year, iso_week), [])),
+                        "router_version": router_version_for_week(epochs, iso_year, iso_week,
+                            routing_by_week.get((iso_year, iso_week), [])),
                         'difficulty_dispatches': difficulty_split(dispatch_rows or [], iso_year, iso_week),
                         "frontier": {"api_equivalent_usd": frontier_cost, "sessions": len(frontier_sessions),
                                      "model_ids": sorted(frontier_ids)}})
@@ -558,6 +614,9 @@ def routing_tables(report: dict) -> list[tuple[str, list[str], list[list[str]]]]
     return [("Routing compliance by workstation (Claude sessions)",
              ["Workstation", "Sessions", "Delegations", "Routed", "Unrouted", "Routed share"], stations),
             ("Delegations by category and job", ["Axis", "Name", "Delegations"], distribution)] + ([
+            ("Routing compliance before/after latest epoch (ET day)",
+             ["Period", "Delegations", "Routed", "Unrouted", "Routed share"], report["router_version"]["split"])]
+             if report.get("router_version", {}).get("split") else []) + ([
             ("Difficulty dispatches by workstation (wrappers)", ["Workstation", "Standard", "Hard"],
              [[item['workstation'], str(item['standard']), str(item['hard'])] for item in report.get('difficulty_dispatches', [])])] if report.get('difficulty_dispatches') else [])
 
@@ -583,6 +642,9 @@ def render_routing_line(report: dict) -> str:
 
 def render_markdown(report: dict) -> str:
     lines = [f"# Model-router weekly cost report - {report['label']}", ""]
+    lines.extend(["## Router version", ""])
+    lines.extend(report.get("router_version", {"lines": ["Router epochs unavailable."]})["lines"])
+    lines.append("")
     lines.append("Subscription vs API-equivalent cost of observed usage, priced at published vendor list rates. "
                   "This total reflects only the sessions found in the swept logs; it is never presented as a "
                   "certified full-account spend figure.")
@@ -713,6 +775,7 @@ h1{{font-size:20px;margin:0 0 12px}} h2{{font-size:16px;margin:0 0 10px}}
 p{{margin:6px 0}} ul{{margin:4px 0 8px 18px;padding:0}}
 </style></head><body>
 <h1>Model-router weekly cost report - {html.escape(report['label'])}</h1>
+<section><h2>Router version</h2>{''.join('<p>' + html.escape(line) + '</p>' for line in report.get('router_version', {'lines': ['Router epochs unavailable.']})['lines'])}</section>
 <p class='label'>Subscription vs API-equivalent cost, priced at published vendor list rates. Reflects only sessions found in the swept logs -- never a certified full-account total.</p>
 {''.join(cards)}
 <section><h2>Work by model</h2><ul>{''.join(model_rows)}</ul><p>{frontier_line}</p></section>

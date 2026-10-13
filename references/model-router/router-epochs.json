@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "epochs": [
+    {
+      "id": "v2-roster",
+      "start_et": "2026-09-28T00:00",
+      "label": "Router v2 roster live (jobs, vendor backups)"
+    },
+    {
+      "id": "coder-codex-first",
+      "start_et": "2026-09-30T16:29",
+      "label": "Coder job flipped to GPT-6.1 Sol first, Opus backup (Danny policy)"
+    },
+    {
+      "id": "shared-router-wiring",
+      "start_et": "2026-10-01T14:30",
+      "label": "dt-build and dt-review route through the shared router; transcript compliance measured"
+    },
+    {
+      "id": "difficulty-tiers",
+      "start_et": "2026-10-04T19:11",
+      "label": "Standard/hard difficulty tiers for coder and deep-thinker"
+    },
+    {
+      "id": "tie-break",
+      "start_et": "2026-10-05T08:53",
+      "label": "Approved ties (fast, deep-thinker) pick the vendor with more weekly quota left"
+    },
+    {
+      "id": "all-sessions-wrappers",
+      "start_et": "2026-10-11T16:17",
+      "label": "Ad-hoc wrapper mode; every session delegates build work through the router wrappers"
+    }
+  ],
+  "notes": [
+    {
+      "date_et": "2026-10-12",
+      "text": "Compliance counter fixed: router wrapper calls count as routed. Re-tallied retroactively, so earlier weeks' compliance numbers changed."
+    }
+  ]
+}

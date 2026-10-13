@@ -49,8 +49,8 @@ def test_week_boundary_uses_tool_timestamp_and_keeps_pending_selection(tmp_path:
 def test_dispatch_types_nearest_pairing_and_preflight_exclusion(tmp_path: Path) -> None:
     row, = routing(transcript(tmp_path, "routing-dispatch-kinds.jsonl"))
     assert (row["delegations"], row["routed"], row["unrouted"]) == (6, 3, 3)
-    assert row["by_category"] == {"analysis": 1, "complex-coding": 1, "mechanical": 1}
-    assert row["by_job"] == {"deep-thinker": 1, "coder": 1, "fast": 1}
+    assert row["by_category"] == {"analysis": 1, "routine-coding": 2}
+    assert row["by_job"] == {"deep-thinker": 1, "coder": 2}
 
 
 def test_missing_model_consumes_selection_before_explicit_model(tmp_path: Path) -> None:
@@ -101,7 +101,7 @@ def test_workstation_parent_and_buckets(tmp_path: Path, project: str, expected: 
     assert row["project"] == project
 
 
-@pytest.mark.parametrize("version", [None, 0, 1, 2])
+@pytest.mark.parametrize("version", [None, 0, 1, 2, 3])
 def test_old_cache_rebuilt_once_for_unchanged_claude_and_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: int | None) -> None:
     claude = tmp_path / "projects"
     codex = tmp_path / "sessions"
@@ -116,7 +116,7 @@ def test_old_cache_rebuilt_once_for_unchanged_claude_and_codex(tmp_path: Path, m
     else:
         cache["cache_version"] = version
     rows, rebuilt = cu.sweep_all_sessions(claude, codex, cache)
-    assert rebuilt["cache_version"] == cu.ALL_SESSIONS_CACHE_VERSION == 3
+    assert rebuilt["cache_version"] == cu.ALL_SESSIONS_CACHE_VERSION == 4
     assert not any(r["kind"] == "stale" for r in rows)
     assert any(r["kind"] == "routing" for r in rows)
     assert any(r["host"] == "codex" for r in rows)
@@ -216,3 +216,73 @@ def test_real_commands_count_once_with_their_model_status(command: str, explicit
     bucket = buckets["2026-10-01"]
     assert (bucket["delegations"], bucket["routed"], bucket["unrouted"]) == (1, int(explicit), int(not explicit))
     assert pending == []
+
+@pytest.mark.parametrize(('command', 'lines', 'routed', 'category'), [
+    ('pwsh -File invoke-codex-chunk.ps1 -Category analysis', 0, True, 'analysis'),
+    ('./invoke-codex-chunk.ps1 -Tier complex', 0, True, 'complex-coding'),
+    ('./invoke-codex-chunk.ps1 -Tier light', 0, True, 'mechanical'),
+    ('./invoke-codex-chunk.ps1', 0, True, 'routine-coding'),
+    ('./invoke-codex-chunk.ps1 -Model gpt-test', 0, False, None),
+    ('./invoke-codex-chunk.ps1 -Model gpt-test -Category analysis', 1, True, 'analysis'),
+    ('codex exec -m gpt-test prompt', 0, False, None),
+    ('pwsh -NoProfile -File ./invoke-claude-chunk.ps1 -AdHoc -Category analysis -SelectionReason "x"', 0, True, 'analysis'),
+    ('pwsh -Command "& ./invoke-claude-chunk.ps1 -Category analysis"', 0, True, 'analysis'),
+    ('./invoke-codex-chunk.ps1 -Category analysis; ./invoke-claude-chunk.ps1 -Tier complex', 0, True, 'analysis'),
+    ('./invoke-codex-chunk.ps1; ./invoke-claude-chunk.ps1 -Model opus', 0, False, None),
+    ('./invoke-codex-chunk.ps1 -Model gpt-test; ./invoke-claude-chunk.ps1 -Model opus', 1, False, None),
+    ('./invoke-codex-chunk.ps1 -Model gpt-test; ./invoke-claude-chunk.ps1 -Model opus', 2, True, 'routine-coding'),
+    ('./invoke-codex-chunk.ps1 -Category analysis; ./invoke-claude-chunk.ps1 -Model opus', 2, True, 'analysis'),
+])
+def test_wrapper_routing_contract(command: str, lines: int, routed: bool, category: str | None) -> None:
+    pending = [('planning', 'high')] * lines
+    buckets = {}
+    row = {'timestamp': '2026-10-12T16:00:00Z', 'message': {'role': 'assistant', 'content': [
+        {'type': 'tool_use', 'name': 'Bash', 'input': {'command': command}}]}}
+    cu.tally_routing_message(row, pending, buckets, {'analysis': 'deep-thinker'})
+    bucket = buckets['2026-10-12']
+    assert (bucket['delegations'], bucket['routed'], bucket['unrouted']) == (1, int(routed), int(not routed))
+    assert dict(bucket['by_category']) == ({category: 1} if category else {})
+    assert pending == []
+
+
+def test_wrapper_consumes_pending_and_effort_only_from_args() -> None:
+    assert cu.executed_dispatch_details('./invoke-codex-chunk.ps1 -Tier complex') == [
+        {'wrapper': True, 'explicit': False, 'category': 'complex-coding', 'effort': None}]
+    assert cu.executed_dispatch_details('./invoke-codex-chunk.ps1 -Category analysis -Tier light -Effort medium')[0]['effort'] == 'medium'
+    assert cu.executed_dispatch_details('./invoke-codex-chunk.ps1 -Category analysis -Tier light')[0]['category'] == 'analysis'
+    pending = [('planning', 'high')]
+    buckets = {}
+    blocks = [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': cmd}} for cmd in (
+        './invoke-codex-chunk.ps1 -Category analysis', 'codex exec -m gpt-test prompt')]
+    cu.tally_routing_message({'timestamp': '2026-10-12T16:00:00Z', 'message': {'role': 'assistant', 'content': blocks}}, pending, buckets, {})
+    assert (buckets['2026-10-12']['routed'], buckets['2026-10-12']['unrouted']) == (1, 1)
+    assert buckets['2026-10-12']['by_category'] == {'analysis': 1}
+    assert pending == []
+
+
+@pytest.mark.parametrize('command', [
+    './invoke-codex-chunk.ps1 -Preflight -Category analysis',
+    "cat <<'EOF' > sample.ps1\npwsh -File invoke-claude-chunk.ps1 -Category analysis\nEOF",
+])
+def test_wrapper_preflight_and_heredoc_without_selection(command: str) -> None:
+    assert cu.executed_dispatch(command) is None
+    assert cu.executed_dispatch_details(command) == []
+
+@pytest.mark.parametrize(('command', 'expected'), [
+    ('echo hello', None),
+    ('codex exec prompt', False),
+    ('codex exec -m gpt-test prompt', True),
+    ('./invoke-codex-chunk.ps1', True),
+    ('./invoke-codex-chunk.ps1 -Model gpt-test', True),
+    ('pwsh -NoProfile -Command "& ./invoke-codex-chunk.ps1 -Preflight"', None),
+    ('codex exec prompt; codex exec -m gpt-test prompt', True),
+])
+def test_executed_dispatch_public_contract(command: str, expected: bool | None) -> None:
+    assert cu.executed_dispatch(command) is expected
+
+
+def test_nested_multiple_wrappers_and_preflight_details() -> None:
+    calls = cu.executed_dispatch_details('pwsh -Command "& ./invoke-codex-chunk.ps1 -Preflight; & ./invoke-codex-chunk.ps1 -Tier complex; & ./invoke-claude-chunk.ps1 -Category analysis -Effort high"')
+    assert len(calls) == 2
+    assert [call['category'] for call in calls] == ['complex-coding', 'analysis']
+    assert [call['effort'] for call in calls] == [None, 'high']

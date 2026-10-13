@@ -36,7 +36,7 @@ CTX_FLAG = 300_000          # peak context above this is flagged
 RESUME_FLAG = 5             # follow-up messages to live agents above this is flagged
 IDLE_MINUTES = 5            # cache TTL; a big re-write after this gap is an idle loss
 BIG_REWRITE = 50_000
-ALL_SESSIONS_CACHE_VERSION = 3
+ALL_SESSIONS_CACHE_VERSION = 4
 SELECTION_RE = re.compile(r"MODEL_SELECTION:[^\r\n]*?\(([^,()]+)(?:,[^()]*)?,\s*effort\s+([^(),\s]+)\)")
 WRAPPER_RE = re.compile(r"invoke-(?:codex|claude)-chunk\.ps1", re.IGNORECASE)
 COMMAND_TOKEN_RE = re.compile(
@@ -44,7 +44,13 @@ COMMAND_TOKEN_RE = re.compile(
 
 
 def executed_dispatch(command: str, depth: int = 0) -> bool | None:
-    """Recognize dispatch command positions, returning explicit-model status.
+    """Retain the public explicit-model status contract for existing callers."""
+    calls = executed_dispatch_details(command, depth)
+    return any(call["wrapper"] or call["explicit"] for call in calls) if calls else None
+
+
+def executed_dispatch_details(command: str, depth: int = 0) -> list[dict]:
+    """Recognize dispatch command positions and retain each call's routing arguments.
 
     This is a small lexer for literal calls, not a shell evaluator. Arguments,
     comments and file-writing heredoc/here-string bodies cannot launch a model.
@@ -83,7 +89,7 @@ def executed_dispatch(command: str, depth: int = 0) -> bool | None:
             # Remove literal quote delimiters; retain Windows path backslashes.
             parts = re.findall(r''''([^']*)'|"((?:`.|\\.|[^"\\])*)"|([^'"\s]+)''', token)
             segments[-1].append("".join(a or b or c for a, b, c in parts))
-    found: bool | None = None
+    calls: list[dict] = []
     for args in segments:
         while args and (args[0] == "." or re.match(r"^[A-Za-z_]\w*=", args[0])):
             args = args[1:]
@@ -98,20 +104,27 @@ def executed_dispatch(command: str, depth: int = 0) -> bool | None:
                     continue
                 executable = re.split(r"[\\/]", args[0])[-1].lower()
             elif "-command" in lowered and depth < 2:
-                nested = executed_dispatch(" ".join(args[lowered.index("-command") + 1:]), depth + 1)
-                if nested is not None:
-                    found = bool(found or nested)
+                calls.extend(executed_dispatch_details(" ".join(args[lowered.index("-command") + 1:]), depth + 1))
                 continue
             else:
                 continue
         if WRAPPER_RE.fullmatch(executable):
             if not any(arg.lower() == "-preflight" or arg.lower().startswith("-preflight:") for arg in args[1:]):
-                found = True
+                options: dict[str, str] = {}
+                for i, arg in enumerate(args[1:], start=1):
+                    key, sep, value = arg.partition(":")
+                    if key.lower() in ("-model", "-category", "-tier", "-effort"):
+                        options[key.lower()] = value if sep else (args[i + 1] if i + 1 < len(args) else "")
+                category = options.get("-category") or {
+                    "complex": "complex-coding", "standard": "routine-coding", "light": "mechanical",
+                }.get(options.get("-tier", "standard").lower(), "routine-coding")
+                calls.append({"wrapper": True, "explicit": "-model" in options,
+                              "category": category, "effort": options.get("-effort")})
         elif executable in ("codex", "codex.exe") and args[1:2] == ["exec"]:
             explicit = any(arg == "-m" and i + 1 < len(args) and bool(args[i + 1])
                            for i, arg in enumerate(args[2:], start=2))
-            found = bool(found or explicit)
-    return found
+            calls.append({"wrapper": False, "explicit": explicit})
+    return calls
 
 
 def workstation_for_project(project: str) -> str:
@@ -158,17 +171,30 @@ def tally_routing_message(row: dict, pending: list[tuple[str, str] | None],
         inp = block.get("input") or {}
         name = block.get("name")
         explicit = bool(inp.get("model"))
+        calls = []
         if name != "Agent":
             if name != "Bash":
                 continue
             command = str(inp.get("command") or "")
-            dispatch = executed_dispatch(command)
-            if dispatch is None:
+            calls = executed_dispatch_details(command)
+            if not calls:
                 continue
-            explicit = dispatch
-        has_selection = bool(pending)
-        selection = pending.pop() if has_selection else None
-        routed = bool(explicit and has_selection)
+        selection = None
+        if any(call["wrapper"] for call in calls):
+            routed = True
+            for call in calls:
+                has_selection = bool(pending)
+                if has_selection:
+                    pending.pop()
+                routed = routed and ((call["wrapper"] and not call["explicit"])
+                                     or (call["explicit"] and has_selection))
+                if call["wrapper"] and selection is None:
+                    selection = (call["category"], call["effort"])
+        else:
+            has_selection = bool(pending)
+            selection = pending.pop() if has_selection else None
+            explicit = any(call["explicit"] for call in calls) if calls else explicit
+            routed = bool(explicit and has_selection)
         date = to_et_date(row.get("timestamp"))
         if not date:
             continue
