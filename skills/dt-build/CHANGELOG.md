@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.36.0
+
+- dt-job approval queue applies and records correctly (FS-57); MODEL_SELECTION prints when the model resolves (FS-59); optional machine test lock that a job or acceptance entry opts into with exclusive_reason, never by default (FS-58)
+
 ## 2.35.1
 
 - Codex jobs refused for vendor capacity are classified capacity (not ROUTER_UNEXPLAINED) and retry the same model and effort after 5, 10 and 20 minutes (35-minute bound), with attempts and waits in provenance; outcome mining excludes capacity from model quality.
