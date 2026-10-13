@@ -3,6 +3,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:AuthorityReadBudgetChars = 32000
+$script:AuthorityReadCeilingChars = 96000
 
 function Get-AuthorityHash {
     param([string]$Path)
@@ -221,6 +222,25 @@ function Get-AuthorityMandatoryPaths {
 
 function Get-AuthorityMarkdown {
     param([string]$RunFolder, [object[]]$Records, [string]$BuildStatePath)
+    $body = Get-AuthorityMarkdownBody -RunFolder $RunFolder -Records $Records -BuildStatePath $BuildStatePath
+    $mandatory = @(Get-AuthorityMandatoryPaths -Records $Records -BuildStatePath $BuildStatePath)
+    # Fixed-width header keeps the measured boundary independent of warning state.
+    $warningHeader = Get-AuthorityBudgetHeader -OverTarget $true
+    $bootstrapChars = $body.Length + $warningHeader.Length + [IO.File]::ReadAllText($BuildStatePath).Length
+    foreach ($record in $Records) { if ($record.path -in $mandatory) { $bootstrapChars += $record.chars } }
+    $header = Get-AuthorityBudgetHeader -OverTarget ($bootstrapChars -gt $script:AuthorityReadBudgetChars)
+    return $body.Replace("# Authority digest`n", "# Authority digest`n$header")
+}
+
+function Get-AuthorityBudgetHeader {
+    param([bool]$OverTarget)
+    $warning = 'WARNING: over_target; proceed with all current authority; confirm observed transcript on next resume.'
+    $state = if ($OverTarget) { $warning } else { 'within_target'.PadRight($warning.Length, '.') }
+    return "Budget: target $script:AuthorityReadBudgetChars chars; hard ceiling $script:AuthorityReadCeilingChars chars. $state`n"
+}
+
+function Get-AuthorityMarkdownBody {
+    param([string]$RunFolder, [object[]]$Records, [string]$BuildStatePath)
     $lines = @('# Authority digest', '', 'Mechanical index only. Original records control authorization. Read each governing original IN FULL immediately before its dependent action.', '')
     $mandatory = @(Get-AuthorityMandatoryPaths -Records $Records -BuildStatePath $BuildStatePath)
     # Reserve the entire lean checkpoint ceiling so dt-job status/cursor changes do not
@@ -273,6 +293,7 @@ function Get-AuthorityMarkdown {
     foreach ($item in $script:AuthorityDiagnostics) { $diagnosticLines += "- $($item.reason): ``$($item.candidate)``" }
     if (-not $script:AuthorityDiagnostics.Count) { $diagnosticLines += '- none' }
     $overhead += (($diagnosticLines -join "`n") + "`n").Length
+    $overhead += (Get-AuthorityBudgetHeader -OverTarget $true).Length
     $allowance = if ($Records.Count) { [math]::Max(0, [math]::Min(196, [math]::Floor(($script:AuthorityReadBudgetChars - $mandatoryChars - $overhead) / $Records.Count))) } else { 196 }
     for ($i = 0; $i -lt $Records.Count; $i++) {
         $extract = [string]$Records[$i].extract

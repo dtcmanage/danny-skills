@@ -1,0 +1,7 @@
+PASS AST: skills/dt-build/scripts/authority-digest.ps1
+PASS AST: skills/dt-build/scripts/build-authority-digest.ps1
+PASS AST: skills/dt-build/scripts/verify-authority-digest.ps1
+PASS AST: skills/dt-build/scripts/read-authority-digest.ps1
+PASS AST: skills/dt-build/scripts/tests/test-authority-digest.ps1
+PASS: git diff --check
+PASS: wrapper, versions and changelogs untouched

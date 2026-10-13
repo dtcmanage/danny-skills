@@ -32,7 +32,7 @@ $markdown = Get-AuthorityMarkdown -RunFolder $RunFolder -Records $records -Build
 $mdPath = Join-Path $destination 'authority-digest.md'
 $jsonPath = Join-Path $destination 'authority-digest.json'
 [IO.File]::WriteAllText($mdPath, $markdown, [Text.UTF8Encoding]::new($false))
-$manifest = [ordered]@{ schema_version = 1; producer = 'deterministic'; checkpoint = [IO.Path]::GetFullPath($BuildStatePath); checkpoint_authority_sha256 = Get-AuthorityCheckpointHash ([IO.File]::ReadAllText($BuildStatePath)); budget_chars = $script:AuthorityReadBudgetChars; mandatory_paths = $mandatory; markdown_sha256 = Get-AuthorityHash $mdPath; originals = $records; enumerated_paths = $script:AuthorityEnumeratedPaths; diagnostics = @($script:AuthorityDiagnostics) }
+$manifest = [ordered]@{ schema_version = 1; producer = 'deterministic'; checkpoint = [IO.Path]::GetFullPath($BuildStatePath); checkpoint_authority_sha256 = Get-AuthorityCheckpointHash ([IO.File]::ReadAllText($BuildStatePath)); budget_chars = $script:AuthorityReadBudgetChars; ceiling_chars = $script:AuthorityReadCeilingChars; mandatory_paths = $mandatory; markdown_sha256 = Get-AuthorityHash $mdPath; originals = $records; enumerated_paths = $script:AuthorityEnumeratedPaths; diagnostics = @($script:AuthorityDiagnostics) }
 [IO.File]::WriteAllText($jsonPath, ($manifest | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 # Publish the pin last. A partially written pair never verifies.
 [IO.File]::WriteAllText("$jsonPath.sha256", (Get-AuthorityHash $jsonPath), [Text.UTF8Encoding]::new($false))

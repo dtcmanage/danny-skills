@@ -103,8 +103,55 @@ try {
         $context.state = 'ok'
     }
     Write-Text $current ('Only fixtures. ' * 4000)
-    $bad = Invoke-Fixture 'build-authority-digest.ps1'
-    Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_BOOTSTRAP_BUDGET')) 'oversized current authority cannot be silently omitted'
+    $soft = Invoke-Fixture 'build-authority-digest.ps1'
+    $softResult = $soft.text | ConvertFrom-Json
+    Assert-True ($soft.code -eq 0 -and $softResult.budget_state -eq 'over_target' -and $softResult.mode -eq 'digest') 'soft-over current authority proceeds with a visible JSON warning'
+    Assert-True ([IO.File]::ReadAllText((Join-Path $root 'authority-digest.md')).Contains('WARNING: over_target')) 'soft-over Markdown header visibly warns and requires observed transcript confirmation'
+    $softRead = Invoke-Fixture 'read-authority-original.ps1' @('-Path', $current)
+    Assert-True ($softResult.mandatory_paths -contains $current -and $softRead.code -eq 0 -and $softRead.text.TrimEnd("`r", "`n") -ceq [IO.File]::ReadAllText($current)) 'soft-over never omits or truncates mandatory current authority'
+    $manifest = Get-Content (Join-Path $root 'authority-digest.json') -Raw | ConvertFrom-Json
+    Assert-True ($manifest.budget_chars -eq 32000 -and $manifest.ceiling_chars -eq 96000) 'manifest records both current budget constants'
+    foreach ($field in @('budget_chars', 'ceiling_chars')) {
+        $savedBudget = $manifest.$field
+        $manifest.$field = $savedBudget + 1
+        Pin-Manifest $manifest
+        $bad = Invoke-Fixture 'verify-authority-digest.ps1'
+        Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_MANIFEST_INVALID')) "verifier rejects repinned mismatching $field"
+        $manifest.$field = $savedBudget
+    }
+    Pin-Manifest $manifest
+    # Fit the actual emitted index + mandatory originals to exact boundaries.
+    # At these sizes inherited navigation extracts are clipped to zero.
+    foreach ($limit in @(32000, 32001, 96000, 96001)) {
+        Write-Text $current ('x' * $limit)
+        $probe = Invoke-Fixture 'build-authority-digest.ps1'
+        $mdChars = [IO.File]::ReadAllText((Join-Path $root 'authority-digest.md')).Length
+        $pinned = Get-Content (Join-Path $root 'authority-digest.json') -Raw | ConvertFrom-Json
+        $otherChars = [IO.File]::ReadAllText($checkpoint).Length
+        foreach ($record in $pinned.originals) { if ($record.path -in $pinned.mandatory_paths -and $record.path -ne $current) { $otherChars += $record.chars } }
+        Write-Text $current ('x' * ($limit - $mdChars - $otherChars))
+        $boundary = Invoke-Fixture 'build-authority-digest.ps1'
+        if ($limit -le 96000) {
+            $boundaryResult = $boundary.text | ConvertFrom-Json
+            $expected = if ($limit -gt 32000) { 'over_target' } else { 'within_target' }
+            Assert-True ($boundary.code -eq 0 -and $boundaryResult.bootstrap_chars -eq $limit -and $boundaryResult.budget_state -eq $expected) "exactly $limit chars proceeds with $expected"
+            Assert-True ((Invoke-Fixture 'verify-authority-digest.ps1').code -eq 0) "independent verifier accepts exactly $limit chars"
+            if ($limit -eq 32000) {
+                $savedCheckpoint = [IO.File]::ReadAllText($checkpoint)
+                Write-Text $checkpoint ($savedCheckpoint.Replace('last_consumed_event_seq: 7', 'last_consumed_event_seq: 12345'))
+                $ownedCross = Invoke-Fixture 'verify-authority-digest.ps1'
+                $ownedCrossResult = $ownedCross.text | ConvertFrom-Json
+                Assert-True ($ownedCross.code -eq 0 -and $ownedCrossResult.bootstrap_chars -eq 32004 -and $ownedCrossResult.budget_state -eq 'over_target') 'owned cursor crosses soft target without invalidating authority or stopping'
+                $ownedRead = Invoke-Fixture 'read-authority-digest.ps1'
+                Assert-True ($ownedRead.code -eq 0 -and $ownedRead.text.Contains('WARNING: over_target') -and $ownedRead.text.TrimEnd("`r", "`n").Length -eq ([IO.File]::ReadAllText((Join-Path $root 'authority-digest.md')).TrimEnd("`r", "`n").Length)) 'digest reader renders current warning without adding bootstrap characters'
+                Write-Text $checkpoint $savedCheckpoint
+            }
+        } else {
+            Assert-True ($boundary.code -ne 0 -and $boundary.text.Contains('AUTHORITY_BOOTSTRAP_BUDGET') -and $boundary.text.Contains('96001 chars') -and $boundary.text.Contains('consolidate or supersede old stop records')) 'hard-over stops with exact count and actionable operator recovery'
+            $bad = Invoke-Fixture 'verify-authority-digest.ps1'
+            Assert-True ($bad.code -ne 0 -and $bad.text.Contains('AUTHORITY_BOOTSTRAP_BUDGET')) 'independent verifier also stops above hard ceiling'
+        }
+    }
     $contract = Get-Content (Join-Path $scripts '../references/managed-resume.md') -Raw
     Assert-True ($contract.Contains('32,000 characters') -and $contract.Contains('IN FULL') -and $contract.Contains('Coordinators never author or edit')) 'entry contract names budget, action-time originals and script-only authorship'
     # Reproduce the live failure's scale with 99 fixture originals and a lean checkpoint.
