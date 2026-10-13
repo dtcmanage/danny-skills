@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import json
 import math
 import os
@@ -20,7 +20,8 @@ import subprocess
 import sys
 import time
 import uuid
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from eastern_time import eastern_zone
 
 ROOT = Path('C:/ProgramData/DannyPytest') if os.name == 'nt' else Path('/tmp/danny-pytest-machine')
 LOCK = ROOT / 'exclusive.lock'
@@ -30,17 +31,7 @@ STATUS = ROOT / 'holder.json'
 def eastern_time(now: datetime | None = None) -> str:
     """ET without a tzdata dependency; fallback uses US DST rules since 2007."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    try:
-        eastern = now.astimezone(ZoneInfo('America/New_York'))
-    except ZoneInfoNotFoundError:
-        if now.year < 2007:
-            raise ValueError('stdlib ET fallback supports dates from 2007 onward')
-        march = datetime(now.year, 3, 8, 7, tzinfo=timezone.utc)
-        november = datetime(now.year, 11, 1, 6, tzinfo=timezone.utc)
-        start = march + timedelta(days=(6 - march.weekday()) % 7)
-        end = november + timedelta(days=(6 - november.weekday()) % 7)
-        offset = -4 if start <= now < end else -5
-        eastern = now.astimezone(timezone(timedelta(hours=offset)))
+    eastern = now.astimezone(eastern_zone())
     return eastern.isoformat() + ' ET'
 
 

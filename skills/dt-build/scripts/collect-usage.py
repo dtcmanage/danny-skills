@@ -21,11 +21,12 @@ import statistics
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+from eastern_time import eastern_zone
 
-ET_ZONE = ZoneInfo("America/New_York")
+ET_ZONE = eastern_zone()
 
 ORCH_MARKERS = (b"verify-milestone-acceptance.ps1", b"write-build-state.ps1")
 ORCH_CALL_RE = re.compile(r"(?:verify-milestone-acceptance|write-build-state)\.ps1[\\\"']*\s+-[A-Za-z]")
@@ -507,7 +508,7 @@ def to_et_date(stamp: str | None) -> str | None:
     if parsed is None:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+        parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(ET_ZONE).date().isoformat()
 
 

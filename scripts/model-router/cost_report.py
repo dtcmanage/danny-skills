@@ -25,9 +25,10 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from eastern_time import eastern_zone
 
-ET_ZONE = ZoneInfo("America/New_York")
+ET_ZONE = eastern_zone()
 UTC = timezone.utc
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

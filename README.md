@@ -194,4 +194,16 @@ A periodic cleanup pass for memory/governance files (`CLAUDE.md`, `MEMORY.md`, `
 
 ## Installing
 
+### Preparing a test machine
+
+Install Python, Node.js (with npm), and PowerShell 7, then run from the repo root:
+
+```powershell
+pwsh -NoProfile -File scripts/test-preflight.ps1 -Fix
+```
+
+This installs the pinned Python packages in `requirements-test.txt` and runs `npm ci`
+in the UI benchmark harness. The ship gate runs the preflight without `-Fix` first;
+missing dependencies produce a fix command and exit immediately.
+
 Each skill lives in `skills/<skill-name>/SKILL.md`. To use them in Claude Code, copy or symlink the `skills/` subfolders into your user-level skills directory (`~/.agents/skills/` on this machine — note: not `~/.claude/skills/`).

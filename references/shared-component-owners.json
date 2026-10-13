@@ -1,4 +1,8 @@
 {
+  "scripts/eastern_time.py": {"consumers": ["dt-build"], "summary_token": "model router"},
+  "scripts/test-preflight.ps1": {"consumers": [], "summary_token": "test dependencies"},
+  "scripts/tests/test-test-preflight.ps1": {"consumers": [], "summary_token": "test dependencies"},
+  "scripts/tests/test_eastern_time.py": {"consumers": [], "summary_token": "test dependencies"},
   "scripts/model-router/tests/test-codex-capacity-backoff.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/pytest-lock.py": {"consumers": ["dt-build"], "summary_token": "pytest serialization"},
   "scripts/pytest-lock.ps1": {"consumers": ["dt-build"], "summary_token": "pytest serialization"},
