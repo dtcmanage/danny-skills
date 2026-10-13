@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.38.3
+
+- Model router bench (shared component): broken or quota-blocked Codex calls stay out of bench results; recovered dispatch failures no longer break quality ties.
+
 ## 2.38.2
 
 - Worker standing rules: run the full named test selection without early-stop flags, classify and fix every failure per round; the two-attempt limit counts rounds, not failing tests (FS-60).

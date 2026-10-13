@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.31 (2026-10-13): Model router bench (shared component): broken or quota-blocked Codex calls stay out of bench results; recovered dispatch failures no longer break quality ties.
+
 - 0.3.30 (2026-10-13): Shared process wrapper classifies Codex capacity refusals as capacity, and model router outcome recording treats them as vendor availability, not model quality.
 
 - 0.3.29 (2026-10-11): model router: read-only Codex workers on Windows can read files (unsandboxed with an unchanged-tree check); the ad-hoc wiring test uses the fixture Claude CLI.
