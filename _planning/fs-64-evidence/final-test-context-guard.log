@@ -1,4 +1,0 @@
-FAIL: ASSERT_FAIL: codex heavy authority reads are measured since launch
-at Assert-True, D:\Claude\_Claude-Workspace\Skill Creation\danny-skills-bootstrap-authority-digest\skills\dt-build\scripts\tests\test-context-guard.ps1: line 9
-at <ScriptBlock>, D:\Claude\_Claude-Workspace\Skill Creation\danny-skills-bootstrap-authority-digest\skills\dt-build\scripts\tests\test-context-guard.ps1: line 888
-SUMMARY: 128 passed

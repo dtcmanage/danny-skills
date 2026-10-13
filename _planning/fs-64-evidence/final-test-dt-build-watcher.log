@@ -1,3 +1,0 @@
-FAIL: Index was outside the bounds of the array.
-at <ScriptBlock>, D:\Claude\_Claude-Workspace\Skill Creation\danny-skills-bootstrap-authority-digest\skills\dt-build\scripts\tests\test-dt-build-watcher.ps1: line 1237
-SUMMARY: 206 passed

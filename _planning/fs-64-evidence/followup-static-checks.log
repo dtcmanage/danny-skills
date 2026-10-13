@@ -1,8 +1,0 @@
-skills/dt-build/scripts/authority-digest.ps1 : 0 AST errors
-skills/dt-build/scripts/build-authority-digest.ps1 : 0 AST errors
-skills/dt-build/scripts/verify-authority-digest.ps1 : 0 AST errors
-skills/dt-build/scripts/tests/test-authority-digest.ps1 : 0 AST errors
-_planning/fs-64-live-acceptance.ps1 : 0 AST errors
-git diff --check: exit 0
-wrapper/version/changelog diff: exit 0
-5 touched PowerShell files; 0 AST errors
