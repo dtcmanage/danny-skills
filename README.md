@@ -203,7 +203,7 @@ pwsh -NoProfile -File scripts/test-preflight.ps1 -Fix
 ```
 
 This installs the pinned Python packages in `requirements-test.txt` and runs `npm ci`
-in the UI benchmark harness. The ship gate runs the preflight without `-Fix` first;
-missing dependencies produce a fix command and exit immediately.
+in the UI benchmark harness. The gate checks only its own needs (`-Scope gate`); `-Fix` in the default full scope prepares a machine for every suite.
+Missing dependencies produce a fix command and exit immediately.
 
 Each skill lives in `skills/<skill-name>/SKILL.md`. To use them in Claude Code, copy or symlink the `skills/` subfolders into your user-level skills directory (`~/.agents/skills/` on this machine — note: not `~/.claude/skills/`).
