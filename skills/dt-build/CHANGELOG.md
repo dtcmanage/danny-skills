@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.37.0
+
+- New read-only resolve-tooling-revision.ps1 maps a tooling file's exact bytes to the danny-skills main commit that published it, so pinned runs can accept releases automatically and stop only on unpublished edits (FS-68).
+
 ## 2.36.1
 
 - Watcher trusts a matching coordinator exit receipt over log text when classifying capacity refusals; a clean exit no longer stops a run as capacity (FS-67).
