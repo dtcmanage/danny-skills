@@ -507,6 +507,7 @@ if ($env:DT_FAKE_CREATE_UNTRACKED) {
     [IO.File]::WriteAllText((Join-Path (Get-Location) 'worker-ignored.txt'), 'ignored')
 }
 if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
+if ($env:DT_FAKE_WORKER_REPORT) { [IO.File]::WriteAllText($env:DT_FAKE_WORKER_REPORT, 'FULL WORKER REPORT') }
 if ($mode -eq 'preflight') { [System.IO.File]::WriteAllText($outPath, 'OK'); exit 0 }
 if ($mode -eq 'malformed') { [System.IO.File]::WriteAllText($outPath, 'I cannot do that.'); exit 0 }
 if ($mode -eq 'blocked') {
@@ -588,6 +589,13 @@ if($env:DT_FAKE_UNICODE_TEXT){
         & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath "$adhocOut.default" -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'default ad-hoc fixture' -AdHoc -Json *> $null
         $defaultProv = Get-Content -Raw "$adhocOut.default.provenance.json" | ConvertFrom-Json
         Assert-True ($LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($capturedPrompt).Contains('Allow at most 2 fix rounds') -and @($defaultProv.untracked_created).Count -eq 0) 'ad-hoc default rule uses two rounds and existing untracked files are excluded'
+        Assert-True ((Test-Path "$adhocOut.default") -and -not (Test-Path "$adhocOut.default.final.md") -and -not (Test-Path "$adhocOut.default.last-message.tmp") -and -not $defaultProv.worker_output_kept) 'ad-hoc final message lands at -OutputPath when the worker writes no report there'
+        $keptOut = "$adhocOut.kept"
+        $env:DT_FAKE_WORKER_REPORT = $keptOut
+        try { & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $keptOut -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'worker report fixture' -AdHoc -Json *> $null; $keptExit = $LASTEXITCODE }
+        finally { Remove-Item Env:DT_FAKE_WORKER_REPORT -ErrorAction SilentlyContinue }
+        $keptProv = Get-Content -Raw "$keptOut.provenance.json" | ConvertFrom-Json
+        Assert-True ($keptExit -eq 0 -and [IO.File]::ReadAllText($keptOut) -eq 'FULL WORKER REPORT' -and (Test-Path "$keptOut.final.md") -and [IO.File]::ReadAllText("$keptOut.final.md") -ne 'FULL WORKER REPORT' -and $keptProv.worker_output_kept -and $keptProv.final_message_path -and -not (Test-Path "$keptOut.last-message.tmp")) 'ad-hoc keeps a worker-written -OutputPath report and files the final message as .final.md'
         $env:DT_BUILD_PROMPT_MAX_CHARS = [string]((Get-Content -Raw $wrapperPrompt).Length + 1)
         $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath "$adhocOut.too-large" -CodexCliPath $fakeCodex -Effort medium -SelectionReason 'effective prompt fixture' -AdHoc -ValidateOnly 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($guardLog -join "`n") -match 'PROMPT_TOO_LARGE') 'validation checks effective ad-hoc prompt including standing rule'

@@ -376,6 +376,11 @@ $sandboxArgs = if ($windowsUnsandboxed) {
 } else {
     @('--sandbox', $sandbox)
 }
+# Ad hoc workers often write their own report at -OutputPath; capture the final chat
+# message separately so it can never overwrite that report.
+$lastMessagePath = if ($AdHoc) { "$OutputPath.last-message.tmp" } else { $OutputPath }
+$finalMessagePath = "$OutputPath.final.md"
+$workerOutputKept = $false
 $args = @(
     '--ask-for-approval', 'never',
     'exec',
@@ -383,7 +388,7 @@ $args = @(
 ) + $sandboxArgs + @(
     '--cd', $projectRoot,
     '--model', $resolvedModel,
-    '--output-last-message', $OutputPath,
+    '--output-last-message', $lastMessagePath,
     '-'
 )
 
@@ -457,7 +462,8 @@ try {
     $dispatchDiagnosis = $null
     if ($proc) { $proc.Dispose() }
     # Never accept a retained message from an earlier failed launch.
-    Remove-Item -LiteralPath $OutputPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $OutputPath, $lastMessagePath, $finalMessagePath -Force -ErrorAction SilentlyContinue
+    $workerOutputKept = $false
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $startInfo
     if (-not $proc.Start()) { throw "CODEX_INVOKE_FAIL: failed to start codex CLI." }
@@ -501,8 +507,20 @@ try {
     }
     $dispatchAttempts.Add($attemptRecord)
 
-    $lastMessage = if (Test-Path -LiteralPath $OutputPath) {
-        Get-Content -Raw -LiteralPath $OutputPath
+    if ($AdHoc -and (Test-Path -LiteralPath $lastMessagePath)) {
+        if (Test-Path -LiteralPath $OutputPath) {
+            # The worker wrote -OutputPath itself (it was removed before launch): keep its
+            # report and file the final chat message beside it.
+            Move-Item -LiteralPath $lastMessagePath -Destination $finalMessagePath -Force
+            $workerOutputKept = $true
+            $workerReport = Get-Content -Raw -LiteralPath $OutputPath
+            if (-not [string]::IsNullOrEmpty($workerReport)) { [System.IO.File]::WriteAllText($OutputPath, (Invoke-SecretRedaction -Text $workerReport)) }
+        }
+        else { Move-Item -LiteralPath $lastMessagePath -Destination $OutputPath -Force }
+    }
+    $messageFile = if ($workerOutputKept) { $finalMessagePath } else { $OutputPath }
+    $lastMessage = if (Test-Path -LiteralPath $messageFile) {
+        Get-Content -Raw -LiteralPath $messageFile
     }
     else { "" }
 
@@ -510,7 +528,7 @@ try {
     # writing provenance, not only the process stream.
     if (-not [string]::IsNullOrEmpty($lastMessage)) {
         $lastMessage = Invoke-SecretRedaction -Text $lastMessage
-        [System.IO.File]::WriteAllText($OutputPath, $lastMessage)
+        [System.IO.File]::WriteAllText($messageFile, $lastMessage)
     }
 
     $failureReason = ''
@@ -590,7 +608,7 @@ try {
             $attemptRecord.failure_detail = $failureDetail
             # A refusal can follow substantial work. Discard its partial final message;
             # each retry starts a fresh exec with the same prompt, argv and output path.
-            Remove-Item -LiteralPath $OutputPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $OutputPath, $lastMessagePath, $finalMessagePath -Force -ErrorAction SilentlyContinue
             if ($capacityBackoffs.Count -lt $CapacityBackoffMs.Count) {
                 $waitMs = $CapacityBackoffMs[$capacityBackoffs.Count]
                 $waitStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
@@ -758,6 +776,8 @@ try {
         output_sha256          = if (Test-Path -LiteralPath $OutputPath) { (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
         output_path            = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
         stream_log_path        = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }
+        worker_output_kept     = $workerOutputKept
+        final_message_path     = if ($workerOutputKept -and (Test-Path -LiteralPath $finalMessagePath)) { (Resolve-Path -LiteralPath $finalMessagePath).Path } else { $null }
         failure_category       = $failureCategory
         failure_detail         = $failureDetail
         dispatch_attempts      = @($dispatchAttempts.ToArray())
@@ -817,4 +837,5 @@ finally {
     if ($temporaryOutput) {
         Remove-Item -LiteralPath $OutputPath, "$OutputPath.stream.log" -Force -ErrorAction SilentlyContinue
     }
+    if ($AdHoc -and $lastMessagePath) { Remove-Item -LiteralPath $lastMessagePath -Force -ErrorAction SilentlyContinue }
 }
