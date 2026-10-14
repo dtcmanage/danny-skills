@@ -109,8 +109,6 @@ try {
     $result = Resolve-Fixture -File $guide
     Assert-True ($result.status -eq 'ON_MAIN' -and $result.repo_relative_path -eq 'Resources/ops-conventions.md') 'workspace RepoRoot infers guide path'
     Assert-True ($result.repo_root -eq $fixture -and $result.ref -eq 'origin/main' -and $result.ref_head -eq $guideHead -and $result.ref_commit_date) 'workspace ref snapshot includes repo, head and commit time'
-    Resolve-Fixture -File $guide -Extra @('-Fetch') -ExpectedExit 2
-    Assert-True ((Get-Content $errorLog -Raw) -match 'read-only') 'fetch is rejected before git mutation'
 
     $pin = Join-Path $tempRoot 'pinned.txt'
     $runtime = Join-Path $tempRoot 'known_hosts'

@@ -13,7 +13,7 @@ pwsh -NoProfile -File skills/dt-build/scripts/resolve-tooling-revision.ps1 -Path
 
 Files within the selected repository infer their repository-relative path. Installed `dt-build/scripts` copies retain the canonical tooling path inference. For an external copy, supply `-RepoRelativePath <repo-path>`.
 
-The helper compares exact bytes, including line endings, with the selected repository's local `origin/main` history. `ON_MAIN` means a matching blob exists at that path in a commit reachable from that ref; it can be historical, not just the head version. `is_ref_head` states whether the head blob matches. The helper never fetches; `-Fetch` is rejected with exit 2. A local remote-tracking ref is a snapshot, not proof of the current remote state.
+The helper compares exact bytes, including line endings, with the selected repository's local `origin/main` history. `ON_MAIN` means a matching blob exists at that path in a commit reachable from that ref; it can be historical, not just the head version. `is_ref_head` states whether the head blob matches. The helper never fetches unless `-Fetch` is explicitly passed; append-only checks never touch git. A local remote-tracking ref is a snapshot, not proof of the current remote state.
 
 JSON records `repo_root`, `repo_relative_path`, `ref`, `ref_head`, `ref_commit_date` (time of the checked head), `commit`, `commit_date` (newest matching path revision), size, SHA256, blob id and `is_ref_head`. Dates use Eastern time with a numeric offset.
 

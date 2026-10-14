@@ -141,7 +141,6 @@ function Resolve-AppendOnly {
 $stream = $null
 try {
     if ([string]::IsNullOrWhiteSpace($Path)) { throw '-Path is required.' }
-    if ($Fetch) { throw '-Fetch is not allowed: this helper is read-only.' }
     $file = Get-Item -LiteralPath $Path
     if ($file.PSIsContainer) { throw "Path is not a file: $Path" }
     $Path = $file.FullName
@@ -175,6 +174,7 @@ try {
     if ($RepoRelativePath.StartsWith('/') -or $RepoRelativePath -match '(^|/)\.\.?(/|$)|:' ) {
         throw '-RepoRelativePath must be a repository-relative file path without dot segments.'
     }
+    if ($Fetch) { $null = Invoke-RevisionGit -Arguments @('fetch', 'origin') }
     $refHead = Invoke-RevisionGit -Arguments @('rev-parse', '--verify', "$Ref^{commit}")
     # Hold a read-only handle to prevent concurrent byte changes while git reads.
     $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
