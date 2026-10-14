@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.41.2
+
+- Watcher: a coordinator killed by a host restart is not a capacity refusal; the log fallback only counts a refusal in the last 40 lines.
+
 ## 2.41.1
 
 - Blocked-report classifier ignores report headers, the verdict word and CHANGED_FILES paths, and matches whole-word denial phrases on one line; a content BLOCKED is no longer labeled sandbox_tool_denied.

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.24.49",
+  "version": "0.24.50",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.24.50 Watcher restart classification (process wrapper, version policy): dt-build 2.41.2",
       "0.24.49 Blocked-report classification (process wrapper, version policy): dt-build 2.41.1, dt-image-gen 0.3.34, dt-review 1.16.34, dt-writing-draft 0.2.34, dt-writing-edit 0.3.34",
       "0.24.48 Worker authority scope (process wrapper, version policy): dt-build 2.41.0",
       "0.24.47 dt-job single wait (process wrapper, version policy): dt-build 2.40.2",
