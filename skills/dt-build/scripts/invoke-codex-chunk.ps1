@@ -145,7 +145,14 @@ if (-not $Preflight) {
     $promptText = Get-Content -Raw -LiteralPath $PromptPath
     . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
     $fixRoundRule = Get-WorkerFixRoundRule -MaxFixRounds $MaxFixRounds
-    if ($AdHoc) { $promptText += "`nStanding execution rules:`n- $fixRoundRule`n" }
+    if ($AdHoc) {
+        $promptFolder = Split-Path -Parent $PromptPath
+        # Workers never see where the prompt came from; refuse sibling references that cannot resolve.
+        $siblingPattern = '(?i)[`"'']?([\w.-]+\.[a-z0-9]{1,8})[`"'']?\s*\((?:beside|next to|alongside) this prompt\)'
+        $missingSiblings = @([regex]::Matches($promptText, $siblingPattern) | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique | Where-Object { -not (Test-Path -LiteralPath (Join-Path $promptFolder $_) -PathType Leaf) })
+        if ($missingSiblings.Count) { throw "CODEX_PROMPT_SIBLING_MISSING: referenced beside the prompt but absent from ${promptFolder}: $($missingSiblings -join ', ')" }
+        $promptText += "`nStanding execution rules:`n- This prompt file is $PromptPath. Resolve files described as beside, next to, or alongside this prompt against its folder: $promptFolder`n- $fixRoundRule`n"
+    }
     elseif ($PSBoundParameters.ContainsKey('MaxFixRounds')) {
         $rulePattern = '(?m)^- Run the full named test selection[^\r\n]*'
         if ($promptText -match $rulePattern) { $promptText = [regex]::Replace($promptText, $rulePattern, { param($match) '- ' + $fixRoundRule }) }
@@ -350,7 +357,11 @@ $promptSha256 = if ($Preflight) {
     finally { $sha.Dispose() }
 }
 else {
-    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($prompt))).ToLowerInvariant()
+    # prompt_sha256 stays the prompt file's bytes (runs seal it); appended standing rules get their own hash.
+    (Get-FileHash -LiteralPath $PromptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+$dispatchedPromptSha256 = if ($Preflight) { $promptSha256 } else {
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([System.Text.UTF8Encoding]::new($false).GetBytes($prompt))).ToLowerInvariant()
 }
 $sandbox = if ($Preflight -or $ReadOnly) { 'read-only' } else { 'workspace-write' }
 # Keep the existing Windows builder route separate from reviewers. Reviewers
@@ -743,6 +754,7 @@ try {
         duration_ms            = $durationMs
         timeout_ms             = $TimeoutMs
         prompt_sha256          = $promptSha256
+        dispatched_prompt_sha256 = $dispatchedPromptSha256
         output_sha256          = if (Test-Path -LiteralPath $OutputPath) { (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
         output_path            = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
         stream_log_path        = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }

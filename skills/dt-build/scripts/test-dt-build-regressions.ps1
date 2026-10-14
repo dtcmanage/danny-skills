@@ -592,6 +592,18 @@ if($env:DT_FAKE_UNICODE_TEXT){
         $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath "$adhocOut.too-large" -CodexCliPath $fakeCodex -Effort medium -SelectionReason 'effective prompt fixture' -AdHoc -ValidateOnly 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($guardLog -join "`n") -match 'PROMPT_TOO_LARGE') 'validation checks effective ad-hoc prompt including standing rule'
         Remove-Item Env:DT_BUILD_PROMPT_MAX_CHARS -ErrorAction SilentlyContinue
+        Assert-True ($defaultProv.prompt_sha256 -eq (Get-FileHash -LiteralPath $wrapperPrompt -Algorithm SHA256).Hash.ToLowerInvariant() -and $defaultProv.dispatched_prompt_sha256 -and $defaultProv.dispatched_prompt_sha256 -ne $defaultProv.prompt_sha256) 'prompt_sha256 keeps the prompt file bytes; appended rules get dispatched_prompt_sha256'
+        Assert-True ([IO.File]::ReadAllText($capturedPrompt).Contains("This prompt file is $((Resolve-Path -LiteralPath $wrapperPrompt).Path)")) 'ad-hoc standing rules name the prompt path and folder'
+        $siblingDir = Join-Path $tempRoot 'sibling-prompt'
+        New-Item -ItemType Directory -Path $siblingDir -Force | Out-Null
+        $siblingPrompt = Join-Path $siblingDir 'brief.md'
+        Write-Utf8 $siblingPrompt 'Read release12-prompt.md (beside this prompt) and follow it.'
+        $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $siblingPrompt -OutputPath "$adhocOut.sibling" -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'sibling fixture' -AdHoc -ValidateOnly 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($guardLog -join "`n") -match 'CODEX_PROMPT_SIBLING_MISSING' -and ($guardLog -join "`n") -match 'release12-prompt\.md') 'ad-hoc refuses a missing sibling named beside the prompt'
+        Write-Utf8 (Join-Path $siblingDir 'release12-prompt.md') 'sibling'
+        $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $siblingPrompt -OutputPath "$adhocOut.sibling" -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'sibling fixture' -AdHoc -ValidateOnly 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "ad-hoc validates when the named sibling exists: $($guardLog -join ' | ')"
+        Remove-Item Env:DT_BUILD_PROMPT_MAX_CHARS -ErrorAction SilentlyContinue
     } finally {
         $env:DT_BUILD_RUN_PIN_VENDOR = $savedPinVendor; $env:DT_BUILD_RUN_PIN_MODEL = $savedPinModel
         Remove-Item Env:DT_FAKE_ALL_CALLS, Env:DT_FAKE_CREATE_UNTRACKED, Env:DT_FAKE_UNICODE_PROMPT, Env:DT_BUILD_PROMPT_MAX_CHARS -ErrorAction SilentlyContinue
