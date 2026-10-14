@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.42.2
+
+- The context wall never blocks instruction and policy files (CLAUDE/AGENTS/MEMORY/CONTEXT.md, 00_Resources policy, skill SKILL.md and references); data files stay walled.
+
 ## 2.42.1
 
 - Ad hoc runs keep a worker-written -OutputPath report and file the final chat message as <OutputPath>.final.md (provenance: worker_output_kept, final_message_path).
