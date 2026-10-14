@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.40.0
+
+- Worker dispatch: -MaxFixRounds with a no-progress stop, -ValidateOnly, effective selection-reason length check (FS-62), ad-hoc output outside the project tree, prompt-sibling resolution, dt-job requeue and documented -DependsOn chaining.
+
 ## 2.39.0
 
 - Revision resolver adds append-only proofs for pinned runtime files (protected rows unchanged) and ON_MAIN proofs against any repo via -RepoRoot, incl. the workspace repo.
