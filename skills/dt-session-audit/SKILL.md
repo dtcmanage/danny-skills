@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.5.1
+  version: 0.6.0
 ---
 
 # Session Audit
@@ -368,6 +368,10 @@ When applying:
 4. Apply explicit in-session conflict decisions exactly as chosen.
 5. Enforce MULTI_SCOPE atomic apply contract.
 6. Report what was written and what remains escalated.
+7. **Command Center backstop:** review the session for anything that now needs Danny, is waiting on someone else, has a real deadline, or finished an item on the list.
+   For each workstation touched, run `pwsh -NoProfile -File "D:\Claude\_Claude-Workspace\Command Center\cc.ps1" list --workstation "<folder>"`; add missing items, update changed ones, and close finished ones with `done <id> --done-note "..."`.
+   Read and follow `D:\Claude\_Claude-Workspace\Command Center\CLAUDE.md` § The session write rule: titles without amounts/account numbers, starter prompts usable in a fresh session, workstation = folder path including substation. Never move open items into `MEMORY.md`; move any open-for-Danny item found there to Command Center.
+   Report Command Center writes in one line in the audit output.
 
 After apply, run:
 

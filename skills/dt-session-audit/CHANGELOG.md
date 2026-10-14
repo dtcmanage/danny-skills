@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.6.0 (2026-10-13): Add a Command Center backstop to reconcile session open and finished items, move misplaced open-for-Danny memory entries, and report list writes.
+
 - 0.5.1 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.
 
 - 0.5.0 (2026-08-30): Residency Test and root write gate cover refine operations (a refine that would fail residency today relocates instead of growing root); condition 4 measured deterministically via detect-memory-bloat.ps1 word_count with References rows counted in the after-total; same gate extended to workstation CLAUDE.md writes minus the root-scope condition.
