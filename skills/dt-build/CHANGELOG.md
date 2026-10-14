@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.39.0
+
+- Revision resolver adds append-only proofs for pinned runtime files (protected rows unchanged) and ON_MAIN proofs against any repo via -RepoRoot, incl. the workspace repo.
+
 ## 2.38.5
 
 - Model router bench (shared component): bench tests use a fake renderer, and the ranked renderer finds browser-smoke through DANNY_BROWSER_SMOKE_DIR outside the workspace tree; the task bank is unchanged (FS-69).
