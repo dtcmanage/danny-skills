@@ -14,7 +14,7 @@ $dtJob = "<repo>/skills/dt-build/scripts/dt-job.ps1"
 $run = "<run folder>"
 $upstream = pwsh -NoProfile -File $dtJob start -RunFolder $run -Kind command -Command 'Write-Output upstream' -Json | ConvertFrom-Json
 $downstream = pwsh -NoProfile -File $dtJob start -RunFolder $run -Kind command -Command 'Write-Output downstream' -DependsOn $upstream.job_id -Json | ConvertFrom-Json
-pwsh -NoProfile -File $dtJob wait -RunFolder $run -JobId $downstream.job_id -All -Json
+pwsh -NoProfile -File $dtJob wait -RunFolder $run -JobId $downstream.job_id -TimeoutSec 3600 -Json
 ```
 
 `requeue -JobId <id>` accepts only blocked or cancelled jobs. It creates a new
@@ -28,7 +28,7 @@ job immediately. To restart a blocked chain after rerunning its upstream:
 cd "<project path>"
 $retryUpstream = pwsh -NoProfile -File $dtJob start -RunFolder $run -Kind command -Command 'Write-Output upstream-retry' -Json | ConvertFrom-Json
 $retryDownstream = pwsh -NoProfile -File $dtJob requeue -RunFolder $run -JobId $downstream.job_id -DependsOn $retryUpstream.job_id -Json | ConvertFrom-Json
-pwsh -NoProfile -File $dtJob wait -RunFolder $run -JobId $retryDownstream.job_id -All -Json
+pwsh -NoProfile -File $dtJob wait -RunFolder $run -JobId $retryDownstream.job_id -TimeoutSec 3600 -Json
 ```
 
 For further links, requeue each blocked job against the newly returned predecessor

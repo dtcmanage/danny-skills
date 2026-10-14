@@ -123,6 +123,8 @@ try {
         $null = Wait-JobTerminal $pinRun $pinJob.job_id
         $pinWait = Invoke-DtJob @('wait', '-RunFolder', $pinRun, '-JobId', $pinJob.job_id, '-All', '-TimeoutSec', '1')
         Assert-True ($pinWait.pin -eq 'codex gpt-fixture') "$kind wait carries pin label"
+        $singleWait = Invoke-DtJob @('wait', '-RunFolder', $pinRun, '-JobId', $pinJob.job_id, '-TimeoutSec', '1')
+        Assert-True ($singleWait.result -eq 'finished' -and $singleWait.pin -eq 'codex gpt-fixture') "$kind single-job wait needs neither -Any nor -All"
     }
     $null = Invoke-DtJob @('lease', '-RunFolder', $pinRun, '-Action', 'acquire', '-CoordinatorId', 'pin-reader', '-Host', 'codex', '-LaunchedBy', 'watcher')
     $resumeArgs = @('-RunFolder', $pinRun, '-RunId', 'pin-run', '-BuildStatePath', $pinState, '-CoordinatorId', 'pin-reader')

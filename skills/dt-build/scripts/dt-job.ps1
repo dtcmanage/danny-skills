@@ -1342,8 +1342,10 @@ function Get-DtJobWaitRenewSec {
 function Invoke-DtJobWait {
     $ids = @($script:DtJobIds)
     if ($ids.Count -eq 0) { throw 'DT_JOB_USAGE: wait requires -JobId.' }
-    if ($Any -eq $All) { throw 'DT_JOB_USAGE: wait takes exactly one of -Any or -All.' }
-    if ($TimeoutSec -le 0) { throw 'DT_JOB_USAGE: wait requires -TimeoutSec greater than 0.' }
+    # One job: -Any and -All mean the same thing, so neither is required.
+    if ($ids.Count -eq 1 -and -not $Any -and -not $All) { $script:All = $true; $All = $true }
+    if ($Any -eq $All) { throw 'DT_JOB_USAGE: wait on several jobs takes exactly one of -Any or -All (single job: wait -JobId <id> -TimeoutSec <n>).' }
+    if ($TimeoutSec -le 0) { throw 'DT_JOB_USAGE: wait requires -TimeoutSec greater than 0 (for example: wait -JobId <id> -TimeoutSec 3600).' }
     foreach ($id in $ids) { if ($null -eq (Get-DtJobRecord -RunFolder $RunFolder -JobId $id)) { throw "DT_JOB_UNKNOWN: $id" } }
     $coordinator = $script:DtJobCoordinator
     $renewEverySec = Get-DtJobWaitRenewSec (Get-DtJobLease -RunFolder $RunFolder)
