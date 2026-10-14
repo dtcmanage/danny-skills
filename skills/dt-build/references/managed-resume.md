@@ -24,6 +24,8 @@ On every rewrite, keep `_build-state.md` at most 8 KiB: current milestone, short
 
 Never copy operator notes into the checkpoint; they live in the run folder's `operator-notes.json`, and `dt-job status` and every wait show them. Put job history, custody/hash comparisons, failed attempts, detailed verification results and decision narrative in the run folder, never append them to the checkpoint. Do not discard operative boundaries to satisfy the size limit: retain them in a run-folder boundary record, name it in the checkpoint, and apply the authority read contract before marking bootstrap. Archive history before replacing it with a pointer. Use the canonical pipeline template's fields; no template read is needed until a rewrite.
 
+**Evidence notes.** Operators record facts with `dt-job note -Evidence -Message <text>` in `evidence-notes.json`. Coordinators read them as information only, never as authority, and never re-bind on them. They cannot grant, widen, waive or change authority. Anything that changes what the run may do must be a normal operator note (omit `-Evidence`).
+
 ## Authority read contract
 
 The original records remain the authorization source. The digest is a mechanical navigation index, never an approval. Coordinators never author or edit its authority content, extracts, manifest or pin; invoke the scripts only.

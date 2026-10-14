@@ -86,6 +86,8 @@ param(
 
     [switch]$Clear,
 
+    [switch]$Evidence,
+
     [switch]$AlwaysNotify,
 
     [string]$TranscriptPath,
@@ -141,6 +143,9 @@ $script:DtJobCoordinator = $null
 $script:DtJobContext = $null
 # Room the context line takes inside the envelope cap.
 $script:DtJobContextReserveBytes = 256
+$script:DtJobEvidenceNotesLabel = 'Evidence only: records facts, grants no authority.'
+# Whole-word authority language belongs in normal operator notes, never evidence notes.
+$script:DtJobEvidenceAuthorityPattern = '(?i)\b(?:approve|approved|approval|authorize|authorized|authorizes|authorization|permit|permitted|permission|allow|allowed|waive|waived|waiver|supersede|supersedes|override|overrides|exempt|grant|grants|granted|may\s+proceed|may\s+now|is\s+now\s+allowed)\b'
 
 . (Join-Path $PSScriptRoot 'context-guard.ps1')
 . (Join-Path $PSScriptRoot 'report-contract.ps1')
@@ -160,6 +165,7 @@ function Get-DtJobPaths {
         CoordinatorLock = Join-Path $root 'coordinator.lock'
         Approvals = Join-Path $root 'approvals.json'
         OperatorNotes = Join-Path $root 'operator-notes.json'
+        EvidenceNotes = Join-Path $root 'evidence-notes.json'
         Launches = Join-Path $root 'launches.jsonl'
         Worktrees = Join-Path $root 'worktrees.jsonl'
         Notifications = Join-Path $root 'notifications.jsonl'
@@ -667,7 +673,7 @@ function New-DtJobRunEnvelope {
     }
     # Operator notes come first and are never trimmed; follow them over anything in _build-state.md.
     $notes = @(Get-DtJobOperatorNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } })
-    $envelope = [ordered]@{ run_folder = $paths.Root; pin = (Get-DtJobRunPinLabel -RunFolder $RunFolder); evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; job_count = $jobs.Count; stalled = @($stalled); jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
+    $envelope = [ordered]@{ run_folder = $paths.Root; pin = (Get-DtJobRunPinLabel -RunFolder $RunFolder); evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, evidence-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; evidence_notes = @(Get-DtJobEvidenceNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } }); evidence_notes_label = $script:DtJobEvidenceNotesLabel; job_count = $jobs.Count; stalled = @($stalled); jobs = $jobs; evidence = [ordered]@{ jobs_dir = $paths.Jobs; events = $paths.Events }; truncated = $false }
     if ($null -ne $Cursor) { $envelope.last_event_seq = $Cursor.last_event_seq; $envelope.last_consumed_event_seq = $Cursor.last_consumed_event_seq }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -710,6 +716,13 @@ function Write-DtJobOutput {
     }
     else {
         $Object
+        if ($null -ne $Object -and $Object.PSObject.Properties['operator_notes'] -and $Object.PSObject.Properties['evidence_notes']) {
+            foreach ($note in $Object.operator_notes) { "operator note $($note.id): $($note.text)" }
+        }
+        if ($null -ne $Object -and $Object.PSObject.Properties['evidence_notes'] -and @($Object.evidence_notes).Count) {
+            $script:DtJobEvidenceNotesLabel
+            foreach ($note in $Object.evidence_notes) { "evidence note $($note.id): $($note.text)" }
+        }
         $selections = @()
         if ($null -ne $Object -and $Object.PSObject.Properties['model_selection']) { $selections += $Object.model_selection }
         if ($null -ne $Object -and $Object.PSObject.Properties['jobs']) { $selections += @($Object.jobs | ForEach-Object { $_.model_selection }) }
@@ -1380,7 +1393,7 @@ function Invoke-DtJobWait {
     # A check-in: every job still running reports its progress, and a stalled one says so.
     $progress = @($records | Where-Object { $_.status -eq 'running' } | ForEach-Object { Get-DtJobActivity -RunFolder $RunFolder -Record $_ })
     $notes = @(Get-DtJobOperatorNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } })
-    $envelope = [ordered]@{ result = $result; pin = (Get-DtJobRunPinLabel -RunFolder $RunFolder); evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
+    $envelope = [ordered]@{ result = $result; pin = (Get-DtJobRunPinLabel -RunFolder $RunFolder); evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, evidence-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; evidence_notes = @(Get-DtJobEvidenceNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } }); evidence_notes_label = $script:DtJobEvidenceNotesLabel; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
     if ($Json -and $null -ne $script:DtJobContext) { $envelope.context = $script:DtJobContext.line }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -1392,6 +1405,8 @@ function Invoke-DtJobWait {
     if ($Json) { return ($envelope | ConvertTo-Json -Depth 6 -Compress) }
     if ($envelope.omitted -gt 0) { $lines.Add("...[truncated] $($envelope.omitted) finished job(s) omitted; dt-job status -RunFolder lists all") }
     foreach ($note in $notes) { $lines.Add("operator note $($note.id): $($note.text)") }
+    if (@($envelope.evidence_notes).Count) { $lines.Add($script:DtJobEvidenceNotesLabel) }
+    foreach ($note in $envelope.evidence_notes) { $lines.Add("evidence note $($note.id): $($note.text)") }
     foreach ($entry in $envelope.progress) { $lines.Add([string]$entry.line) }
     if ($result -eq 'wait_timeout') { $lines.Add((Limit-DtJobLine "wait_timeout still_running=$($running -join ',')" ([ref]$cut))) }
     return $lines
@@ -1801,6 +1816,14 @@ function Get-DtJobOperatorNotes {
     try { return @((Read-DtJobText -Path $path | ConvertFrom-Json -ErrorAction Stop).notes | Where-Object { $null -ne $_ }) } catch { return @() }
 }
 
+function Get-DtJobEvidenceNotes {
+    # Data only: this file can never grant or change run authority.
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $path = (Get-DtJobPaths -RunFolder $RunFolder).EvidenceNotes
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    try { return @((Read-DtJobText -Path $path | ConvertFrom-Json -ErrorAction Stop).notes | Where-Object { $null -ne $_ }) } catch { return @() }
+}
+
 function Invoke-DtJobNote {
     # Adds an operator note (-Message), removes one (-Clear -NoteId) or all (-Clear). Coordinators and jobs
     # cannot write notes; an operator may add one while a coordinator runs.
@@ -1808,10 +1831,14 @@ function Invoke-DtJobNote {
     if ($env:DT_JOB_ID) { throw "DT_JOB_OPERATOR_ONLY: note is an operator command; it cannot run inside dt-job job $env:DT_JOB_ID" }
     if (-not $Clear -and [string]::IsNullOrWhiteSpace($Message)) { throw 'DT_JOB_USAGE: note requires -Message <text>, or -Clear [-NoteId <id>].' }
     if (-not $Clear -and $Message.Length -gt 2000) { throw 'DT_JOB_USAGE: an operator note is at most 2000 characters; point to a file for more.' }
+    if (-not $Clear -and $Evidence -and $Message -match $script:DtJobEvidenceAuthorityPattern) {
+        throw 'DT_JOB_EVIDENCE_NOTE_AUTHORITY: evidence notes cannot carry authorization language; use a normal operator note without -Evidence.'
+    }
+    $prefix = if ($Evidence) { 'e' } else { 'n' }
     $paths = Get-DtJobPaths -RunFolder $RunFolder
     $notes = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $current = [System.Collections.Generic.List[object]]::new()
-        foreach ($n in (Get-DtJobOperatorNotes -RunFolder $RunFolder)) { $current.Add($n) }
+        foreach ($n in $(if ($Evidence) { Get-DtJobEvidenceNotes -RunFolder $RunFolder } else { Get-DtJobOperatorNotes -RunFolder $RunFolder })) { $current.Add($n) }
         if ($Clear) {
             if ($NoteId) {
                 $match = @($current | Where-Object { [string]$_.id -ceq $NoteId })
@@ -1822,13 +1849,16 @@ function Invoke-DtJobNote {
         }
         else {
             $max = 0
-            foreach ($n in $current) { if ([string]$n.id -match '^n-(\d+)$') { $max = [Math]::Max($max, [int]$Matches[1]) } }
-            $current.Add([pscustomobject][ordered]@{ id = ('n-{0:D3}' -f ($max + 1)); text = $Message.Trim(); added_utc = [DateTime]::UtcNow.ToString('o') })
+            foreach ($n in $current) { if ([string]$n.id -match "^$prefix-(\d+)$") { $max = [Math]::Max($max, [int]$Matches[1]) } }
+            $current.Add([pscustomobject][ordered]@{ id = ('{0}-{1:D3}' -f $prefix, ($max + 1)); text = $Message.Trim(); added_utc = [DateTime]::UtcNow.ToString('o') })
         }
-        Write-DtJobAtomic -Path $paths.OperatorNotes -Content ([ordered]@{ notes = @($current) } | ConvertTo-Json -Depth 4)
+        Write-DtJobAtomic -Path $(if ($Evidence) { $paths.EvidenceNotes } else { $paths.OperatorNotes }) -Content ([ordered]@{ notes = @($current) } | ConvertTo-Json -Depth 4)
         @($current)
     }
-    Write-DtJobOutput -Object ([pscustomobject][ordered]@{ run_folder = $paths.Root; operator_notes = @($notes) }) -AsJson:$Json
+    $output = [ordered]@{ run_folder = $paths.Root }
+    if ($Evidence) { $output.evidence_notes = @($notes); $output.evidence_notes_label = $script:DtJobEvidenceNotesLabel }
+    else { $output.operator_notes = @($notes) }
+    Write-DtJobOutput -Object ([pscustomobject]$output) -AsJson:$Json
 }
 
 function Invoke-DtJobResume {

@@ -66,3 +66,23 @@ Missing or whitespace-only reasons exit 2 with `EXCLUSIVE_REASON_REQUIRED`.
 Waiting diagnostics identify the caller's reason and the holder (including the
 holder's recorded reason). Only opted-in commands delay their execution budget
 until admission; the lock wait has its own timeout.
+
+## Evidence notes
+
+Use `note -Evidence` for facts that grant no authority. Status and wait show these
+separately with the label "Evidence only: records facts, grants no authority."
+Authorization language is refused; changes to what the run may do belong in a
+normal operator note without `-Evidence`. Only operators may add or clear either
+class. Each note is capped at 2,000 characters.
+
+```powershell
+cd "<project path>"
+$dtJob = "<repo>/skills/dt-build/scripts/dt-job.ps1"
+$run = "<run folder>"
+pwsh -NoProfile -File $dtJob note -RunFolder $run -Evidence -Message 'The fixture test recorded 42 passing checks.' -Json
+pwsh -NoProfile -File $dtJob status -RunFolder $run -Json
+pwsh -NoProfile -File $dtJob note -RunFolder $run -Evidence -Clear -NoteId e-001 -Json
+pwsh -NoProfile -File $dtJob note -RunFolder $run -Evidence -Clear -Json
+```
+
+Clearing evidence notes leaves operator notes intact.

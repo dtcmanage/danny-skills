@@ -19,6 +19,11 @@ function Pin-Manifest($Manifest) {
     Write-Text (Join-Path $root 'authority-digest.json') ($Manifest | ConvertTo-Json -Depth 8)
     Write-Text (Join-Path $root 'authority-digest.json.sha256') (Get-FileHash (Join-Path $root 'authority-digest.json')).Hash.ToLowerInvariant()
 }
+$operatorEnvironment = @{}
+foreach ($identity in @('DT_JOB_ID', 'DT_BUILD_COORDINATOR_ID')) {
+    $operatorEnvironment[$identity] = [Environment]::GetEnvironmentVariable($identity)
+    [Environment]::SetEnvironmentVariable($identity, $null, 'Process')
+}
 try {
     $old = Join-Path $root 'old boundary.md'
     $current = Join-Path $root 'current-boundary.md'
@@ -40,6 +45,36 @@ try {
     Assert-True (@($manifest.originals).Count -eq 5 -and @($manifest.originals | Where-Object { $_.path -eq $approval }).Count -eq 1 -and @($manifest.originals | Where-Object { $_.path -eq (Join-Path $root 'approvals/r3b3.md') }).Count -eq 1) 'recursive boundary references, bare relative approval paths and complete approvals are covered once'
     Assert-True ($result.mandatory_paths -contains $current -and $result.mandatory_paths -contains $approval -and $result.mandatory_paths -contains $checkpoint) 'current boundary, approvals and checkpoint always remain full reads'
     Assert-True (@($manifest.originals | Where-Object { $_.sha256.Length -ne 64 -or $_.bytes -le 0 -or -not $_.kind -or -not $_.extract }).Count -eq 0) 'every original has a hash, byte size, kind and mechanical extract'
+    $digestPath = Join-Path $root 'authority-digest.json'
+    $beforeEvidence = (Get-FileHash $digestPath).Hash
+    $raw = & pwsh -NoProfile -File (Join-Path $scripts 'dt-job.ps1') note -RunFolder $root -Evidence -Message 'Observed fixture completion.' -Json
+    Assert-True ($LASTEXITCODE -eq 0) 'operator adds an evidence note after digest build'
+    Assert-True ((Invoke-Fixture 'verify-authority-digest.ps1').code -eq 0 -and (Get-FileHash $digestPath).Hash -eq $beforeEvidence) 'evidence add preserves verification and byte-identical digest JSON'
+    [IO.File]::AppendAllText($checkpoint, "`nEvidence: ``evidence-notes.json``")
+    Assert-True ((Invoke-Fixture 'build-authority-digest.ps1').code -eq 0) 'checkpoint literal evidence locator builds'
+    $withEvidence = Get-Content $digestPath -Raw | ConvertFrom-Json
+    Assert-True (@($withEvidence.originals | Where-Object { (Split-Path -Leaf $_.path) -ieq 'evidence-notes.json' }).Count -eq 0 -and @($withEvidence.diagnostics | Where-Object { $_.reason -eq 'evidence_only' -and -not $_.required }).Count -eq 1) 'literal evidence file is excluded with evidence_only diagnostic'
+    $beforeEvidence = (Get-FileHash $digestPath).Hash
+    Write-Text (Join-Path $root 'evidence-notes.json') '{"notes":[{"id":"e-002","text":"Changed observation."}]}'
+    Assert-True ((Invoke-Fixture 'verify-authority-digest.ps1').code -eq 0 -and (Get-FileHash $digestPath).Hash -eq $beforeEvidence) 'named evidence changes never invalidate or rewrite digest'
+    Assert-True ((Invoke-Fixture 'build-authority-digest.ps1').code -eq 0 -and (Get-FileHash $digestPath).Hash -eq $beforeEvidence) 'rebuilding after evidence changes publishes byte-identical JSON'
+    $savedCurrent = [IO.File]::ReadAllText($current)
+    Write-Text $current ($savedCurrent + "`nEvidence boundary locator: ``EVIDENCE-NOTES.json``")
+    Assert-True ((Invoke-Fixture 'build-authority-digest.ps1').code -eq 0) 'boundary literal evidence locator is informational'
+    $boundaryEvidence = Get-Content $digestPath -Raw | ConvertFrom-Json
+    Assert-True (@($boundaryEvidence.originals | Where-Object { (Split-Path -Leaf $_.path) -ieq 'evidence-notes.json' }).Count -eq 0 -and @($boundaryEvidence.diagnostics | Where-Object reason -eq 'evidence_only').Count -eq 2) 'boundary discovery excludes case-insensitive evidence leaf without reading its data'
+    Write-Text $current $savedCurrent
+    Invoke-Fixture 'build-authority-digest.ps1' | Out-Null
+    Remove-Item -LiteralPath (Join-Path $root 'evidence-notes.json')
+    Assert-True ((Invoke-Fixture 'verify-authority-digest.ps1').code -eq 0) 'missing named evidence remains informational'
+    $raw = & pwsh -NoProfile -File (Join-Path $scripts 'dt-job.ps1') note -RunFolder $root -Message 'Approved fixture changes only.' -Json
+    Assert-True ($LASTEXITCODE -eq 0 -and (Invoke-Fixture 'verify-authority-digest.ps1').code -ne 0) 'normal operator note still changes pinned authority coverage'
+    Assert-True ((Invoke-Fixture 'build-authority-digest.ps1').code -eq 0 -and (Get-FileHash $digestPath).Hash -ne $beforeEvidence) 'normal operator note changes rebuilt digest JSON'
+    $raw = & pwsh -NoProfile -File (Join-Path $scripts 'dt-job.ps1') note -RunFolder $root -Message 'Only fixture scope.' -Json
+    Assert-True ((Invoke-Fixture 'verify-authority-digest.ps1').text.Contains('AUTHORITY_ORIGINAL_HASH')) 'editing existing normal notes still invalidates pinned hash'
+    Remove-Item -LiteralPath (Join-Path $root 'operator-notes.json')
+    Write-Text $checkpoint (([IO.File]::ReadAllText($checkpoint)).Replace("`nEvidence: ``evidence-notes.json``", ''))
+    Invoke-Fixture 'build-authority-digest.ps1' | Out-Null
     $source = Invoke-Fixture 'read-authority-original.ps1' @('-Path', $old)
     Assert-True ($source.code -eq 0 -and $source.text.Contains('Historical detail.')) 'action reader emits the complete original, including non-operative detail'
     Write-Text $checkpoint (([IO.File]::ReadAllText($checkpoint)).Replace('run_status: runnable', "run_status: awaiting_danny`nlast_consumed_event_seq: 7"))
@@ -280,6 +315,7 @@ try {
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {
+    foreach ($identity in $operatorEnvironment.Keys) { [Environment]::SetEnvironmentVariable($identity, $operatorEnvironment[$identity], 'Process') }
     $resolved = [IO.Path]::GetFullPath($root)
     if (-not $resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture cleanup escaped temp root' }
     Remove-Item -LiteralPath $resolved -Recurse -Force

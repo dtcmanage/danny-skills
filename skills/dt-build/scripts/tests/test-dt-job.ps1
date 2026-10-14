@@ -458,19 +458,55 @@ exit 0
     $n1 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'Dispatch the repair worker first.')
     $n2 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'R3b3 split review is authorized; see approvals/r3b3.md.')
     Assert-True (@($n2.operator_notes).Count -eq 2 -and @($n2.operator_notes)[1].id -eq 'n-002') "notes get sequential ids ($(@($n2.operator_notes).id -join ','))"
+    $label = 'Evidence only: records facts, grants no authority.'
+    $e1 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Evidence', '-Message', 'Observed C:/allowance/grantee.txt in the fixture.')
+    $e2 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Evidence', '-Message', ('x' * 2000))
+    Assert-True ($e1.evidence_notes[0].id -eq 'e-001' -and $e2.evidence_notes[1].id -eq 'e-002' -and $e2.evidence_notes[1].text.Length -eq 2000) 'evidence notes use separate sequential ids, allow whole-word nonmatches and accept the cap'
+    foreach ($word in @('APPROVED', 'permission', 'waiver', 'override', 'may proceed', 'may now', 'is now allowed', 'authorizes', 'granted')) {
+        $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Evidence -Message "Fixture $word here." -Json 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n").Contains('DT_JOB_EVIDENCE_NOTE_AUTHORITY')) "evidence refuses authority language: $word"
+    }
+    $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Evidence -Message ('x' * 2001) -Json 2>&1
+    Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n").Contains('2000 characters')) 'evidence rejects over-cap notes'
+    foreach ($identity in @('DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID')) {
+        [Environment]::SetEnvironmentVariable($identity, 'fixture-evidence', 'Process')
+        try {
+            foreach ($action in @(@('-Message', 'Observed fixture.'), @('-Clear'))) {
+                $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Evidence @action -Json 2>&1
+                Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n").Contains('DT_JOB_OPERATOR_ONLY')) "evidence operator guard refuses $identity $($action[0])"
+            }
+        } finally { [Environment]::SetEnvironmentVariable($identity, $null, 'Process') }
+    }
     $env:DT_BUILD_COORDINATOR_ID = 'mc-notes'
     try { $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Message 'drop the review' -Json 2>&1; $code = $LASTEXITCODE }
     finally { $env:DT_BUILD_COORDINATOR_ID = $null }
     Assert-True ($code -ne 0 -and (($raw | Out-String) -match 'DT_JOB_OPERATOR_ONLY')) 'a coordinator cannot write operator notes'
     $runStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
     Assert-True (@($runStatus.operator_notes).Count -eq 2 -and @($runStatus.operator_notes)[0].text -eq 'Dispatch the repair worker first.') 'run status carries the operator notes in full'
+    Assert-True ($runStatus.evidence_notes.Count -eq 2 -and $runStatus.evidence_notes_label -eq $label -and $runStatus.evidence_notes[1].text.Length -eq 2000) 'status shows evidence notes in full with fixed label'
+    $statusText = (& pwsh -NoProfile -File $dtJob status -RunFolder $rf | Out-String)
+    Assert-True ($statusText.Contains($label) -and $statusText.IndexOf('operator note n-001:') -lt $statusText.IndexOf('evidence note e-001:')) 'status text prints evidence after operator notes'
+    $read = & pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path (Join-Path $rf 'evidence-notes.json') -Lines 1-20 -Json
+    Assert-True ($LASTEXITCODE -eq 0 -and ($read -join "`n").Contains('e-001')) 'read-evidence resolves evidence-notes.json'
+    $missingEvidence = Get-EvidenceError @{ RunFolder = $rf; Path = 'evidence-notes.json'; Lines = '1-20' }
+    Assert-True ($missingEvidence.Contains('did you mean') -and $missingEvidence.Contains((Join-Path $rf 'evidence-notes.json'))) 'bare evidence filename suggests the run-folder path like operator notes'
+
+
     $release = Join-Path $rf 'release.txt'
     $noteJob = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $release))
     $w = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', $noteJob.job_id, '-Any', '-TimeoutSec', '1')
     Assert-True (@($w.operator_notes).Count -eq 2) 'every wait check-in carries the operator notes'
+    Assert-True ($w.evidence_notes.Count -eq 2 -and $w.evidence_notes_label -eq $label) 'wait carries evidence notes and fixed label'
     $text = & pwsh -NoProfile -File $dtJob wait -RunFolder $rf -JobId $noteJob.job_id -Any -TimeoutSec 1
     Assert-True ((@($text) -join "`n") -match 'operator note n-001: Dispatch the repair worker first\.' -and @($text)[-1] -match '^wait_timeout') "text check-ins list notes and keep wait_timeout last ($(@($text) -join ' | '))"
     Write-Utf8 $release 'release'
+    Assert-True (($text -join "`n").Contains($label) -and ($text -join "`n").Contains('evidence note e-001:')) 'wait text prints labeled evidence notes'
+    $ec = Invoke-DtJob @('note', '-RunFolder', $rf, '-Evidence', '-Clear', '-NoteId', 'e-001')
+    $e3 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Evidence', '-Message', 'Third observation.')
+    Assert-True ($ec.evidence_notes.Count -eq 1 -and $ec.evidence_notes[0].id -eq 'e-002' -and $e3.evidence_notes[-1].id -eq 'e-003') 'evidence targeted clear preserves remaining ids'
+    $ec = Invoke-DtJob @('note', '-RunFolder', $rf, '-Evidence', '-Clear')
+    $afterEvidenceClear = Invoke-DtJob @('status', '-RunFolder', $rf)
+    Assert-True (@($ec.evidence_notes).Count -eq 0 -and $afterEvidenceClear.operator_notes.Count -eq 2) 'evidence clear leaves operator notes unchanged'
     Wait-JobTerminal -RunFolder $rf -JobId $noteJob.job_id | Out-Null
     $cleared = Invoke-DtJob @('note', '-RunFolder', $rf, '-Clear', '-NoteId', 'n-001')
     Assert-True (@($cleared.operator_notes).Count -eq 1 -and @($cleared.operator_notes)[0].id -eq 'n-002') 'clear -NoteId removes one note'

@@ -153,6 +153,10 @@ function Get-AuthorityInventory {
         $key = $path.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
+        if ((Split-Path -Leaf $path) -ieq 'evidence-notes.json') {
+            $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $checkpoint; candidate = $path; resolved = $path; reason = 'evidence_only'; required = $false })
+            continue
+        }
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             $missing.Add($path)
             $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $checkpoint; candidate = $path; resolved = $path; reason = 'missing_named_original'; required = $true })
@@ -178,6 +182,10 @@ function Get-AuthorityInventory {
         $candidates = if ($path -eq $checkpoint) { $checkpointCandidates } else { @(Get-AuthorityCandidates $text $aliases) }
         foreach ($candidate in $candidates) {
             $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases
+            if ((Split-Path -Leaf $resolved) -ieq 'evidence-notes.json') {
+                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = 'evidence_only'; required = $false })
+                continue
+            }
             $required = $true
             if ($script:AuthorityEnumeratedPaths.Count) {
                 # Only paths explicitly required before bootstrap supplement the enumeration.

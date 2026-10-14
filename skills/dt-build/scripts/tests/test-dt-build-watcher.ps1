@@ -108,7 +108,8 @@ $env:DT_TEST_BLOCKED = ''
 $env:DT_BUILD_CTX_SOFT_MARGIN = '40000'; $env:DT_BUILD_CTX_HARD_MARGIN = '70000'
 $deadProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'exit 0' -WindowStyle Hidden -PassThru -Wait
 $env:DT_TEST_DEAD_PID = [string]$deadProcess.Id
-Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue
+# Operator fixtures need a standalone caller; restore both identities in teardown.
+Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
 Remove-Item Env:DT_BUILD_WATCHER_NOW_UTC -ErrorAction SilentlyContinue
 
 function Use-Scenario {

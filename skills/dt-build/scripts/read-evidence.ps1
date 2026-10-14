@@ -71,6 +71,7 @@ if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
         $runFile = switch ($Path) {
             'approvals.json' { $paths.Approvals }
             'operator-notes.json' { $paths.OperatorNotes }
+            'evidence-notes.json' { $paths.EvidenceNotes }
             'launches.jsonl' { $paths.Launches }
             'worktrees.jsonl' { $paths.Worktrees }
             'events.jsonl' { $paths.Events }
