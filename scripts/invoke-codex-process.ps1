@@ -40,10 +40,17 @@ function Get-CodexBlockedReportDetail {
     } else { $Text -match '(?im)^\s*BLOCKED\b' }
     $legacyBlocker = [regex]::Match($Text, '(?ims)^UNRESOLVED_BLOCKERS:[^\S\r\n]*\r?\n(.*?)(?=^[A-Z_]+:|\z)')
     $evidence = if ($blocked) { $Text } elseif (-not $hasVerdict -and $legacyBlocker.Success) { $legacyBlocker.Groups[1].Value } else { '' }
-    if ($evidence -match '(?is)(?:CreateProcess.{0,500}(?:blocked by policy|rejected|denied)|(?:command|process|shell|file.read|Get-Content|Get-FileHash).{0,200}(?:blocked by policy|before process launch))') {
+    # Report headers, the verdict word and CHANGED_FILES paths are not denial evidence: a chunk id
+    # like '...-environment-recovery' above 'VERDICT: BLOCKED' once mislabeled a content blocker (2026-10-14).
+    $evidence = [regex]::Replace($evidence, '(?im)^(?:DT_BUILD_REPORT_VERSION|RUN_ID|chunk_id|attempt):[^\r\n]*$', '')
+    $evidence = [regex]::Replace($evidence, '(?im)^VERDICT:[^\S\r\n]*(?:\r?\n[^\S\r\n]*)?BLOCKED\b[^\r\n]*$', '')
+    $evidence = [regex]::Replace($evidence, '(?ims)^CHANGED_FILES:[^\r\n]*\r?\n.*?(?=^[A-Z_]+:|\z)', '')
+    # Whole words on one line only; path and identifier fragments (environment-recovery, BLOCKED.json) never count.
+    $w = '(?<![-\w\\/.])'; $e = '(?![-\w\\/.])'
+    if ($evidence -match "(?im)(?:CreateProcess[^\r\n]{0,500}(?:blocked by policy|rejected|denied)|$w(?:command|process|shell|file.read|Get-Content|Get-FileHash)$e[^\r\n]{0,200}(?:blocked by policy|before process launch))") {
         return 'sandbox_process_blocked'
     }
-    if ($evidence -match '(?is)(?:sandbox|tool|permission|environment).{0,200}(?:denied|blocked|unavailable|not supported)|(?:denied|blocked).{0,200}(?:sandbox|tool|permission|environment)') {
+    if ($evidence -match "(?im)$w(?:sandbox|tool|permission|environment)$e[^\r\n]{0,200}$w(?:denied|blocked|unavailable|not supported)$e|$w(?:denied|blocked)$e[^\r\n]{0,200}$w(?:sandbox|tool|permission|environment)$e") {
         return 'sandbox_tool_denied'
     }
     return $null

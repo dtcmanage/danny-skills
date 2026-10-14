@@ -703,6 +703,10 @@ if($env:DT_FAKE_UNICODE_TEXT){
     Assert-True ((Get-CodexBlockedReportDetail "UNRESOLVED_BLOCKERS:`nGet-FileHash rejected: blocked by policy`nDISCOVERED_ENHANCEMENTS:`nNONE") -eq 'sandbox_process_blocked') 'legacy unresolved read denial is classified'
     Assert-True ((Get-CodexBlockedReportDetail "VERDICT: BLOCKED`nRequired tool unavailable in sandbox") -eq 'sandbox_tool_denied') 'other required sandbox tool denials are environment failures'
     Assert-True ($null -eq (Get-CodexBlockedReportDetail "VERDICT: BLOCKED`nDesign decision needed")) 'non-environment blockers retain their existing treatment'
+    $contentBlocked = "DT_BUILD_REPORT_VERSION: 3`nRUN_ID: core-durability-20260922`nchunk_id: m05-review-selection-reason-environment-recovery`nattempt: 1`nVERDICT:`nBLOCKED`nCHANGED_FILES:`nD:\run\milestones\M05\vm291-environment-recovery\source-preparation-BLOCKED.json`nUNRESOLVED_BLOCKERS:`nParent seal member count differs from the brief; source preparation not attempted."
+    Assert-True ($null -eq (Get-CodexBlockedReportDetail $contentBlocked)) 'chunk ids and changed-file paths containing environment/BLOCKED are not sandbox denials'
+    Assert-True ((Get-CodexBlockedReportDetail ($contentBlocked + "`nThe sandbox denied Get-ChildItem on the run folder.")) -eq 'sandbox_tool_denied') 'a real denial line after the header is still classified'
+    Assert-True ((Get-CodexBlockedReportDetail "VERDICT: BLOCKED`nCHANGED_FILES:`nNONE`nUNRESOLVED_BLOCKERS:`nshell CreateProcess rejected by the sandbox") -eq 'sandbox_process_blocked') 'process denial in blockers is still classified'
     Assert-True ((@(Get-CodexReadOnlySandboxArguments -OnWindows $false) -join '|') -eq '--sandbox|read-only|-c|web_search="disabled"') 'non-Windows reviews do not receive a Windows implementation override'
     Remove-Item Env:DT_FAKE_CODEX_ARGS
 
