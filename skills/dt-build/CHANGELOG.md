@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.41.0
+
+- Managed runs: worker authority scope. The authority read contract binds the coordinator; worker briefs carry written restrictions and only the originals the task consumes.
+
 ## 2.40.2
 
 - dt-job wait on a single job no longer requires -Any or -All; usage examples pass -TimeoutSec.
