@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.40.1
+
+- Re-release of 2.40.0 with console-wrap-tolerant reason-cap test.
+
 ## 2.40.0
 
 - Worker dispatch: -MaxFixRounds with a no-progress stop, -ValidateOnly, effective selection-reason length check (FS-62), ad-hoc output outside the project tree, prompt-sibling resolution, dt-job requeue and documented -DependsOn chaining.
