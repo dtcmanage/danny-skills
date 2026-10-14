@@ -98,6 +98,92 @@ try {
     $result = Resolve-Fixture
     Assert-True ((Invoke-FixtureGit @('status', '--porcelain')) -eq $before) 'resolver does not change the fixture'
 
+    # Arbitrary workspace guide in the non-default fixture repo infers its relative path.
+    $guide = Join-Path $fixture 'Resources/ops-conventions.md'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $guide) -Force | Out-Null
+    Write-Utf8 $guide "workspace guide`n"
+    $null = Invoke-FixtureGit @('add', '.')
+    $null = Invoke-FixtureGit @('commit', '-m', 'workspace guide')
+    $guideHead = Invoke-FixtureGit @('rev-parse', 'HEAD')
+    $null = Invoke-FixtureGit @('update-ref', 'refs/remotes/origin/main', $guideHead)
+    $result = Resolve-Fixture -File $guide
+    Assert-True ($result.status -eq 'ON_MAIN' -and $result.repo_relative_path -eq 'Resources/ops-conventions.md') 'workspace RepoRoot infers guide path'
+    Assert-True ($result.repo_root -eq $fixture -and $result.ref -eq 'origin/main' -and $result.ref_head -eq $guideHead -and $result.ref_commit_date) 'workspace ref snapshot includes repo, head and commit time'
+    Resolve-Fixture -File $guide -Extra @('-Fetch') -ExpectedExit 2
+    Assert-True ((Get-Content $errorLog -Raw) -match 'read-only') 'fetch is rejected before git mutation'
+
+    $pin = Join-Path $tempRoot 'pinned.txt'
+    $runtime = Join-Path $tempRoot 'known_hosts'
+    $protected = '192.168.71.29 ssh-ed25519 ABCDEFGHIJKLMNOP-secret-key-material'
+    $other = 'other-host ssh-ed25519 another-secret-key-material'
+    $base = "$protected`n"
+    $cases = @(
+        @{ name = 'unchanged'; pin = $base; current = $base; status = 'UNCHANGED'; count = 0 },
+        @{ name = 'pure append'; pin = $base; current = "$base$other`n"; status = 'APPEND_ONLY'; count = 1 },
+        @{ name = 'protected duplicate append'; pin = $base; current = "$base$protected`n"; status = 'CHANGED'; count = 1; added = 1 },
+        @{ name = 'protected new key append'; pin = $base; current = "$base$($protected.Replace('ABCDEFGHIJKLMNOP', 'different-key'))`n"; status = 'CHANGED'; count = 1; added = 1 },
+        @{ name = 'protected edit'; pin = $base; current = "$($protected.Replace('ABCDEFGHIJKLMNOP', 'different-key'))`n"; status = 'CHANGED'; count = 0; removed = 1; added = 1 },
+        @{ name = 'protected removal'; pin = $base; current = ''; status = 'CHANGED'; count = 0; removed = 1 },
+        @{ name = 'LF to CRLF'; pin = $base; current = "$protected`r`n"; status = 'CHANGED'; count = 0 },
+        @{ name = 'CRLF to LF'; pin = "$protected`r`n"; current = $base; status = 'CHANGED'; count = 0 },
+        @{ name = 'CRLF append'; pin = "$protected`r`n"; current = "$protected`r`n$other`r`n"; status = 'APPEND_ONLY'; count = 1 },
+        @{ name = 'missing newline then LF append'; pin = $protected; current = "$base$other`n"; status = 'APPEND_ONLY'; count = 1 },
+        @{ name = 'missing newline then CRLF append'; pin = $protected; current = "$protected`r`n$other`r`n"; status = 'APPEND_ONLY'; count = 1 },
+        @{ name = 'newline only'; pin = $protected; current = $base; status = 'APPEND_ONLY'; count = 0 },
+        @{ name = 'partial row extension'; pin = $protected; current = "$protected-extension`n"; status = 'CHANGED'; count = 0 },
+        @{ name = 'case-sensitive protected edit'; pin = $base; current = "$($protected.ToUpperInvariant())`n"; status = 'CHANGED'; count = 0 },
+        @{ name = 'empty baseline'; pin = ''; current = "$other`n"; status = 'APPEND_ONLY'; count = 1 },
+        @{ name = 'literal trailing CR remains protected'; pin = "$protected`r"; current = "$protected`r`n$other`n"; status = 'CHANGED'; count = 1; removed = 1; added = 1 },
+        @{ name = 'unprotected edit'; pin = "$base$other`n"; current = "$base$($other.Replace('another', 'changed'))`n"; status = 'CHANGED'; count = 0 }
+    )
+    $failures = [Collections.Generic.List[string]]::new()
+    foreach ($case in $cases) {
+        try {
+            Write-Utf8 $pin $case.pin
+            Write-Utf8 $runtime $case.current
+            $hash = (Get-FileHash $pin -Algorithm SHA256).Hash
+            $exitCode = if ($case.status -eq 'CHANGED') { 3 } else { 0 }
+            $result = Resolve-Fixture -File $runtime -Extra @('-PinnedSha256', $hash, '-PinnedCopyPath', $pin, '-ProtectedPattern', '^192\.168\.71\.29 ') -ExpectedExit $exitCode
+            Assert-True ($result.status -eq $case.status -and $result.appended_line_count -eq $case.count) $case.name
+            if ($case.ContainsKey('removed')) { Assert-True ($result.protected_removed.Count -eq $case.removed) "$($case.name) removed rows" }
+            if ($case.ContainsKey('added')) { Assert-True ($result.protected_added.Count -eq $case.added) "$($case.name) added rows" }
+            if ($case.name -eq 'pure append') { Assert-True ($result.appended_hosts[0] -eq 'other-host') 'audit records appended first token' }
+            $serialized = $result | ConvertTo-Json -Depth 8
+            Assert-True ($serialized -notmatch 'secret-key-material|ABCDEFGHIJKLMNOP') "$($case.name) audit excludes key material"
+        } catch { $failures.Add("$($case.name): $($_.Exception.Message)") }
+    }
+    # A full saved line file can prove the prefix; selected rows cannot.
+    Write-Utf8 $pin $base
+    Write-Utf8 $runtime "$base$other`n"
+    $hash = (Get-FileHash $pin -Algorithm SHA256).Hash
+    $result = Resolve-Fixture -File $runtime -Extra @('-PinnedSha256', $hash, '-PinnedLines', $pin, '-ProtectedPattern', '^192\.168\.71\.29 ')
+    Assert-True ($result.status -eq 'APPEND_ONLY') 'complete pinned lines prove the byte prefix'
+    Write-Utf8 $pin "$base$other`n"
+    $hash = (Get-FileHash $pin -Algorithm SHA256).Hash
+    Write-Utf8 $pin $base
+    Write-Utf8 $runtime "$base$other`nnew-host key secret`n"
+    $result = Resolve-Fixture -File $runtime -Extra @('-PinnedSha256', $hash, '-PinnedLines', $pin, '-ProtectedPattern', '^192\.168\.71\.29 ') -ExpectedExit 3
+    Assert-True ($result.reason -eq 'pinned_lines_do_not_prove_full_byte_prefix') 'selected rows fail closed for missing full-prefix proof'
+    Resolve-Fixture -File $runtime -Extra @('-PinnedSha256', $hash, '-PinnedCopyPath', $pin, '-ProtectedPattern', '^192') -ExpectedExit 2
+    Assert-True ((Get-Content $errorLog -Raw) -match 'does not match') 'corrupt saved copy rejected'
+    $hash = (Get-FileHash $pin -Algorithm SHA256).Hash
+    Resolve-Fixture -File $runtime -Extra @('-PinnedSha256', $hash, '-PinnedCopyPath', $pin, '-ProtectedPattern', '[') -ExpectedExit 2
+    Resolve-Fixture -File $runtime -Extra @('-PinnedSha256', $hash, '-PinnedCopyPath', $pin) -ExpectedExit 2
+    $arrayHarness = Join-Path $tempRoot 'multiple-patterns.ps1'
+    Write-Utf8 $pin "$base$other`n"
+    $hash = (Get-FileHash $pin -Algorithm SHA256).Hash
+    Write-Utf8 $runtime "$base$other`n$other`n"
+    Write-Utf8 $arrayHarness @'
+param($Resolver, $Runtime, $Pin, $Hash)
+& $Resolver -Path $Runtime -PinnedSha256 $Hash -PinnedCopyPath $Pin -ProtectedPattern @('^192\.168\.71\.29 ', '^other-host ') -Json
+exit $LASTEXITCODE
+'@
+    $raw = @(& pwsh -NoProfile -File $arrayHarness $resolver $runtime $pin $hash)
+    Assert-True ($LASTEXITCODE -eq 3) 'multiple patterns reject added rows for the second host'
+    $result = ($raw -join "`n") | ConvertFrom-Json
+    Assert-True ($result.protected_added.Count -eq 1 -and $result.protected_added[0].host -eq 'other-host') 'second pattern identifies protected addition'
+    if ($failures.Count) { throw ($failures -join "`n") }
+
     $liveRaw = @(& pwsh -NoProfile -File $resolver -Path (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -Json)
     Assert-True ($LASTEXITCODE -eq 0) 'live wrapper exits zero with default repo and ref'
     $live = ($liveRaw -join "`n") | ConvertFrom-Json

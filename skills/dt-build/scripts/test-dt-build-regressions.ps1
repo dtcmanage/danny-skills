@@ -26,6 +26,9 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-regressions-{
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $originalCodexHome = $env:CODEX_HOME
 $originalLeanBootstrap = $env:DT_BUILD_LEAN_BOOTSTRAP
+$originalJobId = $env:DT_JOB_ID
+# These are direct wrapper fixtures; a parent managed job disables their timeout.
+Remove-Item Env:DT_JOB_ID -ErrorAction SilentlyContinue
 # Isolate from this machine's live Codex session usage until a test sets its own fixture home.
 $env:CODEX_HOME = Join-Path $tempRoot 'empty-codex-home'
 New-Item -ItemType Directory -Path $env:CODEX_HOME -Force | Out-Null
@@ -1038,6 +1041,8 @@ $script:RouterDiagnosisHttp = {
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {
+    if ($null -eq $originalJobId) { Remove-Item Env:DT_JOB_ID -ErrorAction SilentlyContinue }
+    else { $env:DT_JOB_ID = $originalJobId }
     $env:DT_BUILD_LEAN_BOOTSTRAP = $originalLeanBootstrap
     if ($null -eq $originalCodexHome) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
     else { $env:CODEX_HOME = $originalCodexHome }
