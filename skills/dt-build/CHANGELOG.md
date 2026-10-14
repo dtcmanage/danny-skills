@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.40.2
+
+- dt-job wait on a single job no longer requires -Any or -All; usage examples pass -TimeoutSec.
+
 ## 2.40.1
 
 - Re-release of 2.40.0 with console-wrap-tolerant reason-cap test.

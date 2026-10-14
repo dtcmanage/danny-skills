@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.24.46",
+  "version": "0.24.47",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.24.47 dt-job single wait (process wrapper, version policy): dt-build 2.40.2",
       "0.24.46 Worker dispatch guards re-release (process wrapper, version policy): dt-build 2.40.1",
       "0.24.45 Worker dispatch guards (process wrapper, version policy): dt-build 2.40.0",
       "0.24.44 Runtime file provenance (version policy): dt-build 2.39.0 append-only and workspace ON_MAIN proofs",
