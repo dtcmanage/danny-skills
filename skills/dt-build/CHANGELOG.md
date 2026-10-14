@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.42.1
+
+- Ad hoc runs keep a worker-written -OutputPath report and file the final chat message as <OutputPath>.final.md (provenance: worker_output_kept, final_message_path).
+
 ## 2.42.0
 
 - Add data-only evidence notes (dt-job note -Evidence): stored in evidence-notes.json, shown labeled in status/wait, refused when they carry authorization language, and excluded from the authority digest.
