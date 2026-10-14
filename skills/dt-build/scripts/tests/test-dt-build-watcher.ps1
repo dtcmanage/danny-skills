@@ -323,8 +323,10 @@ try {
     $text = @(& pwsh -NoProfile -File $dtJob wait -RunFolder $rf -JobId $c.job_id -Any -TimeoutSec 1)
     Assert-True ($text[-1] -eq "wait_timeout still_running=$($c.job_id)") 'text wait timeout line names the running ids'
     Stop-Job -RunFolder $rf -JobId $c.job_id
-    $bad = Invoke-DtJobExpectFail @('wait', '-RunFolder', $rf, '-JobId', $a.job_id, '-TimeoutSec', '5')
-    Assert-True ($bad.exit -ne 0 -and $bad.text -match 'exactly one of -Any or -All') 'wait requires -Any or -All'
+    $bad = Invoke-DtJobExpectFail @('wait', '-RunFolder', $rf, '-JobId', "$($a.job_id),$($b.job_id)", '-TimeoutSec', '5')
+    Assert-True ($bad.exit -ne 0 -and $bad.text -match 'exactly one of -Any or -All') 'wait on several jobs requires -Any or -All'
+    $single = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', $a.job_id, '-TimeoutSec', '5')
+    Assert-True ($single.result -eq 'finished') 'wait on one job needs neither -Any nor -All'
 
     # ---- lease: acquire conflict, renew, release, renewal by other verbs.
     Use-Scenario 'lease'
@@ -1277,24 +1279,31 @@ $cases = @(
     @{ name = 'partial unparseable receipt refusal'; receipt = '{"coordinator_id":"fixture",'; category = $null; expected = $true },
     @{ name = 'missing receipt ID refusal'; receipt = '{"exit_code":0,"failure_category":null}'; category = $null; expected = $true },
     @{ name = 'mismatched receipt ID refusal'; receipt = '{"coordinator_id":"other","exit_code":0,"failure_category":null}'; category = $null; expected = $true },
-    @{ name = 'matching receipt missing outcome fields'; receipt = '{"coordinator_id":"fixture"}'; category = 'capacity'; expected = $false }
+    @{ name = 'matching receipt missing outcome fields'; receipt = '{"coordinator_id":"fixture"}'; category = 'capacity'; expected = $false },
+    @{ name = 'quoted capacity text before 60 later lines is not a refusal'; receipt = $null; category = $null; log = ("notes quote: Selected model is at capacity`n" + ((1..60 | ForEach-Object { "work line $_" }) -join "`n")); expected = $false },
+    @{ name = 'refusal at the end of a long log is capacity'; receipt = $null; category = $null; log = (((1..60 | ForEach-Object { "work line $_" }) -join "`n") + "`nERROR: Selected model is at capacity"); expected = $true },
+    @{ name = 'coordinator killed by host restart is not capacity'; receipt = $null; category = $null; boot = 'future'; expected = $false }
 )
 $index = 0
 $results = @(foreach ($case in $cases) {
     $folder = Join-Path $Root "capacity-receipt-$index"
     New-Item -ItemType Directory -Path $folder | Out-Null
-    [IO.File]::WriteAllText((Join-Path $folder 'coordinator-fixture.log'), 'Selected model is at capacity')
+    $logText = if ($case.ContainsKey('log')) { $case['log'] } else { 'Selected model is at capacity' }
+    [IO.File]::WriteAllText((Join-Path $folder 'coordinator-fixture.log'), $logText)
     if ($null -ne $case.receipt) { [IO.File]::WriteAllText((Join-Path $folder 'coordinator-fixture.exit.json'), $case.receipt) }
+    # 'future' places the boot after the log's last write, as when the host restarts mid-run.
+    if ($case.ContainsKey('boot') -and $case['boot'] -eq 'future') { $env:DT_TEST_BOOT_UTC = [DateTime]::UtcNow.AddMinutes(5).ToString('o') } else { Remove-Item Env:DT_TEST_BOOT_UTC -ErrorAction SilentlyContinue }
     $launch = [pscustomobject]@{ coordinator_id = 'fixture'; failure_category = $case.category }
     $actual = Test-WatcherCapacityLaunch -RunFolder $folder -Launch $launch
     [ordered]@{ name = $case.name; passed = ($actual -eq $case.expected) }
     $index++
 })
+Remove-Item Env:DT_TEST_BOOT_UTC -ErrorAction SilentlyContinue
 ConvertTo-Json -InputObject $results -Compress
 '@
     $capacityResults = (& pwsh -NoProfile -File $capacityProbe -WatcherScript $watcher -Root $tempRoot | Select-Object -Last 1) | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'capacity receipt probe failed' }
-    Assert-True (@($capacityResults).Count -eq 10) 'capacity receipt probe returns every fixture'
+    Assert-True (@($capacityResults).Count -eq 13) 'capacity receipt probe returns every fixture'
     foreach ($result in $capacityResults) { Assert-True $result.passed "capacity classification: $($result.name)" }
 
     # ---- fingerprint and command helpers, including older launch rows.

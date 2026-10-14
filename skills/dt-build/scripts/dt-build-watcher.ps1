@@ -50,8 +50,21 @@ function Test-WatcherCapacityLaunch {
     if (-not $hasCoordinatorId) { return $false }
     $log = Join-Path $RunFolder "coordinator-$($Launch.coordinator_id).log"
     if (-not (Test-Path -LiteralPath $log -PathType Leaf)) { return $false }
+    # A coordinator killed by a host restart leaves no receipt; that is not a vendor refusal (2026-10-14).
+    $bootUtc = Get-WatcherBootTimeUtc
+    if ((Get-Item -LiteralPath $log).LastWriteTimeUtc -lt $bootUtc) { return $false }
     # The launcher merges plain CLI output and stderr without structured events, so refusal fields cannot be isolated reliably.
-    return (Read-DtJobText -Path $log) -match '(?i)Selected model is at capacity|(?:model|server) is (?:currently )?(?:at capacity|overloaded)|overloaded_error|insufficient model capacity'
+    # A real refusal ends the stream; capacity text quoted earlier (build notes, evidence reads) does not count.
+    $tail = @((Read-DtJobText -Path $log) -split '\r?\n' | Where-Object { $_.Trim() } | Select-Object -Last $script:WatcherCapacityTailLines) -join "`n"
+    return $tail -match '(?i)Selected model is at capacity|(?:model|server) is (?:currently )?(?:at capacity|overloaded)|overloaded_error|insufficient model capacity'
+}
+# Lines at the end of a coordinator log that may carry its capacity refusal.
+$script:WatcherCapacityTailLines = 40
+
+function Get-WatcherBootTimeUtc {
+    # DT_TEST_BOOT_UTC pins the boot time for fixtures.
+    if ($env:DT_TEST_BOOT_UTC) { return [DateTime]::Parse($env:DT_TEST_BOOT_UTC, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal) }
+    return [DateTime]::UtcNow.AddMilliseconds(-[Environment]::TickCount64)
 }
 # One retry of a failed registry read, this long after the first attempt, before it counts as an error.
 $script:WatcherRegistryRetryMs = 500
