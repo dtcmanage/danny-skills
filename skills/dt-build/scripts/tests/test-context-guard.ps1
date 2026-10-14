@@ -942,6 +942,14 @@ try {
     Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = "Get-Content -LiteralPath '$bigFile' -TotalCount 40" }))) 'a later coordinator is denied a shell read of a walled file'
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = "Copy-Item '$bigFile' '$smallFile.bak'" }))) 'a non-read command naming a walled file is allowed'
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $smallFile }))) 'files not on the wall are unaffected'
+    $policyFiles = @('D:/Claude/_Claude-Workspace/00_Resources/model-routing.md', 'D:/Claude/CLAUDE.md', 'D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/skills/dt-build/references/subagent-prompts.md', 'D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/skills/dt-build/SKILL.md')
+    $policyReads = @($policyFiles | ForEach-Object { [ordered]@{ path = $_; reads = 2; chars = 27000 } }) + @([ordered]@{ path = $bigFwd; reads = 3; chars = 90000 })
+    Write-Utf8 -Path $wallFile -Content (([ordered]@{ coordinator_id = 'w1'; coordinators = @('w1'); reads = $policyReads }) | ConvertTo-Json -Depth 4)
+    foreach ($policy in $policyFiles) {
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $policy }))) "the wall never blocks a required policy read: $policy"
+    }
+    Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = "Get-Content -Raw -LiteralPath 'D:\Claude\_Claude-Workspace\00_Resources\model-routing.md'" }))) 'the wall never blocks a shell read of a required policy file'
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $bigFile; offset = 1; limit = 50 }))) 'a data file on the same wall stays blocked'
     Write-Utf8 -Path $wallFile -Content (([ordered]@{ coordinator_id = 'w2'; coordinators = @('w2'); reads = @([ordered]@{ path = $bigFwd; reads = 3; chars = 90000 }) }) | ConvertTo-Json -Depth 4)
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $bigFile; offset = 1; limit = 50 }))) 'the coordinator that hit the wall itself is not blocked mid-handoff'
     Remove-Item -LiteralPath $wallFile -Force

@@ -19,6 +19,9 @@ $ErrorActionPreference = 'Stop'
 # Run-folder file names, as dt-job.ps1 Get-DtJobPaths names them.
 $script:HookLeaseFile = 'coordinator.lease'
 $script:HookBaselineFile = 'context-baseline.json'
+# Instruction and policy files (CLAUDE/AGENTS/MEMORY/CONTEXT.md, 00_Resources policy, skill SKILL.md and
+# references) that managed-resume requires a coordinator to read itself; matched on the lower-case path key.
+$script:HookWallExemptPattern = '(?:/(?:claude|agents|memory|context)\.md$|/00_resources/.+\.md$|/skills/[^/]+/(?:skill\.md|references/.+\.md)$)'
 $script:HookIrreversibleFile = 'irreversible.json'
 $script:HookContextWallFile = 'context-wall.json'
 
@@ -283,6 +286,8 @@ function Get-HookWallDenyReason {
     $lower = $text.ToLowerInvariant()
     foreach ($read in @($wall.reads)) {
         $key = ConvertTo-DtCtxPathKey ([string]$read.path)
+        # Instruction files must be read whole by the coordinator that acts on them; the wall never blocks them.
+        if ($key -match $script:HookWallExemptPattern) { continue }
         if (-not $lower.Contains($key)) { continue }
         $kb = [int][Math]::Round([long]$read.chars / 1000)
         return "dt-build context guard: reading $($read.path) filled an earlier coordinator's working room ($($read.reads) reads, about $kb KB) and no job was started. Do not read it here. Start a mechanical dt-job worker that reads it and writes a short summary of only what this step needs to a file in the run folder, then read that summary with read-evidence.ps1."
