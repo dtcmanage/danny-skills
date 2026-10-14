@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.42.0
+
+- Add data-only evidence notes (dt-job note -Evidence): stored in evidence-notes.json, shown labeled in status/wait, refused when they carry authorization language, and excluded from the authority digest.
+
 ## 2.41.2
 
 - Watcher: a coordinator killed by a host restart is not a capacity refusal; the log fallback only counts a refusal in the last 40 lines.
