@@ -2,7 +2,7 @@
 #
 # 1. Resolve the primary tree and the feature branch in play (auto-detect when
 #    -Branch is omitted).
-# 2. Load the repo's ship config at <primary>\.ship.json (or -ConfigPath). No
+# 2. Load .ship.json from the branch being shipped (or -ConfigPath). No
 #    config means merge + purge + push only: status 'merged_only', deploy and
 #    verification recorded as skipped.
 # 3. Run the config's optional gateCommand (build/tests) inside the feature
@@ -23,7 +23,7 @@
 # Fail closed: the first failing step stops the chain; the JSON reports
 # failed_step. JSON summary: status (shipped | merged_only | not_shipped |
 # failed), failed_step, branch, resolved_branch, merged, pushed, deployed,
-# hash_match, local_head, prod_commit, probe_attempts, probe_log, smoke [{route, pass}],
+# config_source, hash_match, local_head, prod_commit, probe_attempts, probe_log, smoke [{route, pass}],
 # purged [], skipped [], rerere_enabled, timings {step: seconds}, step_logs, error_message.
 #
 # Gate and deploy run with output on files and an optional per-step hard limit
@@ -53,6 +53,7 @@ $state = [ordered]@{
     branch = $Branch
     resolved_branch = $null
     on_main = $false
+    config_source = $null
     merged = $false
     pushed = $false
     deployed = $false
@@ -316,8 +317,29 @@ if ($featureTree) {
 # --- Step: config ------------------------------------------------------------
 
 $configFile = if ($ConfigPath) { $ConfigPath } else { Join-Path $primary '.ship.json' }
+if (-not $ConfigPath -and -not $onMain) {
+    if ($featureTree) {
+        $branchConfigFile = Join-Path $featureTree '.ship.json'
+        if (Test-Path -LiteralPath $branchConfigFile) { $configFile = $branchConfigFile }
+    } else {
+        $branchConfigEntry = Invoke-Git -GitArgs @('-C', $primary, 'ls-tree', $resolvedBranch, '--', '.ship.json')
+        if ($branchConfigEntry.ExitCode -ne 0) {
+            Fail-Step 'config' "Could not locate ship config on branch '$resolvedBranch': $($branchConfigEntry.Output)"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($branchConfigEntry.Output)) {
+            $branchConfig = Invoke-Git -GitArgs @('-C', $primary, 'show', "${resolvedBranch}:.ship.json")
+            if ($branchConfig.ExitCode -ne 0) {
+                Fail-Step 'config' "Could not read ship config on branch '$resolvedBranch': $($branchConfig.Output)"
+            }
+            New-Item -ItemType Directory -Force -Path $StepLogDir | Out-Null
+            $configFile = Join-Path $StepLogDir 'branch.ship.json'
+            Set-Content -LiteralPath $configFile -Value $branchConfig.Output -Encoding utf8
+        }
+    }
+}
 $config = $null
 if (Test-Path -LiteralPath $configFile) {
+    $state.config_source = $configFile
     try {
         $config = Get-Content -LiteralPath $configFile -Raw | ConvertFrom-Json -ErrorAction Stop
     } catch {

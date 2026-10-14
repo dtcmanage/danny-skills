@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.24.42",
+  "version": "0.24.43",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.24.43 dt-ship 0.3.1: load ship config from the branch being shipped and report config_source, preventing first-ship gate/deploy skips and stale commands.",
       "0.24.42 dt-session-audit 0.6.0: add the Command Center end-of-session backstop for missing, changed, and finished items, including misplaced open-for-Danny memory entries.",
       "0.24.41 Hermetic bench renderer (model router, test dependencies, version policy): dt-build 2.38.5, dt-image-gen 0.3.33, dt-review 1.16.33, dt-writing-draft 0.2.33, dt-writing-edit 0.3.33. Bench tests no longer need a real Chromium; DANNY_BROWSER_SMOKE_DIR locates browser-smoke for live runs; full-scope preflight checks it; task bank hash unchanged (FS-69).",
       "0.24.40 Read-only Codex reviewer fix (model router, process wrapper, version policy ownership updated): dt-build 2.38.4, dt-image-gen 0.3.32, dt-review 1.16.32, dt-writing-draft 0.2.32, dt-writing-edit 0.3.32. Read-only reviewers run in the real MXC sandbox; blocked sandbox reads surface as blocked reviews.",
