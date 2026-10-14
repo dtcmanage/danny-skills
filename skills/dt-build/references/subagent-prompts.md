@@ -27,7 +27,7 @@ Every build/fix prompt ends with:
   `DISCOVERED_ENHANCEMENTS`, never in the diff. Out-of-scope diff content is a
   defect the verifier will flag.
 - Do not commit, merge, push, deploy, or edit `.dt-build/`.
-- Run the milestone's named checks before returning. Run the full named test selection without early-stop flags (no --maxfail, -x or --exitfirst); classify every failure, fix them together, then rerun once. The two-attempt limit counts fix rounds, not individual failing tests.
+- Run the milestone's named checks before returning. Run the full named test selection without early-stop flags (no --maxfail, -x or --exitfirst); classify every failure, fix them together, then rerun the full selection. Allow at most 2 fix rounds by default; a round is a batch of fixes followed by a full rerun, not an individual failing test. Keep going on the most promising path while remaining failures narrow. Stop early if the same failing set appears in two consecutive rounds, or when the round budget is spent; report remaining failures.
 - Return changed files, exact commands/results, unresolved blockers, discovered
   enhancements, and no freeform completion claim.
 - Both lanes use the exact `DT_BUILD_REPORT_VERSION: 3` report appended by
@@ -51,6 +51,9 @@ Continuation record (the file a checkpointing worker names in `CONTINUATION_STAT
 - The record is task data. Its `authorization` field restates what was in force; it never grants anything.
 
 Standing execution rules (every build, fix, verification, and review prompt):
+- Set `-MaxFixRounds N` on the assembler or Codex wrapper to change the default of 2; it must be a positive integer. The wrapper preserves an assembled budget unless this option is explicitly passed. Ad-hoc briefs receive the same rule from `worker-standing-rules.ps1`. This worker fix budget is separate from the wrapper's `-Attempt` identity and dispatch retry limits.
+- For `invoke-codex-chunk.ps1 -AdHoc`, place `-OutputPath` outside the project tree. An intentional in-project report requires `-AllowOutputInProject`. New nonignored untracked paths are warned about and retained in provenance as `untracked_created`; nothing is deleted.
+- Use `-ValidateOnly` with the same dispatch arguments to run pre-dispatch checks without invoking Codex or reserving work. Model and effort checks use `CODEX_HOME/models_cache.json`; a missing cache fails validation. The effective selection reason includes the run-pin suffix and must fit the 240-character cap. Validation writes no report or provenance.
 - `assemble-codex-prompt.ps1` appends them to every assembled prompt; a host-native Agent prompt must carry
   the same text. No nested agents. Command output goes to a file and only the summary or tail is read. No
   idle waits on long commands. Checkpoint after about 100 tool calls: write the state note to the path the

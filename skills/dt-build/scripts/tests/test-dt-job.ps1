@@ -145,6 +145,8 @@ try {
     Assert-True (-not $spec.environment.PSObject.Properties['DT_BUILD_RUN_PIN_VENDOR'] -and -not $spec.environment.PSObject.Properties['DT_BUILD_RUN_PIN_MODEL']) 'unpinned registry removes inherited pin hints'
     $null = Wait-JobTerminal $pinRun $pinJob.job_id
     foreach ($name in $pinEnvNames) { [Environment]::SetEnvironmentVariable($name, $pinSavedEnv[$name]) }
+    # Tests that exercise operator verbs must not inherit the outer worker identity.
+    Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
 
     # Live discovery uses the actual Git admin directory, not the ledger or tree file timestamps.
     $treeRepo = New-RunFolder 'tree-repo'
@@ -494,6 +496,29 @@ exit 0
     $okA = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'a2'")
     $okB = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'b2'", '-DependsOn', $okA.job_id)
     Assert-True ((Wait-JobTerminal -RunFolder $rf -JobId $okB.job_id).status -eq 'succeeded') 'dependent starts after its dependency succeeds'
+    $requeued = Invoke-DtJob @('requeue', '-RunFolder', $rf, '-JobId', $b.job_id, '-DependsOn', $okA.job_id)
+    Assert-True ($requeued.job_id -ne $b.job_id -and $requeued.requeued_from -eq $b.job_id) 'requeue allocates a new identity'
+    Assert-True ((Wait-JobTerminal -RunFolder $rf -JobId $requeued.job_id).status -eq 'succeeded') 'requeued blocked consumer runs after replacement dependency succeeds'
+    Assert-True ((Get-JobRecord $rf $b.job_id).status -eq 'blocked') 'original blocked record stays terminal'
+    $oldSpec = [IO.File]::ReadAllText((Join-Path $rf "jobs/$($b.job_id)/spec.json"))
+    Assert-True ($oldSpec -ceq [IO.File]::ReadAllText((Join-Path $rf "jobs/$($requeued.job_id)/spec.json"))) 'requeue preserves the complete spec'
+    $unchanged = Invoke-DtJob @('requeue', '-RunFolder', $rf, '-JobId', $c.job_id)
+    Assert-True ($unchanged.status -eq 'blocked' -and (Get-JobRecord $rf $unchanged.job_id).depends_on[0] -eq $b.job_id) 'omitted dependency override preserves the original chain'
+    $restartedTail = Invoke-DtJob @('requeue', '-RunFolder', $rf, '-JobId', $c.job_id, '-DependsOn', $requeued.job_id)
+    Assert-True ((Wait-JobTerminal $rf $restartedTail.job_id).status -eq 'succeeded') 'a multi-level chain restarts against new predecessor IDs'
+    $raw = & pwsh -NoProfile -File $dtJob requeue -RunFolder $rf -JobId $okA.job_id -Json 2>&1
+    Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n") -match 'DT_JOB_REQUEUE_STATE') 'requeue rejects a succeeded job'
+    $countBefore = @(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json').Count
+    & pwsh -NoProfile -File $dtJob requeue -RunFolder $rf -JobId $b.job_id -DependsOn j-9999 -Json *> $null
+    Assert-True ($LASTEXITCODE -ne 0 -and @(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json').Count -eq $countBefore) 'unknown dependency fails without allocating a job'
+    $heldRelease = Join-Path $rf 'requeue-held.txt'
+    $held = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $heldRelease))
+    $cancelSource = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'cancel-copy'", '-DependsOn', $held.job_id)
+    Invoke-DtJob @('cancel', '-RunFolder', $rf, '-JobId', $cancelSource.job_id) | Out-Null
+    $cancelCopy = Invoke-DtJob @('requeue', '-RunFolder', $rf, '-JobId', $cancelSource.job_id)
+    Assert-True ($cancelCopy.status -eq 'queued') 'cancelled job requeues and waits on its original dependency'
+    Write-Utf8 $heldRelease 'release'
+    Assert-True ((Wait-JobTerminal $rf $cancelCopy.job_id).status -eq 'succeeded' -and (Get-JobRecord $rf $cancelSource.job_id).status -eq 'cancelled') 'cancelled source remains terminal while new job succeeds'
 
     # Mutation key: a second job on the same key queues until the key frees.
     $rf = New-RunFolder 'mutates'

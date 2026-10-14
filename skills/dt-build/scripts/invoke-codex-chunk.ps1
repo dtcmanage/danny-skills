@@ -24,6 +24,9 @@ param(
     [switch]$ReadOnly,
     [switch]$Scrutiny,
     [switch]$AdHoc,
+    [switch]$AllowOutputInProject,
+    [switch]$ValidateOnly,
+    [ValidateRange(1, 2147483647)][int]$MaxFixRounds = 2,
     [string]$CodexCliPath = "",
     [switch]$Json
 )
@@ -76,6 +79,13 @@ if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
     throw "CODEX_INVOKE_FAIL: project path not found: $ProjectPath"
 }
 $projectRoot = (Resolve-Path -LiteralPath $ProjectPath).Path
+if ($AdHoc -and -not [string]::IsNullOrWhiteSpace($OutputPath)) {
+    $OutputPath = [IO.Path]::GetFullPath($OutputPath)
+    $projectPrefix = [IO.Path]::GetFullPath($projectRoot).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    if (-not $AllowOutputInProject -and ($OutputPath.Equals($projectPrefix.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase) -or $OutputPath.StartsWith($projectPrefix, [StringComparison]::OrdinalIgnoreCase))) {
+        throw 'CODEX_OUTPUT_IN_PROJECT: -AdHoc -OutputPath must be outside -ProjectPath; pass -AllowOutputInProject to opt in.'
+    }
+}
 # Outcome rows name the canonical repo (the main checkout's folder), also when building in a linked worktree.
 $outcomeRepo = Split-Path -Leaf $projectRoot
 $commonGitDir = @(& git -C $projectRoot rev-parse --path-format=absolute --git-common-dir 2>$null)
@@ -93,6 +103,8 @@ if (-not $Preflight -and -not $Effort) {
 $runPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR
 $runPinModel = $env:DT_BUILD_RUN_PIN_MODEL
 $runPinActive = -not [string]::IsNullOrWhiteSpace($runPinVendor)
+$selectionSuffix = ''
+if (-not $Preflight -and $SelectionReason -match '[\r\n]') { throw 'CODEX_INVOKE_FAIL: -SelectionReason must be one line.' }
 if ($runPinActive) {
     $pinFailure = if ($runPinVendor -ine 'codex') {
         'CODEX_INVOKE_FAIL: RUN_PIN_VENDOR: run is pinned to ' + $runPinVendor + ' (' + $runPinModel + '); codex wrapper refused.'
@@ -102,7 +114,7 @@ if ($runPinActive) {
         'CODEX_INVOKE_FAIL: RUN_PIN_MODEL: run pin model is missing.'
     } else { $null }
     if ($pinFailure) {
-        if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+        if (-not $ValidateOnly -and -not [string]::IsNullOrWhiteSpace($OutputPath)) {
             $pinProvenance = [ordered]@{
                 pass = $false; preflight = [bool]$Preflight; lane = 'codex'; vendor = 'codex'; tier = $Tier; effort = $Effort
                 category = $Category; requested_model = $Model; resolved_model = $null
@@ -117,7 +129,8 @@ if ($runPinActive) {
         throw $pinFailure
     }
     $Model = $runPinModel
-    $SelectionReason = if ([string]::IsNullOrWhiteSpace($SelectionReason)) { 'run pin' } else { $SelectionReason + '; run pin ' + $runPinModel }
+    $selectionSuffix = if ([string]::IsNullOrWhiteSpace($SelectionReason)) { '' } else { '; run pin ' + $runPinModel }
+    $SelectionReason = if ([string]::IsNullOrWhiteSpace($SelectionReason)) { 'run pin' } else { $SelectionReason.Trim() + $selectionSuffix }
 }
 
 if (-not $Preflight) {
@@ -130,6 +143,14 @@ if (-not $Preflight) {
     $PromptPath = (Resolve-Path -LiteralPath $PromptPath).Path
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
     $promptText = Get-Content -Raw -LiteralPath $PromptPath
+    . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
+    $fixRoundRule = Get-WorkerFixRoundRule -MaxFixRounds $MaxFixRounds
+    if ($AdHoc) { $promptText += "`nStanding execution rules:`n- $fixRoundRule`n" }
+    elseif ($PSBoundParameters.ContainsKey('MaxFixRounds')) {
+        $rulePattern = '(?m)^- Run the full named test selection[^\r\n]*'
+        if ($promptText -match $rulePattern) { $promptText = [regex]::Replace($promptText, $rulePattern, { param($match) '- ' + $fixRoundRule }) }
+        else { $promptText += "`nStanding execution rules:`n- $fixRoundRule`n" }
+    }
     # Pasted sources, evidence packets and histories have pushed review prompts past Codex's
     # 1,048,576-character cap. Refuse well below it, before anything is dispatched.
     $maxPromptChars = 400000
@@ -166,7 +187,7 @@ if (-not $Preflight) {
         throw "CODEX_INVOKE_FAIL: substantive invocation requires -SelectionReason. Report the selected model and this reason in chat before dispatch."
     }
     if ($SelectionReason.Length -gt 240) {
-        throw "CODEX_INVOKE_FAIL: -SelectionReason must be 240 characters or fewer."
+        throw "CODEX_INVOKE_FAIL: SELECTION_REASON_TOO_LONG: effective length $($SelectionReason.Length), suffix length $($selectionSuffix.Length), cap 240."
     }
 }
 
@@ -227,7 +248,7 @@ if ($env:DT_BUILD_DISPATCH_SEAMS) {
 $codexCli = Get-CodexCliPath
 # No model names live here: refresh the live account catalog and let the shared model
 # router pick for the chunk's category. -Model is an explicit override only.
-try { $modelCatalog = Update-CodexModelCatalog -CodexCliPath $codexCli }
+try { $modelCatalog = if ($ValidateOnly) { Get-CodexModelCatalog } else { Update-CodexModelCatalog -CodexCliPath $codexCli } }
 catch { throw "CODEX_INVOKE_FAIL: $($_.Exception.Message)" }
 $modelLadder = @(Get-CodexModelLadder -Catalog $modelCatalog)
 $workstation = if ($projectRoot -match '[/\\]_Claude-Workspace[/\\]([^/\\]+)') { $Matches[1] } else { Split-Path -Leaf (Split-Path -Parent $projectRoot) }
@@ -255,12 +276,12 @@ try {
     $resolvedDifficulty = if ((Get-RouterCategoryJob -Category $Category) -in @('coder','deep-thinker') -or ($isProtected -and $Category -eq 'mechanical')) { $Difficulty } else { $null }
     $escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
 
-    $routerPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -Catalog $modelCatalog -SendAlerts:(-not $Scrutiny) -ChatToStderr:$Json
+    $routerPick = Resolve-RouterModel -Category $Category -Lane codex -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -Catalog $modelCatalog -SendAlerts:(-not $Scrutiny -and -not $ValidateOnly) -ChatToStderr:$Json
 }
 catch { throw "CODEX_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
 if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or (Get-RouterVendorBlocked -Vendor codex))) {
     $waitReason = "ROUTER_WAIT: $($routerPick.reason)"
-    if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+    if (-not $ValidateOnly -and -not [string]::IsNullOrWhiteSpace($OutputPath)) {
         $waitProvenance = [pscustomobject]@{
             pass = $false; preflight = [bool]$Preflight; tier = $Tier; effort = $Effort; reasoning_effort = $Effort
             workstation = $workstation; dispatched_at_utc = [datetimeoffset]::UtcNow.ToString('o'); difficulty = $resolvedDifficulty; difficulty_reason = $(if ($resolvedDifficulty) { $DifficultyReason } else { $null }); retry_at_hard_from = $RetryAtHardFrom
@@ -292,6 +313,11 @@ else {
     $routerReason = [string]$routerPick.reason
 }
 if ($Effort) { [void](Assert-CodexReasoningEffort -Model $resolvedModel -Effort $Effort -Catalog $modelCatalog -Strict) }
+if ($ValidateOnly) {
+    if ($Json) { [pscustomobject]@{ pass = $true; validate_only = $true; resolved_model = $resolvedModel; selection_reason = $SelectionReason; suffix_length = $selectionSuffix.Length } | ConvertTo-Json }
+    else { 'VALIDATION_OK: no dispatch or reservation; model checks used the cached catalog.' }
+    exit 0
+}
 if ($runPinActive) { $routerReason = 'run pin' }
 $selectionLabel = $Category + $(if ($isProtected) { ', protected' } else { '' }) + $(if ($escalatedFrom) { ", escalated from $escalatedFrom" } else { '' })
 $disclosureLine = if ($Preflight) { $null } else {
@@ -315,7 +341,7 @@ $prompt = if ($Preflight) {
     "Reply with the single word OK and nothing else. Do not inspect or modify files."
 }
 else {
-    Get-Content -Raw -LiteralPath $PromptPath
+    $promptText
 }
 $promptSha256 = if ($Preflight) {
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($prompt)
@@ -324,7 +350,7 @@ $promptSha256 = if ($Preflight) {
     finally { $sha.Dispose() }
 }
 else {
-    (Get-FileHash -LiteralPath $PromptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($prompt))).ToLowerInvariant()
 }
 $sandbox = if ($Preflight -or $ReadOnly) { 'read-only' } else { 'workspace-write' }
 # Keep the existing Windows builder route separate from reviewers. Reviewers
@@ -366,6 +392,21 @@ $completedSuccessfully = $false
 $streamPath = "$OutputPath.stream.log"
 $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
+$untrackedBefore = @()
+$untrackedCreated = @()
+function Get-ProjectUntrackedPaths {
+    # NUL delimiters preserve spaces, quotes, Unicode and embedded newlines in paths.
+    $statusText = (@(& git -C $projectRoot status --porcelain --untracked-files=all -z) -join "`n")
+    if ($LASTEXITCODE -ne 0) { throw 'CODEX_UNTRACKED_STATUS_FAILED: could not inspect project untracked paths.' }
+    return @($statusText.Split([char]0) | Where-Object { $_.StartsWith('?? ') } | ForEach-Object { $_.Substring(3) })
+}
+function Update-AdHocUntrackedPaths {
+    if ($AdHoc) {
+        $script:untrackedCreated = @(Get-ProjectUntrackedPaths | Where-Object { $_ -cnotin $untrackedBefore })
+        if ($script:untrackedCreated.Count) { [Console]::Error.WriteLine('WARNING: ad-hoc worker created untracked paths: ' + ($script:untrackedCreated -join ', ')) }
+    }
+}
+if ($AdHoc) { $untrackedBefore = @(Get-ProjectUntrackedPaths) }
 try {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     # Coordinator-only bootstrap must never propagate to workers, including direct wrapper calls.
@@ -662,7 +703,9 @@ try {
         if ($authMatch.Success) { $forcedLoginMethod = $authMatch.Groups[1].Value }
     }
 
+    Update-AdHocUntrackedPaths
     $result = [pscustomobject]@{
+        untracked_created      = @($untrackedCreated)
         pass                   = [string]::IsNullOrWhiteSpace($failureReason)
         preflight              = [bool]$Preflight
         tier                   = $Tier
@@ -734,8 +777,10 @@ try {
 }
 catch {
     if (-not $temporaryOutput -and -not $provenanceWritten) {
+        Update-AdHocUntrackedPaths
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
+            untracked_created = @($untrackedCreated)
             pass = $false; preflight = [bool]$Preflight; tier = $Tier; effort = $Effort; reasoning_effort = $Effort
             workstation = $workstation; dispatched_at_utc = [datetimeoffset]::UtcNow.ToString('o'); difficulty = $resolvedDifficulty; difficulty_reason = $(if ($resolvedDifficulty) { $DifficultyReason } else { $null }); retry_at_hard_from = $RetryAtHardFrom
             category = $Category; protected = $isProtected; escalated_from = $escalatedFrom

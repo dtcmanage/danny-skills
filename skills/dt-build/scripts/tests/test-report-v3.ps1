@@ -199,6 +199,14 @@ try {
     & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $manifestFile -RequiredEntitlements contracts -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -PreambleText 'Fixture preamble.' -BriefText 'Fixture brief.' -OutputPath $assembledPath *> $null
     Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $assembledPath)) "the assembler runs on a fixture manifest (exit $LASTEXITCODE)"
     $assembled = [System.IO.File]::ReadAllText($assembledPath)
+    Assert-True ($assembled.Contains('Allow at most 2 fix rounds') -and $assembled.Contains('same failing set appears in two consecutive rounds') -and $assembled.Contains('round budget is spent')) 'assembler renders default budget and both stop conditions'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $manifestFile -RequiredEntitlements contracts -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -PreambleText 'Fixture preamble.' -BriefText 'Fixture brief.' -OutputPath "$assembledPath.custom" -MaxFixRounds 5 *> $null
+    $customRules = [IO.File]::ReadAllText("$assembledPath.custom")
+    Assert-True ($LASTEXITCODE -eq 0 -and $customRules.Contains('Allow at most 5 fix rounds') -and $customRules.Contains('most promising path')) 'assembler renders custom fix-round budget'
+    foreach ($badBudget in @('0', '-1', 'abc')) {
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $manifestFile -RequiredEntitlements contracts -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -OutputPath "$assembledPath.bad" -MaxFixRounds $badBudget *> $null
+        Assert-True ($LASTEXITCODE -ne 0 -and -not (Test-Path "$assembledPath.bad")) "assembler rejects invalid fix-round budget $badBudget"
+    }
     $ruleMatch = [regex]::Match($assembled, '`pwsh -NoProfile -File "(?<path>[^"]+)" tree-hash -WorkingTree "<worktree>"`')
     $rulePath = $ruleMatch.Groups['path'].Value
     Assert-True ($ruleMatch.Success -and [System.IO.Path]::IsPathFullyQualified($rulePath) -and (Split-Path -Leaf $rulePath) -eq 'dt-job.ps1' -and (Test-Path -LiteralPath $rulePath -PathType Leaf)) "the assembled checkpoint rule gives a copy-paste tree-hash command with an existing absolute dt-job.ps1 ($rulePath)"

@@ -27,8 +27,10 @@ New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $originalCodexHome = $env:CODEX_HOME
 $originalLeanBootstrap = $env:DT_BUILD_LEAN_BOOTSTRAP
 $originalJobId = $env:DT_JOB_ID
-# These are direct wrapper fixtures; a parent managed job disables their timeout.
-Remove-Item Env:DT_JOB_ID -ErrorAction SilentlyContinue
+$originalJobDir = $env:DT_JOB_DIR
+$originalCoordinatorId = $env:DT_BUILD_COORDINATOR_ID
+# Direct-wrapper timeout fixtures and operator commands need a standalone caller.
+Remove-Item Env:DT_JOB_ID, Env:DT_JOB_DIR, Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue
 # Isolate from this machine's live Codex session usage until a test sets its own fixture home.
 $env:CODEX_HOME = Join-Path $tempRoot 'empty-codex-home'
 New-Item -ItemType Directory -Path $env:CODEX_HOME -Force | Out-Null
@@ -489,6 +491,7 @@ rationale: Framework limitation accepted with visible evidence.
     $env:CODEX_HOME = $fixtureCodexHome
     $fakeCodex = Join-Path $tempRoot 'fake-codex.ps1'
     Write-Utf8 -Path $fakeCodex -Content @'
+if ($env:DT_FAKE_ALL_CALLS) { [IO.File]::AppendAllText($env:DT_FAKE_ALL_CALLS, ($args -join '|') + "`n") }
 if ($args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if ($args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path $env:CODEX_HOME 'models_cache.json'); exit 0 }
 if ($env:DT_FAKE_SELECTION_RELEASE) { while (-not (Test-Path -LiteralPath $env:DT_FAKE_SELECTION_RELEASE)) { Start-Sleep -Milliseconds 100 } }
@@ -499,6 +502,10 @@ $outPath = if ($outIndex -ge 0) { [string]$args[$outIndex + 1] } else { '' }
 $mode = [string]$env:DT_FAKE_CODEX_MODE
 if ($mode -eq 'hang') { Start-Sleep -Seconds 10; exit 0 }
 $receivedPrompt=[Console]::In.ReadToEnd()
+if ($env:DT_FAKE_CREATE_UNTRACKED) {
+    [IO.File]::WriteAllText((Join-Path (Get-Location) 'worker-created.txt'), 'worker')
+    [IO.File]::WriteAllText((Join-Path (Get-Location) 'worker-ignored.txt'), 'ignored')
+}
 if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
 if ($mode -eq 'preflight') { [System.IO.File]::WriteAllText($outPath, 'OK'); exit 0 }
 if ($mode -eq 'malformed') { [System.IO.File]::WriteAllText($outPath, 'I cannot do that.'); exit 0 }
@@ -532,6 +539,64 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $wrapperPrompt = Join-Path $tempRoot 'wrapper-prompt.md'
     Write-Utf8 -Path $wrapperPrompt -Content "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nfixture"
     $wrapperOutput = Join-Path $tempRoot 'wrapper-output.md'
+    $wrapper = Join-Path $scriptDir 'invoke-codex-chunk.ps1'
+    $savedPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR; $savedPinModel = $env:DT_BUILD_RUN_PIN_MODEL
+    $allCalls = Join-Path $tempRoot 'guard-cli-calls.txt'
+    $env:DT_FAKE_ALL_CALLS = $allCalls
+    try {
+        $env:DT_BUILD_RUN_PIN_VENDOR = 'codex'; $env:DT_BUILD_RUN_PIN_MODEL = 'gpt-6.1-sol'
+        foreach ($reasonLength in @(219, 220, 227)) {
+            $reason = 'r' * $reasonLength
+            $guardOutput = Join-Path $tempRoot "guard-$reasonLength.md"
+            $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $guardOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason $reason -ValidateOnly -Json 2>&1
+            if ($reasonLength -eq 219) {
+                Assert-True ($LASTEXITCODE -eq 0 -and (($guardLog -join "`n") | ConvertFrom-Json).selection_reason.Length -eq 240) 'effective pinned reason at cap validates'
+            } else {
+                Assert-True ($LASTEXITCODE -ne 0 -and ($guardLog -join "`n") -match "effective length $($reasonLength + 21), suffix length 21, cap 240") "over-cap pinned reason $reasonLength reports all lengths"
+            }
+            Assert-True (-not (Test-Path $guardOutput) -and -not (Test-Path "$guardOutput.provenance.json")) 'validation creates no output or provenance'
+        }
+        $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'guard-dispatch.md') -CodexCliPath $fakeCodex -Effort medium -SelectionReason ('r' * 227) 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($guardLog -join "`n") -match 'SELECTION_REASON_TOO_LONG' -and -not (Test-Path $allCalls)) 'ordinary dispatch refuses overlong effective reason before any CLI call'
+        $env:DT_BUILD_RUN_PIN_VENDOR = ''; $env:DT_BUILD_RUN_PIN_MODEL = ''
+        foreach ($badArgs in @(@{Effort='xhigh'}, @{Category='not-a-category'}, @{Difficulty='hard'}, @{Model='not-selectable'})) {
+            $checkArgs = @{Category='routine-coding'; Effort='medium'}
+            foreach ($k in $badArgs.Keys) { $checkArgs[$k] = $badArgs[$k] }
+            & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'guard-invalid.md') -CodexCliPath $fakeCodex -SelectionReason 'validate fixture' -ValidateOnly @checkArgs *> $null
+            Assert-True ($LASTEXITCODE -ne 0) 'validation runs model, category, effort and difficulty checks'
+        }
+        Assert-True (-not (Test-Path $allCalls)) 'validate-only never invokes Codex, including catalog refresh'
+        foreach ($inside in @((Join-Path $workingTree 'report.md'), (Join-Path $workingTree 'nested/../report.md'), (Join-Path $workingTree.ToUpperInvariant() 'REPORT.md'))) {
+            $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $inside -CodexCliPath $fakeCodex -Effort medium -SelectionReason 'path fixture' -AdHoc -ValidateOnly 2>&1
+            Assert-True ($LASTEXITCODE -ne 0 -and ($guardLog -join "`n") -match 'CODEX_OUTPUT_IN_PROJECT') 'ad-hoc output containment is normalized and case insensitive'
+        }
+        & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $workingTree 'report.md') -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'path fixture' -AdHoc -AllowOutputInProject -ValidateOnly *> $null
+        Assert-True ($LASTEXITCODE -eq 0) 'explicit in-project opt-in validates'
+        $adhocOut = Join-Path $tempRoot 'adhoc-guard.md'
+        $capturedPrompt = Join-Path $tempRoot 'adhoc-prompt.txt'
+        Write-Utf8 (Join-Path $workingTree '.gitignore') 'worker-ignored.txt'
+        Write-Utf8 (Join-Path $workingTree 'already-untracked.txt') 'before'
+        $env:DT_FAKE_CREATE_UNTRACKED = '1'; $env:DT_FAKE_UNICODE_PROMPT = $capturedPrompt
+        $env:DT_FAKE_CODEX_MODE = 'success'
+        $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $adhocOut -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'ad-hoc fixture' -AdHoc -MaxFixRounds 5 -Json 2>&1
+        $guardExit = $LASTEXITCODE
+        $adhocProv = Get-Content -Raw "$adhocOut.provenance.json" | ConvertFrom-Json
+        Assert-True ($guardExit -eq 0 -and @($adhocProv.untracked_created).Count -eq 1 -and $adhocProv.untracked_created[0] -match 'worker-created.txt$') 'provenance reports only newly created nonignored untracked files'
+        Assert-True (($guardLog -join "`n") -match 'WARNING: ad-hoc worker created untracked paths' -and (Test-Path (Join-Path $workingTree 'worker-created.txt'))) 'ad-hoc warning retains files'
+        Assert-True ([IO.File]::ReadAllText($capturedPrompt).Contains('Allow at most 5 fix rounds') -and [IO.File]::ReadAllText($capturedPrompt).Contains('same failing set appears in two consecutive rounds')) 'ad-hoc dispatch receives shared custom fix-round rule'
+        Remove-Item Env:DT_FAKE_CREATE_UNTRACKED -ErrorAction SilentlyContinue
+        & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath "$adhocOut.default" -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'default ad-hoc fixture' -AdHoc -Json *> $null
+        $defaultProv = Get-Content -Raw "$adhocOut.default.provenance.json" | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($capturedPrompt).Contains('Allow at most 2 fix rounds') -and @($defaultProv.untracked_created).Count -eq 0) 'ad-hoc default rule uses two rounds and existing untracked files are excluded'
+        $env:DT_BUILD_PROMPT_MAX_CHARS = [string]((Get-Content -Raw $wrapperPrompt).Length + 1)
+        $guardLog = & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath "$adhocOut.too-large" -CodexCliPath $fakeCodex -Effort medium -SelectionReason 'effective prompt fixture' -AdHoc -ValidateOnly 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($guardLog -join "`n") -match 'PROMPT_TOO_LARGE') 'validation checks effective ad-hoc prompt including standing rule'
+        Remove-Item Env:DT_BUILD_PROMPT_MAX_CHARS -ErrorAction SilentlyContinue
+    } finally {
+        $env:DT_BUILD_RUN_PIN_VENDOR = $savedPinVendor; $env:DT_BUILD_RUN_PIN_MODEL = $savedPinModel
+        Remove-Item Env:DT_FAKE_ALL_CALLS, Env:DT_FAKE_CREATE_UNTRACKED, Env:DT_FAKE_UNICODE_PROMPT, Env:DT_BUILD_PROMPT_MAX_CHARS -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $workingTree '.gitignore'), (Join-Path $workingTree 'already-untracked.txt'), (Join-Path $workingTree 'worker-created.txt'), (Join-Path $workingTree 'worker-ignored.txt') -Force -ErrorAction SilentlyContinue
+    }
     # Run pins use the existing fake catalog/CLI and restore caller hints after every case.
     foreach ($pinCase in @('match', 'reason', 'vendor', 'model')) {
         $savedPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR; $savedPinModel = $env:DT_BUILD_RUN_PIN_MODEL
@@ -1041,9 +1106,10 @@ $script:RouterDiagnosisHttp = {
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {
-    if ($null -eq $originalJobId) { Remove-Item Env:DT_JOB_ID -ErrorAction SilentlyContinue }
-    else { $env:DT_JOB_ID = $originalJobId }
     $env:DT_BUILD_LEAN_BOOTSTRAP = $originalLeanBootstrap
+    $env:DT_JOB_ID = $originalJobId
+    $env:DT_JOB_DIR = $originalJobDir
+    $env:DT_BUILD_COORDINATOR_ID = $originalCoordinatorId
     if ($null -eq $originalCodexHome) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
     else { $env:CODEX_HOME = $originalCodexHome }
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $originalClaudeCredentials

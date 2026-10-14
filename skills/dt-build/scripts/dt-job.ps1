@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'pin', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
+    [ValidateSet('start', 'requeue', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'pin', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -809,6 +809,45 @@ function Invoke-DtJobStart {
     }
     $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $id
     Write-DtJobOutput -Object ([pscustomobject][ordered]@{ job_id = $id; exclusive_reason = $record.exclusive_reason; model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $id); status = $record.status; status_reason = $record.status_reason; job_file = (Join-Path $paths.Jobs "$id.json") }) -AsJson:$Json
+}
+
+function Invoke-DtJobRequeue {
+    if (-not $JobId -or @($JobId).Count -ne 1) { throw 'DT_JOB_USAGE: requeue requires one -JobId.' }
+    if ($null -ne $script:DtJobContext -and $script:DtJobContext.state -eq 'rotate' -and -not $script:DtJobContext.deferred) { throw 'ROTATE_REQUIRED: no new dispatch at the context limit.' }
+    $replaceDependencies = $script:RequeueReplaceDependencies
+    $paths = Get-DtJobPaths -RunFolder $RunFolder
+    $id = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $old = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId
+        if ($null -eq $old) { throw "DT_JOB_UNKNOWN_JOB: $JobId" }
+        if ($old.status -notin @('blocked', 'cancelled')) { throw "DT_JOB_REQUEUE_STATE: $($old.job_id) is $($old.status); only blocked or cancelled jobs can be requeued." }
+        $deps = if ($replaceDependencies) { @($DependsOn) } else { @($old.depends_on) }
+        $existing = @(Get-DtJobRecords -RunFolder $RunFolder)
+        foreach ($dep in $deps) {
+            if (-not ($existing | Where-Object { $_.job_id -eq $dep })) { throw "DT_JOB_UNKNOWN_DEPENDENCY: $dep" }
+        }
+        $max = 0
+        foreach ($r in $existing) { $max = [Math]::Max($max, [int]($r.job_id -replace '^j-', '')) }
+        $newId = 'j-{0:D4}' -f ($max + 1)
+        $jobDir = Join-Path $paths.Jobs $newId
+        $specText = Read-DtJobText -Path (Join-Path $paths.Jobs "$($old.job_id)/spec.json")
+        $record = ($old | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
+        $record.job_id = $newId
+        $record.depends_on = @($deps)
+        $record.status = 'queued'
+        foreach ($field in @('pid','process_start_utc','runner_pid','runner_start_utc','status_reason','exit_code','started','ended','last_progress')) { $record.$field = $null }
+        $record.queued = [DateTime]::UtcNow.ToString('o')
+        $record.output_path = Join-Path $jobDir 'stdout.log'
+        $record.stderr_path = Join-Path $jobDir 'stderr.log'
+        $record.summary_path = Join-Path $jobDir 'summary.json'
+        New-Item -ItemType Directory -Path $jobDir -Force | Out-Null
+        Write-DtJobAtomic -Path (Join-Path $jobDir 'spec.json') -Content $specText
+        Save-DtJobRecord -RunFolder $RunFolder -Record $record
+        Add-DtJobEvent -RunFolder $RunFolder -JobId $newId -Type 'requeued' -Status 'queued' -Reason "requeued from $($old.job_id)"
+        Invoke-DtJobSchedule -RunFolder $RunFolder
+        $newId
+    }
+    $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $id
+    Write-DtJobOutput -Object ([pscustomobject]@{ job_id = $id; requeued_from = $JobId; status = $record.status; job_file = (Join-Path $paths.Jobs "$id.json") }) -AsJson:$Json
 }
 
 function Get-DtJobConsumedSeq {
@@ -2061,6 +2100,7 @@ $script:DtJobExplicitParams = @($PSBoundParameters.Keys)
 Receive-DtJobQueuedApproval -RunFolder $RunFolder
 
 # Under `pwsh -File`, `-Mutates a,b` arrives as the single string 'a,b'; split every list on commas.
+$script:RequeueReplaceDependencies = $PSBoundParameters.ContainsKey('DependsOn')
 $DependsOn = Split-DtJobList $DependsOn
 $Mutates = Split-DtJobList $Mutates
 $PassEnv = Split-DtJobList $PassEnv
@@ -2084,6 +2124,7 @@ if ($script:DtJobCoordinator) {
 
 $verbOutput = switch ($Verb) {
     'start' { Invoke-DtJobStart }
+    'requeue' { Invoke-DtJobRequeue }
     'status' { Invoke-DtJobStatus }
     'wait' { Invoke-DtJobWait }
     'cancel' { Invoke-DtJobCancel }
