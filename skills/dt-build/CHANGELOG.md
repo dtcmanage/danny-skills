@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.42.3
+
+- The watcher restores run_status runnable when an approval recorded in approvals.json and the ledger was lost from a rewritten checkpoint; repairs are logged to watcher-repairs.jsonl.
+
 ## 2.42.2
 
 - The context wall never blocks instruction and policy files (CLAUDE/AGENTS/MEMORY/CONTEXT.md, 00_Resources policy, skill SKILL.md and references); data files stay walled.
