@@ -664,10 +664,15 @@ try {
     Assert-True ($ok.run_status -eq 'runnable' -and @($approvals.approvals).Count -eq 1 -and $approvals.approvals[0].operation -eq 'merge' -and [bool]$approvals.approvals[0].approved_utc -and $null -eq $approvals.awaiting) 'approve records {operation, approved_utc} and sets runnable'
     $lastEvent = Get-Content -LiteralPath (Join-Path $run.folder 'jobs/events.jsonl') | Select-Object -Last 1 | ConvertFrom-Json
     Assert-True ($lastEvent.type -eq 'continuation_requested') 'approve appends continuation_requested'
+    # A checkpoint rewritten after the approval (a workspace sync reset did this) must not strand the run.
+    $stateText = [IO.File]::ReadAllText($run.state)
+    [IO.File]::WriteAllText($run.state, ($stateText -replace '(?m)^run_status:.*$', 'run_status: awaiting_danny'))
+    Assert-True ((Get-RunState $run.state).run_status -eq 'awaiting_danny') 'fixture reverts run_status after the approval'
     $tb = $ta.AddMinutes(60)
     Invoke-Tick -NowUtc $tb | Out-Null
     Invoke-Tick -NowUtc $tb.AddSeconds(30) | Out-Null
     Assert-True ((Get-LaunchCount 'approval') -eq 1) 'approve produces exactly one new launch'
+    Assert-True ((Get-RunState $run.state).run_status -ne 'awaiting_danny' -and (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'watcher-repairs.jsonl')) -match 'restored run_status runnable from approval of merge') 'the watcher restores an approval the checkpoint lost and records the repair'
 
     # ---- scenario 10d: a delegated run routes routine stops away from Danny, escalates late ones once,
     # always DMs production/Azure/irreversible stops, and digests delegated approvals at finish.

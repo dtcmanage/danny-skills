@@ -836,6 +836,30 @@ function Send-WatcherRepeatedStepErrorAlerts {
     return @($results)
 }
 
+function Repair-WatcherLostApproval {
+    # An approval is recorded in approvals.json and the ledger before the checkpoint's run_status flips to
+    # runnable. If something outside dt-job rewrites the checkpoint afterwards (a workspace sync reset did,
+    # Oct 14), the run would wait forever on an approval already given. Restore runnable only when the
+    # ledger proves it: nothing awaiting, and the newest approval continuation follows the newest await.
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath)
+    if ((Get-DtJobRunState -BuildStatePath $BuildStatePath).run_status -ne 'awaiting_danny') { return $null }
+    return Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        $state = Get-DtJobRunState -BuildStatePath $BuildStatePath
+        if ($state.run_status -ne 'awaiting_danny') { return $null }
+        $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+        if ($null -ne $approvals.awaiting) { return $null }
+        $runEvents = @(Get-DtJobEvents -RunFolder $RunFolder | Where-Object { $_.job_id -eq 'run' })
+        $await = @($runEvents | Where-Object { $_.type -eq 'awaiting_danny' } | Select-Object -Last 1)
+        $approved = @($runEvents | Where-Object { $_.type -eq 'continuation_requested' -and [string]$_.reason -like 'approved *' } | Select-Object -Last 1)
+        if ($approved.Count -eq 0 -or $await.Count -eq 0) { return $null }
+        if ([int64]$approved[0].seq -le [int64]$await[0].seq -or [int64]$approved[0].seq -le $state.last_consumed_event_seq) { return $null }
+        $operation = ([string]$approved[0].reason).Substring('approved '.Length)
+        if (@($approvals.approvals | Where-Object { [string]$_.operation -ceq $operation }).Count -eq 0) { return $null }
+        Set-DtJobRunState -BuildStatePath $BuildStatePath -RunStatus 'runnable'
+        return "restored run_status runnable from approval of $operation (event $($approved[0].seq)); the checkpoint had been rewritten after the approval"
+    }
+}
+
 function Invoke-WatcherRunTick {
     param([Parameter(Mandatory)]$Entry)
     $folder = [string]$Entry.run_folder
@@ -847,6 +871,10 @@ function Invoke-WatcherRunTick {
     # Stop and approval DMs that failed to send are retried while the run still waits on Danny.
     $statePath = [string]$Entry.build_state_path
     $retried = @()
+    if (Test-Path -LiteralPath $statePath) {
+        $restored = Repair-WatcherLostApproval -RunFolder $folder -BuildStatePath $statePath
+        if ($restored) { [IO.File]::AppendAllText((Join-Path $folder 'watcher-repairs.jsonl'), (([ordered]@{ utc = [DateTime]::UtcNow.ToString('o'); repair = $restored } | ConvertTo-Json -Compress) + "`n")) }
+    }
     if ((Test-Path -LiteralPath $statePath) -and (Get-DtJobRunState -BuildStatePath $statePath).run_status -eq 'awaiting_danny') {
         $retried = @(Send-DtJobPendingAlerts -RunFolder $folder)
         $escalated = Send-DtJobDelegateEscalation -RunFolder $folder -RunId $runId
