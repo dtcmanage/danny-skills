@@ -183,18 +183,22 @@ exit $LASTEXITCODE
     if ($failures.Count) { throw ($failures -join "`n") }
 
     $liveRaw = @(& pwsh -NoProfile -File $resolver -Path (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -Json)
-    Assert-True ($LASTEXITCODE -eq 0) 'live wrapper exits zero with default repo and ref'
+    $liveExit = $LASTEXITCODE
+    # A branch that edits the wrapper is legitimately NOT_ON_MAIN until it merges; derive the expectation from git.
+    & git -C $scriptDir diff --quiet origin/main -- invoke-codex-chunk.ps1
+    $expectOnMain = $LASTEXITCODE -eq 0
+    Assert-True ($liveExit -eq $(if ($expectOnMain) { 0 } else { 3 })) "live wrapper exit matches git state with default repo and ref (exit $liveExit, on main $expectOnMain)"
     $live = ($liveRaw -join "`n") | ConvertFrom-Json
-    Assert-True ($live.status -eq 'ON_MAIN' -and $live.repo_relative_path -eq 'skills/dt-build/scripts/invoke-codex-chunk.ps1') 'live wrapper resolves ON_MAIN'
+    Assert-True ($live.status -eq $(if ($expectOnMain) { 'ON_MAIN' } else { 'NOT_ON_MAIN' }) -and $live.repo_relative_path -eq 'skills/dt-build/scripts/invoke-codex-chunk.ps1') "live wrapper resolves $($live.status)"
     $junction = Join-Path $tempRoot 'junction/dt-build'
     New-Item -ItemType Directory -Path (Split-Path -Parent $junction) -Force | Out-Null
     $linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
     New-Item -ItemType $linkType -Path $junction -Target (Split-Path -Parent $scriptDir) | Out-Null
     try {
         $junctionRaw = @(& pwsh -NoProfile -File (Join-Path $junction 'scripts/resolve-tooling-revision.ps1') -Path (Join-Path $junction 'scripts/invoke-codex-chunk.ps1') -Json)
-        Assert-True ($LASTEXITCODE -eq 0) 'helper resolves default repo through a skill junction'
+        Assert-True ($LASTEXITCODE -eq $liveExit) 'helper resolves default repo through a skill junction'
         $junctionResult = ($junctionRaw -join "`n") | ConvertFrom-Json
-        Assert-True ($junctionResult.commit -eq $live.commit) 'junction and source resolve the same live commit'
+        Assert-True ($junctionResult.commit -eq $live.commit -and $junctionResult.status -eq $live.status -and $junctionResult.repo_root -eq $live.repo_root) 'junction and source resolve the same live result'
     } finally {
         # Unlink only; never recursively remove a junction target.
         (Get-Item -LiteralPath $junction).Delete()
