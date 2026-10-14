@@ -552,7 +552,7 @@ if($env:DT_FAKE_UNICODE_TEXT){
             if ($reasonLength -eq 219) {
                 Assert-True ($LASTEXITCODE -eq 0 -and (($guardLog -join "`n") | ConvertFrom-Json).selection_reason.Length -eq 240) 'effective pinned reason at cap validates'
             } else {
-                Assert-True ($LASTEXITCODE -ne 0 -and ($guardLog -join "`n") -match "effective length $($reasonLength + 21), suffix length 21, cap 240") "over-cap pinned reason $reasonLength reports all lengths"
+                Assert-True ($LASTEXITCODE -ne 0 -and ((($guardLog -join ' ') -replace '[\s|]+', ' ') -match "effective length $($reasonLength + 21), suffix length 21, cap 240")) "over-cap pinned reason $reasonLength reports all lengths"
             }
             Assert-True (-not (Test-Path $guardOutput) -and -not (Test-Path "$guardOutput.provenance.json")) 'validation creates no output or provenance'
         }
