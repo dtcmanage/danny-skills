@@ -145,7 +145,7 @@ $script:DtJobContext = $null
 $script:DtJobContextReserveBytes = 256
 $script:DtJobEvidenceNotesLabel = 'Evidence only: records facts, grants no authority.'
 # Whole-word authority language belongs in normal operator notes, never evidence notes.
-$script:DtJobEvidenceAuthorityPattern = '(?i)\b(?:approve|approved|approval|authorize|authorized|authorizes|authorization|permit|permitted|permission|allow|allowed|waive|waived|waiver|supersede|supersedes|override|overrides|exempt|grant|grants|granted|may\s+proceed|may\s+now|is\s+now\s+allowed)\b'
+$script:DtJobEvidenceAuthorityPattern = '(?i)\b(?:approv(?:e|es|ed|ing|al|als)|authori[sz](?:e|es|ed|ing|ation|ations)|permit(?:s|ted|ting)?|permissions?|allow(?:s|ed|ing)?|waiv(?:e|es|ed|ing|er|ers)|supersed(?:e|es|ed|ing)|overrid(?:e|es|den|ing)|overrode|exempt(?:s|ed|ing|ion|ions)?|grant(?:s|ed|ing)?|may\s+proceed|may\s+now|is\s+now\s+allowed)\b'
 
 . (Join-Path $PSScriptRoot 'context-guard.ps1')
 . (Join-Path $PSScriptRoot 'report-contract.ps1')

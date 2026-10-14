@@ -462,7 +462,7 @@ exit 0
     $e1 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Evidence', '-Message', 'Observed C:/allowance/grantee.txt in the fixture.')
     $e2 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Evidence', '-Message', ('x' * 2000))
     Assert-True ($e1.evidence_notes[0].id -eq 'e-001' -and $e2.evidence_notes[1].id -eq 'e-002' -and $e2.evidence_notes[1].text.Length -eq 2000) 'evidence notes use separate sequential ids, allow whole-word nonmatches and accept the cap'
-    foreach ($word in @('APPROVED', 'permission', 'waiver', 'override', 'may proceed', 'may now', 'is now allowed', 'authorizes', 'granted')) {
+    foreach ($word in @('APPROVED', 'permission', 'waiver', 'override', 'may proceed', 'may now', 'is now allowed', 'authorizes', 'granted', 'approves', 'waives', 'overridden', 'exempted', 'superseded', 'authorised')) {
         $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Evidence -Message "Fixture $word here." -Json 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n").Contains('DT_JOB_EVIDENCE_NOTE_AUTHORITY')) "evidence refuses authority language: $word"
     }
