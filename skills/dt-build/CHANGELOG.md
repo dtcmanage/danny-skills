@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.41.1
+
+- Blocked-report classifier ignores report headers, the verdict word and CHANGED_FILES paths, and matches whole-word denial phrases on one line; a content BLOCKED is no longer labeled sandbox_tool_denied.
+
 ## 2.41.0
 
 - Managed runs: worker authority scope. The authority read contract binds the coordinator; worker briefs carry written restrictions and only the originals the task consumes.

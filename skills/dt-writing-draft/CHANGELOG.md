@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.34 (2026-10-14): Shared process wrapper: blocked-report classifier ignores report headers and paths (dt-build 2.41.1).
+
 - 0.2.33 (2026-10-13): Model router bench (shared component): bench tests use a fake renderer, and the ranked renderer finds browser-smoke through DANNY_BROWSER_SMOKE_DIR outside the workspace tree; the task bank is unchanged (FS-69).
 
 - 0.2.32 (2026-10-13): Read-only Codex reviewers run in the real MXC sandbox (shared process wrapper); a blocked sandbox read is reported as a blocked review, not a pass.
