@@ -230,6 +230,11 @@ try {
     Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'source changed since prepare') 'a source edited after prepare is refused'
     Write-Text $rulePath $ruleText
 
+    $plainCheckpoint = Get-Content -Raw $checkpoint
+    Write-Text $checkpoint ($plainCheckpoint + "- Before bootstrap read STOP/{next-scope.md,next-approval.md} IN FULL.`n")
+    $pointers = Invoke-Roll 'install' @('-RolloverDirectory', $dir, '-CandidateOnly')
+    Assert-True ($pointers.code -ne 0 -and $pointers.text -match 'AUTHORITY_ROLLOVER_CHECKPOINT_POINTERS: checkpoint line\(s\) 8 name stop-folder files' -and $pointers.text -match 'next-scope.md') "install names the checkpoint lines that point at stop-folder files a rollover lacks ($($pointers.text))"
+    Write-Text $checkpoint $plainCheckpoint
     $candidate = Invoke-Roll 'install' @('-RolloverDirectory', $dir, '-CandidateOnly')
     Assert-True ($candidate.code -eq 0) "install -CandidateOnly succeeds ($($candidate.text))"
     $report = $candidate.text | ConvertFrom-Json

@@ -507,8 +507,23 @@ switch ($Action) {
         $candidatePath = Join-Path $RolloverDirectory 'checkpoint-candidate.md'
         Write-Utf8 $candidatePath $candidate
         # What the action-time read set becomes, and any pre-rollover original the checkpoint still requires.
-        $null = @(Get-AuthorityInventory -RunFolder $RunFolder -BuildStatePath $candidatePath)
-        $after = @(Get-AuthorityInventory -RunFolder $RunFolder -BuildStatePath $candidatePath)
+        try {
+            $null = @(Get-AuthorityInventory -RunFolder $RunFolder -BuildStatePath $candidatePath)
+            $after = @(Get-AuthorityInventory -RunFolder $RunFolder -BuildStatePath $candidatePath)
+        }
+        catch {
+            # A checkpoint line that names stop-folder files (STOP/next-scope.md and the like) resolves into
+            # the rollover once STOP moves, where only the record and its boundary exist. Name those lines.
+            $missing = @([string]$_.Exception.Message -replace '^AUTHORITY_MISSING:\s*', '' -split ';\s*' | Where-Object { $_ -and [IO.Path]::GetFullPath($_).StartsWith($RolloverDirectory, [StringComparison]::OrdinalIgnoreCase) })
+            if (-not ([string]$_.Exception.Message).StartsWith('AUTHORITY_MISSING') -or -not $missing.Count) { throw }
+            $leaves = @($missing | ForEach-Object { Split-Path -Leaf $_ })
+            $checkpointLines = @($checkpointText -split '\r?\n')
+            $named = @(for ($i = 0; $i -lt $checkpointLines.Count; $i++) {
+                $line = $checkpointLines[$i]
+                if ($line -match 'STOP[/\\]' -and @($leaves | Where-Object { $line.Contains($_) }).Count) { $i + 1 }
+            })
+            throw "AUTHORITY_ROLLOVER_CHECKPOINT_POINTERS: checkpoint line(s) $($named -join ', ') name stop-folder files a rollover does not have ($($leaves -join ', ')). Rewrite them through write-resume-checkpoint.ps1 to name STOP/next-operation-boundary.json and the originals it enumerates (equivalent under the current STOP), then install again."
+        }
         $oldSources = @((Get-Ledger $RolloverDirectory).data.sources | ForEach-Object { [IO.Path]::GetFullPath([string]$_.path) })
         $stillRequired = @($after | Where-Object { [IO.Path]::GetFullPath($_.path) -in $oldSources } | ForEach-Object path)
         $report = [ordered]@{
