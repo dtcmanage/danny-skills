@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.43.0
+
+- Add -SingleDispatch to invoke-codex-chunk.ps1 and invoke-claude-chunk.ps1: capacity, offline and unexplained retries fail closed as single-dispatch-refused, recorded in provenance (single_dispatch, single_dispatch_refused_branch, Claude dispatch_count).
+
 ## 2.42.3
 
 - The watcher restores run_status runnable when an approval recorded in approvals.json and the ledger was lost from a rewritten checkpoint; repairs are logged to watcher-repairs.jsonl.
