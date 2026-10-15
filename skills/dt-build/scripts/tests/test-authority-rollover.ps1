@@ -138,11 +138,20 @@ try {
     Write-Text $reviewPath ((Get-Content -Raw $reviewPath) + ' ')
     Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'differs from the reviewer output') 'a review edited after dispatch is refused'
     Write-Review $dir
+    Write-Text (Join-Path $dir 'attempt1-review.json') '{"verdicts":[]}'
+    Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'an earlier review sits in the rollover folder \(attempt1-review.json\)') 'an earlier review left in the rollover folder fails verify'
+    $recompose = (Invoke-Roll 'compose' @('-RolloverDirectory', $dir)).text | ConvertFrom-Json
+    Assert-True (@($recompose.archived_reviews).Count -eq 1 -and $recompose.archived_reviews[0] -like '*_review-archive*attempt1-review.json' -and (Test-Path -LiteralPath $recompose.archived_reviews[0]) -and (Test-Path (Join-Path $dir 'review.json'))) 'compose archives an earlier review outside the folder and keeps the review of an unchanged prompt'
+    Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).code -eq 0) 'verify passes again once the earlier review is archived'
+    $prompt = Get-Content -Raw (Join-Path $dir 'review-prompt.md')
+    Assert-True ($prompt.Contains('never open, search for or rely on any earlier review') -and $prompt.Contains('the first character of your reply is {')) 'the review prompt demands independence and a JSON-only reply'
 
     $bad = Read-Ledger $dir
     (Find-Clause $bad 'One review allowance remains')[0].evidence.quote.text = 'text that appears nowhere in the log'
     Save-Ledger $dir $bad
-    $null = Invoke-Roll 'compose' @('-RolloverDirectory', $dir); Write-Review $dir
+    $changed = (Invoke-Roll 'compose' @('-RolloverDirectory', $dir)).text | ConvertFrom-Json
+    Assert-True (@($changed.archived_reviews | Where-Object { $_ -like '*review.json' }).Count -eq 1 -and -not (Test-Path (Join-Path $dir 'review.json'))) 'a changed ledger archives the old review with its prompt'
+    Write-Review $dir
     Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'quote not found') 'drop evidence quotes must exist in the cited file'
     $bad = Read-Ledger $dir
     $c = (Find-Clause $bad 'One review allowance remains')[0]; $c.evidence = [pscustomobject]@{ event_seq = 99 }
@@ -181,8 +190,10 @@ try {
     $consolidationsPath = Join-Path $dir 'consolidations.json'
     $goodConsolidations = Get-Content -Raw $consolidationsPath
     Write-Text $consolidationsPath ($goodConsolidations.Replace('consolidated fixture', 'consolidated fixture.'))
-    $null = Invoke-Roll 'compose' @('-RolloverDirectory', $dir)
-    Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'review names different consolidations') 'consolidations edited after review are refused'
+    $moved = (Invoke-Roll 'compose' @('-RolloverDirectory', $dir)).text | ConvertFrom-Json
+    Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'independent review missing') 'editing consolidations archives the review, so a new one is required'
+    foreach ($old in @($moved.archived_reviews)) { Copy-Item -LiteralPath $old -Destination (Join-Path $dir (Split-Path -Leaf $old)) }
+    Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'review names different consolidations') 'a review of earlier consolidations put back by hand is refused'
     $one = $goodConsolidations | ConvertFrom-Json; $one[0].replaces = @($one[0].replaces[0])
     Write-Text $consolidationsPath (ConvertTo-Json @($one) -Depth 6); $null = Invoke-Roll 'compose' @('-RolloverDirectory', $dir); Write-Review $dir
     Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'must replace at least two clauses') 'a consolidation must replace at least two clauses'

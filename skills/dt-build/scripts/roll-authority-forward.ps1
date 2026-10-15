@@ -247,12 +247,14 @@ function Get-ReviewPromptText($Ledger, [string]$LedgerSha, $Consolidations) {
     $lines.Add('')
     $lines.Add("For each dropped clause below, read its text, its reason and its evidence in the ledger, and check them against the run's records under $RunFolder. Answer stale only when the clause is plainly consumed, superseded, closed or exhausted by that evidence; when in doubt, answer live. Do not edit any file.")
     $lines.Add('')
+    $lines.Add("Judge independently: never open, search for or rely on any earlier review of this or any other rollover (review*.json, attempt*-review*, files under authority-rollover/_review-archive). Your evidence is the ledger, the consolidations file and the run's records.")
+    $lines.Add('')
     $items = @($Consolidations.items)
     if ($items.Count) {
         $lines.Add("Some drops have reason consolidated: several restatements replaced by one consolidated clause, listed below with the clauses it replaces. For each consolidated clause, compare it with the full text of every clause it replaces (in the ledger) and answer covers only when it keeps every restriction, pin, gate, allowance limit, exclusion, scope, exception and number of each, with the strictest value winning where they differ; otherwise answer loosens. A clause dropped as consolidated is stale only when its consolidated clause covers it.")
         $lines.Add('')
     }
-    $lines.Add('Reply with only this JSON, no prose and no code fence:')
+    $lines.Add('Reply with only this JSON: the first character of your reply is { and the last is }, with no prose, preamble or code fence:')
     $consolidationShape = if ($items.Count) { ", ""consolidations_sha256"": ""$($Consolidations.sha256)"", ""consolidations"": [{""consolidation"": ""<id>"", ""verdict"": ""covers"" or ""loosens"", ""why"": ""<one sentence>""}]" } else { '' }
     $lines.Add("{""ledger_sha256"": ""$LedgerSha""$consolidationShape, ""verdicts"": [{""clause"": ""<id>"", ""verdict"": ""stale"" or ""live"", ""why"": ""<one sentence>""}]}")
     $lines.Add('')
@@ -268,6 +270,23 @@ function Get-ReviewPromptText($Ledger, [string]$LedgerSha, $Consolidations) {
         }
     }
     return ($lines -join "`n") + "`n"
+}
+
+function Get-PriorReviewFiles([string]$Directory, [bool]$IncludeCurrent) {
+    # Review outputs in the rollover folder other than the current review.json family (and the prompt).
+    @(Get-ChildItem -LiteralPath $Directory -File | Where-Object {
+        $_.Name -match '(?i)review' -and $_.Name -ne 'review-prompt.md' -and ($IncludeCurrent -or -not $_.Name.StartsWith('review.json'))
+    })
+}
+
+function Move-PriorReviews([string]$Directory, [bool]$IncludeCurrent) {
+    # Archive outside the rollover folder, under RUN/authority-rollover/_review-archive/<rollover>/<utc>/.
+    $files = @(Get-PriorReviewFiles $Directory $IncludeCurrent)
+    if (-not $files.Count) { return @() }
+    $archive = Join-Path (Split-Path -Parent $Directory) ('_review-archive/' + (Split-Path -Leaf $Directory) + '/' + [datetime]::UtcNow.ToString('yyyyMMdd-HHmmss'))
+    [IO.Directory]::CreateDirectory($archive) | Out-Null
+    foreach ($file in $files) { Move-Item -LiteralPath $file.FullName -Destination (Join-Path $archive $file.Name) }
+    return @($files | ForEach-Object { Join-Path $archive $_.Name })
 }
 
 function Test-Evidence($Clause, $Ledger, [string]$EventsPath, $Consolidations) {
@@ -372,6 +391,7 @@ function Invoke-Verify([string]$Directory) {
         if ((Read-Utf8 $pair[0]) -cne $pair[1]) { $errors.Add("$(Split-Path -Leaf $pair[0]) differs from compose output for this ledger") }
     }
     # 4. One independent read-only single-dispatch review confirms every drop.
+    foreach ($stray in @(Get-PriorReviewFiles $Directory $false)) { $errors.Add("an earlier review sits in the rollover folder ($($stray.Name)); compose again to archive it, then review again") }
     $dropIds = @($data.clauses | Where-Object decision -eq 'drop' | ForEach-Object id)
     $reviewPath = Join-Path $Directory 'review.json'
     $provenancePath = "$reviewPath.provenance.json"
@@ -460,8 +480,14 @@ switch ($Action) {
         Write-Utf8 $recordPath $composed.record
         Write-Utf8 (Join-Path $RolloverDirectory $script:ProvenanceName) $composed.provenance
         Write-Utf8 (Join-Path $RolloverDirectory 'next-operation-boundary.json') (Get-BoundaryText $ledger.data $ledger.sha256 $recordPath)
-        Write-Utf8 (Join-Path $RolloverDirectory 'review-prompt.md') (Get-ReviewPromptText $ledger.data $ledger.sha256 $consolidations)
-        [ordered]@{ status = 'composed'; record = $recordPath; record_chars = $composed.record.Length; ceiling_chars = $script:AuthorityReadCeilingChars; within_ceiling = ($composed.record.Length -le $script:AuthorityReadCeilingChars); dropped = @($ledger.data.clauses | Where-Object decision -eq 'drop').Count; consolidated = @($consolidations.items).Count; next = 'dispatch one reviewer: invoke-codex-chunk.ps1 (or invoke-claude-chunk.ps1) -ReadOnly -AdHoc -SingleDispatch -PromptPath review-prompt.md -OutputPath review.json, then -Action verify' } | ConvertTo-Json -Compress
+        $promptPath = Join-Path $RolloverDirectory 'review-prompt.md'
+        $promptText = Get-ReviewPromptText $ledger.data $ledger.sha256 $consolidations
+        # A review answers one prompt: when the prompt changes, the old review leaves the folder, and an
+        # earlier review left beside the outputs always does, so the next reviewer cannot anchor on it.
+        $promptChanged = -not (Test-Path -LiteralPath $promptPath) -or (Read-Utf8 $promptPath) -cne $promptText
+        $archived = @(Move-PriorReviews $RolloverDirectory $promptChanged)
+        Write-Utf8 $promptPath $promptText
+        [ordered]@{ status = 'composed'; archived_reviews = $archived; record = $recordPath; record_chars = $composed.record.Length; ceiling_chars = $script:AuthorityReadCeilingChars; within_ceiling = ($composed.record.Length -le $script:AuthorityReadCeilingChars); dropped = @($ledger.data.clauses | Where-Object decision -eq 'drop').Count; consolidated = @($consolidations.items).Count; next = 'dispatch one reviewer: invoke-codex-chunk.ps1 (or invoke-claude-chunk.ps1) -ReadOnly -AdHoc -SingleDispatch -PromptPath review-prompt.md -OutputPath review.json, then -Action verify' } | ConvertTo-Json -Compress
     }
     'verify' {
         if (-not $RolloverDirectory) { throw 'AUTHORITY_ROLLOVER_DIRECTORY: pass -RolloverDirectory from prepare' }
