@@ -195,6 +195,18 @@ try {
     $c = (Find-Clause $bad 'Only local work under RUN')[0]; $c.decision = 'drop'; $c.reason = 'consolidated'; $c.evidence = [pscustomobject]@{ consolidation = 'c-000000000000' }
     Save-Ledger $dir $bad; $null = Invoke-Roll 'compose' @('-RolloverDirectory', $dir); Write-Review $dir
     Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'consolidation c-000000000000 is not in consolidations.json') 'a consolidated drop must name a real consolidation'
+    New-Fixture
+    $dir = ((Invoke-Roll 'prepare').text | ConvertFrom-Json).rollover_directory
+    Decide $dir; Consolidate $dir
+    $chain = Read-Ledger $dir
+    $d = (Find-Clause $chain 'Approve stop2')[0]; $d.decision = 'drop'; $d.reason = 'superseded'; $d.evidence = [pscustomobject]@{ clause = (Find-Clause $chain 'Only local work under RUN')[0].id }
+    Save-Ledger $dir $chain; $null = Invoke-Roll 'compose' @('-RolloverDirectory', $dir); Write-Review $dir
+    $chained = Invoke-Roll 'verify' @('-RolloverDirectory', $dir)
+    Assert-True ($chained.code -eq 0) "a drop superseded by a clause later consolidated still verifies through the consolidation ($($chained.text))"
+    $chain = Read-Ledger $dir
+    $d = (Find-Clause $chain 'Approve stop2')[0]; $d.evidence = [pscustomobject]@{ clause = (Find-Clause $chain 'Approve stop1')[0].id }
+    Save-Ledger $dir $chain; $null = Invoke-Roll 'compose' @('-RolloverDirectory', $dir); Write-Review $dir
+    Assert-True ((Invoke-Roll 'verify' @('-RolloverDirectory', $dir)).text -match 'is not a carried clause or a clause consolidated') 'a superseding clause that was simply dropped is still refused'
 
     # Fresh roll for source drift and install, with one consolidation.
     New-Fixture

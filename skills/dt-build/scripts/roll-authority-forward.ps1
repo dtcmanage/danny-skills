@@ -299,7 +299,13 @@ function Test-Evidence($Clause, $Ledger, [string]$EventsPath, $Consolidations) {
     }
     if ($names -contains 'clause') {
         $target = @($Ledger.clauses | Where-Object id -eq ([string]$evidence.clause))
-        if ($target.Count -ne 1 -or $target[0].decision -ne 'carry') { return "superseding clause $($evidence.clause) is not a carried clause" }
+        if ($target.Count -ne 1) { return "superseding clause $($evidence.clause) is not a carried clause" }
+        # A superseding clause later folded into a consolidation still governs through that consolidation.
+        if ($target[0].decision -eq 'drop' -and $target[0].reason -eq 'consolidated' -and $target[0].evidence -and $target[0].evidence.PSObject.Properties['consolidation']) {
+            $via = @($Consolidations.items | Where-Object { $_.id -eq [string]$target[0].evidence.consolidation -and [string]$target[0].id -in $_.replaces })
+            if ($via.Count -eq 1) { return $null }
+        }
+        if ($target[0].decision -ne 'carry') { return "superseding clause $($evidence.clause) is not a carried clause or a clause consolidated into a carried one" }
         return $null
     }
     return 'evidence must be quote {path,text}, event_seq, or clause'
@@ -435,7 +441,7 @@ switch ($Action) {
             prepared_at_utc = [datetime]::UtcNow.ToString('o')
             ledger_path = $ledgerPath
             previous_boundary = $current.boundary
-            decision_rules = "Set decision to carry or drop on every clause whose decision is null. A drop needs reason ($($script:DropReasons -join '|')) and evidence: {quote:{path,text}} found in that file, {event_seq:N} in jobs/events.jsonl, or {clause:'c-...'} naming the carried clause that supersedes it. Several restatements of one rule may be replaced by one consolidated clause in $($script:ConsolidationsName) ([{text, heading, replaces:[c-ids], why}]) that keeps every restriction of each, with the strictest value winning; mark each replaced clause drop, reason consolidated, evidence {consolidation:'<id of that text>'}. Carry when in doubt. Never edit id, text, heading or sources."
+            decision_rules = "Set decision to carry or drop on every clause whose decision is null. A drop needs reason ($($script:DropReasons -join '|')) and evidence: {quote:{path,text}} found in that file, {event_seq:N} in jobs/events.jsonl, or {clause:'c-...'} naming the carried clause that supersedes it (or a clause consolidated into a carried one). Several restatements of one rule may be replaced by one consolidated clause in $($script:ConsolidationsName) ([{text, heading, replaces:[c-ids], why}]) that keeps every restriction of each, with the strictest value winning; mark each replaced clause drop, reason consolidated, evidence {consolidation:'<id of that text>'}. Carry when in doubt. Never edit id, text, heading or sources."
             sources = @($current.sources | ForEach-Object { [ordered]@{ path = $_; sha256 = (Get-FileSha $_); chars = (Read-Utf8 $_).Length } })
             clauses = $clauses
         }
