@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.47.0
+
+- Local, reversible work never stops a managed run; lifecycle records are never byte-pinned; roll-forwards run only past the soft target; published tooling is adopted without a stop (FS-95).
+
 ## 2.46.1
 
 - Approval files keep timestamp text on rewrite; approval timestamps compare as instants (FS-95).
