@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.45.0
+
+- Authority roll-forward record v2: clause text only with an evidence-only provenance sidecar (the first live roll composed 1.0M chars, mostly repeated absolute source paths); reviewed consolidation of restatements into one clause that keeps every restriction; verify refuses a record over the read ceiling.
+
 ## 2.44.0
 
 - Add roll-authority-forward.ps1 (prepare, compose, verify, install): each stop rolls the governing stop records into one verbatim current record, drops stale clauses only with evidence and an independent single-dispatch review, appends drops to the evidence-only authority-history.jsonl, and repoints STOP. Digest discovery treats authority-history.jsonl as evidence only and parses .jsonl paths whole.
