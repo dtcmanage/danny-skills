@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 # Roll a run's governing authority forward into ONE current record, so the action-time read set stays
 # small by construction (Danny, 2026-10-15: "it really just need to automatically clean up after itself
-# and remove anything stale"). Steps, run at each stop/approval transition (managed-resume.md):
+# and remove anything stale"). Steps, run at a stop/approval transition once the read set passes the soft target (managed-resume.md):
 #   prepare  split every stop-record original into clauses and write a ledger with one row per clause
 #   (decide) the coordinator marks each clause carry or drop; a drop names its reason and checkable evidence;
 #            restatements of one rule may be replaced by one consolidated clause (consolidations.json)
@@ -536,7 +536,7 @@ switch ($Action) {
             previous_source_chars = $result.source_chars
             still_required_old_records = $stillRequired
             record_chars = $result.record_chars
-            # New wording needs Danny's go: the preview lists every consolidated clause and what it replaces.
+            # New wording is guarded by the review's covers verdict; the preview lists every consolidated clause and what it replaces for Danny to read.
             consolidated_clauses = @((Get-Consolidations $RolloverDirectory).items | ForEach-Object { [ordered]@{ id = $_.id; replaces = $_.replaces; text = $_.text } })
         }
         if (-not $CandidateOnly) {

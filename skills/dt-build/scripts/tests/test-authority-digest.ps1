@@ -189,6 +189,7 @@ try {
     }
     $contract = Get-Content (Join-Path $scripts '../references/managed-resume.md') -Raw
     Assert-True ($contract.Contains('32,000 characters') -and $contract.Contains('IN FULL') -and $contract.Contains('Coordinators never author or edit')) 'entry contract names budget, action-time originals and script-only authorship'
+    Assert-True ($contract.Contains('## Local work never stops') -and $contract.Contains('Never pin a lifecycle record') -and $contract.Contains('once the action-time read set passes the 32,000-character soft target') -and -not $contract.Contains("Danny's go on that preview")) 'FS-95: local work never stops, lifecycle records are not byte-pinned, rolls run only past the soft target'
     # Reproduce the live failure's scale with 99 fixture originals and a lean checkpoint.
     Write-Text $current "Current boundary: fixtures only. Approval: ``approval.md``"
     $pointers = @('run_status: awaiting_danny', 'last_consumed_event_seq: 7', 'Inherited: `old boundary.md`')
