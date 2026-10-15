@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.46.1
+
+- Approval files keep timestamp text on rewrite; approval timestamps compare as instants (FS-95).
+
 ## 2.46.0
 
 - dt-job status (run level) reports run_status and the pending awaiting stop; watchers read it instead of event types (FS-94).
