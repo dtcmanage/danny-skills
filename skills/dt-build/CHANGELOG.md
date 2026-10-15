@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.45.1
+
+- Chunk wrappers keep custody of the worker process tree: a job object tracks every descendant, the output drain is bounded at 30 s after the CLI exits, and orphans (one held a Codex wrapper 33 minutes at 12.7 GB on Oct 15) are stopped and recorded in provenance.
+
 ## 2.45.0
 
 - Authority roll-forward record v2: clause text only with an evidence-only provenance sidecar (the first live roll composed 1.0M chars, mostly repeated absolute source paths); reviewed consolidation of restatements into one clause that keeps every restriction; verify refuses a record over the read ceiling.
