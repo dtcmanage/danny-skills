@@ -19,6 +19,12 @@ Execution resilience controls in Phase 7B:
   capacity backoff, offline recovery, the unexplained-failure retry) then fails closed with
   `failure_category: single-dispatch-refused`; provenance records `single_dispatch` and
   `single_dispatch_refused_branch` (and the dispatch count). Without the switch, behavior is unchanged.
+- Process custody: both wrappers join a fresh Windows job object before starting the worker CLI
+  (`scripts/worker-process-tree.ps1`), so every descendant is tracked even after its parent exits. Once the CLI
+  exits or times out, output drains for at most 30 seconds; a descendant still holding the pipes is stopped,
+  then every remaining descendant is stopped, so no worker child outlives its dispatch. Provenance records
+  `process_custody` (`job_object`, `job_object_unavailable`, `unsupported_platform`) and `orphans_stopped`
+  (pid, name, working set). Outside Windows the drain is still bounded.
 
 Shared posture:
 - Use repo-level `references/security-posture.md` as the policy anchor.

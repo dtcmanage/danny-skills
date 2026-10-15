@@ -64,6 +64,7 @@ function Resolve-SkillRepoRoot {
 
 # Report shape (v3, with v2 accepted and flagged) is shared with the other wrapper.
 . (Join-Path $PSScriptRoot 'report-contract.ps1')
+. (Join-Path $PSScriptRoot 'worker-process-tree.ps1')
 
 function Get-ClaudeCliPath {
     if (-not [string]::IsNullOrWhiteSpace($ClaudeCliPath)) {
@@ -314,6 +315,7 @@ $backupPick = $null
 $unexplainedRetried = $false
 $singleDispatchRefused = $null
 $dispatchCount = 0
+$workerOrphansStopped = [System.Collections.Generic.List[object]]::new()
 $started = Get-Date
 $proc = $null
 $streamPath = "$OutputPath.stream.log"
@@ -359,6 +361,7 @@ try {
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $startInfo
     if ($SingleDispatch -and $dispatchCount -ge 1) { throw "CLAUDE_INVOKE_FAIL: -SingleDispatch refused a second child launch." }
+    $null = Initialize-WorkerProcessJob
     if (-not $proc.Start()) { throw "CLAUDE_INVOKE_FAIL: failed to start claude CLI." }
     $dispatchCount++
 
@@ -381,11 +384,11 @@ try {
         try { $proc.Kill($true) } catch { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
         [void]$proc.WaitForExit(5000)
     }
-    else {
-        $proc.WaitForExit()
-    }
-    $stdout = $stdoutTask.GetAwaiter().GetResult()
-    $stderr = $stderrTask.GetAwaiter().GetResult()
+    # Bounded drain: an orphaned descendant holding the output pipes is stopped, never waited on.
+    $completion = Complete-WorkerDispatch -OutputTasks @($stdoutTask, $stderrTask)
+    $stdout = $completion.stdout
+    $stderr = $completion.stderr
+    foreach ($orphan in $completion.orphans_stopped) { $workerOrphansStopped.Add($orphan) }
     $exitCode = if ($timedOut) { 124 } else { $proc.ExitCode }
     $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
 
@@ -583,6 +586,8 @@ try {
         failure_category    = $failureCategory
         dispatch_count      = $dispatchCount
         single_dispatch     = [bool]$SingleDispatch
+        process_custody     = $script:WorkerJobState
+        orphans_stopped     = @($workerOrphansStopped.ToArray())
         single_dispatch_refused_branch = $singleDispatchRefused
         diagnosis              = $diagnosis
         dispatch_diagnosis     = $dispatchDiagnosis
@@ -625,6 +630,7 @@ catch {
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }
             failure_category = 'tooling'; termination_reason = (Invoke-SecretRedaction -Text $_.Exception.Message)
             dispatch_count = $dispatchCount; single_dispatch = [bool]$SingleDispatch; single_dispatch_refused_branch = $singleDispatchRefused
+            process_custody = $script:WorkerJobState; orphans_stopped = @($workerOrphansStopped.ToArray())
         }
         [System.IO.File]::WriteAllText($provenancePath, ($fallback | ConvertTo-Json -Depth 5))
     }

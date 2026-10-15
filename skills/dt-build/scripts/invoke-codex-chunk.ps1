@@ -58,6 +58,7 @@ function Resolve-SkillRepoRoot {
 
 # Report shape (v3, with v2 accepted and flagged) is shared with the other wrapper.
 . (Join-Path $PSScriptRoot 'report-contract.ps1')
+. (Join-Path $PSScriptRoot 'worker-process-tree.ps1')
 
 function Get-CodexCliPath {
     if (-not [string]::IsNullOrWhiteSpace($CodexCliPath)) {
@@ -405,6 +406,7 @@ $backupPick = $null
 $unexplainedRetried = $false
 $singleDispatchRefused = $null
 $dispatchAttempts = [System.Collections.Generic.List[object]]::new()
+$workerOrphansStopped = [System.Collections.Generic.List[object]]::new()
 $capacityBackoffs = [System.Collections.Generic.List[object]]::new()
 $started = Get-Date
 $proc = $null
@@ -470,6 +472,7 @@ try {
     $workerOutputKept = $false
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $startInfo
+    $null = Initialize-WorkerProcessJob
     if (-not $proc.Start()) { throw "CODEX_INVOKE_FAIL: failed to start codex CLI." }
 
     # Start both drains before writing stdin so neither native pipe can fill and
@@ -491,11 +494,11 @@ try {
         try { $proc.Kill($true) } catch { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
         [void]$proc.WaitForExit(5000)
     }
-    else {
-        $proc.WaitForExit()
-    }
-    $stdout = $stdoutTask.GetAwaiter().GetResult()
-    $stderr = $stderrTask.GetAwaiter().GetResult()
+    # Bounded drain: an orphaned descendant holding the output pipes is stopped, never waited on.
+    $completion = Complete-WorkerDispatch -OutputTasks @($stdoutTask, $stderrTask)
+    $stdout = $completion.stdout
+    $stderr = $completion.stderr
+    foreach ($orphan in $completion.orphans_stopped) { $workerOrphansStopped.Add($orphan) }
     $exitCode = if ($timedOut) { 124 } else { $proc.ExitCode }
     $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
     $streamText = Invoke-SecretRedaction -Text (($stdout, $stderr) -join "`n")
@@ -800,6 +803,8 @@ try {
         dispatch_attempts      = @($dispatchAttempts.ToArray())
         capacity_backoffs      = @($capacityBackoffs.ToArray())
         single_dispatch        = [bool]$SingleDispatch
+        process_custody        = $script:WorkerJobState
+        orphans_stopped        = @($workerOrphansStopped.ToArray())
         single_dispatch_refused_branch = $singleDispatchRefused
         diagnosis              = $diagnosis
         dispatch_diagnosis     = $dispatchDiagnosis
@@ -847,6 +852,7 @@ catch {
             failure_category = 'tooling'; termination_reason = (Invoke-SecretRedaction -Text $_.Exception.Message)
             dispatch_attempts = @($dispatchAttempts.ToArray()); capacity_backoffs = @($capacityBackoffs.ToArray())
             single_dispatch = [bool]$SingleDispatch; single_dispatch_refused_branch = $singleDispatchRefused
+            process_custody = $script:WorkerJobState; orphans_stopped = @($workerOrphansStopped.ToArray())
         }
         [System.IO.File]::WriteAllText($provenancePath, ($fallback | ConvertTo-Json -Depth 5))
     }
