@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.44.0
+
+- Add roll-authority-forward.ps1 (prepare, compose, verify, install): each stop rolls the governing stop records into one verbatim current record, drops stale clauses only with evidence and an independent single-dispatch review, appends drops to the evidence-only authority-history.jsonl, and repoints STOP. Digest discovery treats authority-history.jsonl as evidence only and parses .jsonl paths whole.
+
 ## 2.43.0
 
 - Add -SingleDispatch to invoke-codex-chunk.ps1 and invoke-claude-chunk.ps1: capacity, offline and unexplained retries fail closed as single-dispatch-refused, recorded in provenance (single_dispatch, single_dispatch_refused_branch, Claude dispatch_count).
