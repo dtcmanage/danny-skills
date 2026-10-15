@@ -1,5 +1,10 @@
 # dt-build — CHANGELOG
 
+## 2.45.3
+
+- Roll-forward reviews stay independent: compose archives earlier reviews outside the rollover folder, the prompt forbids consulting them and demands a JSON-only reply, and verify refuses while one remains.
+- Roll-forward install names checkpoint lines that point at stop-folder files a rollover lacks (AUTHORITY_ROLLOVER_CHECKPOINT_POINTERS) instead of a bare AUTHORITY_MISSING.
+
 ## 2.45.2
 
 - Roll-forward: {clause: X} supersession evidence also accepts an X later folded into a consolidated clause (the first live roll had 487 such drops).
