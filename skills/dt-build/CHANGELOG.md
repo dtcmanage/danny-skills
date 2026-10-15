@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.45.2
+
+- Roll-forward: {clause: X} supersession evidence also accepts an X later folded into a consolidated clause (the first live roll had 487 such drops).
+
 ## 2.45.1
 
 - Chunk wrappers keep custody of the worker process tree: a job object tracks every descendant, the output drain is bounded at 30 s after the CLI exits, and orphans (one held a Codex wrapper 33 minutes at 12.7 GB on Oct 15) are stopped and recorded in provenance.
