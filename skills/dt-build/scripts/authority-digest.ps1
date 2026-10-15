@@ -6,8 +6,9 @@ $script:AuthorityReadBudgetChars = 32000
 $script:AuthorityReadCeilingChars = 96000
 
 # Evidence-only files: named in authority text but never authority. authority-history.jsonl is the
-# rollover's append-only audit log (roll-authority-forward.ps1), read only for an explicit lookup.
-$script:AuthorityEvidenceOnlyNames = @('evidence-notes.json', 'authority-history.jsonl')
+# rollover's append-only audit log, and the provenance sidecar, consolidations file and clause ledger are
+# its working evidence (roll-authority-forward.ps1); each is read only for an explicit lookup.
+$script:AuthorityEvidenceOnlyNames = @('evidence-notes.json', 'authority-history.jsonl', 'current-authority.provenance.json', 'consolidations.json', 'clauses-ledger.json')
 
 function Get-AuthorityHash {
     param([string]$Path)

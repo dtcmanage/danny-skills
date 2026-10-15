@@ -3,10 +3,12 @@
 # small by construction (Danny, 2026-10-15: "it really just need to automatically clean up after itself
 # and remove anything stale"). Steps, run at each stop/approval transition (managed-resume.md):
 #   prepare  split every stop-record original into clauses and write a ledger with one row per clause
-#   (decide) the coordinator marks each clause carry or drop; a drop names its reason and checkable evidence
-#   compose  build the current record from the carried clauses, verbatim, plus the rollover boundary and
-#            the independent reviewer's prompt
-#   (review) one read-only -SingleDispatch reviewer confirms every dropped clause is stale
+#   (decide) the coordinator marks each clause carry or drop; a drop names its reason and checkable evidence;
+#            restatements of one rule may be replaced by one consolidated clause (consolidations.json)
+#   compose  build the current record from the carried clauses, verbatim, and the consolidated clauses, plus
+#            the provenance sidecar, the rollover boundary and the independent reviewer's prompt
+#   (review) one read-only -SingleDispatch reviewer confirms every dropped clause is stale and every
+#            consolidated clause keeps every restriction of the clauses it replaces
 #   verify   prove nothing live was lost: same sources, every clause decided, carried text verbatim,
 #            evidence real, review complete
 #   install  re-verify, point the checkpoint's STOP at the rollover, rebuild and verify the digest
@@ -27,8 +29,16 @@ $ErrorActionPreference = 'Stop'
 $script:LifecycleNames = @('approvals.json', 'operator-notes.json', 'build-state.md', 'build-plan.md')
 # JSON fields that only wire the authority graph together; the rollover replaces the graph itself.
 $script:StructuralKeys = @('schema', 'inherited_authority_sources', 'inherited_boundary', 'inherited_boundary_reference', 'source_disposition', 'scope', 'approval_text', 'approval_record', 'operator_notes', 'required_original_records', 'original_inherited_record_count', 'inherited_originals')
-$script:DropReasons = @('consumed', 'superseded', 'closed', 'exhausted')
-$script:RecordMarker = '<!-- dt-build authority rollover v1 -->'
+$script:DropReasons = @('consumed', 'superseded', 'closed', 'exhausted', 'consolidated')
+# v2 records hold clause text only; ids, line ranges and sources live in the provenance sidecar (evidence
+# only), so the action-time read set is the live text and nothing else. v1 records (inline markers) still parse.
+$script:RecordMarker = '<!-- dt-build authority rollover v2 -->'
+$script:RecordMarkerV1 = '<!-- dt-build authority rollover v1 -->'
+$script:ProvenanceName = 'current-authority.provenance.json'
+# Optional, in the rollover folder: [{text, heading, replaces: [c-ids], why}]. One consolidated clause
+# restates several originals; the reviewer must confirm it keeps every restriction of each.
+$script:ConsolidationsName = 'consolidations.json'
+$script:ConsolidatedHeading = '## Consolidated restatements'
 $utf8 = [Text.UTF8Encoding]::new($false)
 
 function Get-Sha([string]$Text) { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($utf8.GetBytes($Text))).ToLowerInvariant() }
@@ -37,6 +47,13 @@ function Get-Normalized([string]$Text) { ($Text -replace '\s+', ' ').Trim() }
 function Get-ClauseId([string]$Text) { 'c-' + (Get-Sha (Get-Normalized $Text)).Substring(0, 12) }
 function Write-Utf8([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, $utf8) }
 function Read-Utf8([string]$Path) { ([IO.File]::ReadAllText($Path, $utf8)).TrimStart([char]0xFEFF) }
+function Get-RunRelative([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $relative = [IO.Path]::GetRelativePath($RunFolder, $full)
+    if ($relative.StartsWith('..') -or [IO.Path]::IsPathRooted($relative)) { return $full.Replace('\', '/') }
+    return $relative.Replace('\', '/')
+}
+function Resolve-RunPath([string]$Path) { if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $RunFolder $Path)) } }
 
 function Get-RollableSources {
     # The stop-record originals of the current authority graph, from the same discovery the digest uses.
@@ -50,6 +67,20 @@ function Get-RollableSources {
 function Split-TextClauses([string]$Path, [string]$Text) {
     $clauses = [Collections.Generic.List[object]]::new()
     if ($Text.StartsWith($script:RecordMarker)) {
+        # A previous v2 record: the sidecar maps each clause to its exact lines; the id re-proves the text.
+        $sidecar = Join-Path (Split-Path -Parent $Path) $script:ProvenanceName
+        if (-not (Test-Path -LiteralPath $sidecar)) { throw "AUTHORITY_ROLLOVER_PROVENANCE_MISSING: $sidecar" }
+        $provenance = Read-Utf8 $sidecar | ConvertFrom-Json -Depth 32
+        $lines = $Text -split "`n"
+        foreach ($entry in @($provenance.clauses)) {
+            $body = ($lines[([int]$entry.line_start - 1)..([int]$entry.line_end - 1)]) -join "`n"
+            if ((Get-ClauseId $body) -ne [string]$entry.id) { throw "AUTHORITY_ROLLOVER_RECORD_MISMATCH: $Path lines $($entry.line_start)-$($entry.line_end) are not clause $($entry.id)" }
+            $origins = @($entry.sources | ForEach-Object { [pscustomobject]@{ path = (Resolve-RunPath ([string]$_.path)); locator = [string]$_.locator } })
+            $clauses.Add([pscustomobject]@{ text = $body; heading = [string]$entry.heading; origins = $origins })
+        }
+        return $clauses
+    }
+    if ($Text.StartsWith($script:RecordMarkerV1)) {
         # A previous rollover record: its clause markers keep each clause's id-stable text and sources.
         foreach ($m in [regex]::Matches($Text, '(?ms)^<!-- clause (c-[0-9a-f]{12}) \| heading: (.*?) \| sources: (.*?) -->\r?\n(.*?)(?=^<!-- clause |\z)')) {
             $body = $m.Groups[4].Value -replace '(\r?\n)+\z', ''
@@ -129,27 +160,64 @@ function Get-Ledger([string]$Directory) {
     return [pscustomobject]@{ path = $path; sha256 = (Get-FileSha $path); data = (Read-Utf8 $path | ConvertFrom-Json -Depth 64) }
 }
 
-function Get-RecordText($Ledger, [string]$LedgerSha) {
+function Get-Consolidations([string]$Directory) {
+    # The optional consolidations file, with each entry's id derived from its text (never trusted from input).
+    $path = Join-Path $Directory $script:ConsolidationsName
+    if (-not (Test-Path -LiteralPath $path)) { return [pscustomobject]@{ sha256 = $null; items = @() } }
+    $items = @(Read-Utf8 $path | ConvertFrom-Json -Depth 16 | ForEach-Object {
+        [pscustomobject][ordered]@{ id = (Get-ClauseId ([string]$_.text)); text = [string]$_.text; heading = [string]$_.heading; replaces = @($_.replaces | ForEach-Object { [string]$_ }); why = [string]$_.why }
+    })
+    return [pscustomobject]@{ sha256 = (Get-FileSha $path); items = $items }
+}
+
+function Get-ComposeOutput($Ledger, [string]$LedgerSha, $Consolidations) {
+    # The record is clause text only, grouped under each original heading once; consolidated clauses
+    # follow under their own heading. The provenance sidecar maps every clause to its record lines.
     $carried = @($Ledger.clauses | Where-Object decision -eq 'carry')
-    $dropped = @($Ledger.clauses | Where-Object decision -eq 'drop').Count
-    $out = [Text.StringBuilder]::new()
-    [void]$out.AppendLine($script:RecordMarker)
-    [void]$out.AppendLine('# Current authority (rolled forward)')
-    [void]$out.AppendLine()
-    [void]$out.AppendLine('Every clause below is carried verbatim from the cited original record. This record adds no authority of its own; it replaces the cited records in the action-time read set. Dropped clauses, each with its reason and evidence, are in the ledger, which is evidence only.')
-    [void]$out.AppendLine()
-    [void]$out.AppendLine("- ledger: $($Ledger.ledger_path)")
-    [void]$out.AppendLine("- ledger_sha256: $LedgerSha")
-    [void]$out.AppendLine("- previous_boundary: $($Ledger.previous_boundary)")
-    [void]$out.AppendLine("- source_records: $(@($Ledger.sources).Count); clauses carried: $($carried.Count); dropped: $dropped")
-    [void]$out.AppendLine()
-    foreach ($clause in $carried) {
-        $origins = (@($clause.sources | ForEach-Object { "$($_.path)#$($_.locator)" }) -join '; ')
-        [void]$out.AppendLine("<!-- clause $($clause.id) | heading: $($clause.heading) | sources: $origins -->")
-        [void]$out.AppendLine($clause.text)
-        [void]$out.AppendLine()
+    $drops = @($Ledger.clauses | Where-Object decision -eq 'drop')
+    $byId = @{}; foreach ($clause in $Ledger.clauses) { $byId[[string]$clause.id] = $clause }
+    $replaced = @($Consolidations.items | ForEach-Object { $_.replaces }).Count
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add($script:RecordMarker)
+    $lines.Add('# Current authority (rolled forward)')
+    $lines.Add('')
+    $lines.Add('Every clause below is carried verbatim from an original stop record, except those under "Consolidated restatements": each of those restates several originals in one and keeps every restriction of each. This record adds no authority of its own; it replaces the original records in the action-time read set. Where each clause came from, and every dropped or consolidated original with its reason and evidence, is in the provenance file and the ledger, which are evidence only.')
+    $lines.Add('')
+    $lines.Add("- ledger: $(Get-RunRelative $Ledger.ledger_path)")
+    $lines.Add("- ledger_sha256: $LedgerSha")
+    $lines.Add("- consolidations_sha256: $(if ($Consolidations.sha256) { $Consolidations.sha256 } else { 'none' })")
+    $lines.Add("- previous_boundary: $(Get-RunRelative $Ledger.previous_boundary)")
+    $lines.Add("- source_records: $(@($Ledger.sources).Count); carried: $($carried.Count); consolidated: $(@($Consolidations.items).Count) replacing $replaced; dropped: $($drops.Count - $replaced)")
+    $lines.Add('')
+    $entries = [Collections.Generic.List[object]]::new()
+    $emit = {
+        param([string]$Id, [string]$Kind, [string]$Heading, [string]$Text, $Sources, $Replaces)
+        $start = $lines.Count + 1
+        foreach ($line in ($Text -split "`n")) { $lines.Add($line) }
+        $entry = [ordered]@{ id = $Id; kind = $Kind; heading = $Heading; line_start = $start; line_end = $lines.Count
+            sources = @($Sources | ForEach-Object { [ordered]@{ path = (Get-RunRelative ([string]$_.path)); locator = [string]$_.locator } }) }
+        if ($Replaces) { $entry.replaces = @($Replaces) }
+        $entries.Add($entry)
+        $lines.Add('')
     }
-    return $out.ToString()
+    $headings = [Collections.Generic.List[string]]::new()
+    foreach ($clause in $carried) { if (-not $headings.Contains([string]$clause.heading)) { $headings.Add([string]$clause.heading) } }
+    # Unheaded clauses first, so none reads as part of an unrelated heading's section.
+    foreach ($heading in @($headings | Sort-Object { [bool]$_ } -Stable)) {
+        if ($heading) { $lines.Add($heading); $lines.Add('') }
+        foreach ($clause in @($carried | Where-Object { [string]$_.heading -ceq $heading })) {
+            & $emit ([string]$clause.id) 'carry' $heading ([string]$clause.text) $clause.sources $null
+        }
+    }
+    if (@($Consolidations.items).Count) {
+        $lines.Add($script:ConsolidatedHeading); $lines.Add('')
+        foreach ($item in $Consolidations.items) {
+            $sources = @($item.replaces | Where-Object { $byId.ContainsKey($_) } | ForEach-Object { $byId[$_].sources })
+            & $emit $item.id 'consolidated' $(if ($item.heading) { $item.heading } else { $script:ConsolidatedHeading }) $item.text $sources $item.replaces
+        }
+    }
+    $provenance = [ordered]@{ schema = 'dt-build-authority-rollover-provenance/v1'; ledger_sha256 = $LedgerSha; consolidations_sha256 = $Consolidations.sha256; record = 'current-authority.md'; clauses = @($entries) }
+    return [pscustomobject]@{ record = (($lines -join "`n") + "`n"); provenance = ($provenance | ConvertTo-Json -Depth 12) }
 }
 
 function Get-BoundaryText($Ledger, [string]$LedgerSha, [string]$RecordPath) {
@@ -170,7 +238,7 @@ function Get-BoundaryText($Ledger, [string]$LedgerSha, [string]$RecordPath) {
     return ($boundary | ConvertTo-Json -Depth 5)
 }
 
-function Get-ReviewPromptText($Ledger, [string]$LedgerSha) {
+function Get-ReviewPromptText($Ledger, [string]$LedgerSha, $Consolidations) {
     $dropped = @($Ledger.clauses | Where-Object decision -eq 'drop')
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add('# Independent authority-rollover review')
@@ -179,18 +247,40 @@ function Get-ReviewPromptText($Ledger, [string]$LedgerSha) {
     $lines.Add('')
     $lines.Add("For each dropped clause below, read its text, its reason and its evidence in the ledger, and check them against the run's records under $RunFolder. Answer stale only when the clause is plainly consumed, superseded, closed or exhausted by that evidence; when in doubt, answer live. Do not edit any file.")
     $lines.Add('')
+    $items = @($Consolidations.items)
+    if ($items.Count) {
+        $lines.Add("Some drops have reason consolidated: several restatements replaced by one consolidated clause, listed below with the clauses it replaces. For each consolidated clause, compare it with the full text of every clause it replaces (in the ledger) and answer covers only when it keeps every restriction, pin, gate, allowance limit, exclusion, scope, exception and number of each, with the strictest value winning where they differ; otherwise answer loosens. A clause dropped as consolidated is stale only when its consolidated clause covers it.")
+        $lines.Add('')
+    }
     $lines.Add('Reply with only this JSON, no prose and no code fence:')
-    $lines.Add("{""ledger_sha256"": ""$LedgerSha"", ""verdicts"": [{""clause"": ""<id>"", ""verdict"": ""stale"" or ""live"", ""why"": ""<one sentence>""}]}")
+    $consolidationShape = if ($items.Count) { ", ""consolidations_sha256"": ""$($Consolidations.sha256)"", ""consolidations"": [{""consolidation"": ""<id>"", ""verdict"": ""covers"" or ""loosens"", ""why"": ""<one sentence>""}]" } else { '' }
+    $lines.Add("{""ledger_sha256"": ""$LedgerSha""$consolidationShape, ""verdicts"": [{""clause"": ""<id>"", ""verdict"": ""stale"" or ""live"", ""why"": ""<one sentence>""}]}")
     $lines.Add('')
     $lines.Add("Dropped clauses ($($dropped.Count)):")
     foreach ($clause in $dropped) { $lines.Add("- $($clause.id) ($($clause.reason))") }
+    if ($items.Count) {
+        $lines.Add('')
+        $lines.Add("Consolidated clauses ($($items.Count)):")
+        foreach ($item in $items) {
+            $lines.Add('')
+            $lines.Add("### $($item.id) replaces $($item.replaces -join ', ')")
+            $lines.Add($item.text)
+        }
+    }
     return ($lines -join "`n") + "`n"
 }
 
-function Test-Evidence($Clause, $Ledger, [string]$EventsPath) {
+function Test-Evidence($Clause, $Ledger, [string]$EventsPath, $Consolidations) {
     $evidence = $Clause.evidence
     if ($null -eq $evidence) { return 'no evidence' }
     $names = @($evidence.PSObject.Properties.Name)
+    if ([string]$Clause.reason -eq 'consolidated' -or $names -contains 'consolidation') {
+        if ([string]$Clause.reason -ne 'consolidated' -or $names -notcontains 'consolidation') { return 'reason consolidated and evidence {consolidation} go together' }
+        $target = @($Consolidations.items | Where-Object id -eq ([string]$evidence.consolidation))
+        if ($target.Count -ne 1) { return "consolidation $($evidence.consolidation) is not in $($script:ConsolidationsName)" }
+        if ([string]$Clause.id -notin $target[0].replaces) { return "consolidation $($evidence.consolidation) does not list this clause in replaces" }
+        return $null
+    }
     if ($names -contains 'quote') {
         $quote = [string]$evidence.quote.text
         $path = [string]$evidence.quote.path
@@ -219,6 +309,7 @@ function Invoke-Verify([string]$Directory) {
     $errors = [Collections.Generic.List[string]]::new()
     $ledger = Get-Ledger $Directory
     $data = $ledger.data
+    $consolidations = Get-Consolidations $Directory
     $current = Get-RollableSources
     # 1. The same authority graph: same boundary, same originals, unchanged since prepare.
     if ([IO.Path]::GetFullPath([string]$data.previous_boundary) -ne [IO.Path]::GetFullPath([string]$current.boundary)) { $errors.Add("STOP boundary changed since prepare: $($current.boundary)") }
@@ -243,17 +334,34 @@ function Invoke-Verify([string]$Directory) {
             'structural' { if (-not ($row -and $row.structural)) { $errors.Add("$($clause.id): only graph-wiring JSON fields may be structural") } }
             'drop' {
                 if ([string]$clause.reason -notin $script:DropReasons) { $errors.Add("$($clause.id): drop reason must be one of $($script:DropReasons -join ', ')") }
-                $problem = Test-Evidence $clause $data $eventsPath
+                $problem = Test-Evidence $clause $data $eventsPath $consolidations
                 if ($problem) { $errors.Add("$($clause.id): $problem") }
             }
             default { $errors.Add("$($clause.id): no decision (carry or drop)") }
         }
     }
-    # 3. The record, boundary and review prompt are exactly what compose produces from this ledger.
+    # 2b. Each consolidated clause replaces at least two dropped clauses, each exactly once, and is new text.
+    $decisionById = @{}; foreach ($clause in $data.clauses) { $decisionById[[string]$clause.id] = $clause }
+    $claimed = @{}
+    foreach ($item in $consolidations.items) {
+        if (-not $item.text.Trim()) { $errors.Add('a consolidated clause has no text') }
+        if (@($consolidations.items | Where-Object id -eq $item.id).Count -gt 1) { $errors.Add("$($item.id): consolidated text appears twice") }
+        if ($decisionById.ContainsKey($item.id)) { $errors.Add("$($item.id): consolidated text is identical to a ledger clause; carry that clause instead") }
+        if (@($item.replaces | Sort-Object -Unique).Count -lt 2) { $errors.Add("$($item.id): a consolidated clause must replace at least two clauses") }
+        foreach ($id in $item.replaces) {
+            if ($claimed.ContainsKey($id)) { $errors.Add("$id is replaced by two consolidated clauses") }
+            $claimed[$id] = $true
+            $row = $decisionById[$id]
+            if (-not $row -or $row.decision -ne 'drop' -or $row.reason -ne 'consolidated' -or [string]$row.evidence.consolidation -ne $item.id) { $errors.Add("$($item.id): replaced clause $id must be a drop with reason consolidated naming this consolidation") }
+        }
+    }
+    # 3. The record, sidecar, boundary and review prompt are exactly what compose produces from this ledger.
     $recordPath = Join-Path $Directory 'current-authority.md'
+    $provenancePathOut = Join-Path $Directory $script:ProvenanceName
     $boundaryPath = Join-Path $Directory 'next-operation-boundary.json'
     $promptPath = Join-Path $Directory 'review-prompt.md'
-    foreach ($pair in @(@($recordPath, (Get-RecordText $data $ledger.sha256)), @($boundaryPath, (Get-BoundaryText $data $ledger.sha256 $recordPath)), @($promptPath, (Get-ReviewPromptText $data $ledger.sha256)))) {
+    $composed = Get-ComposeOutput $data $ledger.sha256 $consolidations
+    foreach ($pair in @(@($recordPath, $composed.record), @($provenancePathOut, $composed.provenance), @($boundaryPath, (Get-BoundaryText $data $ledger.sha256 $recordPath)), @($promptPath, (Get-ReviewPromptText $data $ledger.sha256 $consolidations)))) {
         if (-not (Test-Path -LiteralPath $pair[0])) { $errors.Add("compose output missing: $($pair[0])"); continue }
         if ((Read-Utf8 $pair[0]) -cne $pair[1]) { $errors.Add("$(Split-Path -Leaf $pair[0]) differs from compose output for this ledger") }
     }
@@ -278,10 +386,19 @@ function Invoke-Verify([string]$Directory) {
                     if (-not $verdicts.ContainsKey($id)) { $errors.Add("review has no verdict for dropped clause $id") }
                     elseif ($verdicts[$id] -ne 'stale') { $errors.Add("reviewer says dropped clause $id is $($verdicts[$id])") }
                 }
+                if (@($consolidations.items).Count) {
+                    if (-not $review.PSObject.Properties['consolidations_sha256'] -or $review.consolidations_sha256 -ne $consolidations.sha256) { $errors.Add('review names different consolidations') }
+                    $covers = @{}; foreach ($v in @($review.consolidations)) { $covers[[string]$v.consolidation] = [string]$v.verdict }
+                    foreach ($item in $consolidations.items) {
+                        if (-not $covers.ContainsKey($item.id)) { $errors.Add("review has no verdict for consolidated clause $($item.id)") }
+                        elseif ($covers[$item.id] -ne 'covers') { $errors.Add("reviewer says consolidated clause $($item.id) $($covers[$item.id])") }
+                    }
+                }
             }
         }
     }
     $recordChars = if (Test-Path -LiteralPath $recordPath) { (Read-Utf8 $recordPath).Length } else { 0 }
+    if ($recordChars -gt $script:AuthorityReadCeilingChars) { $errors.Add("the record is $recordChars chars, over the $($script:AuthorityReadCeilingChars)-char read ceiling: drop or consolidate more before review") }
     return [pscustomobject][ordered]@{
         pass = ($errors.Count -eq 0)
         errors = @($errors)
@@ -292,7 +409,9 @@ function Invoke-Verify([string]$Directory) {
         clauses = @($data.clauses).Count
         carried = @($data.clauses | Where-Object decision -eq 'carry').Count
         dropped = $dropIds.Count
+        consolidated = @($consolidations.items).Count
         record_chars = $recordChars
+        ceiling_chars = $script:AuthorityReadCeilingChars
     }
 }
 
@@ -316,7 +435,7 @@ switch ($Action) {
             prepared_at_utc = [datetime]::UtcNow.ToString('o')
             ledger_path = $ledgerPath
             previous_boundary = $current.boundary
-            decision_rules = "Set decision to carry or drop on every clause whose decision is null. A drop needs reason ($($script:DropReasons -join '|')) and evidence: {quote:{path,text}} found in that file, {event_seq:N} in jobs/events.jsonl, or {clause:'c-...'} naming the carried clause that supersedes it. Carry when in doubt. Never edit id, text, heading or sources."
+            decision_rules = "Set decision to carry or drop on every clause whose decision is null. A drop needs reason ($($script:DropReasons -join '|')) and evidence: {quote:{path,text}} found in that file, {event_seq:N} in jobs/events.jsonl, or {clause:'c-...'} naming the carried clause that supersedes it. Several restatements of one rule may be replaced by one consolidated clause in $($script:ConsolidationsName) ([{text, heading, replaces:[c-ids], why}]) that keeps every restriction of each, with the strictest value winning; mark each replaced clause drop, reason consolidated, evidence {consolidation:'<id of that text>'}. Carry when in doubt. Never edit id, text, heading or sources."
             sources = @($current.sources | ForEach-Object { [ordered]@{ path = $_; sha256 = (Get-FileSha $_); chars = (Read-Utf8 $_).Length } })
             clauses = $clauses
         }
@@ -328,11 +447,15 @@ switch ($Action) {
         $ledger = Get-Ledger $RolloverDirectory
         $undecided = @($ledger.data.clauses | Where-Object { [string]$_.decision -notin @('carry', 'drop', 'structural') })
         if ($undecided.Count) { throw "AUTHORITY_ROLLOVER_UNDECIDED: $($undecided.Count) clause(s) have no carry/drop decision, first $($undecided[0].id)" }
+        $RolloverDirectory = [IO.Path]::GetFullPath($RolloverDirectory)
+        $consolidations = Get-Consolidations $RolloverDirectory
         $recordPath = Join-Path $RolloverDirectory 'current-authority.md'
-        Write-Utf8 $recordPath (Get-RecordText $ledger.data $ledger.sha256)
+        $composed = Get-ComposeOutput $ledger.data $ledger.sha256 $consolidations
+        Write-Utf8 $recordPath $composed.record
+        Write-Utf8 (Join-Path $RolloverDirectory $script:ProvenanceName) $composed.provenance
         Write-Utf8 (Join-Path $RolloverDirectory 'next-operation-boundary.json') (Get-BoundaryText $ledger.data $ledger.sha256 $recordPath)
-        Write-Utf8 (Join-Path $RolloverDirectory 'review-prompt.md') (Get-ReviewPromptText $ledger.data $ledger.sha256)
-        [ordered]@{ status = 'composed'; record = $recordPath; record_chars = (Read-Utf8 $recordPath).Length; dropped = @($ledger.data.clauses | Where-Object decision -eq 'drop').Count; next = 'dispatch one reviewer: invoke-codex-chunk.ps1 (or invoke-claude-chunk.ps1) -ReadOnly -AdHoc -SingleDispatch -PromptPath review-prompt.md -OutputPath review.json, then -Action verify' } | ConvertTo-Json -Compress
+        Write-Utf8 (Join-Path $RolloverDirectory 'review-prompt.md') (Get-ReviewPromptText $ledger.data $ledger.sha256 $consolidations)
+        [ordered]@{ status = 'composed'; record = $recordPath; record_chars = $composed.record.Length; ceiling_chars = $script:AuthorityReadCeilingChars; within_ceiling = ($composed.record.Length -le $script:AuthorityReadCeilingChars); dropped = @($ledger.data.clauses | Where-Object decision -eq 'drop').Count; consolidated = @($consolidations.items).Count; next = 'dispatch one reviewer: invoke-codex-chunk.ps1 (or invoke-claude-chunk.ps1) -ReadOnly -AdHoc -SingleDispatch -PromptPath review-prompt.md -OutputPath review.json, then -Action verify' } | ConvertTo-Json -Compress
     }
     'verify' {
         if (-not $RolloverDirectory) { throw 'AUTHORITY_ROLLOVER_DIRECTORY: pass -RolloverDirectory from prepare' }
@@ -365,6 +488,9 @@ switch ($Action) {
             previous_source_records = $result.source_records
             previous_source_chars = $result.source_chars
             still_required_old_records = $stillRequired
+            record_chars = $result.record_chars
+            # New wording needs Danny's go: the preview lists every consolidated clause and what it replaces.
+            consolidated_clauses = @((Get-Consolidations $RolloverDirectory).items | ForEach-Object { [ordered]@{ id = $_.id; replaces = $_.replaces; text = $_.text } })
         }
         if (-not $CandidateOnly) {
             # Append-only audit history: every dropped clause verbatim, with its source, why it is stale and
@@ -381,13 +507,16 @@ switch ($Action) {
                 }
                 $shaByPath = @{}; foreach ($s in $ledger.data.sources) { $shaByPath[[IO.Path]::GetFullPath([string]$s.path)] = $s.sha256 }
                 $rolledAt = [datetime]::UtcNow.ToString('o')
+                $consolidationText = @{}; foreach ($item in (Get-Consolidations $RolloverDirectory).items) { $consolidationText[$item.id] = $item.text }
                 $rows = foreach ($clause in @($ledger.data.clauses | Where-Object decision -eq 'drop')) {
-                    [ordered]@{
+                    $row = [ordered]@{
                         rolled_at_utc = $rolledAt; rollover_directory = $RolloverDirectory; ledger_sha256 = $ledger.sha256
                         clause = $clause.id; heading = $clause.heading; text = $clause.text; reason = $clause.reason; superseded_by = $clause.evidence
                         reviewer_why = $review[[string]$clause.id]
                         sources = @($clause.sources | ForEach-Object { [ordered]@{ path = $_.path; locator = $_.locator; sha256 = $shaByPath[[IO.Path]::GetFullPath([string]$_.path)] } })
-                    } | ConvertTo-Json -Depth 12 -Compress
+                    }
+                    if ($clause.reason -eq 'consolidated') { $row.consolidated_into = $consolidationText[[string]$clause.evidence.consolidation] }
+                    $row | ConvertTo-Json -Depth 12 -Compress
                 }
                 if (@($rows).Count) { [IO.File]::AppendAllText($historyPath, ((@($rows) -join "`n") + "`n"), $utf8) }
             }
