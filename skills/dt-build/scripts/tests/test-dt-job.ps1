@@ -851,6 +851,13 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     Assert-True ($resumed.run_status -eq 'runnable' -and $null -eq $resumed.awaiting) 'run status clears the pending stop after approval'
     Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'immediate-review') | Out-Null
     Assert-True ((Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json).approvals.Count -eq 2) 'immediate approve twice records only one new approval without a queue'
+    # FS-95: a later approval write keeps earlier timestamp text byte-for-byte (no trailing-zero trim).
+    $zeroStamp = '2026-10-15T16:14:05.5441830Z'
+    $approvalText = [regex]::Replace((Get-Content -LiteralPath $pendingPath -Raw), '"approved_utc":\s*"[^"]+"', ('"approved_utc": "' + $zeroStamp + '"'), 1)
+    Write-Utf8 $pendingPath $approvalText
+    Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'timestamp-text', '-Message', 'fixture only') | Out-Null
+    Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'timestamp-text') | Out-Null
+    Assert-True ((Get-Content -LiteralPath $pendingPath -Raw).Contains('"' + $zeroStamp + '"')) 'approval rewrites preserve stored timestamp text exactly'
     $wrongRepeat = & pwsh -NoProfile -File $dtJob approve -RunFolder $rf -Operation fixture-review -Json 2>&1
     Assert-True ($LASTEXITCODE -ne 0 -and ($wrongRepeat -join ' ') -match 'DT_JOB_NOT_AWAITING') 'older operation is not accepted as a repeated latest approval'
 

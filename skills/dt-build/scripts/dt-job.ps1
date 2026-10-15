@@ -349,6 +349,21 @@ function ConvertTo-DtJobUtc {
     return [DateTime]::Parse([string]$Value, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
 }
 
+function Test-DtJobSameInstant {
+    # FS-95: timestamps compare as instants, never as text ('.5441830Z' and '.544183Z' are equal).
+    param($Left, $Right)
+    if ($null -eq $Left -or $null -eq $Right -or '' -eq [string]$Left -or '' -eq [string]$Right) { return ($null -eq $Left -or '' -eq [string]$Left) -and ($null -eq $Right -or '' -eq [string]$Right) }
+    try { return (ConvertTo-DtJobUtc $Left).Ticks -eq (ConvertTo-DtJobUtc $Right).Ticks } catch { return $false }
+}
+
+function ConvertFrom-DtJobJsonText {
+    # FS-95: files dt-job rewrites keep their timestamp text byte-for-byte. Default ConvertFrom-Json turns
+    # ISO strings into DateTime and ConvertTo-Json writes them back without trailing zeros.
+    param([Parameter(Mandatory, ValueFromPipeline)][string]$Text)
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { return ($Text | ConvertFrom-Json -DateKind String) }
+    return ($Text | ConvertFrom-Json)
+}
+
 function Test-DtJobProcessIdentity {
     # A PID counts only when its start time matches the recorded one; this defeats PID reuse.
     param($ProcessId, $StartUtc)
@@ -1257,7 +1272,7 @@ function Get-DtJobApprovals {
     param([Parameter(Mandatory)][string]$RunFolder)
     $path = (Get-DtJobPaths -RunFolder $RunFolder).Approvals
     if (Test-Path -LiteralPath $path) {
-        $parsed = Read-DtJobText -Path $path | ConvertFrom-Json
+        $parsed = Read-DtJobText -Path $path | ConvertFrom-DtJobJsonText
         $delegateRecord = if ($parsed.PSObject.Properties['delegate']) { $parsed.delegate } else { $null }
         return [pscustomobject]@{ awaiting = $parsed.awaiting; approvals = @($parsed.approvals | Where-Object { $null -ne $_ }); delegate = $delegateRecord }
     }
@@ -1701,14 +1716,14 @@ function Receive-DtJobQueuedApproval {
     $queuePath = Join-Path $RunFolder 'approval-queued.json'
     if (-not (Test-Path -LiteralPath $queuePath)) { return }
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
-        $q = Read-DtJobText -Path $queuePath | ConvertFrom-Json
+        $q = Read-DtJobText -Path $queuePath | ConvertFrom-DtJobJsonText
         if ($q.status -ne 'queued' -or (Test-DtJobProcessIdentity $q.coordinator_pid $q.coordinator_start_utc)) { return }
         $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $q.build_state_path -RunId $q.run_id
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder
         $pending = $approvals.awaiting
         if ($null -eq $pending -or $pending.operation -cne $q.operation -or $pending.seq -ne $q.await_seq -or
             (Get-DtJobRunState -BuildStatePath $ctx.build_state_path).run_status -ne 'awaiting_danny') {
-            $recorded = @($approvals.approvals | Where-Object { $_.PSObject.Properties['requested_utc'] -and $_.requested_utc -ceq $q.requested_utc -and $_.operation -ceq $q.operation })
+            $recorded = @($approvals.approvals | Where-Object { $_.PSObject.Properties['requested_utc'] -and (Test-DtJobSameInstant $_.requested_utc $q.requested_utc) -and $_.operation -ceq $q.operation })
             if ($recorded.Count -eq 1 -and $null -eq $pending) {
                 Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'runnable'
                 $existingEvent = @(Get-DtJobEvents -RunFolder $RunFolder | Where-Object { $_.type -eq 'continuation_requested' -and $_.reason -eq "approved $($q.operation)" -and [int64]$_.seq -gt [int64]$q.await_seq })
@@ -1751,8 +1766,8 @@ function Invoke-DtJobApprove {
         $receipt = [pscustomobject][ordered]@{ operation = $Operation; await_seq = $approvals.awaiting.seq; run_id = $ctx.run_id; build_state_path = $ctx.build_state_path; requested_by = [Environment]::UserName; requested_pid = $PID; requested_utc = [DateTime]::UtcNow.ToString('o'); delegated_to = $delegatedTo }
         if ($live) {
             if (Test-Path -LiteralPath $queuePath) {
-                $q = Read-DtJobText -Path $queuePath | ConvertFrom-Json
-                if ($q.status -eq 'queued' -and $q.operation -ceq $receipt.operation -and $q.await_seq -eq $receipt.await_seq -and $q.coordinator_id -ceq $lease.coordinator_id -and $q.coordinator_start_utc -eq $lease.pid_start_utc) {
+                $q = Read-DtJobText -Path $queuePath | ConvertFrom-DtJobJsonText
+                if ($q.status -eq 'queued' -and $q.operation -ceq $receipt.operation -and $q.await_seq -eq $receipt.await_seq -and $q.coordinator_id -ceq $lease.coordinator_id -and (Test-DtJobSameInstant $q.coordinator_start_utc $lease.pid_start_utc)) {
                     return @{ approval_queued = $Operation; message = "approval queued; applies when coordinator $($q.coordinator_pid) exits" }
                 }
             }
