@@ -5,6 +5,10 @@ $ErrorActionPreference = 'Stop'
 $script:AuthorityReadBudgetChars = 32000
 $script:AuthorityReadCeilingChars = 96000
 
+# Evidence-only files: named in authority text but never authority. authority-history.jsonl is the
+# rollover's append-only audit log (roll-authority-forward.ps1), read only for an explicit lookup.
+$script:AuthorityEvidenceOnlyNames = @('evidence-notes.json', 'authority-history.jsonl')
+
 function Get-AuthorityHash {
     param([string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -51,7 +55,8 @@ function Resolve-AuthorityLiteral {
 
 function Get-AuthorityCandidates {
     param([string]$Text, [hashtable]$Aliases)
-    $ext = '(?:md|json|txt|ya?ml)'
+    # jsonl before json: the alternation must not cut authority-history.jsonl down to .json.
+    $ext = '(?:md|jsonl|json|txt|ya?ml)'
     $patterns = @(
         ('`(?<path>[^`\r\n]+\.' + $ext + ')`'),
         ('\]\(<?(?<path>[^\r\n<>]+\.' + $ext + ')>?\)'),
@@ -153,7 +158,7 @@ function Get-AuthorityInventory {
         $key = $path.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
-        if ((Split-Path -Leaf $path) -ieq 'evidence-notes.json') {
+        if ((Split-Path -Leaf $path) -in $script:AuthorityEvidenceOnlyNames) {
             $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $checkpoint; candidate = $path; resolved = $path; reason = 'evidence_only'; required = $false })
             continue
         }
@@ -182,7 +187,7 @@ function Get-AuthorityInventory {
         $candidates = if ($path -eq $checkpoint) { $checkpointCandidates } else { @(Get-AuthorityCandidates $text $aliases) }
         foreach ($candidate in $candidates) {
             $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases
-            if ((Split-Path -Leaf $resolved) -ieq 'evidence-notes.json') {
+            if ((Split-Path -Leaf $resolved) -in $script:AuthorityEvidenceOnlyNames) {
                 $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = 'evidence_only'; required = $false })
                 continue
             }
