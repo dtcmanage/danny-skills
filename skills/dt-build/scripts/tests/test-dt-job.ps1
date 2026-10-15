@@ -842,7 +842,13 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     # Immediate approvals have no queue file; repeat the latest exact approval.
     Remove-Item -LiteralPath $queuePath
     Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'immediate-review', '-Message', 'fixture only') | Out-Null
+    # FS-94: a continuation_requested event after the stop must not hide it; status reads run_status.
+    Invoke-DtJob @('request-continuation', '-RunFolder', $rf, '-Reason', 'fixture rotation') | Out-Null
+    $stopped = Invoke-DtJob @('status', '-RunFolder', $rf)
+    Assert-True ($stopped.run_status -eq 'awaiting_danny' -and $stopped.awaiting.operation -ceq 'immediate-review' -and [int64]$stopped.awaiting.seq -gt 0) 'run status reports awaiting_danny and the pending stop after a later continuation event'
     Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'immediate-review') | Out-Null
+    $resumed = Invoke-DtJob @('status', '-RunFolder', $rf)
+    Assert-True ($resumed.run_status -eq 'runnable' -and $null -eq $resumed.awaiting) 'run status clears the pending stop after approval'
     Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'immediate-review') | Out-Null
     Assert-True ((Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json).approvals.Count -eq 2) 'immediate approve twice records only one new approval without a queue'
     $wrongRepeat = & pwsh -NoProfile -File $dtJob approve -RunFolder $rf -Operation fixture-review -Json 2>&1

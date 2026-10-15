@@ -7,6 +7,10 @@ Intake resilience controls in Phase 7A:
 - Contract validation fails closed on schema and dependency violations.
 
 Execution resilience controls in Phase 7B:
+- Outside watchers (a parent session, a cron check, a script) read the run's state from `dt-job status -RunFolder <run> -Json`:
+  `run_status` and, when it is `awaiting_danny`, `awaiting` (operation, seq, since_utc). Never infer the state from the
+  last event's type: a `continuation_requested` event can follow a stop while the run still awaits Danny (FS-94, a
+  43-minute missed stop). Wait on a job with `dt-job wait -JobId <id> -TimeoutSec <n>`, never a sleep loop.
 - Codex prompt assembly and verify gates run through deterministic scripts.
 - Codex execution runs only through `scripts/invoke-codex-chunk.ps1`, with cache-verified model resolution,
   explicit effort, a mandatory one-line selection reason, stdin prompt delivery, redacted logs, and retained

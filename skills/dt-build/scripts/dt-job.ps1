@@ -902,7 +902,26 @@ function Invoke-DtJobStatus {
     }
     else {
         $snap = Get-DtJobSnapshot -RunFolder $RunFolder
-        Write-DtJobOutput -Object (New-DtJobRunEnvelope -RunFolder $RunFolder -Cursor $snap -Records $snap.records) -AsJson:$Json
+        $envelope = New-DtJobRunEnvelope -RunFolder $RunFolder -Cursor $snap -Records $snap.records
+        # FS-94: the run's state comes from run_status, never from the last event's type (a later
+        # continuation_requested event can still carry awaiting_danny). Watchers read these fields.
+        $runStatus = $null
+        $awaiting = $null
+        $entry = Get-DtJobRegistryEntry -RunFolder $RunFolder
+        $statePath = if ($BuildStatePath) { $BuildStatePath } elseif ($null -ne $entry) { [string]$entry.build_state_path } else { $null }
+        if ($statePath -and (Test-Path -LiteralPath $statePath)) {
+            $runStatus = (Get-DtJobRunState -BuildStatePath $statePath).run_status
+            if ($runStatus -eq 'awaiting_danny') {
+                $pending = (Get-DtJobApprovals -RunFolder $RunFolder).awaiting
+                if ($null -ne $pending) {
+                    $awaiting = [ordered]@{ operation = [string]$pending.operation; seq = $null; since_utc = $null }
+                    foreach ($field in @('seq', 'since_utc')) { if ($pending.PSObject.Properties[$field]) { $awaiting[$field] = $pending.$field } }
+                }
+            }
+        }
+        $envelope | Add-Member -NotePropertyName run_status -NotePropertyValue $runStatus -Force
+        $envelope | Add-Member -NotePropertyName awaiting -NotePropertyValue $awaiting -Force
+        Write-DtJobOutput -Object $envelope -AsJson:$Json
     }
 }
 
