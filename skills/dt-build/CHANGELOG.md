@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.46.0
+
+- dt-job status (run level) reports run_status and the pending awaiting stop; watchers read it instead of event types (FS-94).
+
 ## 2.45.3
 
 - Roll-forward reviews stay independent: compose archives earlier reviews outside the rollover folder, the prompt forbids consulting them and demands a JSON-only reply, and verify refuses while one remains.
