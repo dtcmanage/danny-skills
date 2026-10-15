@@ -20,6 +20,9 @@ param(
     # Vendor capacity is transient: retry the identical invocation after 5/10/20 minutes.
     # Milliseconds permit fast fixtures; an empty array disables capacity retries.
     [AllowEmptyCollection()][ValidateRange(0, 2147483647)][int[]]$CapacityBackoffMs = @(300000, 600000, 1200000),
+    # Launch the child exactly once. A capacity wait, offline recovery or unexplained-failure retry would
+    # relaunch it; with this switch each fails closed instead (failure_category single-dispatch-refused).
+    [switch]$SingleDispatch,
     [switch]$Preflight,
     [switch]$ReadOnly,
     [switch]$Scrutiny,
@@ -400,6 +403,7 @@ $diagnosis = $null
 $dispatchDiagnosis = $null
 $backupPick = $null
 $unexplainedRetried = $false
+$singleDispatchRefused = $null
 $dispatchAttempts = [System.Collections.Generic.List[object]]::new()
 $capacityBackoffs = [System.Collections.Generic.List[object]]::new()
 $started = Get-Date
@@ -609,7 +613,12 @@ try {
             # A refusal can follow substantial work. Discard its partial final message;
             # each retry starts a fresh exec with the same prompt, argv and output path.
             Remove-Item -LiteralPath $OutputPath, $lastMessagePath, $finalMessagePath -Force -ErrorAction SilentlyContinue
-            if ($capacityBackoffs.Count -lt $CapacityBackoffMs.Count) {
+            if ($SingleDispatch) {
+                $singleDispatchRefused = 'capacity'
+                $failureCategory = 'single-dispatch-refused'
+                $failureReason = "CODEX_SINGLE_DISPATCH_REFUSED: capacity: $failureDetail; -SingleDispatch launches exactly one child, so no capacity backoff or second dispatch was attempted. Redacted stream: $streamPath"
+            }
+            elseif ($capacityBackoffs.Count -lt $CapacityBackoffMs.Count) {
                 $waitMs = $CapacityBackoffMs[$capacityBackoffs.Count]
                 $waitStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
                 $etZone = [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time')
@@ -636,9 +645,11 @@ try {
                 $dispatchStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
                 continue dispatch
             }
-            $totalWaitMs = [long]0
-            foreach ($backoff in $capacityBackoffs) { $totalWaitMs += $backoff.wait_ms }
-            $failureReason = "CODEX_CAPACITY_EXHAUSTED: $failureDetail; vendor capacity unavailable after $($dispatchAttempts.Count) dispatch attempts and ${totalWaitMs}ms of bounded backoff. Same model $resolvedModel and effort $Effort retained. Redacted stream: $streamPath"
+            else {
+                $totalWaitMs = [long]0
+                foreach ($backoff in $capacityBackoffs) { $totalWaitMs += $backoff.wait_ms }
+                $failureReason = "CODEX_CAPACITY_EXHAUSTED: $failureDetail; vendor capacity unavailable after $($dispatchAttempts.Count) dispatch attempts and ${totalWaitMs}ms of bounded backoff. Same model $resolvedModel and effort $Effort retained. Redacted stream: $streamPath"
+            }
         }
         else {
             $dispatchDiagnosis = Resolve-RouterDispatchFailure -Vendor codex -ErrorText $codexErrorText
@@ -655,7 +666,13 @@ try {
                 }
                 Add-RouterOutcome -Row $row
             }
-            switch ($diagnosis) {
+            if ($SingleDispatch -and $diagnosis -in @('offline', 'unexplained')) {
+                # Both branches would relaunch the child; single-dispatch fails closed instead.
+                $singleDispatchRefused = $diagnosis
+                $failureCategory = 'single-dispatch-refused'
+                $failureReason = "CODEX_SINGLE_DISPATCH_REFUSED: ${diagnosis}: -SingleDispatch launches exactly one child, so no recovery wait or second dispatch was attempted. Redacted stream: $streamPath"
+            }
+            else { switch ($diagnosis) {
                 'offline' {
                     $outageStart = [datetimeoffset](& $script:RouterDiagnosisClock)
                     do {
@@ -693,7 +710,7 @@ try {
                     $message = Get-RouterAlertMessage -Key $key -Model $resolvedModel -Category $Category -ErrorText $codexErrorText -Checks $dispatchDiagnosis.checks -ArtifactPath $provenancePath -PromptText $prompt -InvocationText ($startInfo.ArgumentList -join ' ')
                     $null = Send-RouterAlert -Key $key -Message $message -ChatToStderr:$Json
                 }
-            }
+            } }
         }
     }
 
@@ -782,6 +799,8 @@ try {
         failure_detail         = $failureDetail
         dispatch_attempts      = @($dispatchAttempts.ToArray())
         capacity_backoffs      = @($capacityBackoffs.ToArray())
+        single_dispatch        = [bool]$SingleDispatch
+        single_dispatch_refused_branch = $singleDispatchRefused
         diagnosis              = $diagnosis
         dispatch_diagnosis     = $dispatchDiagnosis
         backup_pick            = $backupPick
@@ -827,6 +846,7 @@ catch {
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }
             failure_category = 'tooling'; termination_reason = (Invoke-SecretRedaction -Text $_.Exception.Message)
             dispatch_attempts = @($dispatchAttempts.ToArray()); capacity_backoffs = @($capacityBackoffs.ToArray())
+            single_dispatch = [bool]$SingleDispatch; single_dispatch_refused_branch = $singleDispatchRefused
         }
         [System.IO.File]::WriteAllText($provenancePath, ($fallback | ConvertTo-Json -Depth 5))
     }

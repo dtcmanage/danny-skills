@@ -14,6 +14,11 @@ Execution resilience controls in Phase 7B:
 - Verify/fix automation is capped at two implementation failures per milestone. Environment, tooling, and
   approved contract-revision failures are recorded but do not consume implementation attempts.
 - Integration-branch updates run through compare-and-swap (`scripts/branch-cas-update.ps1`) after rehearsal.
+- Single dispatch: when a step must launch exactly one child (a one-shot review), pass `-SingleDispatch` to
+  `invoke-codex-chunk.ps1` or `invoke-claude-chunk.ps1`. Every branch that would relaunch the child (the Codex
+  capacity backoff, offline recovery, the unexplained-failure retry) then fails closed with
+  `failure_category: single-dispatch-refused`; provenance records `single_dispatch` and
+  `single_dispatch_refused_branch` (and the dispatch count). Without the switch, behavior is unchanged.
 
 Shared posture:
 - Use repo-level `references/security-posture.md` as the policy anchor.

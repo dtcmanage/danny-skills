@@ -455,6 +455,22 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
             }
         }
     }
+    # -SingleDispatch: the same fixtures that relaunch above (offline recovery, unexplained retry) launch exactly one child.
+    foreach ($lane in @('codex','claude')) {
+        foreach ($case in @('offline-resume','unexplained-success','unexplained-fail')) {
+            Remove-Item (Join-Path $state 'vendor-status-cache.json'),(Join-Path $state 'vendor-blocks.json'),(Join-Path $state 'alert-log.jsonl') -Force -ErrorAction SilentlyContinue
+            $env:DT_FAKE_DIAGNOSIS = $case
+            $env:DT_FAKE_DISPATCH_COUNTER = Join-Path $temp "$lane-$case-single.counter"
+            $extra = @('-Category','routine-coding','-TimeoutMs','600000','-SingleDispatch')
+            $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-$case-single" $extra } else { Invoke-ClaudeWrapper "$lane-$case-single" $extra }
+            $count = [int](Get-Content $env:DT_FAKE_DISPATCH_COUNTER)
+            $branch = if ($case -like 'offline*') { 'offline' } else { 'unexplained' }
+            Assert-True ($count -eq 1) "$lane $case -SingleDispatch launches exactly one child (launched $count)"
+            Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -ceq 'single-dispatch-refused' -and $r.prov.single_dispatch -eq $true -and $r.prov.single_dispatch_refused_branch -ceq $branch -and [string]$r.prov.termination_reason -match "_SINGLE_DISPATCH_REFUSED: ${branch}:") "$lane $case -SingleDispatch fails closed with a distinct category in provenance ($($r.prov.failure_category); $($r.prov.termination_reason))"
+            $launches = if ($lane -eq 'codex') { @($r.prov.dispatch_attempts).Count } else { [int]$r.prov.dispatch_count }
+            Assert-True ($launches -eq 1) "$lane $case -SingleDispatch provenance records one dispatch ($launches)"
+        }
+    }
     $env:DT_FAKE_DIAGNOSIS = $null
     $env:DT_FAKE_DISPATCH_COUNTER = $null
     Remove-Item (Join-Path $state 'vendor-status-cache.json'),(Join-Path $state 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue

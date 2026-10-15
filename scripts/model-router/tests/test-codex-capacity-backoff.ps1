@@ -145,6 +145,24 @@ $params = Get-Content $ArgFile -Raw | ConvertFrom-Json -AsHashtable
     Check ($r.pass -and $r.dispatch_attempts[0].duration_ms -ge 4440000) '74-minute prior work cannot consume fresh capacity attempt timeout'
     $r = Run-Case 'quota' 99 'ERROR: usage limit reached; selected model is at capacity'
 
+    # -SingleDispatch: a capacity refusal fails closed after one child, with the production backoff schedule left in place.
+    # The quota case above leaves a Codex vendor block; this case is a fresh capacity outage.
+    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
+    $env:FS63_COUNTER = Join-Path $temp 'single'; $env:FS63_SUCCEED = '99'; $env:FS63_SIGNAL = 'Selected model is at capacity'
+    $env:FS63_WORK_MS = '0'; $env:FS63_TIME_JUMP_MS = '0'
+    $out = $env:FS63_COUNTER + '.output'
+    $argFile = Join-Path $temp 'single.args.json'
+    Write-Utf8 $argFile (@{ ProjectPath=$project; PromptPath=$prompt; OutputPath=$out; CodexCliPath=$fake; AdHoc=$true; Effort='medium'; Category='complex-coding'; SelectionReason='single-dispatch fixture'; TimeoutMs=1000; Json=$true; SingleDispatch=$true } | ConvertTo-Json)
+    & pwsh -NoProfile -File (Join-Path $temp 'recover.runner.ps1') (Join-Path $repoRoot 'skills/dt-build/scripts/invoke-codex-chunk.ps1') $argFile > ($out + '.stdout') 2> ($out + '.stderr')
+    $code = $LASTEXITCODE
+    if (-not (Test-Path ($env:FS63_COUNTER + '.calls'))) { throw "single-dispatch capacity never launched a child: $(Get-Content ($out + '.stderr') -Raw)" }
+    $prov = Get-Content ($out + '.provenance.json') -Raw | ConvertFrom-Json
+    $calls = @(Get-Content ($env:FS63_COUNTER + '.calls'))
+    Check ($code -ne 0 -and $calls.Count -eq 1 -and @($prov.dispatch_attempts).Count -eq 1 -and @($prov.capacity_backoffs).Count -eq 0 -and -not (Test-Path ($env:FS63_COUNTER + '.sleeps'))) "single-dispatch capacity launches exactly one child and never waits (calls $($calls.Count))"
+    Check ($prov.failure_category -ceq 'single-dispatch-refused' -and $prov.single_dispatch -eq $true -and $prov.single_dispatch_refused_branch -ceq 'capacity' -and $prov.termination_reason -match '^CODEX_SINGLE_DISPATCH_REFUSED: capacity:') "single-dispatch capacity fails closed with a distinct category in provenance ($($prov.failure_category); $($prov.termination_reason))"
+    $prior = Get-Content (Join-Path $temp 'exhaust.output.provenance.json') -Raw | ConvertFrom-Json
+    Check ($prior.single_dispatch -eq $false -and $null -eq $prior.single_dispatch_refused_branch) 'without -SingleDispatch provenance records single_dispatch false'
+
     # Shared process API classifies the same stderr without adding retries to its callers.
     $env:FS63_COUNTER = Join-Path $temp 'process'; $env:FS63_SUCCEED = '99'; $env:FS63_SIGNAL = 'ERROR: overloaded_error'
     $r = Invoke-CodexProcess -CodexPath $fake -Arguments @('--output-last-message', (Join-Path $temp 'process-output')) -Prompt 'fixture' -WorkingDirectory $project -TimeoutMs 10000

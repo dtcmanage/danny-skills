@@ -21,6 +21,9 @@ param(
     [switch]$ReadOnly,
     [switch]$Scrutiny,
     [switch]$AdHoc,
+    # Launch the child exactly once. An offline-recovery or unexplained-failure retry would relaunch it;
+    # with this switch each fails closed instead (failure_category single-dispatch-refused).
+    [switch]$SingleDispatch,
     [string]$ClaudeCliPath = "",
     [switch]$Json
 )
@@ -309,6 +312,8 @@ $diagnosis = $null
 $dispatchDiagnosis = $null
 $backupPick = $null
 $unexplainedRetried = $false
+$singleDispatchRefused = $null
+$dispatchCount = 0
 $started = Get-Date
 $proc = $null
 $streamPath = "$OutputPath.stream.log"
@@ -353,7 +358,9 @@ try {
     Remove-Item -LiteralPath $OutputPath -Force -ErrorAction SilentlyContinue
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $startInfo
+    if ($SingleDispatch -and $dispatchCount -ge 1) { throw "CLAUDE_INVOKE_FAIL: -SingleDispatch refused a second child launch." }
     if (-not $proc.Start()) { throw "CLAUDE_INVOKE_FAIL: failed to start claude CLI." }
+    $dispatchCount++
 
     # Start both drains before writing stdin so neither native pipe can fill and
     # deadlock the process.
@@ -476,7 +483,13 @@ try {
                 }
                 Add-RouterOutcome -Row $row
             }
-            switch ($diagnosis) {
+            if ($SingleDispatch -and $diagnosis -in @('offline', 'unexplained')) {
+                # Both branches would relaunch the child; single-dispatch fails closed instead.
+                $singleDispatchRefused = $diagnosis
+                $failureCategory = 'single-dispatch-refused'
+                $failureReason = "CLAUDE_SINGLE_DISPATCH_REFUSED: ${diagnosis}: -SingleDispatch launches exactly one child, so no recovery wait or second dispatch was attempted."
+            }
+            else { switch ($diagnosis) {
                 'offline' {
                     $outageStart = [datetimeoffset](& $script:RouterDiagnosisClock)
                     do {
@@ -514,7 +527,7 @@ try {
                     $message = Get-RouterAlertMessage -Key $key -Model $resolvedModel -Category $Category -ErrorText $claudeErrorText -Checks $dispatchDiagnosis.checks -ArtifactPath $provenancePath -PromptText $prompt -InvocationText ($startInfo.ArgumentList -join ' ')
                     $null = Send-RouterAlert -Key $key -Message $message -ChatToStderr:$Json
                 }
-            }
+            } }
         }
     }
 
@@ -568,6 +581,9 @@ try {
         output_path         = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
         stream_log_path     = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }
         failure_category    = $failureCategory
+        dispatch_count      = $dispatchCount
+        single_dispatch     = [bool]$SingleDispatch
+        single_dispatch_refused_branch = $singleDispatchRefused
         diagnosis              = $diagnosis
         dispatch_diagnosis     = $dispatchDiagnosis
         backup_pick            = $backupPick
@@ -608,6 +624,7 @@ catch {
             prompt_sha256 = $promptSha256
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }
             failure_category = 'tooling'; termination_reason = (Invoke-SecretRedaction -Text $_.Exception.Message)
+            dispatch_count = $dispatchCount; single_dispatch = [bool]$SingleDispatch; single_dispatch_refused_branch = $singleDispatchRefused
         }
         [System.IO.File]::WriteAllText($provenancePath, ($fallback | ConvertTo-Json -Depth 5))
     }
