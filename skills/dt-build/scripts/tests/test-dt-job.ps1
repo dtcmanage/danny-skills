@@ -88,8 +88,12 @@ $junctionLink = $null
 $pinEnvNames = @('DT_BUILD_STATE_DIR', 'DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID', 'DT_BUILD_RUN_PIN_VENDOR', 'DT_BUILD_RUN_PIN_MODEL')
 $pinSavedEnv = @{}
 foreach ($name in $pinEnvNames) { $pinSavedEnv[$name] = [Environment]::GetEnvironmentVariable($name) }
+$savedRouterState = $env:DT_MODEL_ROUTER_STATE
 try {
     $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'registry'
+    $env:DT_MODEL_ROUTER_STATE = Join-Path $tempRoot 'router-state'
+    New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_STATE -Force | Out-Null
+    Assert-True ([IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE).StartsWith([IO.Path]::GetFullPath($tempRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'router state stays under the suite temp directory'
     Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
     $pinRun = New-RunFolder 'pin-run'
     $pinState = Join-Path $pinRun '_build-state.md'
@@ -595,6 +599,61 @@ exit 0
     Assert-True ((Get-JobRecord -RunFolder $rf -JobId $c.job_id).status -eq 'cancelled') 'cancel is not overwritten by the runner'
     Assert-True (-not (Test-Path -Path (Join-Path $rf 'jobs/locks/key-k2-*.lock'))) 'cancel frees the mutation key'
 
+    # FS-96: job custody must retain a grandchild after its intermediate parent exits.
+    if ($IsWindows) {
+        $rf = New-RunFolder 'cancel-process-tree'
+        $directMarker = 'dt-job-child-' + [guid]::NewGuid().ToString('N')
+        do {
+            $pingMarker = '127.0.0.' + (Get-Random -Minimum 2 -Maximum 255)
+        } while (@(Get-CimInstance Win32_Process -Filter "Name = 'PING.EXE'" | Where-Object { $_.CommandLine -like "*$pingMarker*" }).Count -gt 0)
+        $fixture = Join-Path $rf 'launch-tree.ps1'
+        $custodyScript = (Join-Path $scriptDir 'worker-process-tree.ps1').Replace("'", "''")
+        Write-Utf8 $fixture @"
+`$ErrorActionPreference = 'Stop'
+. '$custodyScript'
+if ((Initialize-WorkerProcessJob) -ne 'job_object' -or -not `$script:WorkerJobKillOnClose) { throw 'fixture requires kill-on-close job custody' }
+`$psi = [Diagnostics.ProcessStartInfo]::new('cmd.exe')
+`$psi.UseShellExecute = `$false
+`$psi.CreateNoWindow = `$true
+`$psi.Arguments = '/c start /b ping -n 300 $pingMarker'
+`$intermediate = [Diagnostics.Process]::Start(`$psi)
+`$intermediate.WaitForExit()
+`$psi = [Diagnostics.ProcessStartInfo]::new('pwsh')
+`$psi.UseShellExecute = `$false
+`$psi.CreateNoWindow = `$true
+foreach (`$arg in @('-NoProfile', '-Command', 'Start-Sleep 300  # $directMarker')) { `$psi.ArgumentList.Add(`$arg) }
+`$null = [Diagnostics.Process]::Start(`$psi)
+Start-Sleep 300
+"@
+        $treeJob = $null
+        try {
+            $treeJob = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "& '$($fixture.Replace("'", "''"))'")
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            do {
+                $processes = @(Get-CimInstance Win32_Process -Filter "Name = 'PING.EXE' OR Name = 'pwsh.exe'")
+                $pingChildren = @($processes | Where-Object { $_.Name -ieq 'ping.exe' -and $_.CommandLine -like "*$pingMarker*" })
+                $directChildren = @($processes | Where-Object { $_.Name -ieq 'pwsh.exe' -and $_.CommandLine -like "*$directMarker*" })
+                if ($pingChildren.Count -gt 0 -and $directChildren.Count -gt 0) { break }
+                Start-Sleep -Milliseconds 250
+            } while ([DateTime]::UtcNow -lt $deadline)
+            Assert-True ($pingChildren.Count -eq 1 -and $directChildren.Count -eq 1) 'cancel fixture starts an orphan grandchild and a direct child after cmd exits'
+            Assert-True (Test-ProcessGone $pingChildren[0].ParentProcessId) 'cancel fixture intermediate parent has exited'
+            $cancelled = Invoke-DtJob @('cancel', '-RunFolder', $rf, '-JobId', $treeJob.job_id)
+            Assert-True ($cancelled.status -eq 'cancelled') 'process tree job is cancelled'
+            $remaining = @(Get-CimInstance Win32_Process -Filter "Name = 'PING.EXE' OR Name = 'pwsh.exe'" | Where-Object { $_.CommandLine -like "*$pingMarker*" -or $_.CommandLine -like "*$directMarker*" })
+            Assert-True ($remaining.Count -eq 0) 'cancel removes the orphan grandchild and direct child markers'
+
+            $deadRecord = Get-JobRecord -RunFolder $rf -JobId $treeJob.job_id
+            $deadProbe = ". '$($dtJob.Replace("'", "''"))'; `$deadPidRecord = Get-Content -Raw -LiteralPath '$((Join-Path $rf "jobs/$($treeJob.job_id).json").Replace("'", "''"))' | ConvertFrom-Json; @(Stop-DtJobProcesses -Record `$deadPidRecord).Count"
+            $deadCount = & pwsh -NoProfile -Command $deadProbe
+            Assert-True ($LASTEXITCODE -eq 0 -and "$deadCount" -eq '0' -and (Test-ProcessGone $deadRecord.pid) -and (Test-ProcessGone $deadRecord.runner_pid)) 'Stop-DtJobProcesses returns an empty array for dead pids'
+        }
+        finally {
+            if ($treeJob) { & pwsh -NoProfile -File $dtJob cancel -RunFolder $rf -JobId $treeJob.job_id -Json | Out-Null }
+            Get-CimInstance Win32_Process -Filter "Name = 'PING.EXE' OR Name = 'pwsh.exe'" | Where-Object { $_.CommandLine -like "*$pingMarker*" -or $_.CommandLine -like "*$directMarker*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        }
+    } else { Write-Output 'SKIP: FS-96 Windows process tree cancellation and dead-pid regressions' }
+
     # Race: cancel against launch. Whatever wins, a cancelled job never does its work.
     foreach ($delayMs in @(700, 1100, 1500)) {
         $rf = New-RunFolder "race-$delayMs"
@@ -905,6 +964,7 @@ catch {
     $exitCode = 1
 }
 finally {
+    [Environment]::SetEnvironmentVariable('DT_MODEL_ROUTER_STATE', $savedRouterState)
     foreach ($name in $pinEnvNames) { [Environment]::SetEnvironmentVariable($name, $pinSavedEnv[$name]) }
     Write-Output "SUMMARY: $script:passed passed"
     # Unlink only: a recursive delete would follow the junction into the real skill folder.

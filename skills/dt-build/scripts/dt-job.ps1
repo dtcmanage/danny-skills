@@ -383,13 +383,46 @@ function Test-DtJobAlive {
     return $false
 }
 
-function Stop-DtJobProcesses {
-    param([Parameter(Mandatory)]$Record)
-    foreach ($pair in @(@($Record.runner_pid, $Record.runner_start_utc), @($Record.pid, $Record.process_start_utc))) {
-        if (Test-DtJobProcessIdentity $pair[0] $pair[1]) {
-            try { (Get-Process -Id ([int]$pair[0]) -ErrorAction Stop).Kill($true) } catch { }
+function Get-DtJobDescendants {
+    # Every live process under the roots, by parent id, each with its start time so a reused PID is never killed.
+    param([int[]]$RootPids)
+    if (-not $IsWindows -or $RootPids.Count -eq 0) { return @() }
+    $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, CreationDate -ErrorAction SilentlyContinue)
+    $children = @{}
+    foreach ($p in $all) { $key = [int]$p.ParentProcessId; if (-not $children.ContainsKey($key)) { $children[$key] = [System.Collections.Generic.List[object]]::new() }; $children[$key].Add($p) }
+    $found = [System.Collections.Generic.List[object]]::new()
+    $seen = [System.Collections.Generic.HashSet[int]]::new()
+    $queue = [System.Collections.Generic.Queue[int]]::new(); foreach ($r in $RootPids) { $queue.Enqueue($r) }
+    while ($queue.Count -gt 0) {
+        $id = $queue.Dequeue()
+        if (-not $seen.Add($id) -or -not $children.ContainsKey($id)) { continue }
+        foreach ($c in $children[$id]) {
+            # A child must start after its parent; a reused parent id never adopts older processes.
+            $found.Add([pscustomobject]@{ pid = [int]$c.ProcessId; start_utc = $c.CreationDate.ToUniversalTime() }); $queue.Enqueue([int]$c.ProcessId)
         }
     }
+    return @($found)
+}
+
+function Stop-DtJobProcesses {
+    # FS-96: snapshot the whole tree first, kill it, then kill and verify every snapshot member, so a worker
+    # under a shim or a re-parented child cannot outlive cancel. Returns the processes still alive afterwards.
+    param([Parameter(Mandatory)]$Record)
+    $roots = @(foreach ($pair in @(@($Record.runner_pid, $Record.runner_start_utc), @($Record.pid, $Record.process_start_utc))) {
+        if (Test-DtJobProcessIdentity $pair[0] $pair[1]) { [pscustomobject]@{ pid = [int]$pair[0]; start_utc = $pair[1] } }
+    })
+    $tree = @(Get-DtJobDescendants -RootPids @($roots | ForEach-Object { $_.pid }))
+    foreach ($root in $roots) { try { (Get-Process -Id $root.pid -ErrorAction Stop).Kill($true) } catch { } }
+    foreach ($member in $tree) {
+        if (Test-DtJobProcessIdentity $member.pid $member.start_utc) { try { (Get-Process -Id $member.pid -ErrorAction Stop).Kill($true) } catch { } }
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        $alive = @(@($roots) + @($tree) | Where-Object { Test-DtJobProcessIdentity $_.pid $_.start_utc })
+        if ($alive.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    return @($alive | ForEach-Object { $_.pid })
 }
 
 function Start-DtJobRunner {
@@ -949,9 +982,11 @@ function Invoke-DtJobCancel {
             Set-DtJobState -RunFolder $RunFolder -Record $record -Status 'cancelled' -EventType 'cancelled' -Reason 'cancelled while queued'
         }
         elseif ($record.status -eq 'running') {
-            Stop-DtJobProcesses -Record $record
+            $survivors = @(Stop-DtJobProcesses -Record $record)
+            # FS-96: cancelled means the whole process tree is gone; a survivor keeps the job running and fails loudly.
+            if ($survivors.Count -gt 0) { throw "DT_JOB_CANCEL_INCOMPLETE: $JobId still has live processes $($survivors -join ', ') after cancel; the job stays running." }
             Remove-DtJobKeyLocks -RunFolder $RunFolder -Record $record
-            Set-DtJobState -RunFolder $RunFolder -Record $record -Status 'cancelled' -EventType 'cancelled' -Reason 'cancelled while running'
+            Set-DtJobState -RunFolder $RunFolder -Record $record -Status 'cancelled' -EventType 'cancelled' -Reason 'cancelled while running; process tree verified gone'
         }
         Invoke-DtJobSchedule -RunFolder $RunFolder
     }

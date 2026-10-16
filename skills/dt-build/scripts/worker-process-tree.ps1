@@ -25,9 +25,26 @@ public static class DtWorkerJob {
     static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool QueryInformationJobObject(IntPtr job, int infoClass, IntPtr info, int length, out int returned);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetInformationJobObject(IntPtr job, int infoClass, IntPtr info, int length);
+    [StructLayout(LayoutKind.Sequential)]
+    struct BasicLimit { public long PerProcessUserTimeLimit; public long PerJobUserTimeLimit; public uint LimitFlags; public UIntPtr MinimumWorkingSetSize; public UIntPtr MaximumWorkingSetSize; public uint ActiveProcessLimit; public UIntPtr Affinity; public uint PriorityClass; public uint SchedulingClass; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct IoCounters { public ulong ReadOperationCount; public ulong WriteOperationCount; public ulong OtherOperationCount; public ulong ReadTransferCount; public ulong WriteTransferCount; public ulong OtherTransferCount; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct ExtendedLimit { public BasicLimit BasicLimitInformation; public IoCounters IoInfo; public UIntPtr ProcessMemoryLimit; public UIntPtr JobMemoryLimit; public UIntPtr PeakProcessMemoryUsed; public UIntPtr PeakJobMemoryUsed; }
+    public static bool KillOnClose;
     public static IntPtr CreateAndAssignSelf() {
         IntPtr job = CreateJobObjectW(IntPtr.Zero, null);
         if (job == IntPtr.Zero) { return IntPtr.Zero; }
+        // FS-96: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE. The wrapper holds the only handle, so when it exits or is
+        // killed (dt-job cancel), Windows ends every process still in the job, orphans and shim children included.
+        ExtendedLimit info = new ExtendedLimit();
+        info.BasicLimitInformation.LimitFlags = 0x2000;
+        int size = Marshal.SizeOf(typeof(ExtendedLimit));
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try { Marshal.StructureToPtr(info, buffer, false); KillOnClose = SetInformationJobObject(job, 9, buffer, size); }
+        finally { Marshal.FreeHGlobal(buffer); }
         if (!AssignProcessToJobObject(job, GetCurrentProcess())) { return IntPtr.Zero; }
         return job;
     }
@@ -51,6 +68,7 @@ public static class DtWorkerJob {
         }
         $script:WorkerJobHandle = [DtWorkerJob]::CreateAndAssignSelf()
         $script:WorkerJobState = if ($script:WorkerJobHandle -ne [IntPtr]::Zero) { 'job_object' } else { 'job_object_unavailable' }
+        $script:WorkerJobKillOnClose = ($script:WorkerJobState -eq 'job_object' -and [DtWorkerJob]::KillOnClose)
     }
     catch { $script:WorkerJobState = 'job_object_unavailable' }
     return $script:WorkerJobState
