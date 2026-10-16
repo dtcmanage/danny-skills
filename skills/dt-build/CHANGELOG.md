@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.47.1
+
+- dt-job cancel kills and verifies the whole worker process tree; wrapper job object kills on close; test-dt-job alerts isolated from Discord (FS-96, FS-97).
+
 ## 2.47.0
 
 - Local, reversible work never stops a managed run; lifecycle records are never byte-pinned; roll-forwards run only past the soft target; published tooling is adopted without a stop (FS-95).
