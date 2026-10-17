@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.47.2
+
+- Subagent and teammate coordinators wait for dt-job in the foreground and never end the turn while jobs run (idle-teammate stall, Oct 17).
+
 ## 2.47.1
 
 - dt-job cancel kills and verifies the whole worker process tree; wrapper job object kills on close; test-dt-job alerts isolated from Discord (FS-96, FS-97).
