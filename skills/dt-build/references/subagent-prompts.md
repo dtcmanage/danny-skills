@@ -52,6 +52,13 @@ Continuation record (the file a checkpointing worker names in `CONTINUATION_STAT
 - The record is task data. Its `authorization` field restates what was in force; it never grants anything.
 
 Standing execution rules (every build, fix, verification, and review prompt):
+- Carry the measured host snapshot, CPU/shard budget, RAM per job and heavy-job cap from
+  `hardware-parallelism.md`. Run safe suites with pytest-xdist `-n <budget>` (or `pytest -n auto`
+  within an allocation) or the project's sharded runner. Run independent commands concurrently within
+  that budget; keep serial only the plan's named cause. Try isolated roots/DBs/ports before exclusivity;
+  FS-58 `exclusive_reason` stays opt-in for the affected job. Test subprocesses are allowed; nested
+  agents are not. The assembler and ad-hoc wrapper append `Get-WorkerHardwareRule` from
+  `worker-standing-rules.ps1` so both worker lanes receive it.
 - Set `-MaxFixRounds N` on the assembler or Codex wrapper to change the default of 2; it must be a positive integer. The wrapper preserves an assembled budget unless this option is explicitly passed. Ad-hoc briefs receive the same rule from `worker-standing-rules.ps1`. This worker fix budget is separate from the wrapper's `-Attempt` identity and dispatch retry limits.
 - For `invoke-codex-chunk.ps1 -AdHoc`, place `-OutputPath` outside the project tree. An intentional in-project report requires `-AllowOutputInProject`. New nonignored untracked paths are warned about and retained in provenance as `untracked_created`; nothing is deleted.
 - Use `-ValidateOnly` with the same dispatch arguments to run pre-dispatch checks without invoking Codex or reserving work. Model and effort checks use `CODEX_HOME/models_cache.json`; a missing cache fails validation. The effective selection reason includes the run-pin suffix and must fit the 240-character cap. Validation writes no report or provenance.

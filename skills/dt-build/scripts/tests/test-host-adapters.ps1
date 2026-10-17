@@ -107,6 +107,7 @@ try {
     Assert-True ($adapterSection -match 'Claude Code host[^;]*`references/adapter-claude\.md`' -and $adapterSection -match 'Codex host[^.]*`references/adapter-codex\.md`') 'SKILL.md maps each host to its adapter file'
     Assert-True ($adapterSection -match 'everything else in this SKILL\.md is shared') 'SKILL.md says the rest is shared'
     Assert-True ((Get-WordCount $skillText) -le $skillWordCap) "SKILL.md is $(Get-WordCount $skillText) words, over $skillWordCap"
+    Assert-True ($skillText.Contains('measure-build-host.ps1') -and $skillText.Contains('computed cap') -and $skillText.Contains('exclusive_reason') -and $skillText.Contains('plan''s named cause')) 'dt-build requires measured throughput and scoped serial reasons'
 
     # SKILL.md: Context discipline carries the script rules and keeps the advisory ones.
     $discipline = [regex]::Match($skillText, '(?s)## Context discipline\s*(.*?)(?=\r?\n## )').Groups[1].Value

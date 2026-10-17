@@ -33,20 +33,13 @@ Load exactly one host adapter before step 1: on a Claude Code host (CLI, Cowork,
 
 ## HTML Review Artifact Requirement
 
-For any artifact this skill produces for Danny to review, generate an HTML companion per `../../references/html-artifact-policy.md`.
-
-Baseline requirement:
-- Keep the primary machine/edit artifact (for example `.md`, `.json`, `.csv`) when needed.
-- Also emit a review-first `.html` artifact in the same artifact family/folder.
-- Include visual structure (cards/tables) plus at least one flow/state visualization (Mermaid or SVG).
-- Report both output paths in the final skill output.
-
-Exception — `build-run-review.html` is on-request only; see step 6.5 for the binding policy.
+Follow `../../references/html-artifact-policy.md` for review artifacts. Keep primary files and link both
+outputs. Exception: `build-run-review.html` is on-request only (step 6.5).
 
 
 
-`dt-build` consumes a finalized `roadmap.md` contract and executes milestones on a short-lived `build/<RUN_ID>` branch cut from `main`, leaving it rehearsed and tested for a separate human-authorized merge to `main`.
-Phase 7A established deterministic roadmap-first intake. Phase 7B restores execution parity through deterministic execution-side scripts.
+Execute finalized roadmap milestones on `build/<RUN_ID>`, cut from `main`; leave the tested branch for
+a separate human-authorized merge.
 
 ## When this fires
 
@@ -106,6 +99,14 @@ Harness terms: `claude-host` has the Agent tool; `codex-host` is any other orche
 
 These rules are enforced by scripts both hosts must call; the adapter gives each host's exact commands.
 
+- **Decide throughput.** Read `references/hardware-parallelism.md`. At intake, after state creation,
+  run `scripts/measure-build-host.ps1 -RunFolder <folder> -MemoryPerJobGB <estimate>`; it records logical
+  processors, RAM, other heavy jobs and the computed cap in build state. Refresh before heavy dispatch
+  and on resume. Run independent jobs concurrently within that cap and pass worker/shard budgets in
+  briefs. Use safe parallel suites (`pytest -n auto` within a CPU allocation, bounded `-n`, or project
+  sharding); serial requires the plan's named cause. Resolve missing decisions before dispatch.
+  FS-58 `exclusive_reason` stays opt-in; never lock unrelated safe work.
+
 - **Run work as jobs.** Workers, tests, builds, and browser checks run as `scripts/dt-job.ps1` jobs, never in the coordinator's foreground. Read only capped `dt-job status|wait -Json` envelopes, checking `report_verdict`/`failure_category`; run state is `run_status`, never event type. Run `dt-job reconcile` at every start, resume and `wait_timeout`; each wait is a 10-minute check-in flagging stalls.
 - **Read deeper deliberately.** Open job evidence only through `scripts/read-evidence.ps1` (`-Lines a-b` or `-Grep`), never by reading stream logs or output files directly.
 - **Mark bootstrap once.** After the mandatory reads and before the first dispatch, run `dt-job mark-bootstrap`; the context limits are measured from that point.
@@ -155,9 +156,8 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   then proceed with that roadmap. This reuses the canonical dt-roadmap producer — dt-build does not
   re-implement milestone parsing or duplicate the schema.
 - If the producer emits a `## Producer Warnings` section or throws "No milestones derivable", surface
-  it and STOP: the design lacks an `## Implementation Sequence` / `## Validation Gates` surface with
-  runnable commands. This is a graceful, explanatory stop — not a crash — and tells the author exactly
-  what the design must add (or to run a deliberate `dt-roadmap` pass first).
+  it and STOP. Name the missing implementation sequence, runnable validation commands or Throughput and
+  hardware decisions; resolve them in the design or through `dt-roadmap` before proceeding.
 - For a heavy build (the generated roadmap has many milestones or any load-bearing/gate milestone per
   `scripts/identify-load-bearing.ps1`), recommend in chat that Danny run a reviewed `dt-roadmap` pass
   before proceeding — then continue if he wants the auto-generated contract.

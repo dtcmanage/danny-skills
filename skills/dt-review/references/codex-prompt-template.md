@@ -15,6 +15,8 @@ both lanes consume it) in this order:
 
 1. Round instructions, the blocking policy, the proportionality rules (stakes-bound blocking, smallest-fix remediation, over-building as a finding), a verification-round block from round 3 on (verify prior commitments; new findings only at high severity), and verdict calibration.
 2. The trusted canonical dimension contract.
+   Under Feasibility, check Throughput and hardware: measured host resources and a parallel method or
+   named serial cause for every long-running step. Missing decisions or unjustified serial runs are findings.
 3. Envelope-wrapped current draft.
 4. Optional envelope-wrapped `review-context.md` evidence map.
 5. For Round 2+, the envelope-wrapped prior review/response, a **condensed cumulative finding

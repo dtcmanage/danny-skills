@@ -68,6 +68,12 @@ Body sections (required):
 
 ## Validation expectations
 
+New producers carry `## Throughput and hardware` verbatim from the design and append `execution` and
+`test-execution` to Milestones and Chunks. Dependencies identify concurrent DAG branches; execution names
+`parallel` or `serial: <cause>`; test-execution names the shard command/budget or serial cause. Preserve
+these fields in milestone exports. Legacy contracts without them remain parseable; resolve their missing
+decisions at build intake before dispatch. Do not treat a legacy sequential chain as evidence of exclusivity.
+
 `skills/dt-roadmap/scripts/roadmap-validator.ps1` must reject with a named error when any of these occur:
 
 - `SCHEMA_VERSION_MISMATCH`: roadmap `schema_version` major differs from schema `producer_current_version` major.

@@ -49,7 +49,7 @@ Do NOT fire for:
 ## Input contract (design-doc sections the producer reads)
 
 The producer is deterministic and filename-agnostic (the design path is passed as `-DesignPath`;
-`design-final-<slug>.md`, legacy `design-final.md`, and `plan-draft.md` all work). It reads two named
+`design-final-<slug>.md`, legacy `design-final.md`, and `plan-draft.md` all work). It reads three named
 sections from the design and fails closed if a milestone has no runnable command to lift.
 
 1. **Milestone source** — primary: `## Implementation Sequence` (also accepted: `## Implementation Order`, `## Build Sequence`, `## Build Order`, `## Milestone Sequence`). Each top-level numbered list item (`1. ...`, `2. ...`) becomes one milestone, numbered M01, M02, ... in source order. The first sentence of the line becomes the milestone name. If the line leads with a bold title (`**Title.**  detail...`), that bolded title (<= 80 chars) becomes the name instead — so an author may write either a plain lead sentence or a `**Bold title.**` lead and both yield a clean short name. Fallback: legacy `### Phase ...` / `### Contract Freeze Gate ...` / `### Value Review ...` headings (pre-1.1.0 behavior, kept for back-compat).
@@ -63,6 +63,13 @@ sections from the design and fails closed if a milestone has no runnable command
    A "runnable command" is anything `scripts/extract-named-artifacts.ps1` returns as an `artifact` or a `command` (see `references/roadmap-schema.md` for the canonical definition). Milestones with no lifted command appear under `## Producer Warnings` in the emitted roadmap; the validator hard-fails them with `VERIFICATION_NAMES_NO_RUNNABLE` so the gap is surfaced before dt-build runs.
 
 The producer does NOT infer test paths, assign milestones to gates by prose matching, or invent commands. The design author owns concrete test file paths.
+
+3. **Throughput and hardware** — carry the plan's measured hosts and decisions into the finalized design.
+   Add a table with `milestone-id`, `dependencies` (`-` for independent), `execution` (`parallel` or
+   `serial: <named cause>`), and `test-execution` (`parallel: <sharded command/budget>` or
+   `serial: <named cause>`). Map every milestone and its chunk; name shared state, isolation and RAM needs
+   in the section. Mark independent milestones/chunks concurrent only when their write surfaces are isolated.
+   The producer copies this section and exports both execution columns; it never infers independence from order.
 
 ## Procedure
 
@@ -78,6 +85,8 @@ The producer does NOT infer test paths, assign milestones to gates by prose matc
 
 3. Draft `roadmap.md` in the schema contract shape:
 - Run `scripts/build-roadmap.ps1 -DesignPath <design> -RoadmapPath <roadmap>`.
+- Resolve any throughput Producer Warnings before intake. Keep the plan's serial reasons and shard commands;
+  put the chosen runnable shard command in Validation Gates so acceptance executes it verbatim.
 - Frontmatter includes `schema_version: 1`.
 - Milestone table includes required contract columns.
 - Chunk table includes required contract columns.

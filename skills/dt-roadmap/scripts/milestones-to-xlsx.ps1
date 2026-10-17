@@ -121,6 +121,8 @@ $exportRows = foreach ($m in $milestones) {
         dependencies = [string]$m.dependencies
         chunks = [string]$m.chunks
         verification_mode = [string]$m.'verification-mode'
+        execution = if ($m.PSObject.Properties['execution']) { [string]$m.execution } else { 'UNRESOLVED' }
+        test_execution = if ($m.PSObject.Properties['test-execution']) { [string]$m.'test-execution' } else { 'UNRESOLVED' }
         status = 'pending'
         percent_complete = 0
         owner = 'unassigned'
@@ -169,11 +171,11 @@ if ($usedFallback) {
     }
     $lines.Add("- schema_version: $schemaVersion")
     $lines.Add('')
-    $lines.Add('| id | name | dependencies | chunks | verification_mode | status | percent_complete | owner |')
-    $lines.Add('| :-- | :-- | :-- | :-- | :-- | :-- | --: | :-- |')
+    $lines.Add('| id | name | dependencies | chunks | verification_mode | execution | test_execution | status | percent_complete | owner |')
+    $lines.Add('| :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | --: | :-- |')
 
     foreach ($r in $exportRows) {
-        $lines.Add("| $($r.id) | $($r.name) | $($r.dependencies) | $($r.chunks) | $($r.verification_mode) | $($r.status) | $($r.percent_complete) | $($r.owner) |")
+        $lines.Add("| $($r.id) | $($r.name) | $($r.dependencies) | $($r.chunks) | $($r.verification_mode) | $($r.execution) | $($r.test_execution) | $($r.status) | $($r.percent_complete) | $($r.owner) |")
     }
 
     Set-Content -LiteralPath $mdPath -Value ($lines -join "`n") -Encoding UTF8

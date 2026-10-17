@@ -288,6 +288,7 @@ Set-Content -LiteralPath (Join-Path $PSScriptRoot 'held-output-child.pid') -Valu
     $assemblyJson = & (Join-Path $SkillRoot 'scripts\assemble-review-prompt.ps1') -ProjectPath $project -Round 1 -Tier complex
     $assembly = $assemblyJson | ConvertFrom-Json
     $prompt = Get-Content -LiteralPath $assembly.prompt_path -Raw
+    Assert-True ($prompt.Contains('Under Feasibility (performance/operability)') -and $prompt.Contains('Throughput and hardware') -and $prompt.Contains('serial decisions without a named cause, are findings')) 'both reviewer lanes receive the hardware decision check'
     . (Join-Path $RepoRoot 'scripts\wrap-prompt-envelope.ps1')
     $expectedEnvelope = New-PromptEnvelope -Label 'CURRENT DRAFT V1' -Content $malicious
     Assert-True $prompt.Contains($expectedEnvelope) 'prompt assembly drifted from shared envelope primitive'

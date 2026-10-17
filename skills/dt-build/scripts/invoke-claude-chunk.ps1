@@ -140,6 +140,11 @@ if (-not $Preflight) {
     $PromptPath = (Resolve-Path -LiteralPath $PromptPath).Path
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
     $promptText = Get-Content -Raw -LiteralPath $PromptPath
+    if ($AdHoc) {
+        . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
+        $hardwareRule = Get-WorkerHardwareRule
+        $promptText += "`nStanding execution rules:`n- $hardwareRule`n"
+    }
     # Pasted sources, evidence packets and histories have pushed review prompts past Codex's
     # 1,048,576-character cap. Refuse well below it, before anything is dispatched.
     $maxPromptChars = 400000
@@ -277,7 +282,7 @@ $prompt = if ($Preflight) {
     "Reply with the single word OK and nothing else. Do not inspect or modify files."
 }
 else {
-    Get-Content -Raw -LiteralPath $PromptPath
+    $promptText
 }
 $promptSha256 = if ($Preflight) {
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($prompt)
@@ -287,6 +292,9 @@ $promptSha256 = if ($Preflight) {
 }
 else {
     (Get-FileHash -LiteralPath $PromptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+$dispatchedPromptSha256 = if ($Preflight) { $promptSha256 } else {
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([System.Text.UTF8Encoding]::new($false).GetBytes($prompt))).ToLowerInvariant()
 }
 # Preflight needs no tool access; a build chunk needs file writes and test
 # commands without interactive prompts, mirroring Codex's workspace-write sandbox.
@@ -580,6 +588,7 @@ try {
         duration_ms         = $durationMs
         timeout_ms          = $TimeoutMs
         prompt_sha256       = $promptSha256
+        dispatched_prompt_sha256 = $dispatchedPromptSha256
         output_sha256       = if (Test-Path -LiteralPath $OutputPath) { (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
         output_path         = if ($temporaryOutput -or -not (Test-Path -LiteralPath $OutputPath)) { $null } else { (Resolve-Path -LiteralPath $OutputPath).Path }
         stream_log_path     = if ($temporaryOutput -or -not (Test-Path -LiteralPath $streamPath)) { $null } else { (Resolve-Path -LiteralPath $streamPath).Path }
@@ -627,6 +636,7 @@ catch {
             disclosure_line = $disclosureLine
             attempt = $Attempt; duration_ms = $durationMs; timeout_ms = $TimeoutMs
             prompt_sha256 = $promptSha256
+            dispatched_prompt_sha256 = $dispatchedPromptSha256
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }
             failure_category = 'tooling'; termination_reason = (Invoke-SecretRedaction -Text $_.Exception.Message)
             dispatch_count = $dispatchCount; single_dispatch = [bool]$SingleDispatch; single_dispatch_refused_branch = $singleDispatchRefused

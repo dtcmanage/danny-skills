@@ -336,14 +336,47 @@ if ($milestones.Count -eq 0) {
 
 $gatesByMilestone = Parse-ValidationGates -Text $redacted
 
+# Decisions are authored, never guessed from milestone order or suite names.
+$throughput = Get-SectionBody -Text $redacted -Headers @('Throughput and hardware')
+$throughputByMilestone = @{}
+if ($throughput) {
+    # A carried-forward plan also has host/step tables. Read the milestone
+    # decision table by its header, not its position in the section.
+    $headers = @()
+    foreach ($line in ($throughput.Body -split '\r?\n')) {
+        if ($line -notmatch '^\s*\|') { $headers = @(); continue }
+        $cells = @($line.Trim().Trim('|').Split('|') | ForEach-Object { $_.Trim() })
+        if ($cells -contains 'milestone-id') { $headers = $cells; continue }
+        if (-not $headers.Count -or $cells[0] -match '^:?-+:?$') { continue }
+        $row = @{}
+        for ($i = 0; $i -lt $headers.Count; $i++) {
+            $row[$headers[$i]] = if ($i -lt $cells.Count) { $cells[$i] } else { '' }
+        }
+        if ($row['milestone-id']) {
+            $mid = $row['milestone-id'].ToUpperInvariant()
+            if ($throughputByMilestone.ContainsKey($mid)) { throw "THROUGHPUT_DUPLICATE: $mid" }
+            $throughputByMilestone[$mid] = $row
+        }
+    }
+}
+$throughputWarnings = [System.Collections.Generic.List[string]]::new()
+
 # Augment each milestone with verification metadata.
 $milestonesAugmented = foreach ($m in $milestones) {
+    $decision = $throughputByMilestone[$m.id]
+    if (-not $decision -or -not $decision['dependencies'] -or
+        $decision['execution'] -notmatch '^(parallel|serial:\s*\S.*)$' -or
+        $decision['test-execution'] -notmatch '^(parallel|serial):\s*\S.*$') {
+        $throughputWarnings.Add("$($m.id): supply dependencies, execution and test-execution in Throughput and hardware; name every serial cause.")
+    }
     $cmds = if ($gatesByMilestone.ContainsKey($m.id)) { @($gatesByMilestone[$m.id]) } else { @() }
     $verificationMode = if ($m.name -like '*Gate*' -or $m.name -like '*gate*') { 'machine-checkable' } else { 'machine-checkable' }
     [pscustomobject]@{
         id = $m.id
         name = $m.name
-        dependencies = if ($m.id -eq 'M01') { '-' } else { ('M{0:D2}' -f ([int]$m.id.Substring(1) - 1)) }
+        dependencies = if ($decision -and $decision['dependencies']) { $decision['dependencies'] } elseif ($m.id -eq 'M01') { '-' } else { ('M{0:D2}' -f ([int]$m.id.Substring(1) - 1)) }
+        execution = if ($decision) { $decision['execution'] } else { 'UNRESOLVED' }
+        test_execution = if ($decision) { $decision['test-execution'] } else { 'UNRESOLVED' }
         verification_mode = $verificationMode
         commands = $cmds
     }
@@ -367,6 +400,8 @@ foreach ($m in $milestonesAugmented) {
         'milestone-id' = $m.id
         'model-routing' = if ($m.verification_mode -eq 'machine-checkable') { 'codex' } else { 'claude' }
         'reference-pack-entitlement' = 'contracts, glossary'
+        'execution' = $m.execution
+        'test-execution' = $m.test_execution
     })
 
     $procedureText = Format-ProcedureCell -MilestoneId $m.id -Commands $m.commands
@@ -376,7 +411,7 @@ foreach ($m in $milestonesAugmented) {
         ('acceptance to be enumerated for {0} in design ## Validation Gates' -f $m.id)
     }
 
-    $milestoneRows.Add("| $($m.id) | $($m.name) | $($m.dependencies) | $chunkSlug | $($m.verification_mode) | baseline-floor-default | $acceptanceText | carry-forward from design-final non-negotiables and approved trade-offs |")
+    $milestoneRows.Add("| $($m.id) | $($m.name) | $($m.dependencies) | $chunkSlug | $($m.verification_mode) | baseline-floor-default | $acceptanceText | carry-forward from design-final non-negotiables and approved trade-offs | $($m.execution) | $($m.test_execution) |")
 
     $manifestRows.Add("| chk-$($m.id.ToLowerInvariant()) | $($m.id) | integration | repo baseline ready | $($m.verification_mode) | $procedureText |")
 }
@@ -391,15 +426,34 @@ $mermaidMilestoneInput = $milestonesAugmented | ForEach-Object {
 }
 
 $mermaid = New-MermaidRenderPayload -Milestones $mermaidMilestoneInput -TryMcp:(-not $ForceMermaidFallback) -VendoredAssetPath (Join-Path $repoRoot 'assets\visualize\vendored\mermaid-10.9.3.min.js')
+# The shared render helper's default is a sequential sketch. Use the declared DAG for this contract.
+$graphLines = @('graph TD')
+$ganttLines = @('gantt', '  title Dependency Timeline', '  dateFormat YYYY-MM-DD', '  section Buildout')
+foreach ($m in $milestonesAugmented) {
+    $safeName = $m.name.Replace('"', "'").Replace('[', '(').Replace(']', ')').Replace('`', "'")
+    $graphLines += ('  {0}["{1}"]' -f $m.id, $safeName)
+    $deps = @($m.dependencies -split '[,;\s]+' | Where-Object { $_ -and $_ -notin @('-', 'none') })
+    foreach ($dep in $deps) { $graphLines += ('  {0} --> {1}' -f $dep, $m.id) }
+    $start = if ($deps.Count) { 'after ' + (($deps | ForEach-Object { $_.ToLowerInvariant() }) -join ' ') } else { '2026-01-01' }
+    $ganttName = $safeName.Replace(':', ' ').Replace(',', ' ')
+    $ganttLines += ('  {0} :{1}, {2}, 1d' -f $ganttName, $m.id.ToLowerInvariant(), $start)
+}
+$mermaid.GraphDefinition = $graphLines -join "`n"
+$mermaid.GanttDefinition = $ganttLines -join "`n"
 $vendoredMermaidPath = Join-Path $repoRoot 'assets\visualize\vendored\mermaid-10.9.3.min.js'
 
 $generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
 
-$chunkRowsMarkdown = ($chunkRows | ForEach-Object { "| $($_.'chunk-slug') | $($_.'milestone-id') | $($_.'model-routing') | $($_.'reference-pack-entitlement') |" }) -join "`n"
+$chunkRowsMarkdown = ($chunkRows | ForEach-Object { "| $($_.'chunk-slug') | $($_.'milestone-id') | $($_.'model-routing') | $($_.'reference-pack-entitlement') | $($_.execution) | $($_.'test-execution') |" }) -join "`n"
 
 $gapNote = if ($milestonesMissingCommands.Count -gt 0) {
     "`n## Producer Warnings`n`nThe following milestones have no runnable command lifted from design ## Validation Gates and will fail dt-roadmap's VERIFICATION_NAMES_NO_RUNNABLE check until the design author adds milestone-tagged backticked commands for them:`n`n- " + ($milestonesMissingCommands -join "`n- ") + "`n"
 } else { "" }
+if ($throughputWarnings.Count) {
+    if (-not $gapNote) { $gapNote = "`n## Producer Warnings`n" }
+    $gapNote += "`n- " + ($throughputWarnings -join "`n- ") + "`n"
+}
+$throughputBody = if ($throughput) { $throughput.Body.Trim() } else { 'UNRESOLVED: measure hosts and decide throughput before dispatch.' }
 
 $roadmap = @"
 ---
@@ -414,14 +468,14 @@ Derived from the finalized design source and prepared for Phase-7 dt-build intak
 
 ## Milestones
 
-| id | name | dependencies | chunks | verification-mode | baseline-floor | acceptance-checks | decision-basis |
-| :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
+| id | name | dependencies | chunks | verification-mode | baseline-floor | acceptance-checks | decision-basis | execution | test-execution |
+| :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
 $($milestoneRows -join "`n")
 
 ## Chunks
 
-| chunk-slug | milestone-id | model-routing | reference-pack-entitlement |
-| :-- | :-- | :-- | :-- |
+| chunk-slug | milestone-id | model-routing | reference-pack-entitlement | execution | test-execution |
+| :-- | :-- | :-- | :-- | :-- | :-- |
 $chunkRowsMarkdown
 
 ## Verification Manifest
@@ -429,6 +483,10 @@ $chunkRowsMarkdown
 | check-id | milestone-id | execution-scope | prerequisites | mode | procedure |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 $($manifestRows -join "`n")
+
+## Throughput and hardware
+
+$throughputBody
 
 ## Dependency Graph (Mermaid)
 

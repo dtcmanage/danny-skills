@@ -843,6 +843,16 @@ Write-Envelope $report
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeOutput `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Claude success path failed"
+    $hardwarePromptCapture = Join-Path $tempRoot 'claude-adhoc-hardware-prompt.txt'
+    $savedPromptCapture = $env:DT_FAKE_UNICODE_PROMPT
+    try {
+        $env:DT_FAKE_UNICODE_PROMPT = $hardwarePromptCapture
+        $hardwareOutput = Join-Path $tempRoot 'claude-adhoc-hardware.md'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $hardwareOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'hardware worker rule fixture' -AdHoc -Json *> $null
+        Assert-True ($LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('pytest-xdist -n <budget>')) 'ad-hoc Claude workers receive the shared hardware rule'
+        $hardwareProvenance = Get-Content -Raw "$hardwareOutput.provenance.json" | ConvertFrom-Json
+        Assert-True ($hardwareProvenance.prompt_sha256 -eq (Get-FileHash -LiteralPath $wrapperPrompt -Algorithm SHA256).Hash.ToLowerInvariant() -and $hardwareProvenance.dispatched_prompt_sha256 -ne $hardwareProvenance.prompt_sha256) 'Claude provenance distinguishes source and effective hardware prompt hashes'
+    } finally { $env:DT_FAKE_UNICODE_PROMPT = $savedPromptCapture }
     $claudeV3Prov = Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json" | ConvertFrom-Json
     Assert-True ($null -eq $claudeV3Prov.report_version_warning) 'Claude v3 report carries no version warning'
 
@@ -1038,6 +1048,7 @@ $script:RouterDiagnosisHttp = {
     # the checkpoint field; removing either silently restores unbounded builders.
     $assembler = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'assemble-codex-prompt.ps1')
     Assert-True ($assembler -match 'Do not spawn subagents') "assembled prompt lost the nested-agent ban"
+    Assert-True ($assembler.Contains('Get-WorkerHardwareRule') -and $assembler.Contains('- $hardwareRule')) 'both assembled worker lanes receive the hardware rule'
     Assert-True ($assembler -match 'after about 100 tool calls') "assembled prompt lost the checkpoint rule"
     Assert-True ($assembler -match '(?m)^CONTINUATION_STATE:') "assembled report lost the CONTINUATION_STATE field"
 

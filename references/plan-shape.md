@@ -20,6 +20,9 @@ Body (surface-shaped; section names match what the conversation produced):
 - `# <Project> Plan` title line
 - Metadata lines: `**Date:**`, `**Surface:**`, `**Scope:**`, `**Dimension framework:**`
 - One or more substantive sections (see `surface-templates.md` for per-surface starting structures)
+- `## Throughput and hardware` — required: measured host cores/logical processors/RAM with command/date,
+  long-running steps, and a parallel method or named serial cause per step. State if none exist; mark
+  inaccessible measurements UNVERIFIED with an intake probe. Include dependencies/isolation and RAM per job.
 - `## Build-intake revalidation` — required (added 2026-08-30; present even when the plan rests on no
   external claims, in which case it carries one row saying so)
 - `## Open Questions` — required (present even if it lists nothing currently open)

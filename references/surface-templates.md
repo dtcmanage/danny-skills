@@ -4,6 +4,9 @@ Per-surface starting structures for dt-plan's Step 2. These are **starting point
 
 Whatever structure is chosen, the plan is still drafted against the six dimensions of the Canonical Dimension Contract (repo-level `references/canonical-dimension-contract.md`): the section layout stays surface-shaped, but every dimension must have a home.
 
+Append the required Throughput and hardware section to every surface, including custom structures;
+use dt-plan's measured-host and per-step decision table under Feasibility.
+
 - **CLI utility** — Goal, Inputs & Outputs, Behavior & Flags, Error Handling, Distribution/Install, Tests
 - **Service or system** — Objectives, Architecture Overview, Components, Data Model, Integration Points, Failure Modes, Security, Observability, Open Questions
 - **Integration** — Source/Target Systems, Data Contract, Auth & Secrets, Sync Cadence or Triggers, Failure Modes & Backfill, Observability, Cutover Plan

@@ -92,6 +92,18 @@ Wait for the go-ahead before Step 3.
 
 ## Step 3 — Drive the conversation, section by section
 
+### Throughput and hardware
+
+Require `## Throughput and hardware` in every plan, including custom structures. Measure each execution
+host's physical cores, logical processors and RAM (`Win32_Processor` / `Win32_OperatingSystem`, or
+`nproc` / `free`; macOS: `sysctl`). Record commands, values and check date; mark an inaccessible host
+UNVERIFIED and name its intake probe. List long-running test suites, builds, data passes and VM runs.
+For each, choose parallel and how (`pytest-xdist -n`, sharded runner, concurrent dt-job jobs or independent
+milestones), or serial with a named cause: shared DB/file state, fixed ports, one live service/quota,
+order-dependent tests, irreversible/production steps or memory ceiling. Name isolation workarounds
+considered before exclusivity. State when no long-running steps exist. Grill this under Feasibility:
+can measured hardware meet the runtime, and does every long step have an explicit decision?
+
 ### Tiering the drive
 
 The Scope answered in Step 1 sets the shape of this step. Do not run both tiers the same way — a light
@@ -235,6 +247,12 @@ shape_version: 1
 ## <Section 2>
 ...
 
+## Throughput and hardware
+Hosts: <measured cores/logical processors/RAM, command and date; intake recheck>.
+| Step | Host | Parallel method or serial reason | Dependencies / isolation | RAM per job |
+| --- | --- | --- | --- | --- |
+| <long-running step, or none with explanation> | <host> | <method or named cause> | <independent work / shared state> | <measured or estimated> |
+
 ## Build-intake revalidation
 | Claim | Evidence/source | Checked at | Recheck gate |
 | --- | --- | --- | --- |
@@ -247,7 +265,7 @@ shape_version: 1
 - <Items deliberately excluded — prevents scope creep in later rounds>
 ```
 
-Section names match what the conversation produced. No skeleton headers with placeholders left in. If a section was skipped entirely, omit it.
+Use agreed section names; retain all required sections. Remove placeholders and optional skipped sections.
 
 If `CONTEXT.md` was created or updated during the session, it's already saved (you wrote to it inline as terms got pinned). If an ADR was drafted, save it now to `docs/adr/<NNNN>-<kebab-title>.md` next to `CONTEXT.md`. Resolve the number deterministically (do not eyeball the folder):
 

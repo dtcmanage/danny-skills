@@ -56,6 +56,7 @@ if ($null -ne $shapeVersion -and $shapeVersion -ne 1) {
 # Header text must match exactly: dt-review copies the plan verbatim to
 # draft-v1.md and matches '^## Build-intake revalidation$' as a hard gate.
 $requiredSections = [ordered]@{
+    'Throughput and hardware'   = '(?m)^##\s+Throughput and hardware\s*$'
     'Build-intake revalidation' = '(?m)^##\s+Build-intake revalidation\s*$'
     'Open Questions'            = '(?m)^##\s+Open Questions\s*$'
     'Out of Scope'              = '(?m)^##\s+Out of Scope\s*$'
@@ -80,7 +81,7 @@ foreach ($field in @('Date', 'Surface', 'Scope', 'Dimension framework')) {
 
 # --- substantive body -------------------------------------------------------
 $allH2 = [regex]::Matches($raw, '(?m)^##\s+(.+?)\s*$') | ForEach-Object { $_.Groups[1].Value }
-$reserved = @('Build-intake revalidation', 'Open Questions', 'Out of Scope')
+$reserved = @('Throughput and hardware', 'Build-intake revalidation', 'Open Questions', 'Out of Scope')
 $substantive = @($allH2 | Where-Object { $reserved -notcontains $_ })
 if ($substantive.Count -lt 1) {
     $missing.Add('at least one substantive section')

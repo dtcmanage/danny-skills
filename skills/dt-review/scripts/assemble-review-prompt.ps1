@@ -101,6 +101,7 @@ Round: $Round
 
 Review rules:
 - Evaluate all six canonical dimensions. Be skeptical, concrete, and proportionate.
+- Under Feasibility (performance/operability), check the Throughput and hardware section: measured hosts' cores/logical processors/RAM with evidence, long-running test suites/builds/data passes/VM runs, and a parallel method or named serial reason for each. Long-running steps without a parallelism decision, or serial decisions without a named cause, are findings. Check isolation workarounds before exclusivity; do not invent blanket serialization or compulsory parallelism. Apply the existing severity and verification-round rules.
 - Do not manufacture findings to keep the dialogue running. A clean design is a valid result.
 - Surface every issue you can establish from the current evidence now; do not knowingly serialize findings across later rounds.
 - For a new finding, assign the next ID in this round as R$Round-F01, R$Round-F02, and so on, with status NEW.

@@ -1,0 +1,37 @@
+# Throughput and hardware
+
+At intake, measure the actual execution host after creating `build-state.md`:
+`pwsh -NoProfile -File scripts/measure-build-host.ps1 -RunFolder <folder> -MemoryPerJobGB <estimate>`.
+Use measured peak RAM per job when available; label an estimate and revise it after the first run.
+Repeat for each execution host, on resume and before heavy dispatch. A failed probe is an environment
+gap to resolve, never evidence of an idle machine. Reconcile dt-job state with the process sample;
+sampling alone cannot identify every sleeping VM or remote job. Record those reservations too.
+
+Use the computed cap as a starting allocation, not a blanket limit: CPU slots default to
+`max(1, floor(logical_processors / 4))`, less running heavy jobs. RAM slots are
+`floor((free_RAM - headroom) / peak_RAM_per_job)`; default headroom is the greater of 2 GiB or 10% of
+total RAM. The new-job cap is the smaller nonnegative slot count. Zero means wait or offload, never
+force one job past the RAM ceiling. Record a measured reason for any override. Include every shard's
+RAM in the job estimate. Free RAM already excludes running work; do not subtract its RAM twice.
+
+Dispatch ready independent milestones/chunks through concurrent dt-job jobs with isolated worktrees,
+roots, databases and ports. Keep dependency acceptance gates and load-bearing priority; independent
+work need not wait for an unrelated milestone. Reconcile completions before filling freed slots.
+Serialize integration branch compare-and-swap updates because they mutate one shared ref; rebuild on
+the accepted base as required by the branch contract.
+
+Allocate logical processors and memory across jobs and their nested runners. Give each brief its
+host snapshot, heavy-job cap, CPU/shard budget, memory estimate, exact test command and serial reasons.
+Use the project's sharded runner or pytest-xdist `-n <budget>` for isolated suites. Use `pytest -n auto`
+only within a CPU allocation or when one suite owns the available budget. Verify xdist is installed;
+add it through the project's test dependencies when authorized. Do not silently drop `-n` if it is
+missing. Put the parallel command in the roadmap's verification manifest before acceptance: the gate
+runs the named command verbatim. Keep the full test selection and fix-round budget.
+
+For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
+external service/quota, order dependence, irreversible/production step or memory ceiling), evidence,
+scope and isolation/offload workaround considered. Newly discovered contention requires a recorded
+plan/roadmap decision revision before affected work proceeds, not an unexplained serial fallback.
+Keep safe work parallel. FS-58 is unchanged: pass dt-job `-ExclusiveReason '<cause>'` only for the
+specific job needing the machine pytest lock; leave `exclusive_reason` empty otherwise. Do not use
+that lock as a scheduler or a substitute for isolating a suite.

@@ -146,6 +146,11 @@ pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
 
 ### 3. Round N
 
+Check `## Throughput and hardware` under Feasibility (performance/operability): measured host cores/RAM,
+long-running steps, parallel methods and named serial reasons. Missing decisions for long steps or
+serialization without a named cause are findings. Challenge exclusivity with isolation workarounds;
+preserve settled decisions and the existing severity/round rules.
+
 1. Assemble the prompt deterministically:
 
    ```powershell

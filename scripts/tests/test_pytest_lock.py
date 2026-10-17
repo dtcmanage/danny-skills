@@ -1,4 +1,8 @@
-"""Fixtures only: run directly with Python (these tests exercise the lock itself)."""
+"""Run directly with Python. Isolate ownership fixtures from live suites.
+
+Use a private OS lock and inventory=False in fixture entry points. Test legacy
+inventory classification and bounding separately against the production module.
+"""
 from __future__ import annotations
 import importlib.util
 import json
@@ -20,7 +24,7 @@ spec.loader.exec_module(lock)
 class LockTests(unittest.TestCase):
     def test_reason_required(self):
         for args in ([], ['--reason'], ['--reason', ''], ['--reason', '   ']):
-            result = subprocess.run([sys.executable, str(HELPER), *args, '--',
+            result = subprocess.run([sys.executable, str(self.helper), *args, '--',
                                      sys.executable, '-c', "raise AssertionError('must not run')"],
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 2)
@@ -42,6 +46,26 @@ class LockTests(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name) / 'lock'
+        paths = dict(ROOT=root, LOCK=root / 'exclusive.lock', STATUS=root / 'holder.json')
+        patch = mock.patch.multiple(lock, **paths)
+        patch.start()
+        self.addCleanup(patch.stop)
+        # Invoke the real parser and ownership implementation with fixture-local
+        # paths. The existing opt-out avoids waiting on unrelated live pytest.
+        self.helper = Path(self.temp.name) / 'pytest-lock.py'
+        self.helper.write_text(
+            'import importlib.util\nfrom pathlib import Path\nfrom functools import partial\n'
+            f'spec = importlib.util.spec_from_file_location("fixture_lock", {str(HELPER)!r})\n'
+            'module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n'
+            f'module.ROOT = Path({str(root)!r})\n'
+            'module.LOCK = module.ROOT / "exclusive.lock"\n'
+            'module.STATUS = module.ROOT / "holder.json"\n'
+            'module.pytest_lock = partial(module.pytest_lock, inventory=False)\n'
+            'raise SystemExit(module.main())\n', encoding='utf-8')
+        self.helper.with_suffix('.ps1').write_text(
+            HELPER.with_suffix('.ps1').read_text(encoding='utf-8'), encoding='utf-8')
         self.marker = Path(self.temp.name) / 'held'
         self.release = Path(self.temp.name) / 'release'
         self.children = []
@@ -64,7 +88,6 @@ class LockTests(unittest.TestCase):
                 time.sleep(.1)
         for handle in self.stderr_files:
             handle.close()
-        self.temp.cleanup()
 
     def holder(self):
         code = ('from pathlib import Path\nimport time,os\n'
@@ -73,7 +96,7 @@ class LockTests(unittest.TestCase):
         error_path = Path(self.temp.name) / 'holder.stderr.log'
         error = error_path.open('w')
         self.stderr_files.append(error)
-        child = subprocess.Popen([sys.executable, str(HELPER), '--reason', 'lock fixtures: deliberate contention; separate temp paths cannot test shared ownership', '--', sys.executable, '-c', code],
+        child = subprocess.Popen([sys.executable, str(self.helper), '--reason', 'lock fixtures: deliberate contention within this private fixture; separate locks cannot test ownership', '--', sys.executable, '-c', code],
                                  stdout=subprocess.DEVNULL, stderr=error)
         self.children.append(child)
         deadline = time.monotonic() + 20
@@ -90,7 +113,7 @@ class LockTests(unittest.TestCase):
 
     def caller(self, timeout=15, code='pass', env=None, ready=None, stderr=subprocess.DEVNULL):
         args = ['--ready-file', str(ready)] if ready is not None else []
-        return subprocess.Popen([sys.executable, str(HELPER), '--reason', 'lock fixtures: deliberate contention; separate temp paths cannot test shared ownership', '--timeout', str(timeout), *args, '--',
+        return subprocess.Popen([sys.executable, str(self.helper), '--reason', 'lock fixtures: deliberate contention within this private fixture; separate locks cannot test ownership', '--timeout', str(timeout), *args, '--',
                                  sys.executable, '-c', code], stdout=subprocess.DEVNULL,
                                 stderr=stderr, env=env)
 
@@ -127,11 +150,11 @@ class LockTests(unittest.TestCase):
         self.assertTrue(lock.actual_pytest(dict(Name='pytest.exe', CommandLine='"C:/tools/pytest.exe"')))
         self.assertFalse(lock.actual_pytest(dict(Name='pwsh.exe', CommandLine='Get-CimInstance Win32_Process pytest')))
         self.assertFalse(lock.actual_pytest(dict(Name='python.exe', CommandLine='python scripts/pytest-lock.py -- python -m pytest')))
-        for entry in ([sys.executable, str(HELPER), '--reason', 'lock fixtures: deliberate contention; separate temp paths cannot test shared ownership', '--timeout', '1', '--'],
-                      ['pwsh', '-NoProfile', '-File', str(HELPER.with_suffix('.ps1')), '-Reason', 'nested argv fixture: inherited ownership must avoid deadlock; isolated locks cannot test reuse', '-TimeoutSec', '1'],
+        for entry in ([sys.executable, str(self.helper), '--reason', 'lock fixtures: deliberate contention within this private fixture; separate locks cannot test ownership', '--timeout', '1', '--'],
+                      ['pwsh', '-NoProfile', '-File', str(self.helper.with_suffix('.ps1')), '-Reason', 'nested argv fixture: inherited ownership must avoid deadlock; isolated locks cannot test reuse', '-TimeoutSec', '1'],
                       ['pwsh', '-NoProfile', '-CommandWithArgs',
                        '& $args[0] @($args | Select-Object -Skip 1); exit $LASTEXITCODE',
-                       str(HELPER.with_suffix('.ps1')), '-Reason', 'nested argv fixture: inherited ownership must avoid deadlock; isolated locks cannot test reuse', '-TimeoutSec', '1']):
+                       str(self.helper.with_suffix('.ps1')), '-Reason', 'nested argv fixture: inherited ownership must avoid deadlock; isolated locks cannot test reuse', '-TimeoutSec', '1']):
             argv = Path(self.temp.name) / 'argv.json'
             command = entry + [sys.executable, '-c',
                               f'import sys,json; from pathlib import Path; Path({str(argv)!r}).write_text(json.dumps(sys.argv[1:]))',

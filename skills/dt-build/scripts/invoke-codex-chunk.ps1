@@ -149,13 +149,14 @@ if (-not $Preflight) {
     $promptText = Get-Content -Raw -LiteralPath $PromptPath
     . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
     $fixRoundRule = Get-WorkerFixRoundRule -MaxFixRounds $MaxFixRounds
+    $hardwareRule = Get-WorkerHardwareRule
     if ($AdHoc) {
         $promptFolder = Split-Path -Parent $PromptPath
         # Workers never see where the prompt came from; refuse sibling references that cannot resolve.
         $siblingPattern = '(?i)[`"'']?([\w.-]+\.[a-z0-9]{1,8})[`"'']?\s*\((?:beside|next to|alongside) this prompt\)'
         $missingSiblings = @([regex]::Matches($promptText, $siblingPattern) | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique | Where-Object { -not (Test-Path -LiteralPath (Join-Path $promptFolder $_) -PathType Leaf) })
         if ($missingSiblings.Count) { throw "CODEX_PROMPT_SIBLING_MISSING: referenced beside the prompt but absent from ${promptFolder}: $($missingSiblings -join ', ')" }
-        $promptText += "`nStanding execution rules:`n- This prompt file is $PromptPath. Resolve files described as beside, next to, or alongside this prompt against its folder: $promptFolder`n- $fixRoundRule`n"
+        $promptText += "`nStanding execution rules:`n- This prompt file is $PromptPath. Resolve files described as beside, next to, or alongside this prompt against its folder: $promptFolder`n- $fixRoundRule`n- $hardwareRule`n"
     }
     elseif ($PSBoundParameters.ContainsKey('MaxFixRounds')) {
         $rulePattern = '(?m)^- Run the full named test selection[^\r\n]*'
