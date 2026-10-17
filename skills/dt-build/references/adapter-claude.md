@@ -1,6 +1,6 @@
 # dt-build host adapter: Claude Code
 
-Load this file only when the coordinator runs in Claude Code (interactive CLI, Cowork, or `claude -p`). Other rules live in `SKILL.md`. `dt-job` below means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`; the id checks context and renews the lease.
+Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rules: `SKILL.md`. `dt-job` means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`; it checks context and renews the lease.
 
 ## Dispatch
 
@@ -11,10 +11,11 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 
 ## Waiting and completion
 
-- Wait with one command: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 600 -Json`, run through the Bash tool with `run_in_background: true` and a longer Bash `timeout`. Claude Code notifies on exit. End the turn after starting it.
+- Top-level coordinators: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 600 -Json`, Bash `run_in_background: true`, longer Bash `timeout`; end the turn and await notification.
+- Subagent/teammate coordinators (Agent-tool launched, or no direct user turn): foreground wait with `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 540 -Json`, Bash `run_in_background: false`, `timeout: 600000`. Repeat after every `wait_timeout` check-in; never end the turn while jobs run.
 - Each `wait_timeout` is a check-in listing each running job's `progress`. Jobs have no time limit; for a `STALLED` job (20 silent minutes), check its output, then cancel and retry or keep waiting.
 - Never use CronCreate, Monitor heartbeats, `sleep` loops, or repeated `status` calls.
-- The ledger is the truth, not the notification: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and on `wait_timeout`, then start one new background wait for the jobs still running.
+- Run `dt-job reconcile -CoordinatorId <id>` at start, resume and `wait_timeout`, then repeat the appropriate wait for remaining jobs.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.
 
 ## Bootstrap and context
@@ -40,7 +41,7 @@ Load this file only when the coordinator runs in Claude Code (interactive CLI, C
 - For managed starts, the interactive session registers with `-Managed`, runs `dt-job request-continuation -CoordinatorId <id> -Reason managed_start`, takes no lease, and ends; the watcher continues.
 
 - Managed relaunches verify the existing registration through `read-resume-record.ps1`. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters the run.
-- The watcher (`scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts queued jobs, and relaunches when unconsumed events wait without a live coordinator. Unconsumed triggers retry after 2/10/30 minutes, then stop; two consecutive thrash launches on unchanged checkpoints pause with one DM.
+- The watcher (`scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts jobs and relaunches for unconsumed events without a coordinator. Retries: 2/10/30 minutes; two thrash launches on unchanged checkpoints pause with one DM.
 - Legacy managed coordinator prompts read `/dt-build resume <RUN_ID> (managed coordinator <id>)`. Continue as `<id>` (reconcile, read `_build-state.md`, carry on); never run `dt-job resume`.
 - Before ending each headless turn, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state it shows. An unconsumed trigger counts as a failed launch.
 - The launcher alone sets `DT_BUILD_COORDINATOR_ID`, for managed coordinators. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.

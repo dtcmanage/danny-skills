@@ -49,6 +49,9 @@ try {
         $path = Join-Path $refDir $name
         Assert-True (Test-Path -LiteralPath $path) "$name exists"
         $text = Get-Content -Raw -LiteralPath $path
+        if ($name -eq 'adapter-claude.md') {
+            Assert-True ($text -match 'Subagent/teammate coordinators[^\r\n]*foreground wait[^\r\n]*-TimeoutSec 540[^\r\n]*run_in_background: false[^\r\n]*timeout: 600000') 'Claude adapter names the foreground wait for subagent coordinators'
+        }
         $headings = @([regex]::Matches($text, '(?m)^## (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value })
         Assert-True (($headings -join '|') -ceq ($sections -join '|')) "$name has exactly the required sections in order (found: $($headings -join ', '))"
         $words = Get-WordCount $text
