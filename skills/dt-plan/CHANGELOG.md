@@ -1,5 +1,7 @@
 # dt-plan changelog
 
+- 1.4.0 (2026-10-17): Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).
+
 - 1.3.1 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).
 
 - 1.3.0 (2026-09-06): Premises-first rule for the Build-intake revalidation table: the two to five facts the plan's value depends on are checked live before the dimension passes and recorded as rows; an unverified premise blocks dt-review. Shared dimension contract: security minimum checks apply only with external actors or untrusted input.

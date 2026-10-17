@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.0
+
+- Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).
+
 ## 2.47.2
 
 - Subagent and teammate coordinators wait for dt-job in the foreground and never end the turn while jobs run (idle-teammate stall, Oct 17).

@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.3.0
+
+- Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).
+
 ## 1.2.4
 
 - Consume the shared security posture correction that redacts vendor errors used by the router observability patch.

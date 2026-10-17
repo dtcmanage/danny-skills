@@ -1,5 +1,7 @@
 # dt-prototype changelog
 
+- 1.1.5 (2026-10-17): Plan shape contract adds the required Throughput and hardware section.
+
 - 1.1.4 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).
 
 - 1.1.3 (2026-09-06): Shared plan-shape.md: Build-intake revalidation rows start with the plan's live-checked premises; no change to this skill's own files.

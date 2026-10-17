@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.17.0 (2026-10-17): Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).
+
 - 1.16.34 (2026-10-14): Shared process wrapper: blocked-report classifier ignores report headers and paths (dt-build 2.41.1).
 
 - 1.16.33 (2026-10-13): Model router bench (shared component): bench tests use a fake renderer, and the ranked renderer finds browser-smoke through DANNY_BROWSER_SMOKE_DIR outside the workspace tree; the task bank is unchanged (FS-69).

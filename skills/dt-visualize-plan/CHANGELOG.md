@@ -1,5 +1,7 @@
 # dt-visualize-plan changelog
 
+- 1.1.6 (2026-10-17): Plan shape contract adds the required Throughput and hardware section.
+
 - 1.1.5 (2026-10-01): Consume the shared security posture correction that redacts vendor errors used by the router observability patch.
 
 - 1.1.4 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).
