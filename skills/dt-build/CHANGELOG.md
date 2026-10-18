@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.4
+
+- Balance test shards by work: prefer xdist worksteal or a queue; static shards split by recorded durations (FS-105).
+
 ## 2.48.3
 
 - FS-103: sample job process-tree peak memory, expose it in status, and size host RAM slots from recent measured job history.

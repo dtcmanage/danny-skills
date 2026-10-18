@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.25.3",
+  "version": "0.25.4",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.25.4 dt-build 2.48.4: duration-balanced test sharding guidance (FS-105).",
       "0.25.3 dt-build 2.48.3: measure job process-tree peak RAM and derive slot sizing from run history (FS-103); version policy: reject clean feature branches with post-release commits before merge (FS-104).",
       "0.25.2 dt-build 2.48.2: relaunch test isolation (FS-102 follow-up).",
       "0.25.1 dt-build 2.48.1: guard temporary dt-job run folders and relaunch saved jobs after crashes (FS-101/FS-102).",

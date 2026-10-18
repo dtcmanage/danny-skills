@@ -26,7 +26,11 @@ host snapshot, heavy-job cap, CPU/shard budget, memory estimate, exact test comm
 Use the project's sharded runner or pytest-xdist `-n <budget>` for isolated suites. Use `pytest -n auto`
 only within a CPU allocation or when one suite owns the available budget. Verify xdist is installed;
 add it through the project's test dependencies when authorized. Do not silently drop `-n` if it is
-missing. Put the parallel command in the roadmap's verification manifest before acceptance: the gate
+missing. Balance shards by work, not by file or test count: prefer dynamic distribution (xdist
+`--dist worksteal`, or a runner queue that hands the next test to a free worker) so one slow group
+cannot pin a single shard. When shards must be static, split by recorded per-test durations
+(e.g. `pytest --durations=0` output or a durations file) and spread any known-slow group across all
+shards. Put the parallel command in the roadmap's verification manifest before acceptance: the gate
 runs the named command verbatim. Keep the full test selection and fix-round budget.
 
 For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
