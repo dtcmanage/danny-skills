@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.2
+
+- Keep the FromJob relaunch test off the machine-wide pytest lock.
+
 ## 2.48.1
 
 - Fix FS-101/FS-102: guard new temporary dt-job run folders, keep copied-run evidence readable, and relaunch saved jobs with exact path overrides and ancestry.
