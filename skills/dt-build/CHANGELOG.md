@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.6
+
+- Every pass runs end to end past failures; fix all findings in one round and repeat until one pass is fully clean (FS-107).
+
 ## 2.48.5
 
 - Gate runs refresh the shard durations file automatically (FS-106).

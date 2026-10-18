@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.48.5
+  version: 2.48.6
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -227,9 +227,9 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 - d. **Run independent semantic verification.** A fresh non-builder verifier (via VERIFY_DISPATCH) reviews every load-bearing,
   security-sensitive, live-write, or agent-verification milestone before acceptance. Record findings and the
   verifier surface/model, selection reason, and disclosure line. The builder never self-approves. The verifier also flags any diff content beyond
-  the milestone's named artifacts and stated scope as an out-of-scope finding — built-but-unrequested work is
-  a defect, not a bonus.
+  the milestone's named artifacts and stated scope as an out-of-scope finding — unrequested work is a defect.
 - e. **Run the acceptance gate.** `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
+  Run each pass to the end past failures; fix everything, rerun until clean.
 - f. **Run the downgrade-language scan.** `scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
 - g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and
   resolved model, `category`, `escalated` (true when the accepted attempt used `-EscalateFrom`), selection reason, disclosure line, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
