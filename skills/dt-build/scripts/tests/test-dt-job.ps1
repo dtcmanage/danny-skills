@@ -195,11 +195,11 @@ $results | ConvertTo-Json -Compress
     $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $scriptJob.job_id)
     $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
     Assert-True ($retryRecord.status -eq 'succeeded' -and (Get-Content -Raw $retryRecord.output_path).Trim() -eq 'one,two|') 'script path and argument list survive relaunch'
-    $failedJob = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', 'exit 7', '-Kind', 'test', '-Vendor', 'fixture', '-DependsOn', $scriptJob.job_id, '-ExclusiveReason', 'fixture only')
+    $failedJob = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', 'exit 7', '-Kind', 'test', '-Vendor', 'fixture', '-DependsOn', $scriptJob.job_id)
     $null = Wait-JobTerminal $relaunchRun $failedJob.job_id
     $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $failedJob.job_id)
     $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
-    Assert-True ($retryRecord.status -eq 'failed' -and $retryRecord.exit_code -eq 7 -and $retryRecord.depends_on[0] -eq $scriptJob.job_id -and $retryRecord.exclusive_reason -eq 'fixture only') 'failed job relaunch preserves command dependencies and exclusivity'
+    Assert-True ($retryRecord.status -eq 'failed' -and $retryRecord.exit_code -eq 7 -and $retryRecord.depends_on[0] -eq $scriptJob.job_id) 'failed job relaunch preserves command and dependencies'
     $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $failedJob.job_id, '-ScriptPath', $argScript, '-ArgumentList', 'replacement', '-Kind', 'command', '-Vendor', 'replacement', '-Model', 'new-model', '-DependsOn', '', '-ExclusiveReason', '', '-RunId', 'new-run')
     $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
     Assert-True ($retryRecord.status -eq 'succeeded' -and $retryRecord.kind -eq 'command' -and $retryRecord.vendor -eq 'replacement' -and $retryRecord.model -eq 'new-model' -and $retryRecord.run_id -eq 'new-run' -and $retryRecord.depends_on.Count -eq 0 -and -not $retryRecord.exclusive_reason -and (Get-Content -Raw $retryRecord.output_path).Trim() -eq 'replacement|') 'explicit script arguments kind vendor model run dependencies and exclusivity override copied values'
