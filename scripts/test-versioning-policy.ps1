@@ -2,6 +2,7 @@ param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:passed = 0
 
 function Write-Utf8([string]$Path, [string]$Content) {
     $parent = Split-Path -Parent $Path
@@ -11,6 +12,7 @@ function Write-Utf8([string]$Path, [string]$Content) {
 
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw "ASSERT_FAIL: $Message" }
+    $script:passed++
 }
 
 function Write-Manifests([string]$Root, [string]$Version, [string]$Summary, [string]$PreviousVersion = '1.0.0') {
@@ -106,6 +108,20 @@ try {
     & pwsh -NoProfile -File (Join-Path (Split-Path -Parent $PSScriptRoot) 'tools\build-plugin.ps1') `
         -RepoRoot $tempRoot -BaseRef auto -ValidateOnly *> $null
     Assert-True ($LASTEXITCODE -eq 0) 'packaging -BaseRef auto failed on a valid feature branch'
+    $tipRoot = Join-Path $tempRoot 'tip-fixture'
+    & git clone -q $tempRoot $tipRoot
+    & git -C $tipRoot config user.email 'fixture@example.invalid'
+    & git -C $tipRoot config user.name 'Fixture'
+    & git -C $tipRoot branch -f main $releaseBase
+    Write-Utf8 (Join-Path $tipRoot 'README.md') 'post-release change'
+    & git -C $tipRoot add README.md
+    & git -C $tipRoot commit -q -m 'post-release change'
+    $tipJson = & pwsh -NoProfile -File $validator -RepoRoot $tipRoot -BaseRef main -Json
+    Assert-True ($LASTEXITCODE -eq 1 -and ($tipJson -join ' ') -match 'RELEASE_COMMIT_NOT_TIP') 'clean branch rejects post-bump commit with tip error'
+    Assert-True (($tipJson -join ' ') -match 'Fold the change into the release commit or bump again') 'tip error provides repair instruction'
+    Write-Utf8 (Join-Path $tipRoot 'README.md') 'dirty pending release'
+    $dirtyTipJson = & pwsh -NoProfile -File $validator -RepoRoot $tipRoot -BaseRef main -Json
+    Assert-True ($LASTEXITCODE -eq 0 -and ($dirtyTipJson -join ' ') -notmatch 'RELEASE_COMMIT_NOT_TIP') 'dirty branch keeps current behavior'
     $autoRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("versioning-auto-{0}" -f ([guid]::NewGuid().ToString('N')))
     try {
         $featureName = (& git -C $tempRoot branch --show-current).Trim()
@@ -578,7 +594,7 @@ try {
     Assert-True (-not [string]::IsNullOrWhiteSpace([string](($unicodePluginJson -join "`n") | ConvertFrom-Json).error)) 'plugin Unicode SemVer failure was not JSON'
     Assert-True ((Get-Content -Raw -LiteralPath $helperPluginPath) -eq $unicodePluginBefore) 'plugin Unicode SemVer failure mutated plugin.json'
 
-    Write-Output 'PASS: versioning policy regression suite'
+    Write-Output "PASS: versioning policy regression suite ($script:passed passed)"
 }
 finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

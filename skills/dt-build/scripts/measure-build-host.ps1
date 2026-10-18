@@ -1,6 +1,7 @@
 #Requires -Version 7.0
 param(
     [string]$RunFolder,
+    [string]$Kind,
     [ValidateRange(0.01, 1048576)][double]$MemoryPerJobGB = 2
 )
 Set-StrictMode -Version Latest
@@ -25,11 +26,38 @@ function Get-BuildHardwareBudget {
     }
 }
 
+function Get-BuildMemoryHistory {
+    param([string]$RunFolder, [string]$Kind)
+    $jobsPath = Join-Path $RunFolder 'jobs'
+    $finished = @(if (Test-Path -LiteralPath $jobsPath) {
+        foreach ($file in Get-ChildItem -LiteralPath $jobsPath -File -Filter '*.json') {
+            try {
+                $r = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+                if ($r.status -in @('succeeded', 'failed', 'timeout', 'cancelled', 'orphaned', 'blocked') -and $r.ended -and
+                    (-not $Kind -or $r.kind -eq $Kind)) { $r }
+            } catch { } # Ignore partial or unrelated records.
+        }
+    })
+    $peaks = @($finished | Sort-Object { [DateTimeOffset]$_.ended } -Descending | Select-Object -First 20 |
+        Where-Object { $_.PSObject.Properties['peak_memory_gb'] -and $null -ne $_.peak_memory_gb -and
+            $_.peak_memory_gb -is [ValueType] -and [double]::IsFinite([double]$_.peak_memory_gb) -and $_.peak_memory_gb -ge 0 } |
+        ForEach-Object { [double]$_.peak_memory_gb })
+    if ($peaks.Count -eq 0) { return [pscustomobject]@{ value = 2.0; source = 'default' } }
+    $max = ($peaks | Measure-Object -Maximum).Maximum
+    [pscustomobject]@{ value = [math]::Max(0.5, $max * 1.25); source = "measured ($($peaks.Count) jobs, max $max GB)" }
+}
+
 if ($MyInvocation.InvocationName -eq '.') { return }
 if (-not $RunFolder -or -not (Test-Path -LiteralPath (Join-Path $RunFolder 'build-state.md'))) {
     throw 'HARDWARE_STATE_MISSING: create build-state.md before measuring the host.'
 }
 
+$memorySource = 'explicit'
+if (-not $PSBoundParameters.ContainsKey('MemoryPerJobGB')) {
+    $history = Get-BuildMemoryHistory -RunFolder $RunFolder -Kind $Kind
+    $MemoryPerJobGB = $history.value
+    $memorySource = $history.source
+}
 $source = ''
 if ($IsWindows) {
     $cpu = @(Get-CimInstance Win32_Processor)
@@ -78,7 +106,7 @@ $snapshot = [ordered]@{
     host_name = [Environment]::MachineName; measured_at = (Get-Date).ToString('o'); source = $source
     physical_cores = $cores; logical_processors = $logical; total_ram_gb = $total; free_ram_gb = $free
     other_heavy_job_running = ($heavy.Count -gt 0); heavy_process_candidates = $heavy
-    memory_per_job_gb = $MemoryPerJobGB; memory_basis = 'estimate; replace with workload peak including shards'
+    memory_per_job_gb = $MemoryPerJobGB; memory_per_job_source = $memorySource; memory_basis = $memorySource
     budget = $budget
 }
 $json = $snapshot | ConvertTo-Json -Depth 7
@@ -87,6 +115,6 @@ $path = Join-Path $RunFolder 'hardware-snapshot.json'
 $statePath = Join-Path $RunFolder 'build-state.md'
 $state = [IO.File]::ReadAllText($statePath)
 $state = [regex]::Replace($state, '(?ms)^## Throughput and hardware\r?\n.*?(?=^## |\z)', '')
-$state += "`n## Throughput and hardware`nHost: $($snapshot.host_name); logical_processors: $logical; RAM_GiB: $total; free_GiB: $free`nOther heavy process candidates: $($heavy.Count); new_heavy_job_cap: $($budget.new_heavy_job_cap); RAM_per_job_GiB: $MemoryPerJobGB (estimate)`nSnapshot: $path`n"
+$state += "`n## Throughput and hardware`nHost: $($snapshot.host_name); logical_processors: $logical; RAM_GiB: $total; free_GiB: $free`nOther heavy process candidates: $($heavy.Count); new_heavy_job_cap: $($budget.new_heavy_job_cap); RAM_per_job_GiB: $MemoryPerJobGB ($memorySource)`nSnapshot: $path`n"
 & (Join-Path $PSScriptRoot 'write-build-state.ps1') -Path $statePath -Content $state | Out-Null
 $json

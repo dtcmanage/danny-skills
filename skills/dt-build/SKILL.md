@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.48.2
+  version: 2.48.3
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -100,11 +100,12 @@ Harness terms: `claude-host` has the Agent tool; `codex-host` is any other orche
 These rules are enforced by scripts both hosts must call; the adapter gives each host's exact commands.
 
 - **Decide throughput.** Read `references/hardware-parallelism.md`. At intake, after state creation,
-  run `scripts/measure-build-host.ps1 -RunFolder <folder> -MemoryPerJobGB <estimate>`; it records logical
+  run `scripts/measure-build-host.ps1 -RunFolder <folder> [-Kind <kind>]`; it records logical
   processors, RAM, other heavy jobs and the computed cap in build state. Refresh before heavy dispatch
   and on resume. Run independent jobs concurrently within that cap and pass worker/shard budgets in
   briefs. Use safe parallel suites (`pytest -n auto` within a CPU allocation, bounded `-n`, or project
   sharding); serial requires the plan's named cause. Resolve missing decisions before dispatch.
+  Per-process memory caps for test runners must come from measured peaks, never a guess.
   FS-58 `exclusive_reason` stays opt-in; never lock unrelated safe work.
 
 - **Run work as jobs.** Workers, tests, builds, and browser checks run as `scripts/dt-job.ps1` jobs, never in the coordinator's foreground. Read only capped `dt-job status|wait -Json` envelopes, checking `report_verdict`/`failure_category`; run state is `run_status`, never event type. Run `dt-job reconcile` at every start, resume and `wait_timeout`; each wait is a 10-minute check-in flagging stalls.

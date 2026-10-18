@@ -29,6 +29,28 @@ try {
     $state = Get-Content (Join-Path $root 'build-state.md') -Raw
     $refreshed = Get-Content (Join-Path $root 'hardware-snapshot.json') -Raw | ConvertFrom-Json
     Check ($LASTEXITCODE -eq 0 -and ([regex]::Matches($state, '(?m)^## Throughput and hardware$')).Count -eq 1 -and $state.Contains('RUN_ID: fixture') -and $refreshed.memory_per_job_gb -eq 3) 'resume refresh replaces the allocation without duplicating sections or losing state'
+    Check ($live.memory_per_job_source -eq 'explicit') 'explicit memory overrides history'
+    $fallback = (& pwsh -NoProfile -File $probe -RunFolder $root) | ConvertFrom-Json
+    Check ($fallback.memory_per_job_gb -eq 2 -and $fallback.memory_per_job_source -eq 'default') 'empty history falls back to 2 GB'
+    $jobs = Join-Path $root 'jobs'
+    New-Item -ItemType Directory -Path $jobs | Out-Null
+    foreach ($i in 0..21) {
+        @{ status = 'succeeded'; ended = [DateTime]::UtcNow.AddMinutes(-$i).ToString('o'); kind = 'test'; peak_memory_gb = $(if ($i -ge 20) { 99 } else { 4 }) } |
+            ConvertTo-Json | Set-Content (Join-Path $jobs "$i.json")
+    }
+    @{ status = 'failed'; ended = [DateTime]::UtcNow.ToString('o'); kind = 'build'; peak_memory_gb = 8 } | ConvertTo-Json | Set-Content (Join-Path $jobs 'build.json')
+    @{ status = 'running'; ended = $null; kind = 'test'; peak_memory_gb = 100 } | ConvertTo-Json | Set-Content (Join-Path $jobs 'running.json')
+    $measured = (& pwsh -NoProfile -File $probe -RunFolder $root -Kind test) | ConvertFrom-Json
+    Check ($measured.memory_per_job_gb -eq 5 -and $measured.memory_per_job_source -eq 'measured (20 jobs, max 4 GB)') 'history filters kind and uses only last 20 finished jobs'
+    $override = (& pwsh -NoProfile -File $probe -RunFolder $root -Kind test -MemoryPerJobGB 3) | ConvertFrom-Json
+    Check ($override.memory_per_job_gb -eq 3 -and $override.memory_per_job_source -eq 'explicit') 'explicit memory wins over measured history'
+    $all = Get-BuildMemoryHistory -RunFolder $root
+    Check ($all.value -eq 10 -and $all.source -eq 'measured (20 jobs, max 8 GB)') 'omitted kind includes all kinds and failed jobs'
+    Check ((Get-BuildMemoryHistory -RunFolder $root -Kind absent).source -eq 'default') 'unmatched kind falls back'
+    @{ status = 'succeeded'; ended = [DateTime]::UtcNow.ToString('o'); kind = 'small'; peak_memory_gb = 0.1 } | ConvertTo-Json | Set-Content (Join-Path $jobs 'small.json')
+    Check ((Get-BuildMemoryHistory -RunFolder $root -Kind small).value -eq 0.5) 'measured sizing retains 0.5 GB floor'
+    @{ status = 'succeeded'; ended = [DateTime]::UtcNow.ToString('o'); kind = 'unknown'; peak_memory_gb = $null } | ConvertTo-Json | Set-Content (Join-Path $jobs 'unknown.json')
+    Check ((Get-BuildMemoryHistory -RunFolder $root -Kind unknown).source -eq 'default') 'null peaks do not invent history'
     . (Join-Path $PSScriptRoot '../worker-standing-rules.ps1')
     $rule = Get-WorkerHardwareRule
     Check ($rule.Contains('pytest-xdist -n <budget>') -and $rule.Contains('plan''s named reason') -and $rule.Contains('exclusive_reason is opt-in')) 'worker rule requires bounded sharding and named serial causes'

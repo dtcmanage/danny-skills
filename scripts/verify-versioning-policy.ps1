@@ -395,6 +395,24 @@ if (-not [string]::IsNullOrWhiteSpace($BaseRef)) {
                 if ($ancestorProbe.code -ne 0) {
                     Add-Error 'MAIN_NOT_ANCESTOR' 'local main must be an ancestor of the feature-branch HEAD before release validation'
                 }
+                else {
+                    $workingProbe = Invoke-Git -Arguments @('status', '--porcelain', '--untracked-files=normal')
+                    $hasWorkingChanges = @($workingProbe.lines | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) -and
+                        ([string]$_).Substring([Math]::Min(3, ([string]$_).Length)).Trim('"').Replace('\', '/') -notmatch '^skills/[^/]+/_log(-archive)?\.md$' }).Count -gt 0
+                    if (-not $hasWorkingChanges) {
+                        $latestPluginCommit = (Invoke-Git -Arguments @('log', '-1', '--format=%H', '--', '.claude-plugin/plugin.json')).text.Trim()
+                        # Reuse clean-main's exemption for friction-log-only changes.
+                        $afterRelease = @()
+                        if ($latestPluginCommit -ne $headCommit) {
+                            $afterRelease = @((Invoke-Git -Arguments @('diff', '--name-only', $latestPluginCommit, $headCommit, '--')).lines |
+                                ForEach-Object { ([string]$_).Trim().Replace('\', '/') } |
+                                Where-Object { $_ -and $_ -notmatch '^skills/[^/]+/_log(-archive)?\.md$' })
+                        }
+                        if ($latestPluginCommit -ne $headCommit -and $afterRelease.Count -gt 0) {
+                            Add-Error 'RELEASE_COMMIT_NOT_TIP' 'Fold the change into the release commit or bump again; the latest plugin release commit must be the branch tip.'
+                        }
+                    }
+                }
             }
         }
         else {

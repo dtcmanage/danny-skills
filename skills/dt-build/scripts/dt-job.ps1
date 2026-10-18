@@ -728,6 +728,7 @@ function New-DtJobEnvelope {
         report_verdict = $outcome.report_verdict
         failure_category = $failureCategory
         wrapper_pass  = $outcome.wrapper_pass
+        peak_memory_gb = if ($Record.PSObject.Properties['peak_memory_gb']) { $Record.peak_memory_gb } else { $null }
         exit_code     = $Record.exit_code
         status_reason = $reason
         changed_files = $changed
@@ -774,6 +775,7 @@ function New-DtJobRunEnvelope {
         $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $r
         $entry = [ordered]@{ model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $r.job_id); job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)); report_verdict = $outcome.report_verdict; failure_category = $(if ($null -ne $outcome.failure_category) { Limit-DtJobLine $outcome.failure_category ([ref]$cut) } else { $null }) }
         $entry.exclusive_reason = if ($r.PSObject.Properties['exclusive_reason']) { Limit-DtJobLine ([string]$r.exclusive_reason) ([ref]$cut) } else { $null }
+        $entry.peak_memory_gb = if ($r.PSObject.Properties['peak_memory_gb']) { $r.peak_memory_gb } else { $null }
         $entry.relaunched_from = if ($r.PSObject.Properties['relaunched_from']) { $r.relaunched_from } else { $null }
         if ($r.status -eq 'running') {
             $activity = Get-DtJobActivity -RunFolder $RunFolder -Record $r
@@ -942,6 +944,7 @@ function Invoke-DtJobStart {
             mutates           = @($Mutates)
             status            = 'queued'
             status_reason     = $null
+            peak_memory_gb    = $null
             exit_code         = $null
             timeout_sec       = $TimeoutSec
             expected_sec      = $expectedSec
@@ -998,6 +1001,7 @@ function Invoke-DtJobRequeue {
         $record.job_id = $newId
         $record.depends_on = @($deps)
         $record.status = 'queued'
+        $record | Add-Member -NotePropertyName peak_memory_gb -NotePropertyValue $null -Force
         foreach ($field in @('pid','process_start_utc','runner_pid','runner_start_utc','status_reason','exit_code','started','ended','last_progress')) { $record.$field = $null }
         $record.queued = [DateTime]::UtcNow.ToString('o')
         $record.output_path = Join-Path $jobDir 'stdout.log'

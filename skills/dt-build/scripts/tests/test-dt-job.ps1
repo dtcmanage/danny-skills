@@ -145,6 +145,41 @@ $results | ConvertTo-Json -Compress
         Assert-True ($LASTEXITCODE -eq 0 -and $read.path.StartsWith([IO.Path]::GetFullPath($copiedRun), [StringComparison]::OrdinalIgnoreCase)) "$file evidence follows a copied run when the original path is unavailable"
     }
 
+    # FS-103: keep pages resident long enough for several tree samples, in a descendant.
+    $memoryRun = New-RunFolder 'memory'
+    $memoryScript = Join-Path $tempRoot 'allocate-memory.ps1'
+    Write-Utf8 $memoryScript '$buffer = [byte[]]::new(200MB); for ($i = 0; $i -lt $buffer.Length; $i += 4096) { $buffer[$i] = 1 }; Start-Sleep -Seconds 8; [GC]::KeepAlive($buffer)'
+    $memoryJob = Invoke-DtJob @('start', '-RunFolder', $memoryRun, '-Command', "& pwsh -NoProfile -File '$($memoryScript.Replace("'", "''"))'", '-Kind', 'test')
+    $memoryRecord = Wait-JobTerminal $memoryRun $memoryJob.job_id
+    Assert-True ($memoryRecord.status -eq 'succeeded' -and $memoryRecord.peak_memory_gb -gt 0.1) 'resident descendant memory records a measured peak over 0.1 GB'
+    Assert-True ($memoryRecord.peak_memory_gb -eq [math]::Round($memoryRecord.peak_memory_gb, 2)) 'peak is rounded to 0.01 GB'
+    $memoryStatus = Invoke-DtJob @('status', '-RunFolder', $memoryRun, '-JobId', $memoryJob.job_id)
+    Assert-True ($memoryStatus.peak_memory_gb -eq $memoryRecord.peak_memory_gb) 'single job JSON exposes peak'
+    $memoryStatus = Invoke-DtJob @('status', '-RunFolder', $memoryRun)
+    Assert-True ($memoryStatus.jobs[0].peak_memory_gb -eq $memoryRecord.peak_memory_gb) 'run JSON exposes peak per job'
+
+    # Exercise the real wait loop with an unavailable sampler and a completed fake process.
+    & {
+        $runnerPath = Join-Path $scriptDir 'dt-job-runner.ps1'
+        $tokens = $null; $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$parseErrors)
+        $waitFunction = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Wait-DtJobProcess' }, $true)
+        . ([scriptblock]::Create($waitFunction.Extent.Text))
+        function Get-DtJobSettingSec { param($Name, $Default) return $Default }
+        function Get-DtJobTreeMemoryGB { param($RootPid) throw 'fixture sampler unavailable' }
+        $script:DtJobHeartbeatSec = 30
+        $script:peakMemoryGB = $null; $script:memorySamplingFailed = $false
+        $jobDir = $memoryRun; $paths = [pscustomobject]@{ Root = $memoryRun }; $JobId = 'sample-failure'
+        $fake = [pscustomobject]@{ HasExited = $false; Id = $PID }
+        $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($Milliseconds) return $true }
+        $output = [IO.MemoryStream]::new()
+        try {
+            $finished = Wait-DtJobProcess -Process $fake -WorkDir $memoryRun -Outputs @($output)
+            Assert-True $finished 'sampler failure never fails or interrupts the job wait'
+            Assert-True ($script:memorySamplingFailed -and $null -eq $script:peakMemoryGB) 'unavailable sampler retains a null peak'
+        } finally { $output.Dispose() }
+    }
+
     # FS-102: actual script arguments exercise quoted and bare command replacements.
     $relaunchRun = New-RunFolder 'relaunch'
     $argScript = Join-Path $tempRoot 'echo-args.ps1'
@@ -666,6 +701,12 @@ exit 0
     $okA = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'a2'")
     $okB = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'b2'", '-DependsOn', $okA.job_id)
     Assert-True ((Wait-JobTerminal -RunFolder $rf -JobId $okB.job_id).status -eq 'succeeded') 'dependent starts after its dependency succeeds'
+    # Older run records predate memory measurements and must still requeue.
+    $legacy = Get-JobRecord $rf $b.job_id
+    $legacy.PSObject.Properties.Remove('peak_memory_gb')
+    Write-Utf8 (Join-Path $rf "jobs/$($b.job_id).json") ($legacy | ConvertTo-Json -Depth 12)
+    $legacyStatus = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $b.job_id)
+    Assert-True ($null -eq $legacyStatus.peak_memory_gb) 'legacy status exposes a null peak'
     $requeued = Invoke-DtJob @('requeue', '-RunFolder', $rf, '-JobId', $b.job_id, '-DependsOn', $okA.job_id)
     Assert-True ($requeued.job_id -ne $b.job_id -and $requeued.requeued_from -eq $b.job_id) 'requeue allocates a new identity'
     Assert-True ((Wait-JobTerminal -RunFolder $rf -JobId $requeued.job_id).status -eq 'succeeded') 'requeued blocked consumer runs after replacement dependency succeeds'

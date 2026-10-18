@@ -18,6 +18,8 @@ $paths = Get-DtJobPaths -RunFolder $RunFolder
 $jobDir = Join-Path $paths.Jobs $JobId
 $runnerLog = Join-Path $jobDir 'runner.log'
 $process = $null
+$script:peakMemoryGB = $null
+$script:memorySamplingFailed = $false
 
 function Complete-DtJobRun {
     param([Parameter(Mandatory)][string]$Status, $ExitCode, [string]$Reason)
@@ -26,6 +28,7 @@ function Complete-DtJobRun {
         # A terminal result (cancel, reconcile) is never overwritten by this later write.
         if ($null -eq $record -or $record.status -ne 'running') { return }
         $record.exit_code = $ExitCode
+        $record | Add-Member -NotePropertyName peak_memory_gb -NotePropertyValue $(if ($script:memorySamplingFailed) { $null } else { $script:peakMemoryGB }) -Force
         $record.last_progress = [DateTime]::UtcNow.ToString('o')
         Remove-DtJobKeyLocks -RunFolder $RunFolder -Record $record
         $record.status = $Status
@@ -74,6 +77,39 @@ function Get-DtJobTreeCpuSeconds {
     return (Get-Process -Id $RootPid -ErrorAction Stop).TotalProcessorTime.TotalSeconds
 }
 
+function Get-DtJobTreeMemoryGB {
+    param([Parameter(Mandatory)][int]$RootPid)
+    if ($IsWindows) {
+        $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, WorkingSetSize -ErrorAction Stop |
+            ForEach-Object { [pscustomobject]@{ id = [int]$_.ProcessId; parent = [int]$_.ParentProcessId; bytes = [double]$_.WorkingSetSize } })
+    }
+    else {
+        $rows = @(& (Get-Command ps -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source -axo 'pid=,ppid=,rss=')
+        if ($LASTEXITCODE -ne 0) { throw 'Memory process snapshot failed' }
+        $all = @(foreach ($row in $rows) {
+            if ($row -match '^\s*(\d+)\s+(\d+)\s+(\d+)\s*$') {
+                [pscustomobject]@{ id = [int]$Matches[1]; parent = [int]$Matches[2]; bytes = [double]$Matches[3] * 1KB }
+            }
+        })
+    }
+    $byId = @{}; $children = @{}
+    foreach ($p in $all) {
+        $byId[$p.id] = $p
+        if (-not $children.ContainsKey($p.parent)) { $children[$p.parent] = [System.Collections.Generic.List[int]]::new() }
+        $children[$p.parent].Add($p.id)
+    }
+    if (-not $byId.ContainsKey($RootPid)) { return $null } # Child exited during the snapshot.
+    $queue = [System.Collections.Generic.Queue[int]]::new(); $queue.Enqueue($RootPid)
+    $seen = [System.Collections.Generic.HashSet[int]]::new(); $total = 0.0
+    while ($queue.Count -gt 0) {
+        $id = $queue.Dequeue()
+        if (-not $seen.Add($id)) { continue }
+        if ($byId.ContainsKey($id)) { $total += $byId[$id].bytes }
+        if ($children.ContainsKey($id)) { foreach ($child in $children[$id]) { $queue.Enqueue($child) } }
+    }
+    return $total / 1GB
+}
+
 function Wait-DtJobProcess {
     # Waits for the job without a time limit unless the job has one, and every heartbeat records whether
     # it showed any sign of life: CPU in its process tree, output, or file changes in its working
@@ -97,8 +133,18 @@ function Wait-DtJobProcess {
     $lastActivity = $started
     $lastCpu = $null; $lastBytes = [long]-1; $fileChanges = 0; $newFiles = 0
     $nextBeat = $started
+    $nextMemorySample = $started
     try {
-        while (-not $Process.WaitForExit(1000)) {
+        while (-not $Process.HasExited) {
+            if ([DateTime]::UtcNow -ge $nextMemorySample) {
+                try {
+                    $memory = Get-DtJobTreeMemoryGB -RootPid $Process.Id
+                    if ($null -ne $memory) { $script:peakMemoryGB = [math]::Round([math]::Max([double]$script:peakMemoryGB, $memory), 2) }
+                }
+                catch { $script:memorySamplingFailed = $true }
+                $nextMemorySample = [DateTime]::UtcNow.AddSeconds(3)
+            }
+            if ($Process.WaitForExit(1000)) { break }
             if ($null -ne $fsWatcher) {
                 foreach ($evt in @(Get-Event -ErrorAction SilentlyContinue | Where-Object { $_.SourceIdentifier -like "$sourceId-*" })) {
                     $full = [string]$evt.SourceEventArgs.FullPath

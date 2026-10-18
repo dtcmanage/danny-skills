@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.3
+
+- FS-103: sample job process-tree peak memory, expose it in status, and size host RAM slots from recent measured job history.
+
 ## 2.48.2
 
 - Keep the FromJob relaunch test off the machine-wide pytest lock.
