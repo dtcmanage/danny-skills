@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.5
+
+- Gate runs refresh the shard durations file automatically (FS-106).
+
 ## 2.48.4
 
 - Balance test shards by work: prefer xdist worksteal or a queue; static shards split by recorded durations (FS-105).

@@ -30,7 +30,8 @@ missing. Balance shards by work, not by file or test count: prefer dynamic distr
 `--dist worksteal`, or a runner queue that hands the next test to a free worker) so one slow group
 cannot pin a single shard. When shards must be static, split by recorded per-test durations
 (e.g. `pytest --durations=0` output or a durations file) and spread any known-slow group across all
-shards. Put the parallel command in the roadmap's verification manifest before acceptance: the gate
+shards. Every gate run rewrites that durations file from its own results, so the next run balances on
+current timings; never hand-paste a one-time snapshot. Put the parallel command in the roadmap's verification manifest before acceptance: the gate
 runs the named command verbatim. Keep the full test selection and fix-round budget.
 
 For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
