@@ -7,6 +7,14 @@ param(
 
     [string]$JobId,
 
+    [string]$FromJob,
+
+    [string]$PromptPath,
+
+    [string]$OutputPath,
+
+    [switch]$AllowTempRunFolder,
+
     [string]$Command,
 
     # Optional spec field exclusive_reason; default jobs run directly.
@@ -185,6 +193,44 @@ function Test-DtJobTerminal {
     return ($script:DtJobActive -notcontains $Status)
 }
 
+function Assert-DtJobRunFolder {
+    param([string]$RunFolder, [switch]$WarnExisting)
+    if ($AllowTempRunFolder) { return }
+    $root = [IO.Path]::GetFullPath($RunFolder).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    foreach ($temp in @([IO.Path]::GetTempPath(), $env:TEMP, $env:TMP)) {
+        if (-not $temp) { continue }
+        $normalized = [IO.Path]::GetFullPath($temp).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        if ($root.Equals($normalized, [StringComparison]::OrdinalIgnoreCase) -or $root.StartsWith($normalized + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            $message = 'DT_JOB_TEMP_RUN_FOLDER: use <project root>/.dt-build/adhoc/ for durable ad-hoc jobs, or pass -AllowTempRunFolder.'
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw $message }
+            if ($WarnExisting) { [Console]::Error.WriteLine("WARNING: $message Existing temp run folder accepted: $root") }
+            return
+        }
+    }
+}
+
+function Set-DtJobCommandArgument {
+    # Parse argument extents so quoted text and similarly named parameters are never replaced.
+    param([string]$Command, [string]$Name, [string]$Value)
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Command, [ref]$tokens, [ref]$errors)
+    $values = @($ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object {
+        $elements = $_.CommandElements
+        for ($i = 0; $i -lt $elements.Count; $i++) {
+            $element = $elements[$i]
+            if ($element -isnot [System.Management.Automation.Language.CommandParameterAst] -or $element.ParameterName -ine $Name) { continue }
+            if ($null -ne $element.Argument) { $element.Argument.Extent }
+            elseif ($i + 1 -lt $elements.Count -and $elements[$i + 1] -isnot [System.Management.Automation.Language.CommandParameterAst]) { $elements[$i + 1].Extent }
+        }
+    })
+    if ($values.Count -eq 0) { throw "DT_JOB_FROMJOB_NO_ARG: stored command has no -$Name argument." }
+    $quoted = "'" + $Value.Replace("'", "''") + "'"
+    foreach ($extent in @($values | Sort-Object StartOffset -Descending)) {
+        $Command = $Command.Substring(0, $extent.StartOffset) + $quoted + $Command.Substring($extent.EndOffset)
+    }
+    return $Command
+}
+
 function Write-DtJobAtomic {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Content)
     $directory = Split-Path -Parent $Path
@@ -259,7 +305,17 @@ function Get-DtJobRecord {
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId)
     $path = Join-Path (Get-DtJobPaths -RunFolder $RunFolder).Jobs "$JobId.json"
     if (-not (Test-Path -LiteralPath $path)) { return $null }
-    return (Read-DtJobText -Path $path | ConvertFrom-Json)
+    return (Resolve-DtJobRecordPaths -RunFolder $RunFolder -Record (Read-DtJobText -Path $path | ConvertFrom-Json))
+}
+
+function Resolve-DtJobRecordPaths {
+    # Ledger-owned evidence follows a copied run folder; command input/output paths stay untouched.
+    param([string]$RunFolder, $Record)
+    $jobDir = Join-Path (Get-DtJobPaths -RunFolder $RunFolder).Jobs $Record.job_id
+    foreach ($field in @{ output_path = 'stdout.log'; stderr_path = 'stderr.log'; summary_path = 'summary.json' }.GetEnumerator()) {
+        if ($Record.PSObject.Properties[$field.Key]) { $Record.($field.Key) = Join-Path $jobDir $field.Value }
+    }
+    return $Record
 }
 
 function Get-DtJobRecords {
@@ -267,7 +323,7 @@ function Get-DtJobRecords {
     $jobsDir = (Get-DtJobPaths -RunFolder $RunFolder).Jobs
     if (-not (Test-Path -LiteralPath $jobsDir)) { return @() }
     return @(Get-ChildItem -LiteralPath $jobsDir -File -Filter 'j-*.json' | Sort-Object Name | ForEach-Object {
-        Read-DtJobText -Path $_.FullName | ConvertFrom-Json
+        Resolve-DtJobRecordPaths -RunFolder $RunFolder -Record (Read-DtJobText -Path $_.FullName | ConvertFrom-Json)
     })
 }
 
@@ -278,7 +334,11 @@ function Save-DtJobRecord {
 }
 
 function Add-DtJobEvent {
-    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId, [Parameter(Mandatory)][string]$Type, [Parameter(Mandatory)][string]$Status, [string]$Reason, [string]$RequestedBy, [Nullable[long]]$ConsumedEventSeq)
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$JobId, [Parameter(Mandatory)][string]$Type, [Parameter(Mandatory)][string]$Status, [string]$Reason, [string]$RequestedBy, [Nullable[long]]$ConsumedEventSeq, [string]$RelaunchedFrom)
+    if (-not $RelaunchedFrom -and $Type -in @('launched', 'process_started')) {
+        $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId
+        if ($null -ne $record -and $record.PSObject.Properties['relaunched_from']) { $RelaunchedFrom = $record.relaunched_from }
+    }
     $eventsPath = (Get-DtJobPaths -RunFolder $RunFolder).Events
     $seq = 1
     $prefix = ''
@@ -294,6 +354,7 @@ function Add-DtJobEvent {
     }
     $evt = [ordered]@{ seq = $seq; job_id = $JobId; ts_utc = [DateTime]::UtcNow.ToString('o'); type = $Type; status = $Status }
     if ($Reason) { $evt.reason = $Reason }
+    if ($RelaunchedFrom) { $evt.relaunched_from = $RelaunchedFrom }
     if ($RequestedBy) { $evt.requested_by = $RequestedBy }
     if ($null -ne $ConsumedEventSeq) { $evt.consumed_event_seq = [long]$ConsumedEventSeq }
     [System.IO.File]::AppendAllText($eventsPath, ($prefix + ($evt | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
@@ -661,6 +722,7 @@ function New-DtJobEnvelope {
         exclusive_reason = if ($Record.PSObject.Properties['exclusive_reason']) { $Record.exclusive_reason } else { $null }
         model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $Record.job_id)
         job_id        = $Record.job_id
+        relaunched_from = if ($Record.PSObject.Properties['relaunched_from']) { $Record.relaunched_from } else { $null }
         status        = $Record.status
         verdict       = $verdict
         report_verdict = $outcome.report_verdict
@@ -712,6 +774,7 @@ function New-DtJobRunEnvelope {
         $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $r
         $entry = [ordered]@{ model_selection = (Get-DtJobModelSelection -RunFolder $RunFolder -JobId $r.job_id); job_id = $r.job_id; kind = $r.kind; status = $r.status; exit_code = $r.exit_code; status_reason = (Limit-DtJobLine ([string]$r.status_reason) ([ref]$cut)); report_verdict = $outcome.report_verdict; failure_category = $(if ($null -ne $outcome.failure_category) { Limit-DtJobLine $outcome.failure_category ([ref]$cut) } else { $null }) }
         $entry.exclusive_reason = if ($r.PSObject.Properties['exclusive_reason']) { Limit-DtJobLine ([string]$r.exclusive_reason) ([ref]$cut) } else { $null }
+        $entry.relaunched_from = if ($r.PSObject.Properties['relaunched_from']) { $r.relaunched_from } else { $null }
         if ($r.status -eq 'running') {
             $activity = Get-DtJobActivity -RunFolder $RunFolder -Record $r
             $entry.activity = Limit-DtJobLine $activity.line ([ref]$cut)
@@ -780,6 +843,37 @@ function Write-DtJobOutput {
 
 function Invoke-DtJobStart {
     $paths = Get-DtJobPaths -RunFolder $RunFolder
+    $copiedSpec = $null
+    $workingDirectory = (Get-Location).ProviderPath
+    if ($FromJob) {
+        $old = Get-DtJobRecord -RunFolder $RunFolder -JobId $FromJob
+        if ($null -eq $old) { throw "DT_JOB_UNKNOWN_JOB: $FromJob" }
+        if ($old.status -eq 'running' -and (Test-DtJobAlive $old)) { throw "DT_JOB_FROMJOB_RUNNING: $FromJob is still running." }
+        $copiedSpec = Read-DtJobText -Path (Join-Path $paths.Jobs "$($old.job_id)/spec.json") | ConvertFrom-Json -AsHashtable
+        $fields = @{
+            Command = $copiedSpec.command
+            ScriptPath = $copiedSpec.script_path
+            ArgumentList = @($copiedSpec.argument_list)
+            ExclusiveReason = $copiedSpec.exclusive_reason
+            Kind = $old.kind
+            Category = $old.category
+            Vendor = $old.vendor
+            Model = $old.model
+            DependsOn = @($old.depends_on)
+            Mutates = @($old.mutates)
+            RunId = $old.run_id
+            TimeoutSec = $old.expected_sec
+        }
+        foreach ($name in $fields.Keys) {
+            if ($script:DtJobExplicitParams -notcontains $name) { Set-Variable -Name $name -Value $fields[$name] }
+        }
+        if ($script:DtJobExplicitParams -contains 'Command') { $ScriptPath = $null }
+        if ($script:DtJobExplicitParams -contains 'ScriptPath') { $Command = $null }
+        $workingDirectory = $old.working_directory
+        foreach ($name in @('PromptPath', 'OutputPath')) {
+            if ($script:DtJobExplicitParams -contains $name) { $Command = Set-DtJobCommandArgument -Command $Command -Name $name -Value (Get-Variable -Name $name -ValueOnly) }
+        }
+    }
     $ctx = $script:DtJobContext
     if ($null -ne $ctx -and $ctx.state -eq 'rotate' -and -not $ctx.deferred) {
         throw "ROTATE_REQUIRED: $($ctx.line). No new dispatch at the context limit: write _build-state.md and a coordinator handoff, run dt-job request-continuation -RunFolder `"$($paths.Root)`" -Reason context_rotation, release the lease, and end the turn."
@@ -792,6 +886,14 @@ function Invoke-DtJobStart {
     $expectedSec = $TimeoutSec
     $TimeoutSec = 0
     $spec = [ordered]@{ exclusive_reason = $ExclusiveReason; command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec; environment = (Get-DtJobEnvironment -Extra $PassEnv) }
+    if ($null -ne $copiedSpec) {
+        $spec.environment = $copiedSpec.environment
+        if ($script:DtJobExplicitParams -contains 'PassEnv') {
+            $extraEnv = Get-DtJobEnvironment -Extra $PassEnv
+            foreach ($name in $PassEnv) { if ($extraEnv.Contains($name)) { $spec.environment[$name] = $extraEnv[$name] } }
+        }
+        $spec.relaunched_from = $old.job_id
+    }
     if ($Command) { $spec.command = $Command; $identity = $Command }
     else {
         $spec.script_path = [System.IO.Path]::GetFullPath($ScriptPath)
@@ -843,7 +945,7 @@ function Invoke-DtJobStart {
             exit_code         = $null
             timeout_sec       = $TimeoutSec
             expected_sec      = $expectedSec
-            working_directory = (Get-Location).ProviderPath
+            working_directory = $workingDirectory
             output_path       = (Join-Path $jobDir 'stdout.log')
             stderr_path       = (Join-Path $jobDir 'stderr.log')
             summary_path      = (Join-Path $jobDir 'summary.json')
@@ -853,8 +955,9 @@ function Invoke-DtJobStart {
             last_progress     = $null
         }
         $obj = [pscustomobject]$record
+        if ($FromJob) { $obj | Add-Member -NotePropertyName relaunched_from -NotePropertyValue $old.job_id }
         Save-DtJobRecord -RunFolder $RunFolder -Record $obj
-        Add-DtJobEvent -RunFolder $RunFolder -JobId $newId -Type 'recorded' -Status 'queued'
+        Add-DtJobEvent -RunFolder $RunFolder -JobId $newId -Type 'recorded' -Status 'queued' -RelaunchedFrom $FromJob
         Invoke-DtJobSchedule -RunFolder $RunFolder
         $newId
     }
@@ -2198,6 +2301,8 @@ if ($Verb -eq 'can-reuse') {
 if (-not $Verb) { throw 'DT_JOB_USAGE: -Verb is required (start, status, wait, cancel, reconcile, lease, register-run, unregister-run, consume, request-continuation, await-danny, approve, resume, finish, mark-bootstrap, irreversible, tree-hash, can-reuse).' }
 if (-not $RunFolder) { throw 'DT_JOB_USAGE: -RunFolder is required.' }
 $script:DtJobExplicitParams = @($PSBoundParameters.Keys)
+# Check before approval handling, locks, or lease renewal can create the run folder.
+Assert-DtJobRunFolder -RunFolder $RunFolder -WarnExisting:($Verb -eq 'start')
 Receive-DtJobQueuedApproval -RunFolder $RunFolder
 
 # Under `pwsh -File`, `-Mutates a,b` arrives as the single string 'a,b'; split every list on commas.

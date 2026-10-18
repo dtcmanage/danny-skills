@@ -3,10 +3,11 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
+$script:failed = 0
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
-    if (-not $Condition) { throw "ASSERT_FAIL: $Message" }
+    if (-not $Condition) { $script:failed++; Write-Output "ASSERT_FAIL: $Message"; return }
     $script:passed++
 }
 
@@ -32,7 +33,7 @@ function New-RunFolder {
 
 function Invoke-DtJob {
     param([string[]]$Arguments)
-    $raw = & pwsh -NoProfile -File $dtJob @Arguments -Json
+    $raw = & pwsh -NoProfile -File $dtJob @Arguments -AllowTempRunFolder -Json
     if ($LASTEXITCODE -ne 0) { throw "dt-job $($Arguments -join ' ') exited $LASTEXITCODE" }
     return (($raw -join "`n") | ConvertFrom-Json)
 }
@@ -95,6 +96,133 @@ try {
     New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_STATE -Force | Out-Null
     Assert-True ([IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE).StartsWith([IO.Path]::GetFullPath($tempRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'router state stays under the suite temp directory'
     Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
+    # FS-101: fixtures opt into temp storage explicitly; raw calls exercise the default guard.
+    foreach ($verb in @('start', 'register-run', 'lease', 'note')) {
+        $newTemp = Join-Path $tempRoot "refused-$verb"
+        $raw = & pwsh -NoProfile -File $dtJob $verb -RunFolder $newTemp -Command "'unused'" 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_TEMP_RUN_FOLDER' -and ($raw -join ' ') -match '\.dt-build/adhoc/') "$verb refuses a new temp run and names durable default"
+        Assert-True (-not (Test-Path -LiteralPath $newTemp)) "$verb refusal creates no folder"
+    }
+    $guardProbe = @'
+param($dtJob, $root)
+. $dtJob
+$env:TEMP = Join-Path $root 'alternate-temp'
+$env:TMP = Join-Path $root 'alternate-tmp'
+$results = foreach ($path in @((Join-Path $env:TEMP '../alternate-temp/new'), (Join-Path $env:TMP 'NEW').ToUpperInvariant())) {
+    try { Assert-DtJobRunFolder $path; $false } catch { $_.Exception.Message -match 'DT_JOB_TEMP_RUN_FOLDER' }
+}
+try { Assert-DtJobRunFolder (Join-Path $root 'alternate-temp-sibling/new'); $results += $true } catch { $results += $false }
+$results | ConvertTo-Json -Compress
+'@
+    $probePath = Join-Path $tempRoot 'guard-probe.ps1'
+    Write-Utf8 $probePath $guardProbe
+    $guardResults = ((& pwsh -NoProfile -File $probePath $dtJob $scriptDir) -join "`n") | ConvertFrom-Json
+    Assert-True ($guardResults.Count -eq 3 -and @($guardResults | Where-Object { -not $_ }).Count -eq 0) 'TEMP TMP normalization case and path boundary guard'
+    $tempRun = Join-Path $tempRoot 'explicit-temp'
+    $tempJob = Invoke-DtJob @('start', '-RunFolder', $tempRun, '-Command', "'temp fixture'")
+    Assert-True ((Wait-JobTerminal $tempRun $tempJob.job_id).status -eq 'succeeded') 'explicit temp opt-in creates and runs a job'
+    $warningPath = Join-Path $tempRoot 'temp-warning.txt'
+    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $tempRun -Command "'existing temp'" -Json 2>$warningPath
+    $existingTempJob = ($raw -join "`n") | ConvertFrom-Json
+    Assert-True ($LASTEXITCODE -eq 0 -and @(Get-Content $warningPath).Count -eq 1 -and (Get-Content -Raw $warningPath) -match 'WARNING: DT_JOB_TEMP_RUN_FOLDER') 'existing temp run accepts start with exactly one stderr warning'
+    $null = Wait-JobTerminal $tempRun $existingTempJob.job_id
+    foreach ($verb in @('status', 'wait', 'reconcile', 'cancel')) {
+        $raw = & pwsh -NoProfile -File $dtJob $verb -RunFolder $tempRun -JobId $tempJob.job_id -TimeoutSec 1 -Json 2>$warningPath
+        Assert-True ($LASTEXITCODE -eq 0 -and -not (Get-Content -Raw $warningPath)) "$verb works on existing temp run without warning"
+    }
+    $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $tempRun -Evidence -Message 'Fixture evidence recorded.' -Json 2>$warningPath
+    Assert-True ($LASTEXITCODE -eq 0 -and -not (Get-Content -Raw $warningPath)) 'evidence notes work in existing temp run'
+    $raw = & pwsh -NoProfile -File $readEvidence -RunFolder $tempRun -JobId $tempJob.job_id -File spec -Lines 1-10
+    Assert-True ($LASTEXITCODE -eq 0 -and ($raw -join ' ') -match 'temp fixture') 'evidence reads work in existing temp run'
+    $copiedRun = Join-Path $tempRoot 'copied-run'
+    Copy-Item -LiteralPath $tempRun -Destination $copiedRun -Recurse
+    $sourceRoot = [IO.Path]::GetFullPath($tempRun)
+    Assert-True ($sourceRoot.StartsWith([IO.Path]::GetFullPath($tempRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'migration source stays within isolated fixtures'
+    Rename-Item -LiteralPath $sourceRoot -NewName 'old-temp-unavailable'
+    foreach ($file in @('stdout', 'stderr', 'summary', 'spec')) {
+        $raw = & pwsh -NoProfile -File $readEvidence -RunFolder $copiedRun -JobId $tempJob.job_id -File $file -Lines 1-10 -Json
+        $read = ($raw -join "`n") | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $read.path.StartsWith([IO.Path]::GetFullPath($copiedRun), [StringComparison]::OrdinalIgnoreCase)) "$file evidence follows a copied run when the original path is unavailable"
+    }
+
+    # FS-102: actual script arguments exercise quoted and bare command replacements.
+    $relaunchRun = New-RunFolder 'relaunch'
+    $argScript = Join-Path $tempRoot 'echo-args.ps1'
+    Write-Utf8 $argScript 'param($PromptPath, $OutputPath); Write-Output "$PromptPath|$OutputPath"'
+    $originalCommand = "& '$argScript' -PromptPath 'old prompt.txt' -OutputPath old-output.txt"
+    $originalJob = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', $originalCommand, '-Category', 'fixture', '-Model', 'fixture-model', '-Mutates', 'fixture-key', '-TimeoutSec', '40')
+    $null = Wait-JobTerminal $relaunchRun $originalJob.job_id
+    $originalSpecPath = Join-Path $relaunchRun "jobs/$($originalJob.job_id)/spec.json"
+    $originalSpecText = Get-Content -Raw $originalSpecPath
+    Push-Location $tempRoot
+    try { $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $originalJob.job_id) }
+    finally { Pop-Location }
+    $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
+    $retrySpec = Get-Content -Raw (Join-Path $relaunchRun "jobs/$($retry.job_id)/spec.json") | ConvertFrom-Json
+    Assert-True ($retry.job_id -ne $originalJob.job_id -and $retrySpec.command -ceq $originalCommand -and $retrySpec.relaunched_from -eq $originalJob.job_id) 'FromJob creates a new id with copied command and spec ancestry'
+    Assert-True ($retryRecord.category -eq 'fixture' -and $retryRecord.model -eq 'fixture-model' -and $retryRecord.mutates[0] -eq 'fixture-key' -and $retryRecord.expected_sec -eq 40) 'FromJob copies metadata and expected duration'
+    Assert-True ($retrySpec.environment.DT_MODEL_ROUTER_STATE -eq $env:DT_MODEL_ROUTER_STATE -and $retryRecord.working_directory -eq (Get-JobRecord $relaunchRun $originalJob.job_id).working_directory) 'FromJob preserves environment and working directory'
+    $events = @(Get-Content (Join-Path $relaunchRun 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($events | Where-Object { $_.job_id -eq $retry.job_id -and $_.type -eq 'recorded' })[0].relaunched_from -eq $originalJob.job_id) 'start event records ancestry'
+    foreach ($type in @('launched', 'process_started')) {
+        Assert-True (@($events | Where-Object { $_.job_id -eq $retry.job_id -and $_.type -eq $type })[0].relaunched_from -eq $originalJob.job_id) "$type event records ancestry"
+    }
+    $status = Invoke-DtJob @('status', '-RunFolder', $relaunchRun, '-JobId', $retry.job_id)
+    Assert-True ($status.relaunched_from -eq $originalJob.job_id) 'single job status exposes ancestry'
+    $status = Invoke-DtJob @('status', '-RunFolder', $relaunchRun)
+    Assert-True (@($status.jobs | Where-Object { $_.job_id -eq $retry.job_id })[0].relaunched_from -eq $originalJob.job_id) 'run status exposes ancestry'
+    $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $originalJob.job_id, '-PromptPath', "new prompt's.txt", '-OutputPath', 'new output.txt', '-Category', 'replacement', '-TimeoutSec', '9', '-Mutates', '')
+    $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
+    Assert-True ($retryRecord.status -eq 'succeeded' -and (Get-Content -Raw $retryRecord.output_path).Trim() -ceq "new prompt's.txt|new output.txt") 'quoted and bare arguments replaced exactly and execute with literal values'
+    Assert-True ($retryRecord.category -eq 'replacement' -and $retryRecord.expected_sec -eq 9 -and $retryRecord.mutates.Count -eq 0) 'explicit start parameters override copied values including empty lists'
+    Assert-True ((Get-Content -Raw $originalSpecPath) -ceq $originalSpecText) 'relaunch leaves original spec unchanged'
+    $missingJob = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', "Write-Output '-PromptPath fake -OutputPath fake'; Write-Output done -OutputPathSuffix untouched")
+    $null = Wait-JobTerminal $relaunchRun $missingJob.job_id
+    foreach ($name in @('PromptPath', 'OutputPath')) {
+        $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $relaunchRun -FromJob $missingJob.job_id "-$name" replacement -AllowTempRunFolder 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_FROMJOB_NO_ARG') "$name override refuses absent exact argument including quoted decoys"
+    }
+    $releaseRetry = Join-Path $tempRoot 'release-retry'
+    $heldRetry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', (New-HeldJobCommand $releaseRetry))
+    $null = Wait-JobState $relaunchRun $heldRetry.job_id -Until { param($r) $r.status -eq 'running' -and $r.pid }
+    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $relaunchRun -FromJob $heldRetry.job_id -AllowTempRunFolder 2>&1
+    Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_FROMJOB_RUNNING') 'FromJob refuses a live running job'
+    $null = Invoke-DtJob @('cancel', '-RunFolder', $relaunchRun, '-JobId', $heldRetry.job_id)
+    $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $heldRetry.job_id, '-Command', "'override command'")
+    Assert-True ((Wait-JobTerminal $relaunchRun $retry.job_id).status -eq 'succeeded') 'cancelled job relaunch accepts explicit command override'
+    $scriptJob = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-ScriptPath', $argScript, '-ArgumentList', 'one,two')
+    $null = Wait-JobTerminal $relaunchRun $scriptJob.job_id
+    $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $scriptJob.job_id)
+    $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
+    Assert-True ($retryRecord.status -eq 'succeeded' -and (Get-Content -Raw $retryRecord.output_path).Trim() -eq 'one,two|') 'script path and argument list survive relaunch'
+    $failedJob = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', 'exit 7', '-Kind', 'test', '-Vendor', 'fixture', '-DependsOn', $scriptJob.job_id, '-ExclusiveReason', 'fixture only')
+    $null = Wait-JobTerminal $relaunchRun $failedJob.job_id
+    $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $failedJob.job_id)
+    $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
+    Assert-True ($retryRecord.status -eq 'failed' -and $retryRecord.exit_code -eq 7 -and $retryRecord.depends_on[0] -eq $scriptJob.job_id -and $retryRecord.exclusive_reason -eq 'fixture only') 'failed job relaunch preserves command dependencies and exclusivity'
+    $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $failedJob.job_id, '-ScriptPath', $argScript, '-ArgumentList', 'replacement', '-Kind', 'command', '-Vendor', 'replacement', '-Model', 'new-model', '-DependsOn', '', '-ExclusiveReason', '', '-RunId', 'new-run')
+    $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
+    Assert-True ($retryRecord.status -eq 'succeeded' -and $retryRecord.kind -eq 'command' -and $retryRecord.vendor -eq 'replacement' -and $retryRecord.model -eq 'new-model' -and $retryRecord.run_id -eq 'new-run' -and $retryRecord.depends_on.Count -eq 0 -and -not $retryRecord.exclusive_reason -and (Get-Content -Raw $retryRecord.output_path).Trim() -eq 'replacement|') 'explicit script arguments kind vendor model run dependencies and exclusivity override copied values'
+    $argumentProbe = @'
+param($dtJob)
+. $dtJob
+$command = 'worker -PromptPath "old prompt.txt" -OutputPath:old.txt -OutputPathSuffix keep; Write-Output ''-PromptPath decoy'''
+$command = Set-DtJobCommandArgument $command PromptPath 'new prompt.txt'
+Set-DtJobCommandArgument $command OutputPath 'new output.txt'
+'@
+    Write-Utf8 $probePath $argumentProbe
+    $replaced = ((& pwsh -NoProfile -File $probePath $dtJob) -join "`n")
+    Assert-True ($LASTEXITCODE -eq 0 -and $replaced -ceq "worker -PromptPath 'new prompt.txt' -OutputPath:'new output.txt' -OutputPathSuffix keep; Write-Output '-PromptPath decoy'") 'double quotes and colon values replace exactly while unrelated arguments and strings stay unchanged'
+    # A reboot leaves a running record with dead process identities until reconcile.
+    $deadRecord = Get-JobRecord $relaunchRun $originalJob.job_id
+    $deadRecord.status = 'running'; $deadRecord.pid = 2147483646; $deadRecord.runner_pid = 2147483646
+    Write-Utf8 (Join-Path $relaunchRun "jobs/$($originalJob.job_id).json") ($deadRecord | ConvertTo-Json -Depth 8)
+    $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $originalJob.job_id)
+    Assert-True ((Wait-JobTerminal $relaunchRun $retry.job_id).status -eq 'succeeded') 'FromJob accepts a dead running record after reboot'
+    $null = Invoke-DtJob @('reconcile', '-RunFolder', $relaunchRun)
+    $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $originalJob.job_id)
+    Assert-True ((Wait-JobTerminal $relaunchRun $retry.job_id).status -eq 'succeeded') 'FromJob accepts reconciled orphaned jobs'
+
     $pinRun = New-RunFolder 'pin-run'
     $pinState = Join-Path $pinRun '_build-state.md'
     Write-Utf8 $pinState "updated_utc: fixture`nrun_status: runnable`nlast_consumed_event_seq: 0`n"
@@ -956,9 +1084,10 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     Invoke-DtJob @('cancel','-RunFolder',$rf,'-JobId',$wrapped.job_id) | Out-Null
     Invoke-DtJob @('cancel','-RunFolder',$rf,'-JobId',$held.job_id) | Out-Null
 
-    Write-Output 'PASS: dt-job suite'
+    if ($script:failed -gt 0) { $exitCode = 1 } else { Write-Output 'PASS: dt-job suite' }
 }
 catch {
+    $script:failed++
     Write-Output "FAIL: $($_.Exception.Message)"
     Write-Output $_.ScriptStackTrace
     $exitCode = 1
@@ -966,7 +1095,7 @@ catch {
 finally {
     [Environment]::SetEnvironmentVariable('DT_MODEL_ROUTER_STATE', $savedRouterState)
     foreach ($name in $pinEnvNames) { [Environment]::SetEnvironmentVariable($name, $pinSavedEnv[$name]) }
-    Write-Output "SUMMARY: $script:passed passed"
+    Write-Output "SUMMARY: $script:passed passed, $script:failed failed"
     # Unlink only: a recursive delete would follow the junction into the real skill folder.
     if ($junctionLink -and [IO.Directory]::Exists($junctionLink)) { [IO.Directory]::Delete($junctionLink) }
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -1,5 +1,52 @@
 # dt-job test exclusivity
 
+## Durable run folders
+
+For ad-hoc jobs outside a dt-build run, use `<project root>/.dt-build/adhoc/`
+as `-RunFolder`, and gitignore `.dt-build/` in the project. New run folders
+under the OS temp root, `TEMP`, or `TMP` are refused with
+`DT_JOB_TEMP_RUN_FOLDER`. `-AllowTempRunFolder` explicitly opts into temporary
+storage, for example for test fixtures. Existing temp run folders remain usable;
+`start` prints one stderr warning unless the switch is passed. Other verbs,
+including status, wait, reconcile, cancel, notes and evidence reads, keep working.
+The creation guard also applies to other verbs that create a run folder.
+
+To migrate an existing temp run, wait until no jobs are running; do not stop
+running jobs for the move. Copy the whole run folder to the project's
+`.dt-build/adhoc/` folder, preserving every file and subfolder, then use that
+destination as `-RunFolder`. Ledger-owned stdout, stderr and summary paths follow
+the copied run folder. Job execution references in the spec/command retain their
+absolute paths; those paths stay valid after the copy. Keep any external
+prompt, script and output files at their referenced paths.
+
+## After a crash or reboot
+
+Reconcile the saved ledger, then relaunch the interrupted job from its stored
+spec. The new job has a new ID; its spec, start event and JSON status record
+`relaunched_from` with the old ID. A job that is still running is refused with
+`DT_JOB_FROMJOB_RUNNING`.
+
+```powershell
+cd "<project root>"
+$dtJob = "<repo>/skills/dt-build/scripts/dt-job.ps1"
+$run = Join-Path (Get-Location) '.dt-build/adhoc'
+pwsh -NoProfile -File $dtJob reconcile -RunFolder $run -Json
+pwsh -NoProfile -File $dtJob start -RunFolder $run -FromJob j-0001 -Json
+```
+
+`-FromJob` reads `spec.json` from the same run folder and preserves the command
+or script arguments, environment, working directory, dependencies and job metadata.
+Explicit start parameters override copied values. Optional `-PromptPath` and
+`-OutputPath` replace the corresponding exact arguments in the command, including
+quoted values. An override with no matching argument fails with
+`DT_JOB_FROMJOB_NO_ARG`; it never appends an argument or alters a similarly named
+argument. For example:
+
+```powershell
+cd "<project root>"
+pwsh -NoProfile -File $dtJob start -RunFolder $run -FromJob j-0001 -PromptPath "<new prompt path>" -OutputPath "<new output path>" -Json
+```
+
 ## Dependency chains and requeue
 
 `start -DependsOn <job-id>` records a queued job. It starts when every dependency

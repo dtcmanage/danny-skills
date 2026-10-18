@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.1
+
+- Fix FS-101/FS-102: guard new temporary dt-job run folders, keep copied-run evidence readable, and relaunch saved jobs with exact path overrides and ancestry.
+
 ## 2.48.0
 
 - Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).
