@@ -2184,6 +2184,7 @@ function Invoke-DtJobMarkBootstrap {
             baseline_tokens = [long]$tokens
             marked_utc      = [DateTime]::UtcNow.ToString('o')
         }
+        Set-DtCtxBootstrapMeasurement -Entry $new
         $all = Get-DtJobContextBaselines -RunFolder $RunFolder
         $all.coordinators | Add-Member -NotePropertyName $coordinator -NotePropertyValue $new -Force
         Write-DtJobAtomic -Path $paths.ContextBaseline -Content ($all | ConvertTo-Json -Depth 6)
@@ -2198,6 +2199,9 @@ function Invoke-DtJobMarkBootstrap {
         marked_utc      = $result.entry.marked_utc
         newly_marked    = $result.marked
     }
+    $overhead = if ($result.entry.PSObject.Properties['host_overhead_tokens']) { $result.entry.host_overhead_tokens } else { $null }
+    $measurement = Get-DtCtxBootstrapMeasurement -Baseline $out.baseline_tokens -HostOverhead $overhead
+    foreach ($property in $measurement.PSObject.Properties) { $out | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value }
     Write-DtJobOutput -Object $out -AsJson:$Json
 }
 

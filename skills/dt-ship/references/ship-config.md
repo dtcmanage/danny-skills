@@ -1,6 +1,6 @@
 # .ship.json — Per-Repo Ship Config for dt-ship
 
-Lives at the repo root: `<repo>\.ship.json`. Read from the branch being shipped by `skills/dt-ship/scripts/ship.ps1`: use the branch's worktree copy when checked out, otherwise extract its committed copy with `git show` to a temporary file under `step_logs`. Fall back to the primary-tree copy only when the branch has no config. On-main mode reads the primary-tree copy; `-ConfigPath` overrides selection. The JSON summary's `config_source` records the file used (null when no config exists). No config means dt-ship stops after merge + purge + push (`status: merged_only`) — deploy and live verification are skipped and reported as skipped.
+Lives at the repo root: `<repo>\.ship.json`. Read from the branch being shipped by `<skill>/scripts/ship.ps1`: use the branch's worktree copy when checked out, otherwise extract its committed copy with `git show` to a temporary file under `step_logs`. Fall back to the primary-tree copy only when the branch has no config. On-main mode reads the primary-tree copy; `-ConfigPath` overrides selection. The JSON summary's `config_source` records the file used (null when no config exists). No config means dt-ship stops after merge + purge + push (`status: merged_only`) — deploy and live verification are skipped and reported as skipped.
 
 ## Schema
 
@@ -77,6 +77,6 @@ When dt-ship reports `merged_only` (no config), offer to scaffold: pick the exam
 
 A `gateCommand` runs in the feature worktree on a normal ship and in the primary tree in on-main mode, so
 it must not hardcode a base that is only valid in one of them. For danny-skills, pass `-BaseRef auto` to
-`scripts/verify-versioning-policy.ps1` and `tools/build-plugin.ps1`: they resolve `main` on a feature
+`<danny-skills>/scripts/verify-versioning-policy.ps1` and `tools/build-plugin.ps1`: they resolve `main` on a feature
 branch, `HEAD` on dirty `main`, and the prior plugin-release commit on clean `main`. Log-only commits
 (`_log.md`, `_log-archive.md`) after the release commit do not move that boundary.

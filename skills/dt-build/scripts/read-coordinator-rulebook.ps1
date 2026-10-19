@@ -14,6 +14,8 @@ $sections = @(
     @('7. Guardrails:', '8. Skill propagation gate')
 )
 $parts = [System.Collections.Generic.List[string]]::new()
+$repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
+$parts.Add("Resolved script anchors: <skill> = $skillRoot; <danny-skills> = $repoRoot. Quote substituted paths.")
 $parts.Add([System.IO.File]::ReadAllText((Join-Path $skillRoot "references/adapter-$CoordinatorHost.md")))
 foreach ($section in $sections) {
     $start = $text.IndexOf($section[0], [System.StringComparison]::Ordinal)

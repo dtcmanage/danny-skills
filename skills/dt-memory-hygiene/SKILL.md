@@ -2,8 +2,10 @@
 name: dt-memory-hygiene
 description: "Periodic maintenance pass for CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Runs when deterministic bloat thresholds are exceeded. Compacts verbose entries, removes duplicate drift, normalizes shape, and preserves current-state clarity without changing underlying decisions."
 metadata:
-  version: 0.3.1
+  version: 0.3.2
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # Memory Hygiene
 
@@ -36,7 +38,7 @@ This skill is a maintenance pass, not a session-capture pass.
 
 Use this skill when:
 
-1. `skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1` returns `should_run_hygiene=true`.
+1. `<skill>/scripts/detect-memory-bloat.ps1` returns `should_run_hygiene=true`.
 2. A file is hard to scan because entries are long, duplicated, or stale.
 3. You are preparing for a major handoff/release and want compact memory quality.
 
@@ -45,7 +47,7 @@ Use this skill when:
 Run the detector first from workspace root:
 
 ```powershell
-pwsh -File skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1
+pwsh -File "<skill>/scripts/detect-memory-bloat.ps1"
 ```
 
 Trigger hygiene automatically when any file hits:
@@ -114,7 +116,7 @@ This sweep is advisory and fires once per new candidate — never a blocking gat
 After the hygiene edits, re-run the detector on the same targets:
 
 ```powershell
-pwsh -File skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1
+pwsh -File "<skill>/scripts/detect-memory-bloat.ps1"
 ```
 
 Include the before/after detector metrics for every touched file in the report (`token_est`, `long_lines`, `duplicate_ratio`, `avg_bullet_words`, `bloat_score`). A pass that does not improve the failing metric is not done — keep compacting, or surface exactly why that metric cannot move without a semantic change.

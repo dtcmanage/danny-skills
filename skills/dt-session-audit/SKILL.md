@@ -2,8 +2,10 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.6.0
+  version: 0.6.1
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # Session Audit
 
@@ -263,7 +265,7 @@ writing, all four must hold.
    push root over it.
 
 Measure condition 4 deterministically: run
-`skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1` before and after the write and use
+`<danny-skills>/skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1` before and after the write and use
 its `word_count` for root `CLAUDE.md` — never an eyeball count. The after count includes
 **everything the run added to root, `References` trigger rows from routed findings included**;
 routing a rule out is not free if its pointer row eats the savings.
@@ -375,7 +377,7 @@ When applying:
 
 After apply, run:
 
-`skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1`
+`<danny-skills>/skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1`
 
 If `should_run_hygiene=true`, invoke `dt-memory-hygiene` automatically.
 

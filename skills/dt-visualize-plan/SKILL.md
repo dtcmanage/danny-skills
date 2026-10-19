@@ -6,9 +6,11 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.6
+  version: 1.1.7
   changelog: "Pointer-swap to shared output-paths convention in references/conventions.md instead of restating the no-computer-link rule inline."
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # Visualize Plan
 
@@ -72,8 +74,8 @@ If unsure, default to `plan-plus-mermaid`.
 - For `ui-mockup`: provider (`frontend-design`, `web-artifacts-builder`, `manual-single-variant`) and optional mockup file path.
 
 2. Render with the shared builder:
-- Call `scripts/render-plan-view.ps1` in this skill.
-- Builder path is repo-level `scripts/visualize/html-builder.ps1`.
+- Call `<skill>/scripts/render-plan-view.ps1` in this skill.
+- Builder path is repo-level `<danny-skills>/scripts/visualize/html-builder.ps1`.
 - Output convention: `plan-view.html` next to the source plan unless an explicit output path is provided.
 
 3. Validate output with the shared deterministic checker (via Bash):
@@ -93,7 +95,7 @@ If unsure, default to `plan-plus-mermaid`.
 
 ## Security + dependency rules
 
-- Redact before rendering: `html-builder.ps1` imports repo-level `scripts/security/redact-secrets.ps1`.
+- Redact before rendering: `html-builder.ps1` imports repo-level `<danny-skills>/scripts/security/redact-secrets.ps1`.
 - Mermaid security mode must stay `securityLevel: 'strict'`.
 - Never fetch Mermaid from a CDN; vendored asset only.
 - If Mermaid MCP is unavailable, fallback to vendored client-side renderer.

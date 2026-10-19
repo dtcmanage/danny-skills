@@ -8,7 +8,7 @@ The shape contract for the `plan-draft.md` that dt-plan produces. It is a **soft
 - **Pinned at:** this file (repo-level `references/plan-shape.md`) — the single canonical home for the
   plan-shape spec. There is no per-skill copy; a duplicate under `skills/<name>/references/` is a fork and
   was removed on 2026-08-30.
-- **Producer-side gate:** `skills/dt-plan/scripts/verify-plan-shape.ps1` checks a plan against this contract
+- **Producer-side gate:** `<danny-skills>/skills/dt-plan/scripts/verify-plan-shape.ps1` checks a plan against this contract
   at save time, so a gap surfaces at the producer rather than at consumer intake.
 
 ## Required shape (`shape_version: 1`)
@@ -31,7 +31,7 @@ Body (surface-shaped; section names match what the conversation produced):
 ### `## Build-intake revalidation`
 
 The header text must match exactly. `dt-review` copies a Mode A plan verbatim to `draft-v1.md`, and
-`skills/dt-review/scripts/assemble-review-prompt.ps1` throws `BUILD_INTAKE_GATE` at Round 1 when an
+`<danny-skills>/skills/dt-review/scripts/assemble-review-prompt.ps1` throws `BUILD_INTAKE_GATE` at Round 1 when an
 evidence map exists and the draft has no section headed exactly `## Build-intake revalidation`. Because the
 reviewed draft is hash-bound by finalization, the omission cannot be repaired in flow — so the producer
 carries the table, not the reviewer.
@@ -48,7 +48,7 @@ reference or an executed query; a claim not directly checked is recorded `UNVERI
 `dt-build` rechecks these rows at build intake.
 
 This requirement was added within `shape_version: 1` rather than bumping the version: it is additive (no
-required section renamed or removed), and `skills/dt-review/scripts/finalize-review.ps1` hard-codes
+required section renamed or removed), and `<danny-skills>/skills/dt-review/scripts/finalize-review.ps1` hard-codes
 `shape_version: 1`, so a bump would break finalization in a skill that had just shipped. Plans written
 before the addition are handled by the soft contract below — surfaced via `AskUserQuestion`, never silently
 adapted.

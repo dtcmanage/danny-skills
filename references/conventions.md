@@ -1,5 +1,7 @@
 # danny-skills Conventions
 
+`<danny-skills>` is the resolved danny-skills repo root; quote script paths when substituting it.
+
 Shared conventions every pipeline skill follows. Repo-level reference; read it when authoring or
 editing any skill, script, or reference file in this repo.
 
@@ -90,7 +92,7 @@ Literal path for a copy-paste command: `D:\Claude\_Claude-Workspace\Skill Creati
 ```
 
 This is the single skill-pack output contract. Skill-specific instructions point here instead of
-restating a different path format. Run `python scripts/test-file-link-format.py` after changing this
+restating a different path format. Run `python "<danny-skills>/scripts/test-file-link-format.py"` after changing this
 contract or any artifact-reporting instruction.
 
 ## The `_log.md` friction-note convention

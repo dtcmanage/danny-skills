@@ -6,9 +6,11 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.2
+  version: 1.1.3
   changelog: "Added paired repo-plus-workstation-root writes with deterministic companion shade derivation, while preserving single-target local `.vscode/settings.json` terminal palette updates."
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # Terminal Format Profile
 
@@ -49,9 +51,9 @@ Do NOT fire for:
 - if Danny asks for "a different shade" of a family, choose the nearest preset in that family and say which one you picked
 
 3. Run this skill's script:
-- `pwsh -File scripts/set-terminal-workspace-color.ps1 -Color <color> -Scope <repo|workspace|path> [-TargetPath <path>]`
+- `pwsh -File "<skill>/scripts/set-terminal-workspace-color.ps1" -Color <color> -Scope <repo|workspace|path> [-TargetPath <path>]`
 - when Danny wants a repo color plus a related workstation-root shade, use:
-  `pwsh -File scripts/set-terminal-workspace-color.ps1 -Color <color> -Scope repo -AlsoSetWorkstationRoot -WorkstationVariant lighter`
+  `pwsh -File "<skill>/scripts/set-terminal-workspace-color.ps1" -Color <color> -Scope repo -AlsoSetWorkstationRoot -WorkstationVariant lighter`
 - if the workstation companion color must be explicit rather than derived, pass:
   `-WorkstationColor <color-or-hex>`
 

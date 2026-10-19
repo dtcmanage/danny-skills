@@ -1,0 +1,4 @@
+{"type": "assistant", "isSidechain": true, "message": {"usage": {"input_tokens": 999999}}}
+{"type": "assistant", "message": {"usage": {"input_tokens": 1000, "cache_read_input_tokens": 50000, "cache_creation_input_tokens": 6000}, "content": []}}
+{"type": "assistant", "message": {"usage": {"input_tokens": 89111}, "content": [{"type": "tool_use", "id": "mark", "name": "Bash", "input": {"command": "pwsh -NoProfile -File \"D:/fixture with spaces/dt-job.ps1\" mark-bootstrap -RunFolder fixture"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "mark", "content": [{"type": "text", "text": "{\"baseline_tokens\":89111,\"newly_marked\":true}"}]}]}}

@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.3.1
+
+- Anchor runnable script paths to resolved skill and repository roots (FS-117).
+
 ## 1.3.0
 
 - Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).

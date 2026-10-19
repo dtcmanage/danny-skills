@@ -81,6 +81,7 @@ function Save-HookBootstrapCapture {
                 coordinator_id = $Capture.coordinator_id; host = $captureHost; transcript_path = $transcript; session_id = $sessionId
                 transcript_source = 'hook'; baseline_tokens = [long]$tokens; marked_utc = [DateTime]::UtcNow.ToString('o'); captured_utc = [DateTime]::UtcNow.ToString('o')
             }
+            Set-DtCtxBootstrapMeasurement -Entry $new
             $all.coordinators | Add-Member -NotePropertyName $Capture.coordinator_id -NotePropertyValue $new -Force
             Write-DtJobAtomic -Path $paths.ContextBaseline -Content ($all | ConvertTo-Json -Depth 6)
             return
@@ -99,6 +100,7 @@ function Save-HookBootstrapCapture {
         $entry | Add-Member -NotePropertyName transcript_path -NotePropertyValue $transcript -Force
         $entry | Add-Member -NotePropertyName session_id -NotePropertyValue $sessionId -Force
         $entry | Add-Member -NotePropertyName transcript_source -NotePropertyValue 'hook' -Force
+        Set-DtCtxBootstrapMeasurement -Entry $entry
         $entry | Add-Member -NotePropertyName captured_utc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
         Write-DtJobAtomic -Path $paths.ContextBaseline -Content ($all | ConvertTo-Json -Depth 6)
     }

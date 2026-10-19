@@ -1,7 +1,7 @@
 # Throughput and hardware
 
 At intake, measure the actual execution host after creating `build-state.md`:
-`pwsh -NoProfile -File scripts/measure-build-host.ps1 -RunFolder <folder> [-Kind <kind>]`.
+`pwsh -NoProfile -File "<skill>/scripts/measure-build-host.ps1" -RunFolder <folder> [-Kind <kind>]`.
 Per-process memory caps for test runners must come from measured peaks, never a guess.
 Use run-folder history automatically (last 20 finished jobs, optionally filtered by kind, with 25% headroom and a 0.5 GB floor); without measurements, slot sizing falls back to 2 GB. Override with -MemoryPerJobGB only from measured workload peaks.
 Repeat for each execution host, on resume and before heavy dispatch. A failed probe is an environment

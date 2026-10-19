@@ -2,8 +2,10 @@
 name: dt-writing-draft
 description: "Turn an idea or a pile of notes into a publishable draft: investor letters, white papers, case studies, marketing copy, decks, DDQ content. Builds a sourced corpus first (digests FT Unhedged and the Economist from Outlook, fetches article URLs, reads memos and prior pieces), surfaces what Danny would forget, shapes the draft section by section, then fact-checks it. Trigger on /dt-writing-draft, dt-writing-draft X, or any request to write, draft, or put together a substantial written piece. Do not use to edit a finished draft (that is dt-writing-edit) or for a single short email."
 metadata:
-  version: 0.2.34
+  version: 0.2.35
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # Writing-Draft — From Sources to Publishable Draft
 
@@ -221,7 +223,7 @@ Close with: "To run a structural and clarity pass when ready, point `dt-writing-
 
 ## Guardrails
 
-- **Route any model dispatch as `long-form-writing`.** When this skill hands drafting to another model (a subagent or a Codex/Claude CLI call), pick it with the shared model router's fixed category: `scripts/model-router/resolve-model.ps1 -Category long-form-writing -Lane <codex|claude> -Json`. The category is protected by construction; never pass a cheaper model to save quota.
+- **Route any model dispatch as `long-form-writing`.** When this skill hands drafting to another model (a subagent or a Codex/Claude CLI call), pick it with the shared model router's fixed category: `<danny-skills>/scripts/model-router/resolve-model.ps1 -Category long-form-writing -Lane <codex|claude> -Json`. The category is protected by construction; never pass a cheaper model to save quota.
 - **Load the voice references and the style profile before writing a word.** A draft written without them sounds like a model, not like Danny, and gets discarded.
 - **The business voice profile governs.** `voice-principles-business.md` is the governing voice reference for long-form; `voice-principles.md` is the email base beneath it. Where they differ, the business profile wins — it permits the sparing definitional em dash and the financial term "leverage", both banned by the email file. Length always matches stakes, never an arbitrary cap.
 - **Pull comprehensively.** The full quarter of newsletters, not a convenient sample. Sampling is how events get missed, and catching missed events is half the point of the corpus.

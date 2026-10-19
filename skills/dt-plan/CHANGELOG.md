@@ -1,5 +1,7 @@
 # dt-plan changelog
 
+- 1.4.1 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
+
 - 1.4.0 (2026-10-17): Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).
 
 - 1.3.1 (2026-09-19): Standardized Windows local file links per the shared local file-link contract (conventions.md).

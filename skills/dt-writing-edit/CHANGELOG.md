@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.35 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
+
 - 0.3.34 (2026-10-14): Shared process wrapper: blocked-report classifier ignores report headers and paths (dt-build 2.41.1).
 
 - 0.3.33 (2026-10-13): Model router bench (shared component): bench tests use a fake renderer, and the ranked renderer finds browser-smoke through DANNY_BROWSER_SMOKE_DIR outside the workspace tree; the task bank is unchanged (FS-69).

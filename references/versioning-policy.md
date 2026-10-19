@@ -1,5 +1,7 @@
 # Skill and Plugin Versioning Policy
 
+`<danny-skills>` is the resolved danny-skills repo root.
+
 This is the canonical versioning contract for every skill and shared runtime component in
 `danny-skills`. It deliberately supplements the generic upstream skill format: this pack keeps
 external changelogs and release metadata because installed plugin copies need a deterministic
@@ -37,7 +39,7 @@ bookkeeping. This intentionally includes instruction wording, metadata, scripts,
 templates, and assets: even a small wording change can alter model execution. A shared script/reference change
 also bumps every skill whose runtime behavior changes because of it.
 
-Use `scripts/bump-skill-version.ps1`; never hand-edit a released skill version or append a release entry
+Use `<danny-skills>/scripts/bump-skill-version.ps1`; never hand-edit a released skill version or append a release entry
 manually. `-Set` is for an intentional forward version only and may never downgrade or repeat a version.
 
 ## Plugin SemVer
@@ -52,7 +54,7 @@ A plugin bump is required when distributable state changes under `skills/`, `scr
 `assets/` (excluding friction logs and changelog-only repair), or when `tools/build-plugin.ps1` changes how
 that state is assembled. The package itself is an allowlist of `.claude-plugin/`, `skills/`, `scripts/`,
 `references/`, and `assets/`; root work artifacts and friction logs are never shipped. The plugin changelog entry names every changed
-skill and its new version, plus material shared-runtime changes. Use `scripts/bump-plugin-version.ps1` once;
+skill and its new version, plus material shared-runtime changes. Use `<danny-skills>/scripts/bump-plugin-version.ps1` once;
 it updates all three manifest fields and prepends the release entry.
 
 Every changed shared file under `scripts/`, `references/`, or `assets/` must have an entry in
@@ -81,9 +83,9 @@ entries; bookkeeping migration may reorder them without inventing missing releas
 ## Release transaction
 
 1. Finish and verify the behavioral changes.
-2. Bump each affected skill once with `scripts/bump-skill-version.ps1`.
-3. Bump the plugin once with `scripts/bump-plugin-version.ps1`.
-4. Run `scripts/verify-versioning-policy.ps1 -BaseRef <merge-target> -Json`.
+2. Bump each affected skill once with `<danny-skills>/scripts/bump-skill-version.ps1`.
+3. Bump the plugin once with `<danny-skills>/scripts/bump-plugin-version.ps1`.
+4. Run `<danny-skills>/scripts/verify-versioning-policy.ps1 -BaseRef <merge-target> -Json`.
 5. Run affected tests, then commit. Never mark a build complete or merge while the version gate is red.
 
 On a feature branch, `<merge-target>` is the current local `main`, and `main` must already be an ancestor of
@@ -93,4 +95,4 @@ arbitrary older ref or `HEAD` self-comparison is invalid because either can hide
 The validator is the enforcement authority. It checks all skill versions, shared-policy inheritance,
 changelog presence/current-first order, manifest agreement, plugin changelog alignment, changed-skill bumps,
 and the release-level plugin bump. New-skill junction propagation remains the separate
-`scripts/verify-skill-junctions.ps1` gate.
+`<danny-skills>/scripts/verify-skill-junctions.ps1` gate.

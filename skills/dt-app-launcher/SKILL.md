@@ -6,9 +6,11 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI on Windows; requires danny-skills repo present."
 metadata:
-  version: 0.3.2
-  changelog: "Extracted launcher verification to scripts/verify-launcher.ps1: deterministic pass/fail report on manifest files, shortcut .lnk targets (edge_static vs python_gui), TCP listener, and Edge hardening-flag presence. SKILL.md step 4 now invokes the script instead of asking the AI to interpret process command lines and shortcut targets by hand."
+  version: 0.3.3
+  changelog: "Extracted launcher verification to <skill>/scripts/verify-launcher.ps1: deterministic pass/fail report on manifest files, shortcut .lnk targets (edge_static vs python_gui), TCP listener, and Edge hardening-flag presence. SKILL.md step 4 now invokes the script instead of asking the AI to interpret process command lines and shortcut targets by hand."
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # App Launcher
 
@@ -61,7 +63,7 @@ Do NOT fire for:
 - `python_gui` mode: Python apps that already implement their own GUI window behavior from `main.py` (for example File Sorter). This mode creates shortcuts that target `pythonw.exe` directly and do not use `.bat` as shortcut target.
 
 ```powershell
-pwsh -File skills/dt-app-launcher/scripts/new-app-launcher.ps1 `
+pwsh -File "<skill>/scripts/new-app-launcher.ps1" `
   -AppName "<app name>" `
   -TargetPath "<absolute app repo path>" `
   -StaticRoot "<relative or absolute static root>" `
@@ -74,7 +76,7 @@ pwsh -File skills/dt-app-launcher/scripts/new-app-launcher.ps1 `
 Python GUI pattern:
 
 ```powershell
-pwsh -File skills/dt-app-launcher/scripts/new-app-launcher.ps1 `
+pwsh -File "<skill>/scripts/new-app-launcher.ps1" `
   -AppName "<app name>" `
   -TargetPath "<absolute app repo path>" `
   -StaticRoot "." `
@@ -98,7 +100,7 @@ Optional parameters:
 - Run the verifier with `-CheckRunning` to confirm the running process matches the contract:
 
   ```powershell
-  pwsh -NoProfile -File skills/dt-app-launcher/scripts/verify-launcher.ps1 `
+  pwsh -NoProfile -File "<skill>/scripts/verify-launcher.ps1" `
     -ManifestPath "<absolute path to <slug>-launcher.json>" `
     -CheckRunning -Json
   ```

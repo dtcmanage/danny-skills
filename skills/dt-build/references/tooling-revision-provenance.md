@@ -4,11 +4,11 @@ Runs own the acceptance decision. These read-only proofs permit record-and-conti
 
 ## Published tooling and workspace guides
 
-Invoke `scripts/resolve-tooling-revision.ps1 -Path <installed-file> -Json` for danny-skills tooling. The default repository is the source danny-skills checkout, including when invoked through a skill junction. For a workspace guide use `-RepoRoot D:/Claude`; for example:
+Invoke `<skill>/scripts/resolve-tooling-revision.ps1 -Path <installed-file> -Json` for danny-skills tooling. The default repository is the source danny-skills checkout, including when invoked through a skill junction. For a workspace guide use `-RepoRoot D:/Claude`; for example:
 
 ```powershell
 cd "<danny-skills checkout>"
-pwsh -NoProfile -File skills/dt-build/scripts/resolve-tooling-revision.ps1 -Path D:/Claude/_Claude-Workspace/00_Resources/ops-conventions.md -RepoRoot D:/Claude -Json
+pwsh -NoProfile -File "<skill>/scripts/resolve-tooling-revision.ps1" -Path D:/Claude/_Claude-Workspace/00_Resources/ops-conventions.md -RepoRoot D:/Claude -Json
 ```
 
 Files within the selected repository infer their repository-relative path. Installed `dt-build/scripts` copies retain the canonical tooling path inference. For an external copy, supply `-RepoRelativePath <repo-path>`.

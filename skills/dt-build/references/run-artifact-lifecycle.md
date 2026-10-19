@@ -6,7 +6,7 @@ Artifact classes:
 - Retained execution provenance: redacted chunk output, model/effort/CLI provenance JSON, acceptance rows,
   and prompt/reference hashes. Full assembled prompts remain ephemeral.
 - Retained decision record: `build-plan.md`, `build-state.md`, `build-decision-log.md`.
-- Orchestration state (written only by `scripts/dt-job.ps1`, the watcher, and the launcher): `jobs/` (one
+- Orchestration state (written only by `<skill>/scripts/dt-job.ps1`, the watcher, and the launcher): `jobs/` (one
   `<job_id>.json` per job, a per-job `jobs/<job_id>/` folder holding `spec.json`, `stdout.log`, `stderr.log`,
   and `summary.json`, plus `events.jsonl`, `reads.jsonl`, `locks/`), `coordinator.lease`, `coordinator.lock`,
   `context-baseline.json`, `irreversible.json`, `approvals.json`, `launches.jsonl`, `notifications.jsonl`,

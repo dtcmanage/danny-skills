@@ -2,9 +2,11 @@
 name: dt-ship
 description: "One-command close-out for a finished feature: run the build/tests gate, rebase + ff-only merge to main via the shared merge machinery, push, deploy per the repo's .ship.json, PROVE the deploy is live (deployed commit hash must equal local main HEAD, plus browser-smoke on the configured routes), then purge the merged worktree and branch. Trigger on /dt-ship, 'ship it', 'push live', or 'ship and clean tree'. Do NOT use to create branches or worktrees (that is start-work), for design review (dt-review), or for build execution (dt-build)."
 metadata:
-  version: 0.3.1
+  version: 0.3.2
   changelog: See CHANGELOG.md.
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # dt-ship — Merge, Deploy, Prove Live, Clean Up
 
@@ -30,7 +32,7 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
 2. **Run the gate, then the chain, via the deterministic driver:**
 
    ```powershell
-   pwsh -NoProfile -File skills/dt-ship/scripts/ship.ps1 -RepoRoot "<repo path>" -Branch "<name>" -Json
+   pwsh -NoProfile -File "<skill>/scripts/ship.ps1" -RepoRoot "<repo path>" -Branch "<name>" -Json
    ```
 
    Run the driver with the shell located in the primary tree, never from inside the feature worktree — on Windows the purge cannot delete the directory the invoking shell occupies (the script fails fast at `preflight-cwd` if you do).
@@ -38,7 +40,7 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
    The script, fail-closed (the first failing step stops everything and names itself in `failed_step`):
    - loads `.ship.json` from the branch being shipped: its worktree copy when checked out, otherwise its committed copy via `git show`; falls back to `<primary>\.ship.json` only when the branch has no config (on-main mode uses the primary copy; schema: `references/ship-config.md`; override with `-ConfigPath`),
    - runs the config's `gateCommand` (build/tests) inside the feature worktree — a red gate means NOT merged, NOT shipped,
-   - merges by calling `skills/git-merge-feature/scripts/merge-feature.ps1 -PurgeWorktree` (rebase, ff-only merge, branch delete, worktree removal — the shared machinery, never reimplemented),
+   - merges by calling `<danny-skills>/skills/git-merge-feature/scripts/merge-feature.ps1 -PurgeWorktree` (rebase, ff-only merge, branch delete, worktree removal — the shared machinery, never reimplemented),
    - sweeps for leftovers: any surviving worktree or branch for the merged feature is removed, but only when fully merged and clean,
    - pushes `main` to origin (pushing `main` IS the ship),
    - deploys via `deployCommand`, substituting `{HOST}` from `hostResolveCommand` output so a moved VM IP can never go stale in config,

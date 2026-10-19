@@ -1,4 +1,4 @@
-"""Measure a resume read plan, or attribute an observed Codex bootstrap transcript.
+"""Measure a resume read plan, or attribute an observed Claude Code or Codex bootstrap transcript.
 
 o200k_base is a reproducible text-token proxy; transcript input_tokens is the actual
 model measurement. Install the pinned dependency in requirements-bootstrap.txt.
@@ -41,33 +41,88 @@ def measure_plan(manifest_path: Path, repo_root: Path, canonical_root: Path | No
 def measure_transcript(transcript_path: Path) -> dict[str, object]:
     encoder = tiktoken.get_encoding("o200k_base")
     commands: list[dict[str, object]] = []
+    pending: dict[str, str] = {}
+    overhead: int | None = None
+    first_seen = False
     actual: int | None = None
-    # Use executed commands, not prompts/skill text that merely mention mark-bootstrap.
-    for line in transcript_path.read_text(encoding="utf-8").splitlines():
+
+    def output_text(value: object) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "\n".join(output_text(item) for item in value)
+        if isinstance(value, dict):
+            return output_text(value.get("text", value.get("content", "")))
+        return ""
+
+    def executed(command: str, output: str, failed: bool = False) -> int | None:
+        marker = re.search(r'"baseline_tokens"\s*:\s*(\d+)', output)
+        is_mark = bool(re.search(r"(?:-Verb\s+|dt-job\.ps1[\"']?\s+)mark-bootstrap(?:\s|$)", command))
+        if is_mark and marker and not failed:
+            return int(marker.group(1))
+        commands.append({"command": command, "text_tokens": len(encoder.encode(output))})
+        return None
+
+    for line in transcript_path.read_text(encoding="utf-8-sig").splitlines():
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
         payload = row.get("payload", {})
-        if row.get("type") == "event_msg" and payload.get("type") == "token_count":
-            actual = payload.get("info", {}).get("last_token_usage", {}).get("input_tokens", actual)
-        item = payload.get("item", {})
-        if payload.get("type") != "item_completed" or item.get("type") != "CommandExecution":
-            continue
-        command = item.get("command", [""])[-1]
-        output = item.get("aggregated_output", "")
-        marker = re.search(r'"baseline_tokens"\s*:\s*(\d+)', output)
-        if marker and ("-Verb mark-bootstrap" in command or "dt-job.ps1' mark-bootstrap" in command):
-            actual = int(marker.group(1))
+        kind = row.get("type")
+        if kind == "assistant" and not row.get("isSidechain"):
+            message = row.get("message", {})
+            if not first_seen:
+                first_seen = True
+                usage = message.get("usage") or {}
+                total = sum(usage.get(key, 0) or 0 for key in
+                            ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+                overhead = total if total > 0 else None
+            for block in message.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    inputs = block.get("input", {})
+                    command = inputs.get("command", inputs.get("cmd", ""))
+                    if isinstance(command, str):
+                        pending[block["id"]] = command
+        elif kind == "user":
+            for block in row.get("message", {}).get("content", []):
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    actual = executed(pending.pop(block.get("tool_use_id"), ""),
+                                      output_text(block.get("content", "")), bool(block.get("is_error")))
+                    if actual is not None:
+                        break
+        elif kind == "event_msg" and payload.get("type") == "token_count" and not first_seen:
+            first_seen = True
+            overhead = ((payload.get("info") or {}).get("last_token_usage") or {}).get("input_tokens")
+        elif kind == "response_item" and payload.get("type") in ("function_call", "custom_tool_call"):
+            arguments = payload.get("arguments", payload.get("input", ""))
+            try:
+                inputs = json.loads(arguments)
+                command = inputs.get("cmd", inputs.get("command", ""))
+            except (ValueError, TypeError):
+                command = str(arguments)
+            pending[payload["call_id"]] = command
+        elif kind == "response_item" and payload.get("type") in ("function_call_output", "custom_tool_call_output"):
+            actual = executed(pending.pop(payload.get("call_id"), ""), output_text(payload.get("output", "")))
+        elif payload.get("type") == "item_completed":
+            item = payload.get("item", {})
+            if item.get("type") == "CommandExecution":
+                command = item.get("command", "")
+                if isinstance(command, list):
+                    command = " ".join(command)
+                actual = executed(command, item.get("aggregated_output", ""), item.get("exit_code", 0) != 0)
+        if actual is not None:
             break
-        commands.append({"command": command, "text_tokens": len(encoder.encode(output))})
-    else:
-        raise ValueError("No successful executed mark-bootstrap found in transcript")
     if actual is None:
-        raise ValueError("No actual input_tokens measurement before marker")
+        raise ValueError("No successful executed mark-bootstrap found in transcript")
+    known = overhead is not None and 0 <= overhead <= actual
     return {"commands": commands, "command_output_text_tokens": sum(c["text_tokens"] for c in commands),
-            "actual_input_tokens_before_marker": actual,
-            "note": "Command outputs use o200k_base; actual input includes runtime, native context, tool formatting, commands and reasoning."}
+            "actual_input_tokens_before_marker": actual, "baseline_tokens": actual,
+            "host_overhead_tokens": overhead if known else None,
+            "coordinator_added_tokens": actual - overhead if known else actual,
+            "bootstrap_measurement": "baseline minus first-turn host overhead" if known else
+                                     "host overhead unavailable; using full baseline",
+            "note": "Full baseline still controls context-guard limits; command outputs use o200k_base."}
 
 
 def main() -> int:
@@ -85,7 +140,7 @@ def main() -> int:
     result = measure_transcript(args.transcript) if args.transcript else measure_plan(args.manifest, args.repo_root, args.canonical_root)
     if args.transcript:
         result["target_tokens"] = args.max_tokens
-        result["pass"] = result["actual_input_tokens_before_marker"] < args.max_tokens
+        result["pass"] = result["coordinator_added_tokens"] < args.max_tokens
     rendered = json.dumps(result, indent=2, ensure_ascii=True)
     if args.output:
         args.output.write_text(rendered + "\n", encoding="utf-8")

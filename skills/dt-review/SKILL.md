@@ -6,9 +6,11 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.17.0
+  version: 1.17.1
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # dt-review - Adversarial design convergence
 
@@ -81,7 +83,7 @@ alias, and a run outside the requested family fails closed.
 
 Model slugs are never hardcoded. Both lanes resolve through the shared model router with the fixed
 category `planning`, protected for complex reviews (Codex uses `Resolve-CodexModel -Category planning`; see
-`scripts/model-router/resolve-model.ps1`). Preflight refreshes the live account catalog (`codex debug models`),
+`<danny-skills>/scripts/model-router/resolve-model.ps1`). Preflight refreshes the live account catalog (`codex debug models`),
 and the router's pick must be selectable on it: a pick the catalog cannot select fails closed. Model overrides
 run only on Danny's explicit request through `-Model` with a
 recorded reason; an unselectable override fails closed.
@@ -130,7 +132,7 @@ Codex lane — run with a 75-second outer timeout. The script has four sequentia
 budgets (10 + 10 + 15 + 30 seconds) plus bounded cleanup:
 
 ```powershell
-pwsh -NoProfile -File <skill>\scripts\preflight-codex.ps1 `
+pwsh -NoProfile -File "<skill>/scripts/preflight-codex.ps1" `
   -ProjectPath <abs> -Tier light -TimeoutMs 30000
 ```
 
@@ -140,7 +142,7 @@ resolution, and response. Stop on failure.
 Claude lane: echo-check the router-selected model once before its first substantive round:
 
 ```powershell
-pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
+pwsh -NoProfile -File "<skill>/scripts/invoke-claude-round.ps1" `
   -ProjectPath <abs> -Tier <light|complex> -Preflight -TimeoutMs 60000
 ```
 
@@ -154,7 +156,7 @@ preserve settled decisions and the existing severity/round rules.
 1. Assemble the prompt deterministically:
 
    ```powershell
-   pwsh -NoProfile -File <skill>\scripts\assemble-review-prompt.ps1 `
+   pwsh -NoProfile -File "<skill>/scripts/assemble-review-prompt.ps1" `
      -ProjectPath <abs> -Round <N> -Tier <light|complex>
    ```
 
@@ -165,7 +167,7 @@ preserve settled decisions and the existing severity/round rules.
    Codex lane:
 
    ```powershell
-   pwsh -NoProfile -File <skill>\scripts\invoke-codex-round.ps1 `
+   pwsh -NoProfile -File "<skill>/scripts/invoke-codex-round.ps1" `
      -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> `
      -Tier <light|complex> -TimeoutMs <300000|600000>
    ```
@@ -173,7 +175,7 @@ preserve settled decisions and the existing severity/round rules.
    Claude lane:
 
    ```powershell
-   pwsh -NoProfile -File <skill>\scripts\invoke-claude-round.ps1 `
+   pwsh -NoProfile -File "<skill>/scripts/invoke-claude-round.ps1" `
      -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> `
      -Tier <light|complex> -TimeoutMs <300000|600000>
    ```
@@ -186,7 +188,7 @@ preserve settled decisions and the existing severity/round rules.
 3. Parse and persist state:
 
    ```powershell
-   pwsh -NoProfile -File <skill>\scripts\parse-verdict.ps1 `
+   pwsh -NoProfile -File "<skill>/scripts/parse-verdict.ps1" `
      -FeedbackPath <review-vN.md> -Round <N> -StatePath <verdicts.json> -Tier <light|complex>
    ```
 
@@ -222,7 +224,7 @@ preserve settled decisions and the existing severity/round rules.
 7. Record dispositions:
 
    ```powershell
-   pwsh -NoProfile -File <skill>\scripts\record-dispositions.ps1 `
+   pwsh -NoProfile -File "<skill>/scripts/record-dispositions.ps1" `
      -StatePath <verdicts.json> -Round <N> -DispositionsPath <dispositions-vN.json>
    ```
 
@@ -265,7 +267,7 @@ If Danny selects an extension, persist it before assembling the next prompt:
   manifest before allowing the confirmation review.
 
 ```powershell
-pwsh -NoProfile -File <skill>\scripts\authorize-next-round.ps1 `
+pwsh -NoProfile -File "<skill>/scripts/authorize-next-round.ps1" `
   -ProjectPath <abs> -Round <N+1> -Tier <light|complex> `
   -AuthorizedBy Danny -Reason '<explicit decision>'
 ```
@@ -277,7 +279,7 @@ automatic. The scripts reject skipped, noncontiguous, stale-authorized, or nonla
 ### 5. Finalize
 
 Follow `references/finalization.md`: carry the build-intake revalidation table, reconcile CONTEXT/glossary
-under A1-A8, then run `scripts/finalize-review.ps1`. Only that script may write the final artifact and
+under A1-A8, then run `<skill>/scripts/finalize-review.ps1`. Only that script may write the final artifact and
 delete scratch. Do not generate HTML; that is `dt-visualize-design` on explicit request.
 
 When called by `dt-pipeline` or a subagent, return the final paths to the caller without asking whether to

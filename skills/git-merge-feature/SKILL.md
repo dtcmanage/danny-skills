@@ -2,12 +2,14 @@
 name: git-merge-feature
 description: "Rebase a named feature branch onto main then fast-forward merge it into main and delete the branch. Use when a feature is complete and ready to land on main. Trigger on /git-merge-feature [branch] or 'merge feature X to main' or 'land feature X'."
 metadata:
-  version: 1.2.4
+  version: 1.2.5
   changelog:
     - "1.0.0 - Initial: resolve branch, rebase onto main, ff-only merge, delete branch via merge-feature.ps1."
     - "1.1.0 - Handle a feature branch checked out in a git worktree (the normal trunk-based case): the script now detects and merges it worktree-aware (rebase inside the worktree, ff-merge from the primary tree, remove the worktree before deleting the branch); SKILL.md documents the same fallback."
     - "1.2.0 - Post-merge purge hardening for dt-ship: new opt-in -PurgeWorktree switch makes worktree-remove/branch-delete failures hard errors (plus 'git worktree prune' after removal) so merged worktrees can never be silently left behind; default behavior without the switch is unchanged. JSON now always includes worktree_path, worktree_removed, and rerere_enabled (the rerere suggestion moved from prose re-checking into script output)."
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # git-merge-feature — Rebase and Merge a Feature Branch into main
 
@@ -31,14 +33,14 @@ The feature branch name. Can be the full name (`feat/nav-fix`) or just the suffi
 2. Run the deterministic merge script from this skill:
 
    ```powershell
-   pwsh -NoProfile -File skills/git-merge-feature/scripts/merge-feature.ps1 -Branch "<name>" -Json
+   pwsh -NoProfile -File "<skill>/scripts/merge-feature.ps1" -Branch "<name>" -Json
    ```
 
    The script:
    - resolves the branch (tries `<name>`, then `feat/<name>`, then `feature/<name>`),
    - blocks if the working tree on the feature branch has uncommitted changes,
    - checks out `main` and runs `git pull origin main`,
-   - invokes the repo-level `scripts/git/rebase-onto-main.ps1` to rebase,
+   - invokes the repo-level `<danny-skills>/scripts/git/rebase-onto-main.ps1` to rebase,
    - runs `git merge --ff-only` from `main` (no `--no-ff` fallback),
    - deletes the local feature branch on success,
    - emits a JSON summary with `commit_range`, `branch_deleted`, `worktree_path`, `worktree_removed`, `rerere_enabled`, and `status`.

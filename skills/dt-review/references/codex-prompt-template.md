@@ -1,6 +1,6 @@
 # Review Prompt and Output Contract (both lanes)
 
-`scripts/assemble-review-prompt.ps1` is the only prompt producer, for both the Codex and Claude
+`<skill>/scripts/assemble-review-prompt.ps1` is the only prompt producer, for both the Codex and Claude
 reviewer lanes. Do not assemble a round prompt freehand.
 
 Its JSON receipt binds round/tier plus canonical prompt, draft, state, and required-authorization
@@ -30,16 +30,16 @@ lists findings Danny personally adjudicated (B/C) with the recorded rationale; t
 re-raise them without new evidence and closes them as SUPERSEDED.
 
 Only external/LLM-produced artifacts are wrapped with the shared
-`scripts/wrap-prompt-envelope.ps1` primitive. Never wrap the whole assembled prompt; doing so marks
+`<danny-skills>/scripts/wrap-prompt-envelope.ps1` primitive. Never wrap the whole assembled prompt; doing so marks
 the procedure itself as untrusted data.
 
 ## Structured output
 
-Codex lane: `scripts/invoke-codex-round.ps1` passes
+Codex lane: `<skill>/scripts/invoke-codex-round.ps1` passes
 `references/review-output-schema.json` through `codex exec --output-schema`, validates the semantic
 contracts, and renders `review-v<N>.json` to human-readable `review-v<N>.md`.
 
-Claude lane: `scripts/invoke-claude-round.ps1` appends the same schema to the stdin payload (the
+Claude lane: `<skill>/scripts/invoke-claude-round.ps1` appends the same schema to the stdin payload (the
 canonical prompt file is untouched and stays receipt-bound; the deterministic suffix is hashed into
 round metadata), parses the returned JSON, and runs the identical semantic validation, rendering, and
 redaction chain.

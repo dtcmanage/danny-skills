@@ -1,12 +1,14 @@
 # Model router operator reference
 
-Route work through `scripts/model-router/resolve-model.ps1`; request `-Json` for structured output. The roster contains five jobs, a first choice and an other-vendor backup per job, and a category-to-job map. The illustrator has no backup while only one image model exists. Each slot carries an effort (fast low, coder standard medium / hard high, deep thinker standard medium / hard high, writer medium, illustrator none) that the resolver returns and the wrappers pass to the CLIs.
+`<danny-skills>` is the resolved danny-skills repo root; quote script paths when substituting it.
+
+Route work through `<danny-skills>/scripts/model-router/resolve-model.ps1`; request `-Json` for structured output. The roster contains five jobs, a first choice and an other-vendor backup per job, and a category-to-job map. The illustrator has no backup while only one image model exists. Each slot carries an effort (fast low, coder standard medium / hard high, deep thinker standard medium / hard high, writer medium, illustrator none) that the resolver returns and the wrappers pass to the CLIs.
 
 Use the approved state `roster.json` when valid. An absent `roster.json` raises `router-roster-missing`; a `roster.json` that is invalid or not approved raises `router-roster-invalid` with the error text. In both cases, the resolver uses `default-roster.json`. `ladders.json` defines the per-lane escalation ladder. Vendor limits and recorded refusal blocks can move a job to its backup; drift moves a job to its approved backup. When no eligible model is available, the resolver returns `wait`.
 
 Keep code in `scripts/model-router/` and committed configuration in `references/model-router/`. Runtime readings, proposals, registry, alerts, outcomes, and cost reports live in `DT_MODEL_ROUTER_STATE` when set, otherwise in the `model-router/state` sibling of the main checkout. Worktrees share that state folder.
 
-Rebuild a roster from scratch with `pwsh -NoProfile -File scripts/model-router/approve-roster.ps1 -Seed`, then run the same script with `-Show` to review the proposal and `-Approve` to approve it. Seeding alone leaves routing on the default roster.
+Rebuild a roster from scratch with `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/approve-roster.ps1" -Seed`, then run the same script with `-Show` to review the proposal and `-Approve` to approve it. Seeding alone leaves routing on the default roster.
 
 The catalog check runs twice daily with a 30-second deadline. A failed check preserves the last good registry. A new non-frontier model is queued for release research; its job-scoped bench comparisons (one per job it could serve, never against a job it already holds) run in the overnight cadence with that release pass, not from the daytime check. Alerts show a chat line, try a private Discord DM, and fall back to email; delivered keys fire once. `update-outcomes.ps1` records performance and flags drift. Bench runs on new-model, research, drift and manual triggers; no monthly bench schedule. The weekly cost report compares subscription use with API-equivalent spend and DMs model use, frontier use, vendor quota use, Claude session use, and pending approvals.
 
@@ -48,14 +50,14 @@ Research runs per category (`run-router-research.ps1 -Categories`), reading the 
 Manage the roster with `approve-roster.ps1`: `-Show`, `-Approve` (uses the approved roster), `-Revoke` (clears approval and uses the default roster with an alert), and `-DeclineDrift -Job <job>` (keep the first choice after a drift alert). Drift on a first choice sends that job to its approved backup until Danny approves the swap proposal or declines it.
 Use `-Approve -Jobs fast,coder` to approve only named jobs when a full proposal exceeds the five-model cap.
 
-At ship, register the Windows Scheduled Tasks from the **main checkout** with `pwsh -NoProfile -File scripts/model-router/register-router-schedules.ps1 -Apply`. They run the weekly cost report on Monday at 07:00 ET, the full research cadence daily at 01:00 ET, and the model-release check daily at 13:00 ET. Do not register them from a build worktree. Research runs only for a new frontier-vendor release (and its confirmation and follow-up passes) or on Danny's call. Refresh research (drift marks, readings older than six months) is queued only when the cadence is run by hand with `-Refresh`; the schedule never queues it (2026-10-06, after nightly re-queued refreshes repeated the same comparison).
+At ship, register the Windows Scheduled Tasks from the **main checkout** with `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/register-router-schedules.ps1" -Apply`. They run the weekly cost report on Monday at 07:00 ET, the full research cadence daily at 01:00 ET, and the model-release check daily at 13:00 ET. Do not register them from a build worktree. Research runs only for a new frontier-vendor release (and its confirmation and follow-up passes) or on Danny's call. Refresh research (drift marks, readings older than six months) is queued only when the cadence is run by hand with `-Refresh`; the schedule never queues it (2026-10-06, after nightly re-queued refreshes repeated the same comparison).
 
 From the repo root, run:
 
 ```powershell
 Get-ChildItem scripts/model-router/tests/*.ps1 | ForEach-Object { pwsh -NoProfile -File $_.FullName; if ($LASTEXITCODE -ne 0) { throw "Failed: $($_.Name)" } }
-pwsh -NoProfile -File scripts/verify-versioning-policy.ps1 -BaseRef main -Json
-pwsh -NoProfile -File scripts/verify-skill-junctions.ps1 -RepoRoot (Get-Location).Path -Json
+pwsh -NoProfile -File "<danny-skills>/scripts/verify-versioning-policy.ps1" -BaseRef main -Json
+pwsh -NoProfile -File "<danny-skills>/scripts/verify-skill-junctions.ps1" -RepoRoot "<danny-skills>" -Json
 ```
 # Internal bench research gate
 
@@ -95,7 +97,7 @@ task resets golden approval. An absent or empty private bank keeps the original
 committed-bank hash. A missing or unreadable previously approved private bank is
 named in the report.
 
-Use `scripts/model-router/bench/add_task.py --state <state> --problem <file>
+Use `<danny-skills>/scripts/model-router/bench/add_task.py --state <state> --problem <file>
 --answer <file> --job <job> --grader <exact|numeric> --difficulty <standard|hard>`
 to add a private task. It creates the task folder and refuses to overwrite one.
 `import_aider.py --source <local-clone> --ids <ids-file> --state <state>` imports
@@ -279,7 +281,7 @@ itself adds no network or model call.
 Frontier requests are Windows-only; the Mac never raises them.
 
 For a coder or deep-thinker piece that failed at hard effort (or has disagreeing
-hard-tier answers), run `scripts/model-router/request-frontier.ps1 -Category <category>
+hard-tier answers), run `<danny-skills>/scripts/model-router/request-frontier.ps1 -Category <category>
 -ProblemPath <file> -AttemptPaths <attempt-files> -AttemptVendor <codex|claude>
 -StateDir <state>`. It makes one read-only scrutiny call on the other vendor's
 deep thinker at high effort, using the canonical prompt envelope. Invalid or

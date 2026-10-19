@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.6.1 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
+
 - 0.6.0 (2026-10-13): Add a Command Center backstop to reconcile session open and finished items, move misplaced open-for-Danny memory entries, and report list writes.
 
 - 0.5.1 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.

@@ -13,7 +13,7 @@ $registry = Join-Path $(if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR }
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$receiptPath = Join-Path '<evidence-dir>' 'adoption-merge.json'; New-Item -ItemType Directory -Path (Split-Path $receiptPath) -Force | Out-Null; $receipt = pwsh -NoProfile -File skills/git-merge-feature/scripts/merge-feature.ps1 -Branch '<accepted-build-branch>' -Json; $mergeExit = $LASTEXITCODE; $receipt | Set-Content -LiteralPath $receiptPath; if ($mergeExit -ne 0) { throw "Merge failed; inspect $receiptPath" }; $merge = $receipt | ConvertFrom-Json; if (-not $merge.commit_range) { throw 'Merge receipt lacks commit_range' }
+$receiptPath = Join-Path '<evidence-dir>' 'adoption-merge.json'; New-Item -ItemType Directory -Path (Split-Path $receiptPath) -Force | Out-Null; $receipt = pwsh -NoProfile -File "<danny-skills>/skills/git-merge-feature/scripts/merge-feature.ps1" -Branch '<accepted-build-branch>' -Json; $mergeExit = $LASTEXITCODE; $receipt | Set-Content -LiteralPath $receiptPath; if ($mergeExit -ne 0) { throw "Merge failed; inspect $receiptPath" }; $merge = $receipt | ConvertFrom-Json; if (-not $merge.commit_range) { throw 'Merge receipt lacks commit_range' }
 ```
 
 ```powershell
@@ -25,7 +25,7 @@ git push origin main
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-pwsh -NoProfile -File scripts/verify-skill-junctions.ps1
+pwsh -NoProfile -File "<danny-skills>/scripts/verify-skill-junctions.ps1"
 ```
 
 ```powershell
@@ -37,7 +37,7 @@ claude plugin list
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-pwsh -NoProfile -File skills/dt-build/scripts/register-dt-build-watcher.ps1
+pwsh -NoProfile -File "<skill>/scripts/register-dt-build-watcher.ps1"
 ```
 
 ```powershell
@@ -50,36 +50,36 @@ $installed = Get-Content -Raw -LiteralPath $target | ConvertFrom-Json -AsHashtab
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-pwsh -NoProfile -File skills/dt-build/scripts/tests/test-orchestration-scenarios.ps1 -Live -EvidenceDir '<evidence-dir>'
+pwsh -NoProfile -File "<skill>/scripts/tests/test-orchestration-scenarios.ps1" -Live -EvidenceDir '<evidence-dir>'
 ```
 
 For live scenario 3, create the temporary run and echo job below, then close this coordinator session before the five-second job ends. The registered watcher must observe its completion without an attached coordinator. In a fresh session run the second block to consume exactly once; after another scheduled tick, retain the notifications and event cursor as evidence, then finish with the third block.
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$run = Join-Path '<evidence-dir>' 'live-s03'; New-Item -ItemType Directory -Path $run -Force | Out-Null; $state = Join-Path $run '_build-state.md'; $text = (Get-Content -Raw 'skills/dt-pipeline/templates/build-state-template.md').Replace('__RUN_STATUS__','runnable').Replace('__LAST_CONSUMED_EVENT_SEQ__','0').Replace('__UPDATED_UTC__',[DateTime]::UtcNow.ToString('o')); [IO.File]::WriteAllText($state,$text); pwsh -NoProfile -File skills/dt-build/scripts/dt-job.ps1 register-run -RunFolder $run -RunId live-s03 -BuildStatePath $state -PinnedHost claude -Json; pwsh -NoProfile -File skills/dt-build/scripts/dt-job.ps1 start -RunFolder $run -Command 'Start-Sleep -Seconds 5; Write-Output echo' -Json
+$run = Join-Path '<evidence-dir>' 'live-s03'; New-Item -ItemType Directory -Path $run -Force | Out-Null; $state = Join-Path $run '_build-state.md'; $text = (Get-Content -Raw 'skills/dt-pipeline/templates/build-state-template.md').Replace('__RUN_STATUS__','runnable').Replace('__LAST_CONSUMED_EVENT_SEQ__','0').Replace('__UPDATED_UTC__',[DateTime]::UtcNow.ToString('o')); [IO.File]::WriteAllText($state,$text); pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" register-run -RunFolder $run -RunId live-s03 -BuildStatePath $state -PinnedHost claude -Json; pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" start -RunFolder $run -Command 'Start-Sleep -Seconds 5; Write-Output echo' -Json
 ```
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$run = Join-Path '<evidence-dir>' 'live-s03'; pwsh -NoProfile -File skills/dt-build/scripts/dt-job.ps1 reconcile -RunFolder $run -Json; $status = pwsh -NoProfile -File skills/dt-build/scripts/dt-job.ps1 status -RunFolder $run -Json | ConvertFrom-Json; if ($status.last_event_seq -le $status.last_consumed_event_seq) { throw 'Expected one unconsumed completion' }; pwsh -NoProfile -File skills/dt-build/scripts/dt-job.ps1 consume -RunFolder $run -CoordinatorId live-s03-next -Seq $status.last_event_seq -Json
+$run = Join-Path '<evidence-dir>' 'live-s03'; pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" reconcile -RunFolder $run -Json; $status = pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" status -RunFolder $run -Json | ConvertFrom-Json; if ($status.last_event_seq -le $status.last_consumed_event_seq) { throw 'Expected one unconsumed completion' }; pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" consume -RunFolder $run -CoordinatorId live-s03-next -Seq $status.last_event_seq -Json
 ```
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-$run = Join-Path '<evidence-dir>' 'live-s03'; pwsh -NoProfile -File skills/dt-build/scripts/dt-job.ps1 status -RunFolder $run -Json | Set-Content -LiteralPath (Join-Path $run 'receipt.json'); pwsh -NoProfile -File skills/dt-build/scripts/dt-job.ps1 finish -RunFolder $run -Json
+$run = Join-Path '<evidence-dir>' 'live-s03'; pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" status -RunFolder $run -Json | Set-Content -LiteralPath (Join-Path $run 'receipt.json'); pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" finish -RunFolder $run -Json
 ```
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-pwsh -NoProfile -File skills/dt-build/scripts/compare-orchestration.ps1 -OldRunFolder '<absolute-old-run>' -NewRunFolder '<absolute-new-run>' -UsageLedgerPath '<absolute-collect-usage-ledger>' -OutputDir '<evidence-dir>'
+pwsh -NoProfile -File "<skill>/scripts/compare-orchestration.ps1" -OldRunFolder '<absolute-old-run>' -NewRunFolder '<absolute-new-run>' -UsageLedgerPath '<absolute-collect-usage-ledger>' -OutputDir '<evidence-dir>'
 ```
 
 6. Rollback: first finish or cancel affected runs and confirm no active coordinator. Unregister the watcher, remove only this feature's two hook commands while preserving unrelated settings, and revert the recorded fast-forward range. Review the rollback before committing; push requires Danny's authorization. The settings backup is retained for recovery, not blindly restored over subsequent settings changes.
 
 ```powershell
 cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills"
-pwsh -NoProfile -File skills/dt-build/scripts/register-dt-build-watcher.ps1 -Unregister
+pwsh -NoProfile -File "<skill>/scripts/register-dt-build-watcher.ps1" -Unregister
 ```
 
 ```powershell

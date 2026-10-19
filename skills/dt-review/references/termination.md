@@ -24,7 +24,7 @@ written before 1.12.0 still verify.
 
 ## Contract
 
-`scripts/evaluate-termination.ps1` is authoritative. Run it after every finding has a recorded
+`<skill>/scripts/evaluate-termination.ps1` is authoritative. Run it after every finding has a recorded
 disposition and any re-raised rejection has user adjudication.
 
 | Verdict/state | Action |
@@ -39,7 +39,7 @@ disposition and any re-raised rejection has user adjudication.
 Caps are 3 rounds for `light` and 4 for `complex` (6 until 1.12.0; the audit of 2026-09-06 found no
 review that produced a new finding ID after round 5, only re-litigation). A terminal `NOTHING_TO_ADD` ends the loop even
 before the cap. A user may request a named confirmation round for unusually high-stakes work; record
-that exception with `scripts/authorize-next-round.ps1` rather than making confirmation the default.
+that exception with `<skill>/scripts/authorize-next-round.ps1` rather than making confirmation the default.
 The same authorization record is mandatory when Danny selects a one-round extension at the cap. It
 binds the next round to the source round, termination action, tier, and state hash; prompt assembly and
 Codex invocation both reject a missing or stale authorization. `CONTINUE` and

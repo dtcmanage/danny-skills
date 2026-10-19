@@ -1,11 +1,11 @@
 # dt-build host adapter: Claude Code
 
-Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rules: `SKILL.md`. `dt-job` means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
+Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rules: `SKILL.md`. `dt-job` means `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
 
 ## Dispatch
 
 - Follow `SKILL.md` routing; dispatch pinned runs without `-Model`; omit pins from handoffs.
-- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `scripts/invoke-claude-chunk.ps1` or `scripts/invoke-codex-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
+- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `<skill>/scripts/invoke-claude-chunk.ps1` or `<skill>/scripts/invoke-codex-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
 - Run tests/builds/browser checks as `-Kind test|command` jobs.
 - A Claude pick at the session's own effort may still use the Agent tool with the returned `agent_alias`. Any other effort goes through the wrapper as a job.
 
@@ -42,7 +42,7 @@ Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rul
 - For managed starts, the interactive session registers with `-Managed`, runs `dt-job request-continuation -CoordinatorId <id> -Reason managed_start`, takes no lease, and ends; the watcher continues.
 
 - Managed relaunches verify the existing registration through `read-resume-record.ps1`. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters the run.
-- The watcher (`scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts jobs and relaunches for unconsumed events without a coordinator. Retries: 2/10/30 minutes; two thrash launches on unchanged checkpoints pause with one DM.
+- The watcher (`<skill>/scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts jobs and relaunches for unconsumed events without a coordinator. Retries: 2/10/30 minutes; two thrash launches on unchanged checkpoints pause with one DM.
 - Legacy managed coordinator prompts read `/dt-build resume <RUN_ID> (managed coordinator <id>)`. Continue as `<id>` (reconcile, read `_build-state.md`, carry on); never run `dt-job resume`.
 - Before ending each headless turn, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state it shows. An unconsumed trigger counts as a failed launch.
 - The launcher alone sets `DT_BUILD_COORDINATOR_ID`, for managed coordinators. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
@@ -53,5 +53,5 @@ Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rul
 ## Evidence
 
 - Read only `status|wait -Json` envelopes, checking `report_verdict` and `failure_category`.
-- Use `pwsh -NoProfile -File scripts/read-evidence.ps1 -RunFolder <run-folder> -JobId <id> -File <name>` or `-Path <file>`, with `-Lines a-b` or `-Grep <pattern>`, capped at 16 KB.
+- Use `pwsh -NoProfile -File "<skill>/scripts/read-evidence.ps1" -RunFolder <run-folder> -JobId <id> -File <name>` or `-Path <file>`, with `-Lines a-b` or `-Grep <pattern>`, capped at 16 KB.
 - Never Read/tail/cat job output or stream logs directly. Load screenshots deliberately.

@@ -1,5 +1,7 @@
 # git-merge-feature changelog
 
+- 1.2.5 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
+
 - 1.2.4 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.
 
 - 1.2.3 (2026-09-03): Branch delete falls back to -D only after proving main contains the branch tip, so a feature branch created with an origin/main upstream no longer fails the -PurgeWorktree purge before the push.

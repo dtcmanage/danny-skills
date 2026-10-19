@@ -2,8 +2,10 @@
 name: start-work
 description: "Classify a unit of code work as light/medium/heavy and set up the right git surface: ship on main, a feat/ branch, or a worktree, with a name that matches the work. Trigger on /start-work, 'start a feature', 'set up a branch/worktree for X', or at the start of non-trivial code work. FAST-PATH: when the surface is already named in plain language — 'start a feat/feature named X' (-> feat branch, checked out) or 'make a new worktree/tree named X' (-> worktree, created and entered) — skip classification and just run it. Do NOT use for planning-only (dt-plan) or a trivial one-line edit you will ship immediately."
 metadata:
-  version: 0.1.2
+  version: 0.1.3
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # start-work — Classify and Set Up the Git Surface for a Unit of Work
 
@@ -34,7 +36,7 @@ B. Pass `-Prefix fix` instead of `feat` only if Danny framed it as a bug fix ("f
 C. Run the deterministic script directly — **no `AskUserQuestion`, no tier rationale**:
 
    ```powershell
-   pwsh -NoProfile -File skills/start-work/scripts/start-work.ps1 -Tier <medium|heavy> -Name <slug> -Json
+   pwsh -NoProfile -File "<skill>/scripts/start-work.ps1" -Tier <medium|heavy> -Name <slug> -Json
    ```
 
 D. **Medium:** report the branch; you are now on it. Done.
@@ -66,7 +68,7 @@ If the request is vague about the surface ("start work on X", "I need to do Y") 
 5. **Set up the surface** with the deterministic script:
 
    ```powershell
-   pwsh -NoProfile -File skills/start-work/scripts/start-work.ps1 -Tier <light|medium|heavy> -Name <slug> -Json
+   pwsh -NoProfile -File "<skill>/scripts/start-work.ps1" -Tier <light|medium|heavy> -Name <slug> -Json
    ```
 
    - `light` — stays on `main`, no branch.

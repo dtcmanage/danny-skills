@@ -1,5 +1,7 @@
 # dt-visualize-design changelog
 
+- 1.1.4 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
+
 - 1.1.3 (2026-10-01): Consume the shared security posture correction that redacts vendor errors used by the router observability patch.
 
 - 1.1.2 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.12
+
+- Fix FS-117 anchored commands, FS-118 explicit CAS repository, and FS-65 host-overhead bootstrap measurement.
+
 ## 2.48.11
 
 - Fix FS-112/113/114/116: verify approved retries, check worker changed-file reports, use heartbeat watchdogs, and document Windows process-start resource recovery.

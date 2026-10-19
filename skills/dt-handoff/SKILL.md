@@ -3,8 +3,10 @@ name: dt-handoff
 description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Also owns handoff validation: trigger on 'validate the handoff X', 'validate the build X', 'was this handoff acted on?', or '-validate <handoff-path>' to audit a handoff against deterministic evidence. Do not use for capturing memory or preferences mid-session - that is dt-session-audit's job."
 argument-hint: "What should the next session focus on?"
 metadata:
-  version: 0.2.2
+  version: 0.2.3
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # Handoff
 
@@ -67,7 +69,7 @@ Identify the root folder of the project this session worked on — for a code re
 Pick a short kebab-case `<slug>` for today's handoff topic, then run the prep script:
 
 ```powershell
-pwsh -NoProfile -File skills/dt-handoff/scripts/prep-handoff-folder.ps1 `
+pwsh -NoProfile -File "<skill>/scripts/prep-handoff-folder.ps1" `
   -ProjectRoot "<project-root>" -Slug "<slug>" -Json
 ```
 
@@ -81,7 +83,7 @@ The script:
 Run the registry script against the project root:
 
 ```powershell
-pwsh -NoProfile -File skills/dt-handoff/scripts/handoff-registry.ps1 `
+pwsh -NoProfile -File "<skill>/scripts/handoff-registry.ps1" `
   -Root "<project-root>" -Json
 ```
 

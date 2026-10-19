@@ -42,7 +42,10 @@ $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 try {
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-review-inputs.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'review input snapshot and path identity regressions pass'
-    $rulebook = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -CoordinatorHost codex) -join "`n"
+    Push-Location $tempRoot
+    try { $rulebook = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -CoordinatorHost codex) -join "`n" }
+    finally { Pop-Location }
+    Assert-True ($rulebook.Contains("<skill> = $skillRoot") -and $rulebook.Contains("<danny-skills> = $repoRoot")) 'rendered resume rulebook supplies resolved roots from outside the repo'
     Assert-True ($LASTEXITCODE -eq 0 -and $rulebook.Contains('## Model routing') -and $rulebook.Contains('## Context discipline') -and $rulebook.Contains('6. Execute milestones') -and $rulebook.Contains('7. Guardrails:')) 'rulebook contains all resume execution sections'
     Assert-True (-not $rulebook.Contains('1. Intake in one question') -and -not $rulebook.Contains('## Usage telemetry') -and $rulebook.Contains('grants no permission')) 'rulebook omits intake and retains the authority boundary'
     # The resume budget counts the runtime/native floor, all safety reads, and current repo text.
@@ -57,12 +60,15 @@ try {
     # Actual model input size is a separate gate; a large observed marker must fail.
     foreach ($tokens in @(49999, 50000, 109770)) {
         $rollout = Join-Path $tempRoot "bootstrap-$tokens.jsonl"
-        $usageRow = [ordered]@{ type = 'event_msg'; payload = [ordered]@{ type = 'token_count'; info = [ordered]@{ last_token_usage = [ordered]@{ input_tokens = $tokens } } } }
+        $usageRow = [ordered]@{ type = 'event_msg'; payload = [ordered]@{ type = 'token_count'; info = [ordered]@{} } }
         $markRow = [ordered]@{ type = 'event_msg'; payload = [ordered]@{ type = 'item_completed'; item = [ordered]@{ type = 'CommandExecution'; command = @('pwsh', '-Verb mark-bootstrap'); aggregated_output = ('{"baseline_tokens":' + $tokens + ',"newly_marked":true}') } } }
         Write-Utf8 $rollout (($usageRow | ConvertTo-Json -Compress -Depth 8) + "`n" + ($markRow | ConvertTo-Json -Compress -Depth 8) + "`n")
         & python $measureBootstrap --transcript $rollout *> (Join-Path $tempRoot "bootstrap-check-$tokens.json")
         Assert-True ($LASTEXITCODE -eq $(if ($tokens -lt 50000) { 0 } else { 1 })) "actual resume bootstrap $tokens uses the 50,000 token gate"
     }
+
+    & python (Join-Path $scriptDir 'tests/test-resume-bootstrap.py')
+    Assert-True ($LASTEXITCODE -eq 0) 'Claude and Codex observed bootstrap fixtures pass'
 
     # A managed resume reads existing authority without re-registering or changing the cursor.
     $savedBuildStateDir = $env:DT_BUILD_STATE_DIR
@@ -441,7 +447,7 @@ rationale: Framework limitation accepted with visible evidence.
 
     # The disjoint integration/chunk namespace must be creatable in real Git and
     # support the same compare-and-swap update dt-build performs per milestone.
-    $gitFixture = Join-Path $tempRoot 'git-fixture'
+    $gitFixture = Join-Path $tempRoot 'git fixture'
     New-Item -ItemType Directory -Path $gitFixture -Force | Out-Null
     & git -C $gitFixture init -q
     & git -C $gitFixture config user.email 'fixture@example.invalid'
@@ -476,6 +482,19 @@ rationale: Framework limitation accepted with visible evidence.
         Assert-True ($LASTEXITCODE -ne 0) "CAS mutator allowed a protected branch"
     }
     finally { Pop-Location }
+
+    # Explicit project path works from a non-repository directory, including spaces.
+    & git -C $gitFixture branch 'build/explicit-path' $baseSha
+    Push-Location $tempRoot
+    try {
+        $cas = & pwsh -NoProfile -File (Join-Path $scriptDir 'branch-cas-update.ps1') -RepoPath $gitFixture `
+            -SourceRef $chunkSha -ExpectedTargetSha $baseSha -TargetBranch 'build/explicit-path' -Json
+        Assert-True ($LASTEXITCODE -eq 0 -and (($cas -join "`n") | ConvertFrom-Json).pass) 'CAS accepts RepoPath outside any repo'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'branch-cas-update.ps1') -RepoPath $gitFixture `
+            -SourceRef $chunkSha -ExpectedTargetSha $baseSha -TargetBranch 'build/explicit-path' -Json *> $null
+        Assert-True ($LASTEXITCODE -ne 0) 'explicit RepoPath preserves stale-target protection'
+    } finally { Pop-Location }
+    Assert-True (((& git -C $gitFixture rev-parse 'build/explicit-path').Trim()) -eq $chunkSha) 'explicit RepoPath updates the project ref'
 
     # Unapproved attempts above the automatic budget fail before dispatch.
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `

@@ -74,7 +74,7 @@ New producers carry `## Throughput and hardware` verbatim from the design and ap
 these fields in milestone exports. Legacy contracts without them remain parseable; resolve their missing
 decisions at build intake before dispatch. Do not treat a legacy sequential chain as evidence of exclusivity.
 
-`skills/dt-roadmap/scripts/roadmap-validator.ps1` must reject with a named error when any of these occur:
+`<skill>/scripts/roadmap-validator.ps1` must reject with a named error when any of these occur:
 
 - `SCHEMA_VERSION_MISMATCH`: roadmap `schema_version` major differs from schema `producer_current_version` major.
 - `SCHEMA_REQUIRED_SECTION_MISSING`: required section absent.
@@ -82,11 +82,11 @@ decisions at build intake before dispatch. Do not treat a legacy sequential chai
 - `DEPENDENCY_CYCLE`: milestone dependency graph contains a cycle.
 - `MILESTONE_INDEPENDENCE_VIOLATION`: duplicate ids, unknown dependency ids, or milestone lacks chunk coverage.
 - `CHUNK_PARALLELISM_FEASIBILITY_VIOLATION`: invalid chunk routing/entitlement or chunk table cannot support parallel chunk execution.
-- `VERIFICATION_NAMES_NO_RUNNABLE`: a milestone's combined verification surface (its `acceptance-checks` cell in `## Milestones` plus the `procedure` cell of every `chk-*` row whose `milestone-id` matches it in `## Verification Manifest`) names no runnable artifact. Added 1.1.0 to keep the producer in lock-step with the dt-build per-milestone acceptance gate (`skills/dt-build/scripts/verify-milestone-acceptance.ps1`).
+- `VERIFICATION_NAMES_NO_RUNNABLE`: a milestone's combined verification surface (its `acceptance-checks` cell in `## Milestones` plus the `procedure` cell of every `chk-*` row whose `milestone-id` matches it in `## Verification Manifest`) names no runnable artifact. Added 1.1.0 to keep the producer in lock-step with the dt-build per-milestone acceptance gate (`<danny-skills>/skills/dt-build/scripts/verify-milestone-acceptance.ps1`).
 
 ## Runnable artifact definition (added 1.1.0)
 
-A "runnable artifact" is anything the shared extractor `scripts/extract-named-artifacts.ps1` (byte-identical to the inline `Extract-NamedArtifacts` function inside `skills/dt-build/scripts/verify-milestone-acceptance.ps1`) returns as either an `artifacts` entry or a `commands` entry. Concretely, at least one of the following must appear in the milestone's combined verification surface:
+A "runnable artifact" is anything the shared extractor `<danny-skills>/scripts/extract-named-artifacts.ps1` (byte-identical to the inline `Extract-NamedArtifacts` function inside `<danny-skills>/skills/dt-build/scripts/verify-milestone-acceptance.ps1`) returns as either an `artifacts` entry or a `commands` entry. Concretely, at least one of the following must appear in the milestone's combined verification surface:
 
 - A backtick-quoted file path with at least one directory component and an extension in `{py, ts, js, ps1, md, yaml, yml, json, html, sql}`. Example: `` `tests/backend/test_durability_fresh_create_v11.py` ``.
 - A backtick-quoted command beginning with one of `pytest`, `python`, `pwsh`, `powershell`, `node`, `npm`, `bun`. Example: `` `pytest tests/backend/test_durability_populated_v10_to_v11.py` ``.

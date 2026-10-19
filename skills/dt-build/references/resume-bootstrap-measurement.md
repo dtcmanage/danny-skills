@@ -21,8 +21,8 @@ guide, and adds a conservative 150-token hook reserve. The actual lean manifest
 is **118 tokens**. Shared deterministic/conventions reads remain.
 
 `tests/fixtures/lean-bootstrap-comparison.json` records both complete component
-inventories. Reproduce the after simulation with `scripts/measure-resume-bootstrap.py
---manifest scripts/tests/fixtures/resume-bootstrap-budget.json --repo-root <repo>`.
+inventories. Reproduce the after simulation with `<skill>/scripts/measure-resume-bootstrap.py
+--manifest <skill>/scripts/tests/fixtures/resume-bootstrap-budget.json --repo-root <repo>`.
 The renderer reads authoritative sections instead of maintaining a copied policy.
 The bridge's golden fixture proves ordinary output is byte-identical; jobs and both
 chunk wrappers strip the coordinator-only variable. Authority checks remain before
@@ -119,11 +119,11 @@ These are October 11 source-text measurements, excluding tool framing. This inve
 
 The representative Codex-pinned resume budget is **45,339 text tokens**, including an 18,000-token reserve for native/runtime/tool context and 6,000 for checkpoint, run records, complete approvals and operative boundary sources. The native/runtime reserve is calibrated from the first 1:02 AM input (28,397) minus its initial required-read output proxy (11,097): 17,300, rounded up. The safety reserve cannot be satisfied by omitting an authorization read. FS-64 allows the verified mechanical authority digest above 32,000 authority characters (approximately 8,000 text tokens), or after a context wall. Current boundary and complete approvals remain full bootstrap reads; inherited originals move to full reads immediately before governed actions. This replaces the previous all-originals-before-marker rule without changing authorization. The 32,000-character value is a soft target: above it, proceed with all current authority and a visible `over_target` warning in verification JSON and the Markdown header. The manifest pins the 32,000 target and a 96,000-character hard ceiling (approximately 24,000 text tokens); only above the ceiling does `AUTHORITY_BOOTSTRAP_BUDGET` stop the coordinator, suggesting operator consolidation or supersession of old stop records. Exactly either threshold is accepted. Over-target bootstraps must be confirmed by the observed-transcript check on the next resume. Actual tokenizer/marker checks remain required; character sizing is a read-plan guard, not a token guarantee.
 
-The versioned read-plan fixture retains source counts/hashes. Regression tests remeasure current repo files and, on this workstation, current canonical files. At 50,000 or above the budget check fails. A separate observed-transcript check uses the actual successful marker value and rejects 50,000 or above, including the historical 109,770 case. Install scripts/requirements-bootstrap.txt for the pinned tokenizer.
+The versioned read-plan fixture retains source counts/hashes. Regression tests remeasure current repo files and, on this workstation, current canonical files. At 50,000 or above the budget check fails. A separate observed-transcript check gates coordinator-added tokens as described below. Historical full-baseline counts above remain unchanged. Install <skill>/scripts/requirements-bootstrap.txt for the pinned tokenizer.
 
-**Limitation:** 45,339 is a measured read-plan budget, not proof of a newly launched coordinator baseline. No new coordinator was launched against the live run. Runtime overhead, oversized existing boundary documents or a model disregarding the entry contract can raise actual context. The observed-transcript check must be run on the next actual resume before claiming its baseline is below 50,000.
+**Limitation:** 45,339 is a measured read-plan budget, not proof of a newly launched coordinator baseline. No new coordinator was launched against the live run. Runtime overhead, oversized existing boundary documents or a model disregarding the entry contract can raise actual context. The observed-transcript check must be run on the next actual resume before claiming its coordinator additions are below 50,000.
 
-Example diagnostic: `python scripts/measure-resume-bootstrap.py --transcript <rollout.jsonl>`; exit 1 means the actual baseline exceeded the target. Add `--diagnostic` only for historical reporting. The watcher still counts a rotation with no new job events as thrash, regardless of its marker size.
+Example diagnostic: `python "<skill>/scripts/measure-resume-bootstrap.py" --transcript <rollout.jsonl>`; exit 1 means coordinator-added tokens reached or exceeded the target. Add `--diagnostic` only for historical reporting. The watcher still counts a rotation with no new job events as thrash, regardless of its marker size.
 
 ## Historical ledger replay
 
@@ -132,3 +132,9 @@ A read-only replay of the original launch/event rows recognizes all five continu
 Legacy continuation rows without requested_by/consumed_event_seq use episode timestamps and the run's current consumed cursor. New continuation rows snapshot the cursor under the run lock and name the requester, so later consumption cannot turn an unconsumed-trigger episode into a productive one. A legacy ledger cannot retroactively prove the exact cursor at continuation time; this compatibility fallback is explicit.
 
 Token counts normalize CRLF to LF consistently. The earlier 45,360 budget fell by 21 tokens after normalization: root MEMORY.md contributed 19 fewer and workspace CLAUDE.md 2 fewer; no canonical file content was changed by this fix.
+
+## Host overhead and coordinator additions
+
+`mark-bootstrap` retains `baseline_tokens` as the full context; context-guard soft/hard limits still use it. `host_overhead_tokens` is the first assistant request's input + cache-read + cache-creation tokens on Claude, or the first token_count event's last input_tokens on Codex. `coordinator_added_tokens = baseline_tokens - host_overhead_tokens` is judged against the 50,000 target (exactly 50,000 fails). The marker and observed-transcript report include all three values and the target result. Missing first-turn usage falls back to the full baseline and explicitly reports host overhead unavailable. The Claude capture hook refreshes the split when it corrects transcript identity.
+
+`python "<skill>/scripts/measure-resume-bootstrap.py" --transcript <transcript.jsonl>` accepts Claude Code assistant tool_use/user tool_result records and Codex rollouts, including CommandExecution events and paired tool calls/results. Only an executed successful marker counts. The read-plan simulation remains a separate conservative estimate; its runtime reserve is not a measured host overhead.

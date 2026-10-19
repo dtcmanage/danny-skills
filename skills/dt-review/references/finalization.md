@@ -15,7 +15,7 @@ finding where `blocks_design` is true or disposition is `DEFER`. Each entry carr
 `owner`, and `recheck_gate`; all values are trimmed single lines. Then run:
 
 ```powershell
-pwsh -NoProfile -File <skill>\scripts\prepare-final-draft.ps1 `
+pwsh -NoProfile -File "<skill>/scripts/prepare-final-draft.ps1" `
   -ProjectPath <project> -Round <N> -Tier <light|complex> `
   -InstructionsPath <scratch-json> [-ApprovedResidualRisk]
 ```
@@ -48,7 +48,7 @@ the finalization receipt.
 Run the deterministic finalizer only after `evaluate-termination.ps1` returns a finalizable action:
 
 ```powershell
-pwsh -NoProfile -File <skill>\scripts\finalize-review.ps1 `
+pwsh -NoProfile -File "<skill>/scripts/finalize-review.ps1" `
   -ProjectPath <project> -DraftPath <accepted-draft> -Slug <slug> `
   -Round <N> -Tier <light|complex> -ContextPath <CONTEXT.md> -GlossaryReconciled
 ```

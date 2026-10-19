@@ -15,8 +15,8 @@ For each milestone in the roadmap, in DAG order with load-bearing milestones fir
    - If a check names a script, that script must run and produce its named output artifact.
    - Every check must pass on its own merits. A milestone with three checks where two pass and one fails is `BLOCKED`, not `PASS`.
 5. **Run the deterministic gates** (in this order):
-   - `scripts/verify-milestone-acceptance.ps1` — pools **every** verification-manifest row whose `milestone-id` matches the requested milestone, confirms every artifact named across all of those checks exists in the working tree, and (with `-RunTests`) runs every named test command and folds every exit code into the verdict. JSON output exposes a `verification_checks` array with per-check `check_id`, `procedure_text`, `artifacts_named`, `artifacts_missing`, `commands_named`, `command_results`, and `blockers`; top-level `status` is the rolled-up view and is `PASS` only when every check's blockers are empty.
-   - `scripts/check-downgrade-language.ps1` — scans the milestone's commit message, build-decision-log entry, and any per-chunk Codex output for banned phrases (see below).
+   - `<skill>/scripts/verify-milestone-acceptance.ps1` — pools **every** verification-manifest row whose `milestone-id` matches the requested milestone, confirms every artifact named across all of those checks exists in the working tree, and (with `-RunTests`) runs every named test command and folds every exit code into the verdict. JSON output exposes a `verification_checks` array with per-check `check_id`, `procedure_text`, `artifacts_named`, `artifacts_missing`, `commands_named`, `command_results`, and `blockers`; top-level `status` is the rolled-up view and is `PASS` only when every check's blockers are empty.
+   - `<skill>/scripts/check-downgrade-language.ps1` — scans the milestone's commit message, build-decision-log entry, and any per-chunk Codex output for banned phrases (see below).
 6. **Mark the milestone status** using the four-axis split:
    - `implemented` — the append-only acceptance row records a non-empty milestone commit SHA. The verifier never guesses this value.
    - `tested` — the verification command ran and exited 0.
@@ -58,7 +58,7 @@ per item.
 
 ## Downgrade language ban
 
-The following phrases trigger an automatic `BLOCKED` status when found in milestone notes, commit messages, build review files, or per-chunk Codex output (case-insensitive substring match, run by `scripts/check-downgrade-language.ps1`):
+The following phrases trigger an automatic `BLOCKED` status when found in milestone notes, commit messages, build review files, or per-chunk Codex output (case-insensitive substring match, run by `<skill>/scripts/check-downgrade-language.ps1`):
 
 - `compatible fallback`
 - `deterministic fallback`
@@ -84,7 +84,7 @@ When a milestone is genuinely BLOCKED but the blocker is a spec the operator cho
 semantic limitation exists that the machine verifier cannot encode — Danny can approve the downgrade without
 faking the implementation.
 
-**Mechanism (wired in `scripts/build-acceptance-ledger.ps1`):**
+**Mechanism (wired in `<skill>/scripts/build-acceptance-ledger.ps1`):**
 
 1. In the run folder's `build-decision-log.md`, find the milestone's `## M<NN>` section.
 2. On a line of its own, add:
@@ -92,7 +92,7 @@ faking the implementation.
    downgrade_approved_by: danny
    rationale: <one-line plain-language explanation>
    ```
-3. Re-run `scripts/build-acceptance-ledger.ps1`. With a valid acceptance row and commit SHA, the ledger marks
+3. Re-run `<skill>/scripts/build-acceptance-ledger.ps1`. With a valid acceptance row and commit SHA, the ledger marks
    the milestone `APPROVED_DOWNGRADE` and surfaces the approver/rationale plus any machine blockers. The marker
    must name `danny` exactly and include a non-empty rationale. An approval never waives missing implementation
    evidence.
@@ -103,7 +103,7 @@ If the downgrade has knock-on effects on a dependent milestone, the dependent mi
 
 ## Load-bearing E2E ordering
 
-Milestones flagged by `scripts/identify-load-bearing.ps1` get their verification tests written and run **before** any non-load-bearing milestone that depends on them is marked complete. Criteria the script uses (case-insensitive substring match on the milestone's name, acceptance-checks text, and verification-check procedure text):
+Milestones flagged by `<skill>/scripts/identify-load-bearing.ps1` get their verification tests written and run **before** any non-load-bearing milestone that depends on them is marked complete. Criteria the script uses (case-insensitive substring match on the milestone's name, acceptance-checks text, and verification-check procedure text):
 
 - `load-bearing` / `load bearing`
 - `gate` (as standalone word)
@@ -133,13 +133,13 @@ dt-build's "Execute milestones" step calls the deterministic gates in this order
 
 1. Quote acceptance check from roadmap (manual restatement in build-decision-log).
 2. Assemble + verify + run the Codex prompt (existing build chain).
-3. `scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId mNN -WorkingTree <wt> -RunTests` → must return `PASS`. On `BLOCKED`, escalate within the two-attempt budget.
-4. `scripts/check-downgrade-language.ps1 -Path <milestone-notes-dir> -Json` → must return exit 0. Any nonzero exit is a blocker unless explicitly approved.
-5. Append milestone row to the ledger (`scripts/build-acceptance-ledger.ps1` is a one-shot wrapper at run end, but per-milestone the rows are accumulated in `acceptance-rows.jsonl`).
+3. `<skill>/scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId mNN -WorkingTree <wt> -RunTests` → must return `PASS`. On `BLOCKED`, escalate within the two-attempt budget.
+4. `<skill>/scripts/check-downgrade-language.ps1 -Path <milestone-notes-dir> -Json` → must return exit 0. Any nonzero exit is a blocker unless explicitly approved.
+5. Append milestone row to the ledger (`<skill>/scripts/build-acceptance-ledger.ps1` is a one-shot wrapper at run end, but per-milestone the rows are accumulated in `acceptance-rows.jsonl`).
 6. Rewrite the pipeline checkpoint `_build-state.md` in the project's planning folder (SKILL.md step 6.h; canonical shape: `skills/dt-pipeline/templates/build-state-template.md`).
 7. Move to next milestone (DAG order, load-bearing first within a layer).
 
-When the build completes (or stops at the verify/fix budget cap), `scripts/build-acceptance-ledger.ps1` produces the final ledger. `build-run-review.html` is generated only when Danny explicitly asks (SKILL.md step 6.5); when built, it surfaces the ledger as the headline panel above the milestone status cards.
+When the build completes (or stops at the verify/fix budget cap), `<skill>/scripts/build-acceptance-ledger.ps1` produces the final ledger. `build-run-review.html` is generated only when Danny explicitly asks (SKILL.md step 6.5); when built, it surfaces the ledger as the headline panel above the milestone status cards.
 
 The two-attempt cap limits automatic implementation churn. Count only failures caused by the produced code.
 Do not count environment outages, tool/sandbox failures, or an approved contract revision. After explicit

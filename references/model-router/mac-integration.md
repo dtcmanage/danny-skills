@@ -1,7 +1,9 @@
 # Windows/Mac router operation
 
+`<danny-skills>` is the resolved danny-skills repo root; quote script paths when substituting it.
+
 Windows owns roster approval/revocation, publication, proposal generation, research,
-outcomes importing (`scripts/model-router/update-outcomes.ps1`), benchmarking and
+outcomes importing (`<danny-skills>/scripts/model-router/update-outcomes.ps1`), benchmarking and
 cost reports. Mac reads the approved roster and observes its own subscriptions.
 Mac-local raw dispatch events, quota readings, refusal/incident timers, drift and
 alert markers remain local; they are separate from the Windows importer and writers.
@@ -50,7 +52,7 @@ From the permanent Windows primary checkout:
 
 ```powershell
 cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"
-pwsh -NoProfile -File scripts/model-router/tests/test-mac-regressions.ps1
+pwsh -NoProfile -File "<danny-skills>/scripts/model-router/tests/test-mac-regressions.ps1"
 ```
 
 This actual-OS Windows-only gate declares 23 suites: the 14 retained suites plus
@@ -90,11 +92,11 @@ checkout on `main`, and use the verified absolute PowerShell executable:
 
 ```powershell
 cd "/absolute/main/danny-skills"
-pwsh -NoProfile -File scripts/model-router/router-state-inventory.ps1 -Json
-pwsh -NoProfile -File scripts/model-router/tests/test-mac-observer.ps1
-pwsh -NoProfile -File scripts/model-router/run-mac-observer.ps1
-pwsh -NoProfile -File scripts/model-router/resolve-model.ps1 -Category routine-coding -Json
-pwsh -NoProfile -File scripts/model-router/register-mac-router-schedules.ps1 -RepoPath "/absolute/main/danny-skills" -PwshPath "/absolute/pwsh"
+pwsh -NoProfile -File "<danny-skills>/scripts/model-router/router-state-inventory.ps1" -Json
+pwsh -NoProfile -File "<danny-skills>/scripts/model-router/tests/test-mac-observer.ps1"
+pwsh -NoProfile -File "<danny-skills>/scripts/model-router/run-mac-observer.ps1"
+pwsh -NoProfile -File "<danny-skills>/scripts/model-router/resolve-model.ps1" -Category routine-coding -Json
+pwsh -NoProfile -File "<danny-skills>/scripts/model-router/register-mac-router-schedules.ps1" -RepoPath "/absolute/main/danny-skills" -PwshPath "/absolute/pwsh"
 ```
 
 Inventory is read-only and prints effective paths, provenance and availability, never

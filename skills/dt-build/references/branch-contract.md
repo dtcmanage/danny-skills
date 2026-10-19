@@ -15,7 +15,7 @@ Commit boundaries:
 - `.dt-build/<RUN_ID>/` artifacts are never added to milestone commits.
 
 Integration-branch update:
-- The integration branch is updated only by compare-and-swap through `scripts/branch-cas-update.ps1` (pass `-TargetBranch build/<RUN_ID>`).
+- The integration branch is updated only by compare-and-swap through `<skill>/scripts/branch-cas-update.ps1` (pass `-RepoPath <project repo>` and `-TargetBranch build/<RUN_ID>`).
 - If the observed integration-branch sha differs from the expected pre-rehearsal sha, the CAS update is blocked.
 
 Final ship:

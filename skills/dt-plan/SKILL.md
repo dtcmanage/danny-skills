@@ -5,9 +5,11 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.4.0
+  version: 1.4.1
   changelog: "See skills/dt-plan/CHANGELOG.md."
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # Plan — Cowork Project Planning
 
@@ -180,7 +182,7 @@ Every plan carries a `## Build-intake revalidation` section. This is not optiona
 contract with the two skills downstream:
 
 - `dt-review` copies the plan verbatim to `draft-v1.md` in Mode A. Its Round-1 assembler
-  (`skills/dt-review/scripts/assemble-review-prompt.ps1`) throws `BUILD_INTAKE_GATE` when an evidence map
+  (`<danny-skills>/skills/dt-review/scripts/assemble-review-prompt.ps1`) throws `BUILD_INTAKE_GATE` when an evidence map
   exists and the draft has no section headed exactly `## Build-intake revalidation`. By finalization the
   reviewed draft is hash-bound, so the omission cannot be repaired in flow.
 - `dt-build` rechecks the named assumptions at build intake, because a claim verified during planning may
@@ -219,7 +221,7 @@ When Danny says "save", "we're done", "write it", or equivalent:
 2. Validate the shape deterministically before handing off. Do not eyeball it:
 
    ```powershell
-   pwsh -NoProfile -File skills/dt-plan/scripts/verify-plan-shape.ps1 -Path "<plan-draft.md>" -Json
+   pwsh -NoProfile -File "<skill>/scripts/verify-plan-shape.ps1" -Path "<plan-draft.md>" -Json
    ```
 
    The script returns JSON `{ ok, shape_version, missing_sections, warnings }`. `ok: false` means the plan
@@ -270,7 +272,7 @@ Use agreed section names; retain all required sections. Remove placeholders and 
 If `CONTEXT.md` was created or updated during the session, it's already saved (you wrote to it inline as terms got pinned). If an ADR was drafted, save it now to `docs/adr/<NNNN>-<kebab-title>.md` next to `CONTEXT.md`. Resolve the number deterministically (do not eyeball the folder):
 
 ```powershell
-pwsh -NoProfile -File skills/dt-plan/scripts/next-adr-number.ps1 -Dir "<project>/docs/adr"
+pwsh -NoProfile -File "<skill>/scripts/next-adr-number.ps1" -Dir "<project>/docs/adr"
 ```
 
 The script scans existing ADR filenames and returns JSON `{ next_number, existing_count }` — use `next_number` for `<NNNN>`. A missing or empty `docs/adr/` folder yields `next_number = 1`.

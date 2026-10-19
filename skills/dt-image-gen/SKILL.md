@@ -6,9 +6,11 @@ user-invocable: true
 allowed-tools: "Bash Read Write Edit"
 compatibility: "Windows with Codex CLI authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Node required for helpers/gallery. Requires the danny-skills repo present."
 metadata:
-  version: 0.3.34
+  version: 0.3.35
   changelog: "Release history: CHANGELOG.md (newest first)."
 ---
+
+`<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
 
 # Image Generation
 
@@ -27,7 +29,7 @@ what the bare engine lacks: a race-safe collection contract, a grid-variation wo
 cell crop, optional brand styling, and a review gallery.
 
 Model routing is advisory here: `gen-image.sh` asks the shared model router for its fixed category
-`image-generation` (`scripts/model-router/resolve-model.ps1 -Category image-generation -Lane codex`) and records
+`image-generation` (`<danny-skills>/scripts/model-router/resolve-model.ps1 -Category image-generation -Lane codex`) and records
 the pick on stderr, but generation stays on `gpt-image-2` because Codex's image tool cannot choose a model.
 
 Throughout, `<skill-dir>` is the folder containing this `SKILL.md`. Run every script through the Bash tool.

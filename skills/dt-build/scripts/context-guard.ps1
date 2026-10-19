@@ -78,6 +78,49 @@ function ConvertFrom-DtCtxLine {
     return [long]$last.input_tokens
 }
 
+function Get-DtCtxHostOverhead {
+    # Read forwards only until the first assistant request (Claude) or token_count (Codex).
+    # Missing first-request usage is unknown, never replaced with a later request's usage.
+    param([Parameter(Mandatory)][string]$TranscriptHost, [Parameter(Mandatory)][string]$TranscriptPath)
+    if (-not (Test-Path -LiteralPath $TranscriptPath -PathType Leaf)) { return $null }
+    $stream = [System.IO.File]::Open($TranscriptPath, 'Open', 'Read', ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+    $reader = [System.IO.StreamReader]::new($stream)
+    try {
+        while ($null -ne ($line = $reader.ReadLine())) {
+            try { $row = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+            if ($TranscriptHost -eq 'claude') {
+                if (-not $row.PSObject.Properties['type'] -or $row.type -ne 'assistant') { continue }
+                if ($row.PSObject.Properties['isSidechain'] -and $row.isSidechain) { continue }
+            } else {
+                if (-not $row.PSObject.Properties['type'] -or $row.type -ne 'event_msg' -or -not $row.PSObject.Properties['payload'] -or $null -eq $row.payload -or -not $row.payload.PSObject.Properties['type'] -or $row.payload.type -ne 'token_count') { continue }
+            }
+            return ConvertFrom-DtCtxLine -TranscriptHost $TranscriptHost -Line $line
+        }
+        return $null
+    } finally { $reader.Dispose(); $stream.Dispose() }
+}
+
+function Get-DtCtxBootstrapMeasurement {
+    param([long]$Baseline, $HostOverhead)
+    $known = $null -ne $HostOverhead -and [long]$HostOverhead -ge 0 -and [long]$HostOverhead -le $Baseline
+    $added = if ($known) { $Baseline - [long]$HostOverhead } else { $Baseline }
+    return [pscustomobject][ordered]@{
+        host_overhead_tokens = $(if ($known) { [long]$HostOverhead } else { $null })
+        coordinator_added_tokens = $added
+        bootstrap_target_tokens = 50000
+        bootstrap_over_target = ($added -ge 50000)
+        bootstrap_measurement = $(if ($known) { 'baseline minus first-turn host overhead' } else { 'host overhead unavailable; using full baseline' })
+    }
+}
+
+function Set-DtCtxBootstrapMeasurement {
+    param($Entry)
+    try { $overhead = Get-DtCtxHostOverhead -TranscriptHost $Entry.host -TranscriptPath $Entry.transcript_path }
+    catch { $overhead = $null } # The full baseline remains usable if the first-turn read fails.
+    $measurement = Get-DtCtxBootstrapMeasurement -Baseline $Entry.baseline_tokens -HostOverhead $overhead
+    foreach ($property in $measurement.PSObject.Properties) { $Entry | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value -Force }
+}
+
 function Get-DtCtxTokens {
     # Scans the transcript backwards block by block and stops at the newest line that carries tokens.
     # Claude writes one line per content block of a request, all with that request's usage, so the

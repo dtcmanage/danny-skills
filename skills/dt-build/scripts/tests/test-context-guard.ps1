@@ -280,6 +280,16 @@ try {
     New-ClaudeTranscript -Path $bootT -Totals @(70000, 104000)
     $m1 = Invoke-DtJob @('mark-bootstrap', '-RunFolder', $run.folder, '-CoordinatorId', 'c1', '-Host', 'claude', '-TranscriptPath', $bootT)
     Assert-True ($m1.newly_marked -and [long]$m1.baseline_tokens -eq 104000 -and $m1.host -eq 'claude') "mark-bootstrap records the baseline ($($m1.baseline_tokens))"
+    Assert-True ($m1.host_overhead_tokens -eq 70000 -and $m1.coordinator_added_tokens -eq 34000 -and -not $m1.bootstrap_over_target) 'Claude bootstrap subtracts first assistant request including caches'
+    $codexBoot = Join-Path $fixtures 'codex-overhead.jsonl'
+    New-CodexRollout -Path $codexBoot -Inputs @(57000, 89111)
+    $codexMark = Invoke-DtJob @('mark-bootstrap', '-RunFolder', $run.folder, '-CoordinatorId', 'codex-overhead', '-Host', 'codex', '-TranscriptPath', $codexBoot)
+    Assert-True ($codexMark.baseline_tokens -eq 89111 -and $codexMark.host_overhead_tokens -eq 57000 -and $codexMark.coordinator_added_tokens -eq 32111 -and -not $codexMark.bootstrap_over_target) 'Codex retains full baseline and gates added tokens'
+    $unknownBoot = Join-Path $fixtures 'unknown-overhead.jsonl'
+    Add-Line $unknownBoot @{type='assistant';message=@{content=@()}}
+    Add-ClaudeUsage -Path $unknownBoot -Total 89111
+    $unknownMark = Invoke-DtJob @('mark-bootstrap', '-RunFolder', $run.folder, '-CoordinatorId', 'unknown-overhead', '-Host', 'claude', '-TranscriptPath', $unknownBoot)
+    Assert-True ($null -eq $unknownMark.host_overhead_tokens -and $unknownMark.coordinator_added_tokens -eq 89111 -and $unknownMark.bootstrap_over_target -and $unknownMark.bootstrap_measurement -match 'unavailable') 'missing first-turn usage falls back explicitly to full baseline'
     Add-ClaudeUsage -Path $bootT -Total 130000
     $m2 = Invoke-DtJob @('mark-bootstrap', '-RunFolder', $run.folder, '-CoordinatorId', 'c1', '-Host', 'claude', '-TranscriptPath', $bootT)
     Assert-True (-not $m2.newly_marked -and [long]$m2.baseline_tokens -eq 104000 -and $m2.marked_utc -eq $m1.marked_utc) 'a second mark-bootstrap for the same coordinator returns the stored baseline'
@@ -790,6 +800,7 @@ try {
     Invoke-Hook $postHook (& $mkBoot "pwsh -NoProfile -File `"$dtJob`" mark-bootstrap -RunFolder `"$($run.folder)`" -CoordinatorId cap1 -Host claude") | Out-Null
     $stored = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'context-baseline.json') | ConvertFrom-Json).coordinators.cap1
     Assert-True ($stored.transcript_source -eq 'hook' -and $stored.session_id -eq 'capture-own-session' -and $stored.transcript_path -eq [System.IO.Path]::GetFullPath($capT) -and [long]$stored.baseline_tokens -eq 90000) "the PostToolUse hook replaces a discovered transcript with its own session and re-reads the baseline ($($stored | ConvertTo-Json -Compress))"
+    Assert-True ($stored.host_overhead_tokens -eq 60000 -and $stored.coordinator_added_tokens -eq 30000 -and -not $stored.bootstrap_over_target) 'hook transcript correction recomputes overhead and additions'
     Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'capture-own-session' $capT 'CronCreate' @{ cron = '*' }))) 'after the capture the calling session is a coordinator session'
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'capture-wrong-session' $wrongT 'CronCreate' @{ cron = '*' }))) 'after the capture the guessed session is still left alone'
     # The coordinator id may come from the env var, and a repeat capture changes nothing.

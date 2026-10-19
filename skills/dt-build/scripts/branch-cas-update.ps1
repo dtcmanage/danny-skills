@@ -8,6 +8,8 @@ param(
     [Parameter(Mandatory)]
     [string]$TargetBranch,
 
+    [string]$RepoPath = (Get-Location).Path,
+
     [switch]$Json
 )
 
@@ -23,7 +25,7 @@ function Invoke-Git {
         [Parameter(Mandatory)][string[]]$Args,
         [switch]$AllowFailure
     )
-    $out = & git @Args 2>&1
+    $out = & git -C $RepoPath @Args 2>&1
     $code = $LASTEXITCODE
     if (-not $AllowFailure -and $code -ne 0) {
         throw ("CAS_FAIL: git {0}`n{1}" -f ($Args -join " "), ($out -join "`n"))

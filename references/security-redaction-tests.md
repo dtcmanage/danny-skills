@@ -1,6 +1,6 @@
 # Security Redaction Tests — Fixture Corpus
 
-The acceptance corpus for the secret-pattern redaction module (`scripts/security/redact-secrets.ps1`,
+The acceptance corpus for the secret-pattern redaction module (`<danny-skills>/scripts/security/redact-secrets.ps1`,
 Control 4 in `references/security-posture.md`). Every fixture below is **synthetic** — fake, format-valid
 strings authored for testing. None is a real credential.
 
