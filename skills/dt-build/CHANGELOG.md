@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.3
+
+- Correct FS-130: project a capped group's finish from recorded durations or its last run, never from completed-test counts; drop the miscalculated 9-hour example.
+
 ## 2.49.2
 
 - Size the process-launch cap: pick launcher files by measured subprocess starts, start at half the worker count, and report projected finish when the capped group runs over 3x (FS-130).

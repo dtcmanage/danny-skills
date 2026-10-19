@@ -60,8 +60,10 @@ separately (an xdist group or a separate low-`-n` pass) while the rest stay dura
 Size that cap; never default to near-serial. Pick the capped files by measured subprocess starts per
 file, not whole suites; start the capped group at about half the normal worker count and step down
 only if `0xC0000142` reappears. If the capped group projects to more than about three times the
-uncapped pass, widen the cap or narrow the group, and report the projected finish (one capped half
-once projected to 9 hours after the uncapped half took 7 minutes).
+uncapped pass, widen the cap or narrow the group, and report the projected finish. Project from the
+recorded per-test durations or the last run of the same group, never from completed-test counts:
+slowest-first ordering runs the heaviest tests first, so a count-based estimate badly overstates
+the remainder.
 Balance whole files, never individual tests across files: use xdist `--dist loadfile` or
 `loadgroup`, or a queue of whole files, so module- and class-scoped fixtures stay in one worker.
 Per-test reordering broke once-per-file setup and cost one full pass 40 errors. Before spending a
