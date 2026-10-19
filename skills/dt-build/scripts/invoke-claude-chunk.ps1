@@ -15,7 +15,9 @@ param(
     [string]$Model = "",
     [string]$SelectionReason = "",
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
-    [ValidateRange(1, 2)][int]$Attempt = 1,
+    [ValidateRange(1, 2147483647)][int]$Attempt = 1,
+    [string]$ApprovalOperation = "",
+    [string]$RunFolder = "",
     [ValidateRange(1000, 2147483647)][int]$TimeoutMs = 600000,
     [switch]$Preflight,
     [switch]$ReadOnly,
@@ -42,6 +44,16 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'worker-verification.ps1')
+if ($env:DT_JOB_DIR) {
+    $jobRunFolder = Split-Path -Parent (Split-Path -Parent $env:DT_JOB_DIR)
+    if ($RunFolder -and [IO.Path]::GetFullPath($RunFolder) -ne [IO.Path]::GetFullPath($jobRunFolder)) {
+        throw 'ATTEMPT_APPROVAL_REQUIRED: -RunFolder differs from the current dt-job run.'
+    }
+    $RunFolder = $jobRunFolder
+}
+Assert-WorkerAttemptApproval -RequestedAttempt $Attempt -ApprovalName $ApprovalOperation -ApprovalRunFolder $RunFolder
+
 if ($Scrutiny -and -not $ReadOnly) { throw 'SCRUTINY_REQUIRES_READ_ONLY' }
 
 function Resolve-SkillRepoRoot {
@@ -114,6 +126,7 @@ if ($runPinActive) {
     if ($pinFailure) {
         if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
             $pinProvenance = [ordered]@{
+                approval_operation = $ApprovalOperation; attempt = $Attempt
                 pass = $false; preflight = [bool]$Preflight; lane = 'claude'; vendor = 'claude'; tier = $Tier; effort = $Effort
                 category = $Category; requested_model = $Model; resolved_model = $null
                 router_reason = 'run pin'; selection_reason = $SelectionReason
@@ -231,6 +244,7 @@ if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or
     $waitReason = "ROUTER_WAIT: $($routerPick.reason)"
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         $waitProvenance = [pscustomobject]@{
+            approval_operation = $ApprovalOperation; attempt = $Attempt
             pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier; effort = $Effort
             workstation = $workstation; dispatched_at_utc = [datetimeoffset]::UtcNow.ToString('o'); difficulty = $resolvedDifficulty; difficulty_reason = $(if ($resolvedDifficulty) { $DifficultyReason } else { $null }); retry_at_hard_from = $RetryAtHardFrom
             category = $Category; protected = [bool]$routerPick.protected; escalated_from = $escalatedFrom
@@ -329,6 +343,10 @@ $proc = $null
 $streamPath = "$OutputPath.stream.log"
 $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
+$startCommit = if (-not $Preflight -and -not $ReadOnly) {
+    Get-WorkerStartCommit -Tree $projectRoot
+} else { $null }
+
 try {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
@@ -555,7 +573,12 @@ try {
         ($null | & pwsh -NoProfile -File $claudeCli --version 2>&1) -join ' '
     } else { ($null | & $claudeCli --version 2>&1) -join ' ' }
 
+    $changedFileCheck = if ($startCommit) { Get-WorkerChangedFiles -Tree $projectRoot -StartCommit $startCommit -ReportPath $OutputPath } else { $null }
     $result = [pscustomobject]@{
+        approval_operation = $ApprovalOperation
+        start_commit = $startCommit
+        actual_changed_files = @(if ($changedFileCheck) { $changedFileCheck.actual_changed_files })
+        warnings = @(if ($changedFileCheck) { $changedFileCheck.warnings })
         pass                = [string]::IsNullOrWhiteSpace($failureReason)
         preflight           = [bool]$Preflight
         lane                = 'claude'
@@ -626,6 +649,7 @@ catch {
     if (-not $temporaryOutput -and -not $provenanceWritten) {
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
         $fallback = [pscustomobject]@{
+            approval_operation = $ApprovalOperation; attempt = $Attempt
             pass = $false; preflight = [bool]$Preflight; lane = 'claude'; tier = $Tier; effort = $Effort
             workstation = $workstation; dispatched_at_utc = [datetimeoffset]::UtcNow.ToString('o'); difficulty = $resolvedDifficulty; difficulty_reason = $(if ($resolvedDifficulty) { $DifficultyReason } else { $null }); retry_at_hard_from = $RetryAtHardFrom
             category = $Category; protected = $isProtected; escalated_from = $escalatedFrom
@@ -634,7 +658,7 @@ catch {
             requested_model = $resolvedModel; resolved_model = $actualModel
             selection_reason = if ($Preflight) { $null } else { $SelectionReason }
             disclosure_line = $disclosureLine
-            attempt = $Attempt; duration_ms = $durationMs; timeout_ms = $TimeoutMs
+            duration_ms = $durationMs; timeout_ms = $TimeoutMs
             prompt_sha256 = $promptSha256
             dispatched_prompt_sha256 = $dispatchedPromptSha256
             output_path = $OutputPath; stream_log_path = if (Test-Path -LiteralPath $streamPath) { $streamPath } else { $null }

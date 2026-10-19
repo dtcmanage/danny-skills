@@ -477,7 +477,7 @@ rationale: Framework limitation accepted with visible evidence.
     }
     finally { Pop-Location }
 
-    # Parameter binding enforces the two-automatic-attempt cap.
+    # Unapproved attempts above the automatic budget fail before dispatch.
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -Preflight -Attempt 3 *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Codex wrapper accepted automatic attempt 3"
@@ -529,6 +529,14 @@ DISCOVERED_ENHANCEMENTS:
 NONE
 credential: ghp_abcdefghijklmnopqrstuvwxyz123456
 "@
+if ($env:DT_FAKE_CHANGED_REPORT) { $report = [IO.File]::ReadAllText($env:DT_FAKE_CHANGED_REPORT) }
+if ($env:DT_FAKE_CHANGE_TREE) {
+    [IO.File]::WriteAllText((Join-Path (Get-Location) 'tracked.txt'), 'modified')
+    [IO.File]::WriteAllText((Join-Path (Get-Location) 'new space.txt'), 'new')
+    Remove-Item -LiteralPath (Join-Path (Get-Location) 'deleted.txt')
+    & git add tracked.txt deleted.txt
+    if ($env:DT_FAKE_COMMIT_TREE) { & git commit -qm worker }
+}
 [System.IO.File]::WriteAllText($outPath, $report)
 if($env:DT_FAKE_UNICODE_TEXT){
     [IO.File]::AppendAllText($outPath,"`n"+$env:DT_FAKE_UNICODE_TEXT)
@@ -802,10 +810,89 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $report += "`n"+$env:DT_FAKE_UNICODE_TEXT
     [Console]::Error.WriteLine($env:DT_FAKE_UNICODE_TEXT)
 }
+if ($env:DT_FAKE_CHANGED_REPORT) { $report = [IO.File]::ReadAllText($env:DT_FAKE_CHANGED_REPORT) }
+if ($env:DT_FAKE_CHANGE_TREE) {
+    [IO.File]::WriteAllText((Join-Path (Get-Location) 'tracked.txt'), 'modified')
+    [IO.File]::WriteAllText((Join-Path (Get-Location) 'new space.txt'), 'new')
+    Remove-Item -LiteralPath (Join-Path (Get-Location) 'deleted.txt')
+    & git add tracked.txt deleted.txt
+    if ($env:DT_FAKE_COMMIT_TREE) { & git commit -qm worker }
+}
 Write-Envelope $report
 '@
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
+    # FS-112/113: exercise both wrappers with fake CLIs and the suite's fake alert transport.
+    $approvalRun = Join-Path $tempRoot 'attempt-approval-run'
+    New-Item -ItemType Directory -Path $approvalRun -Force | Out-Null
+    $savedReport = Join-Path $tempRoot 'changed-report.md'
+    try {
+        foreach ($lane in @('codex', 'claude')) {
+            $cliArgs = if ($lane -eq 'codex') { @{ CodexCliPath = $fakeCodex } } else { @{ ClaudeCliPath = $fakeClaude; Model = 'claude-sonnet-5' } }
+            $invoke = Join-Path $scriptDir "invoke-$lane-chunk.ps1"
+            foreach ($approvalCase in @('missing-operation', 'missing-run', 'pending', 'wrong', 'malformed', 'automatic-second', 'approved', 'approved-higher', 'inferred-run', 'different-run')) {
+                Write-Utf8 (Join-Path $approvalRun 'approvals.json') '{"awaiting":{"operation":"retry-original"},"approvals":[]}'
+                $approvalArgs = @{ Attempt = 3; ApprovalOperation = 'retry-original'; RunFolder = $approvalRun }
+                switch ($approvalCase) {
+                    'missing-operation' { $approvalArgs.Remove('ApprovalOperation') }
+                    'missing-run' { $approvalArgs.Remove('RunFolder') }
+                    'wrong' { Write-Utf8 (Join-Path $approvalRun 'approvals.json') '{"awaiting":null,"approvals":[{"operation":"other"}]}' }
+                    'malformed' { Write-Utf8 (Join-Path $approvalRun 'approvals.json') '{invalid' }
+                    { $_ -in @('approved', 'approved-higher', 'inferred-run', 'different-run') } { Write-Utf8 (Join-Path $approvalRun 'approvals.json') '{"awaiting":null,"approvals":[{"operation":"retry-original","requested_by":"Danny"}]}' }
+                }
+                $actualAttempt = if ($approvalCase -eq 'automatic-second') { 2 } elseif ($approvalCase -eq 'approved-higher') { 5 } else { 3 }
+                $approvalArgs.Attempt = $actualAttempt
+                if ($approvalCase -in @('inferred-run', 'different-run')) {
+                    $env:DT_JOB_DIR = Join-Path $approvalRun 'jobs/fixture'
+                    New-Item -ItemType Directory -Path $env:DT_JOB_DIR -Force | Out-Null
+                    if ($approvalCase -eq 'inferred-run') { $approvalArgs.Remove('RunFolder') }
+                    else { $approvalArgs.RunFolder = $tempRoot }
+                }
+                $retryPrompt = Join-Path $tempRoot 'retry-prompt.md'
+                Write-Utf8 $retryPrompt "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: $actualAttempt`nfixture"
+                Write-Utf8 $savedReport "DT_BUILD_REPORT_VERSION: 2`nRUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: $actualAttempt`nCHANGED_FILES:`nNONE`nCOMMANDS_AND_RESULTS:`nNONE`nUNRESOLVED_BLOCKERS:`nNONE`nDISCOVERED_ENHANCEMENTS:`nNONE"
+                $env:DT_FAKE_CHANGED_REPORT = $savedReport
+                $out = Join-Path $tempRoot "$lane-approval-$approvalCase.md"
+                $log = & pwsh -NoProfile -File $invoke -ProjectPath $workingTree -PromptPath $retryPrompt -OutputPath $out @cliArgs @approvalArgs -Effort low -SelectionReason 'approved retry fixture' -Json 2>&1
+                Remove-Item Env:DT_JOB_DIR -ErrorAction SilentlyContinue
+                if ($approvalCase -in @('automatic-second', 'approved', 'approved-higher', 'inferred-run')) {
+                    Assert-True ($LASTEXITCODE -eq 0) "$lane $approvalCase attempt $actualAttempt succeeds: $($log -join ' ' )"
+                    $prov = Get-Content -Raw "$out.provenance.json" | ConvertFrom-Json
+                    Assert-True ($prov.attempt -eq $actualAttempt -and $prov.approval_operation -eq 'retry-original') "$lane preserves actual attempt and approval operation"
+                } else {
+                    Assert-True ($LASTEXITCODE -ne 0 -and ($log -join ' ') -match 'ATTEMPT_APPROVAL_REQUIRED' -and -not (Test-Path $out)) "$lane refuses $approvalCase before dispatch"
+                }
+            }
+            foreach ($case in @('clean', 'false-none', 'match', 'extra', 'committed', 'readonly')) {
+                $tree = Join-Path $tempRoot "$lane-changes-$case"
+                New-Item -ItemType Directory -Path $tree -Force | Out-Null
+                & git -C $tree init -q
+                & git -C $tree config user.email fixture@example.invalid
+                & git -C $tree config user.name Fixture
+                Write-Utf8 (Join-Path $tree 'tracked.txt') 'original'
+                Write-Utf8 (Join-Path $tree 'deleted.txt') 'original'
+                & git -C $tree add .
+                & git -C $tree commit -qm initial
+                $start = & git -C $tree rev-parse HEAD
+                $env:DT_FAKE_CHANGE_TREE = if ($case -in @('false-none', 'match', 'committed')) { '1' } else { $null }
+                $env:DT_FAKE_COMMIT_TREE = if ($case -eq 'committed') { '1' } else { $null }
+                $files = if ($case -in @('match', 'committed')) { '- `tracked.txt`' + "`n" + '- `new space.txt`' + "`n" + '- `deleted.txt`' } elseif ($case -in @('extra', 'readonly')) { 'invented.txt' } else { 'NONE' }
+                Write-Utf8 $savedReport "DT_BUILD_REPORT_VERSION: 2`nRUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nCHANGED_FILES:`n$files`nCOMMANDS_AND_RESULTS:`nNONE`nUNRESOLVED_BLOCKERS:`nNONE`nDISCOVERED_ENHANCEMENTS:`nNONE"
+                $out = Join-Path $tempRoot "$lane-changes-$case.md"
+                $modeArgs = if ($case -eq 'readonly') { @{ ReadOnly = $true } } else { @{} }
+                $log = & pwsh -NoProfile -File $invoke -ProjectPath $tree -PromptPath $wrapperPrompt -OutputPath $out @cliArgs @modeArgs -Effort low -SelectionReason 'changed files fixture' -Json 2>&1
+                Assert-True ($LASTEXITCODE -eq 0) "$lane $case changed-files check does not fail job"
+                $prov = Get-Content -Raw "$out.provenance.json" | ConvertFrom-Json
+                $expectedCount = if ($env:DT_FAKE_CHANGE_TREE) { 3 } else { 0 }
+                Assert-True (@($prov.actual_changed_files).Count -eq $expectedCount) "$lane $case records tracked, deleted, staged and untracked changes"
+                $mismatch = $case -in @('false-none', 'extra')
+                Assert-True (($prov.warnings -contains 'REPORT_CHANGED_FILES_MISMATCH') -eq $mismatch -and (($log -join ' ') -match 'REPORT_CHANGED_FILES_MISMATCH') -eq $mismatch) "$lane $case warning is recorded and printed only on mismatch"
+                Assert-True (($case -eq 'readonly' -and $null -eq $prov.start_commit) -or $prov.start_commit -eq $start) "$lane $case uses the start commit only in write mode"
+            }
+        }
+    } finally {
+        Remove-Item Env:DT_FAKE_CHANGED_REPORT, Env:DT_FAKE_CHANGE_TREE, Env:DT_FAKE_COMMIT_TREE -ErrorAction SilentlyContinue
+    }
     # Run pins use the existing fake catalog/CLI and restore caller hints after every case.
     foreach ($pinCase in @('match', 'reason', 'vendor', 'model')) {
         $savedPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR; $savedPinModel = $env:DT_BUILD_RUN_PIN_MODEL

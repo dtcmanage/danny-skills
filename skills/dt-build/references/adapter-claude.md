@@ -4,13 +4,14 @@ Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rul
 
 ## Dispatch
 
-- Resolve unpinned workers per `SKILL.md` "Model routing"; dt-job and wrappers enforce run pins: dispatch without `-Model` and never restate pins in handoffs.
-- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `scripts/invoke-claude-chunk.ps1` or `scripts/invoke-codex-chunk.ps1` with `SKILL.md` arguments. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md` in-flight work.
-- Run long tests, builds and browser checks as `-Kind test|command` jobs.
+- Follow `SKILL.md` routing; dispatch pinned runs without `-Model`; omit pins from handoffs.
+- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `scripts/invoke-claude-chunk.ps1` or `scripts/invoke-codex-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
+- Run tests/builds/browser checks as `-Kind test|command` jobs.
 - A Claude pick at the session's own effort may still use the Agent tool with the returned `agent_alias`. Any other effort goes through the wrapper as a job.
 
 ## Waiting and completion
 
+- Watchdogs: use `dt-job status -CoordinatorId <id> -Json`, `stalled` and heartbeat/activity age; checkpoint age must never be used alone (`_build-state.md`).
 - Top-level coordinators: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 600 -Json`, Bash `run_in_background: true`, longer Bash `timeout`; end the turn and await notification.
 - Subagent/teammate coordinators (Agent-tool launched, or no direct user turn): foreground wait with `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 540 -Json`, Bash `run_in_background: false`, `timeout: 600000`. Repeat after every `wait_timeout` check-in; never end the turn while jobs run.
 - Each `wait_timeout` is a check-in listing each running job's `progress`. Jobs have no time limit; for a `STALLED` job (20 silent minutes), check its output, then cancel and retry or keep waiting.

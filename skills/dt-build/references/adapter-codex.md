@@ -4,13 +4,14 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 
 ## Dispatch
 
-- Resolve unpinned workers per `SKILL.md` "Model routing"; dt-job and wrappers enforce run pins: dispatch without `-Model` and never restate pins in handoffs.
-- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `scripts/invoke-codex-chunk.ps1` or `scripts/invoke-claude-chunk.ps1` with `SKILL.md` arguments. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md` in-flight work.
-- Run long tests, builds and browser checks as `-Kind test|command` jobs.
+- Follow `SKILL.md` routing; dispatch pinned runs without `-Model`; omit pins from handoffs.
+- Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `scripts/invoke-codex-chunk.ps1` or `scripts/invoke-claude-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
+- Run tests/builds/browser checks as `-Kind test|command` jobs.
 - Never hand-roll `codex exec` or `claude -p` or use Codex subagents for chunks.
 
 ## Waiting and completion
 
+- Watchdogs: use `dt-job status -CoordinatorId <id> -Json`, `stalled` and heartbeat/activity age; checkpoint age must never be used alone (`_build-state.md`).
 - Codex has no in-session completion notice. Wait in the foreground: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` (at most 600) below the shell timeout.
 - On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again; nothing else between waits.
 - Never poll with `status`, `sleep` loops, or log tails.

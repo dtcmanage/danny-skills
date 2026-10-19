@@ -12,8 +12,11 @@ param(
     [string]$ChunkId,
 
     [Parameter(Mandatory)]
-    [ValidateRange(1, 2)]
+    [ValidateRange(1, 2147483647)]
     [int]$Attempt,
+
+    [string]$ApprovalOperation = "",
+    [string]$RunFolder = "",
 
     [string]$PreamblePath = "",
     [string]$PreambleText = "",
@@ -29,6 +32,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'worker-verification.ps1')
+Assert-WorkerAttemptApproval -RequestedAttempt $Attempt -ApprovalName $ApprovalOperation -ApprovalRunFolder $RunFolder
 . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
 $fixRoundRule = Get-WorkerFixRoundRule -MaxFixRounds $MaxFixRounds
 $hardwareRule = Get-WorkerHardwareRule

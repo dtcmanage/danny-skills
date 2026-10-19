@@ -198,6 +198,18 @@ try {
     $assembledPath = Join-Path $tempRoot 'assemble\prompt.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $manifestFile -RequiredEntitlements contracts -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -PreambleText 'Fixture preamble.' -BriefText 'Fixture brief.' -OutputPath $assembledPath *> $null
     Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $assembledPath)) "the assembler runs on a fixture manifest (exit $LASTEXITCODE)"
+    $approvalRun = Join-Path $tempRoot 'retry-run'
+    Write-Utf8 (Join-Path $approvalRun 'approvals.json') '{"awaiting":null,"approvals":[{"operation":"retry-original"}]}'
+    foreach ($approved in @($false, $true)) {
+        $approvalArgs = if ($approved) { @{ ApprovalOperation = 'retry-original'; RunFolder = $approvalRun } } else { @{} }
+        $retryPath = "$assembledPath.retry-$approved"
+        $log = & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $manifestFile -RequiredEntitlements contracts -RunId fixture-run -ChunkId fixture-chunk -Attempt 3 -PreambleText 'Fixture preamble.' -BriefText 'Fixture brief.' -OutputPath $retryPath @approvalArgs 2>&1
+        if ($approved) {
+            Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $retryPath).Contains('attempt: 3')) 'assembler preserves approved third attempt'
+        } else {
+            Assert-True ($LASTEXITCODE -ne 0 -and ($log -join ' ') -match 'ATTEMPT_APPROVAL_REQUIRED' -and -not (Test-Path $retryPath)) 'assembler rejects unapproved third attempt'
+        }
+    }
     $assembled = [System.IO.File]::ReadAllText($assembledPath)
     Assert-True ($assembled.Contains('Allow at most 2 fix rounds') -and $assembled.Contains('same failing set appears in two consecutive rounds') -and $assembled.Contains('round budget is spent')) 'assembler renders default budget and both stop conditions'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $manifestFile -RequiredEntitlements contracts -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -PreambleText 'Fixture preamble.' -BriefText 'Fixture brief.' -OutputPath "$assembledPath.custom" -MaxFixRounds 5 *> $null

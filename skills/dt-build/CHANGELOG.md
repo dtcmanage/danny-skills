@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.11
+
+- Fix FS-112/113/114/116: verify approved retries, check worker changed-file reports, use heartbeat watchdogs, and document Windows process-start resource recovery.
+
 ## 2.48.10
 
 - Fix FS-110 launch-time delegation for routine stops and FS-111 prose path filtering while retaining fail-closed named originals. The dt-job suite now routes every alert to a fake transport and asserts it (FS-115: a fixture alert reached Danny's real Discord).

@@ -89,3 +89,17 @@ Shared rules:
   or `scripts/invoke-claude-chunk.ps1`), which requires the selection reason and records it with the
   canonical disclosure line and pinned model (plus effort and approval policy on the Codex lane). Return
   only the structured report fields defined by dt-build.
+
+## Approved retries and file reports
+
+Keep the original chunk identity and true `-Attempt` number on an approved retry. Attempts 3+
+require `-ApprovalOperation <op>` naming an operation recorded as approved by dt-job in the run's
+`approvals.json`. Pass `-RunFolder <folder>` to the prompt assembler and direct wrapper calls;
+wrappers launched through dt-job infer the run folder. Never rename a chunk to bypass the budget.
+Attempts 1-2 retain their automatic budget.
+
+In write mode, list repository-relative paths under `CHANGED_FILES` (or `NONE`). Wrappers compare
+that list with Git changes from the start commit, including staged, deleted, committed and untracked
+files. Provenance records `actual_changed_files` and prints `REPORT_CHANGED_FILES_MISMATCH` in
+`warnings` on disagreement. The job continues; the coordinator decides how to resolve the warning.
+Read-only/review calls do not perform this comparison.

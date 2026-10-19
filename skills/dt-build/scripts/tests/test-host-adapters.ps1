@@ -54,6 +54,7 @@ try {
         }
         $headings = @([regex]::Matches($text, '(?m)^## (.+?)\s*$') | ForEach-Object { $_.Groups[1].Value })
         Assert-True (($headings -join '|') -ceq ($sections -join '|')) "$name has exactly the required sections in order (found: $($headings -join ', '))"
+        Assert-True ($text.Contains('dt-job status') -and $text.Contains('stalled') -and $text.Contains('heartbeat/activity age') -and $text.Contains('age must never be used alone')) "$name judges watchdog liveness using dt-job"
         $words = Get-WordCount $text
         Assert-True ($words -le $adapterWordCap) "$name is $words words, over $adapterWordCap"
         $bootstrap = [regex]::Match($text, '(?s)## Bootstrap and context\s*(.*?)(?=\r?\n## )').Groups[1].Value

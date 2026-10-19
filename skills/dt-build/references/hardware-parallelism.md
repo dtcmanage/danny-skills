@@ -48,3 +48,12 @@ plan/roadmap decision revision before affected work proceeds, not an unexplained
 Keep safe work parallel. FS-58 is unchanged: pass dt-job `-ExclusiveReason '<cause>'` only for the
 specific job needing the machine pytest lock; leave `exclusive_reason` empty otherwise. Do not use
 that lock as a scheduler or a substitute for isolating a suite.
+
+On Windows, exit code `0xC0000142` (`3221225794` / `-1073741502`, DLL initialization failed)
+during parallel tests means the host hit a process-start resource limit, typically desktop heap,
+rather than an application defect. Rerun only the affected tests at lower process concurrency;
+never count them as passes or skip them. Record the failure and rerun result in the run evidence.
+Size xdist and shard counts by how many subprocesses tests start at once, as well as CPU and RAM.
+Duration balancing must not co-schedule the process-launching tests: slowest-first ordering lined
+them up side by side and lost about 190 tests to this error in one pass. Cap their concurrency
+separately (an xdist group or a separate low-`-n` pass) while the rest stay duration-balanced.
