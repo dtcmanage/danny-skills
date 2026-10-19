@@ -1695,6 +1695,11 @@ function Invoke-DtJobRegisterRun {
     if (-not $BuildStatePath -or -not $RunId -or -not $PinnedHost) { throw 'DT_JOB_USAGE: register-run requires -BuildStatePath, -RunId, and -PinnedHost.' }
     if (($PinVendor -or $PinModel) -and (-not $PinVendor -or [string]::IsNullOrWhiteSpace($PinModel))) { throw 'DT_JOB_USAGE: register-run pin requires -PinVendor and -PinModel.' }
     if ($PinVendor) { Assert-DtJobOperator -VerbName 'register-run pin' -RunFolder $RunFolder -AllowLiveCoordinator }
+    $hasDelegate = $script:DtJobExplicitParams -contains 'Delegate'
+    if ($hasDelegate) {
+        Assert-DtJobOperator -VerbName 'delegate' -RunFolder $RunFolder
+        if ([string]::IsNullOrWhiteSpace($Delegate)) { throw 'DT_JOB_USAGE: delegate requires -Delegate <name> or -Clear.' }
+    }
     $root = (Get-DtJobPaths -RunFolder $RunFolder).Root
     $entry = [ordered]@{
         run_id           = $RunId
@@ -1705,12 +1710,17 @@ function Invoke-DtJobRegisterRun {
         registered_utc   = [DateTime]::UtcNow.ToString('o')
     }
     if ($PinVendor) { $entry.pin = [ordered]@{ vendor = $PinVendor.ToLowerInvariant(); model = $PinModel; set_utc = [DateTime]::UtcNow.ToString('o') } }
-    Invoke-DtJobRegistryLocked -Body {
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action { Invoke-DtJobRegistryLocked -Body {
         $previous = Get-DtJobRunPin -RunFolder $RunFolder
         if (-not $PinVendor -and $null -ne $previous) { $entry.pin = $previous }
         $runs = @(Get-DtJobRegistryRuns | Where-Object { -not (Test-DtPathEqual ([string]$_.run_folder) $root) -and [string]$_.run_id -cne $RunId })
+        if ($hasDelegate) {
+            $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+            $approvals.delegate = [pscustomobject][ordered]@{ name = $Delegate.Trim(); set_utc = [DateTime]::UtcNow.ToString('o') }
+            Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+        }
         Save-DtJobRegistryRuns -Runs (@($runs) + @([pscustomobject]$entry))
-    }
+    } }
     Write-DtJobOutput -Object ([pscustomobject]$entry) -AsJson:$Json
 }
 

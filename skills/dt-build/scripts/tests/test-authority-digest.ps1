@@ -313,6 +313,37 @@ try {
     $cycleFailed = $false
     try { Resolve-AuthorityLiteral 'A/record.md' $liveCheckpoint $liveRoot $cyclicAliases | Out-Null } catch { $cycleFailed = $_.Exception.Message.Contains('AUTHORITY_ALIAS_CYCLE') }
     Assert-True $cycleFailed 'cyclic alias definitions fail closed without an unbounded resolver loop'
+    # FS-111: prose locators are diagnostics; a genuinely named missing original still stops.
+    $proseRoot = Join-Path $root 'prose-tokens'
+    New-Item -ItemType Directory -Path $proseRoot | Out-Null
+    $proseCheckpoint = Join-Path $proseRoot '_build-state.md'
+    Write-Text $proseCheckpoint 'Scope: fixtures only.'
+    $tokens = @(
+        'D:\Claude\sessions\*.json',
+        'skills\dt-roadmap\references\roadmap-schema.md',
+        '~\.codex\sessions\YYYY\MM\DD\rollout-*.jsonl',
+        '00_Resources\ops-conventions.md',
+        'raw\<machine>\<tool>\<session_id>.jsonl',
+        'digests\<machine>\<workstation>\<YYYY-MM-DD>_<session_id>.md'
+    )
+    $missingOriginal = Join-Path $proseRoot 'genuinely-missing-original.md'
+    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ notes = @($tokens) + @($missingOriginal) } | ConvertTo-Json)
+    $missingFailure = ''
+    try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
+    Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains($missingOriginal)) 'prose tokens do not mask a missing absolute named original'
+    foreach ($token in $tokens) {
+        $skipped = @($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $token -and $_.reason -eq 'non_authority_reference' -and -not $_.required })
+        Assert-True ($skipped.Count -eq 1) "prose token skipped exactly once: $token"
+    }
+    Assert-True (@($script:AuthorityDiagnostics | Where-Object required).Count -eq 1) 'only the genuinely missing absolute original is required'
+    Write-Text $missingOriginal 'Only fixture authority.'
+    $inventory = @(Get-AuthorityInventory $proseRoot $proseCheckpoint)
+    Assert-True ($inventory.Count -eq 2) 'six prose tokens permit inventory once the genuine original exists'
+    New-Item -ItemType Directory -Path (Join-Path $proseRoot 'approvals') | Out-Null
+    Write-Text (Join-Path $proseRoot 'operator-notes.json') '{"source":"approvals/missing.md"}'
+    $missingFailure = ''
+    try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
+    Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains('missing.md')) 'missing source-relative original under a real directory fails closed'
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {

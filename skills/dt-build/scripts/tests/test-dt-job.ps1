@@ -90,7 +90,23 @@ $pinEnvNames = @('DT_BUILD_STATE_DIR', 'DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID', '
 $pinSavedEnv = @{}
 foreach ($name in $pinEnvNames) { $pinSavedEnv[$name] = [Environment]::GetEnvironmentVariable($name) }
 $savedRouterState = $env:DT_MODEL_ROUTER_STATE
+$savedAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
+$savedDmLog = $env:DT_TEST_DM_LOG
 try {
+    # FS-115: every alert this suite raises goes to a fake transport, never Danny's real Discord.
+    $env:DT_TEST_DM_LOG = Join-Path $tempRoot 'dms.jsonl'
+    $fakeAlertTransport = Join-Path $tempRoot 'fake-alert-transport.ps1'
+    Write-Utf8 $fakeAlertTransport @'
+param($request)
+if ($request['kind'] -eq 'secret') { return 'fake-secret' }
+if ([string]$request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '1' } } }
+if ([string]$request['uri'] -like '*/messages') {
+    $content = ([string]$request['body'] | ConvertFrom-Json).content
+    [System.IO.File]::AppendAllText($env:DT_TEST_DM_LOG, (([ordered]@{ content = $content } | ConvertTo-Json -Compress) + "`n"))
+}
+return [pscustomobject]@{ id = 'fake' }
+'@
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
     $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'registry'
     $env:DT_MODEL_ROUTER_STATE = Join-Path $tempRoot 'router-state'
     New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_STATE -Force | Out-Null
@@ -1023,6 +1039,36 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $lastSeq = [int](@($parsed | Where-Object { $_.job_id -ne $job2.job_id -and $after.Count -ge 1 -and [int]$_.seq -lt $after[0] } | ForEach-Object { [int]$_.seq } | Measure-Object -Maximum).Maximum)
     Assert-True ($after.Count -ge 1 -and $after[0] -eq $lastSeq + 1 -and (($after -join ',') -eq (($lastSeq + 1)..($lastSeq + $after.Count) -join ','))) "events continue at the next seq ($lastSeq -> $($after -join ','))"
 
+    # FS-110: launch-time delegation uses the operator verb's record and safety checks.
+    $rf = New-RunFolder 'launch-delegate'
+    $state = Join-Path $rf '_build-state.md'
+    Write-Utf8 $state "run_status: runnable`nlast_consumed_event_seq: 0`n"
+    $registerDelegate = @('register-run', '-RunFolder', $rf, '-RunId', 'launch-delegate', '-BuildStatePath', $state, '-PinnedHost', 'codex', '-Managed')
+    Invoke-DtJob ($registerDelegate + @('-Delegate', '  launch-session  ')) | Out-Null
+    $delegated = Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json
+    Assert-True ($delegated.delegate.name -ceq 'launch-session' -and $delegated.delegate.set_utc -and ($delegated.delegate.PSObject.Properties.Name -join ',') -ceq 'name,set_utc') 'register-run stores the trimmed delegate with the delegate verb record shape'
+    $savedDelegate = $delegated.delegate | ConvertTo-Json -Compress
+    Invoke-DtJob $registerDelegate | Out-Null
+    Assert-True (((Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).delegate | ConvertTo-Json -Compress) -ceq $savedDelegate) 'registration without Delegate preserves existing delegation'
+    $routine = Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'attempt-budget', '-Message', 'Retry fixture attempt.')
+    $pending = (Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).awaiting
+    Assert-True ($routine.alert -eq 'delegated' -and $pending.delegated_to -ceq 'launch-session' -and ([datetime]$pending.escalate_after_utc - [datetime]$pending.since_utc).TotalMinutes -ge 15 -and -not (Test-Path (Join-Path $rf 'notifications.jsonl'))) 'routine launch stop records delegation and defers Danny alert for fifteen minutes'
+    $urgent = Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'irreversible-fixture', '-Message', 'Fixture only.')
+    $pending = (Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).awaiting
+    $notifications = @(Get-Content (Join-Path $rf 'notifications.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True ($urgent.alert -ne 'delegated' -and -not $pending.PSObject.Properties['delegated_to'] -and @($notifications | Where-Object { $_.key -match ':awaiting:irreversible-fixture:' }).Count -eq 1) 'irreversible launch stop immediately attempts Danny alert under the temp router guard'
+    Assert-True ((Test-Path $env:DT_TEST_DM_LOG) -and (Get-Content -Raw $env:DT_TEST_DM_LOG) -match 'irreversible-fixture') 'irreversible fixture alert lands on the fake transport, not a live channel'
+    foreach ($invalid in @('blank', 'coordinator', 'job')) {
+        $name = if ($invalid -eq 'blank') { '   ' } else { 'forbidden-session' }
+        if ($invalid -eq 'coordinator') { $env:DT_BUILD_COORDINATOR_ID = 'fixture' }
+        if ($invalid -eq 'job') { $env:DT_JOB_ID = 'fixture' }
+        try {
+            $raw = & pwsh -NoProfile -File $dtJob @registerDelegate -Delegate $name -AllowTempRunFolder -Json 2>&1
+            Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_(USAGE|OPERATOR_ONLY)') "register-run rejects $invalid delegate assignment"
+        } finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue }
+    }
+    Assert-True (((Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).delegate | ConvertTo-Json -Compress) -ceq $savedDelegate) 'rejected delegate assignments leave the original record unchanged'
+
     # FS-57: external approval queues only an exact boundary, survives repeats,
     # and applies after the recorded coordinator identity exits (including PID reuse).
     $rf = New-RunFolder 'approval-queue'
@@ -1135,6 +1181,8 @@ catch {
 }
 finally {
     [Environment]::SetEnvironmentVariable('DT_MODEL_ROUTER_STATE', $savedRouterState)
+    [Environment]::SetEnvironmentVariable('DT_MODEL_ROUTER_ALERT_TRANSPORT', $savedAlertTransport)
+    [Environment]::SetEnvironmentVariable('DT_TEST_DM_LOG', $savedDmLog)
     foreach ($name in $pinEnvNames) { [Environment]::SetEnvironmentVariable($name, $pinSavedEnv[$name]) }
     Write-Output "SUMMARY: $script:passed passed, $script:failed failed"
     # Unlink only: a recursive delete would follow the junction into the real skill folder.

@@ -1,6 +1,6 @@
 # dt-build host adapter: Codex
 
-Load this file only when the coordinator runs in Codex (interactive Codex CLI or `codex exec`). Other rules live in `SKILL.md`. `dt-job` below means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`; the id checks context and renews the lease.
+Load this file only when the coordinator runs in Codex (interactive Codex CLI or `codex exec`). Other rules live in `SKILL.md`. `dt-job` below means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
 
 ## Dispatch
 
@@ -23,7 +23,7 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 
 - Managed resumes follow `managed-resume.md`: compact rulebook and the managed-resume authority read contract first, then mark bootstrap at once. A `dt-build-lean` bridge defers canonical-chain reads to their actions. New starts read the mandatory CLAUDE.md chain, MEMORY.md and governing references first.
 - No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
-- New starts register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost codex`. Add `-Managed` when requested.
+- New starts register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost codex`. Add `-Managed` when requested. Interactive launch/monitor sessions pass `-Delegate <own session name>`; unattended/headless runs omit it.
 - Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host codex`. Use one id, e.g. `<RUN_ID>-codex-<yyyyMMddHHmm>`, from the starting directory or add `-TranscriptPath <this session's rollout file>`.
 - An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host codex`. Any call with your id renews it through long waits. A watcher-launched coordinator already holds it.
 - Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` reach a safe stopping point, then rotate; `rotate` rotate now.

@@ -1,6 +1,6 @@
 # dt-build host adapter: Claude Code
 
-Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rules: `SKILL.md`. `dt-job` means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`; it checks context and renews the lease.
+Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rules: `SKILL.md`. `dt-job` means `pwsh -NoProfile -File scripts/dt-job.ps1 -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
 
 ## Dispatch
 
@@ -22,7 +22,7 @@ Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rul
 
 - Managed resumes follow `managed-resume.md`: verified digest above budget, current authority in full, then bootstrap; governing originals in full before actions. New starts do the mandatory CLAUDE.md chain, MEMORY.md and governing reads first. Load other references only at their step.
 - No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
-- New starts register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested.
+- New starts register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested. Interactive launch/monitor sessions pass `-Delegate <own session name>`; unattended/headless runs omit it.
 - Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host claude`. Use one id, e.g. `<RUN_ID>-claude-<yyyyMMddHHmm>`, from the starting directory or with `-TranscriptPath <transcript>`.
 - An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host claude`. Any call with your id renews it through long waits. A watcher-launched coordinator already holds it.
 - Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` reach a safe stopping point, then rotate; `rotate` rotate now.

@@ -9,6 +9,7 @@ $script:AuthorityReadCeilingChars = 96000
 # rollover's append-only audit log, and the provenance sidecar, consolidations file and clause ledger are
 # its working evidence (roll-authority-forward.ps1); each is read only for an explicit lookup.
 $script:AuthorityEvidenceOnlyNames = @('evidence-notes.json', 'authority-history.jsonl', 'current-authority.provenance.json', 'consolidations.json', 'clauses-ledger.json')
+$script:AuthorityRunRootNames = @('approvals.json', 'operator-notes.json', 'build-state.md', 'build-plan.md')
 
 function Get-AuthorityHash {
     param([string]$Path)
@@ -39,7 +40,7 @@ function Get-AuthorityAliases {
 }
 
 function Resolve-AuthorityLiteral {
-    param([string]$Literal, [string]$Source, [string]$RunFolder, [hashtable]$Aliases)
+    param([string]$Literal, [string]$Source, [string]$RunFolder, [hashtable]$Aliases, [switch]$NamedOriginal)
     $value = $Literal.Trim().Replace('/', [IO.Path]::DirectorySeparatorChar)
     $visited = @{}
     while ($value -match '^([A-Z][A-Z0-9_]*)[/\\](.*)$' -and $Aliases.ContainsKey($Matches[1])) {
@@ -51,7 +52,11 @@ function Resolve-AuthorityLiteral {
     if ([IO.Path]::IsPathRooted($value)) { return [IO.Path]::GetFullPath($value) }
     $near = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $Source) $value))
     if (Test-Path -LiteralPath $near) { return $near }
-    return [IO.Path]::GetFullPath((Join-Path $RunFolder $value))
+    if ($value -in ($script:AuthorityRunRootNames + $script:AuthorityEvidenceOnlyNames)) { return [IO.Path]::GetFullPath((Join-Path $RunFolder $value)) }
+    # A named original below an existing source directory still fails closed if deleted.
+    # Unresolved repository/prose locators must not become invented run-relative originals.
+    if ($NamedOriginal -or (Test-Path -LiteralPath (Split-Path -Parent $near) -PathType Container)) { return $near }
+    return $null
 }
 
 function Get-AuthorityCandidates {
@@ -108,15 +113,15 @@ function Get-AuthorityEnumeration {
     $json = [IO.File]::ReadAllText($Boundary) | ConvertFrom-Json
     $inherited = @()
     if ($json.PSObject.Properties['inherited_boundary']) {
-        $parent = Resolve-AuthorityLiteral $json.inherited_boundary $Boundary $RunFolder $Aliases
+        $parent = Resolve-AuthorityLiteral $json.inherited_boundary $Boundary $RunFolder $Aliases -NamedOriginal
         $inherited = @(Get-AuthorityEnumeration $parent $RunFolder $Aliases $Stack)
     } elseif ($json.PSObject.Properties['inherited_authority_sources']) {
-        $inherited = @($json.inherited_authority_sources | ForEach-Object { Resolve-AuthorityLiteral $_ $Boundary $RunFolder $Aliases })
+        $inherited = @($json.inherited_authority_sources | ForEach-Object { Resolve-AuthorityLiteral $_ $Boundary $RunFolder $Aliases -NamedOriginal })
     } else { throw "AUTHORITY_ENUMERATION_MISSING: $Boundary" }
     $paths = @($Boundary) + $inherited
     foreach ($field in @('source_disposition', 'scope', 'approval_text')) {
         if (-not $json.PSObject.Properties[$field]) { throw "AUTHORITY_ENUMERATION_FIELD: $Boundary : $field" }
-        $paths += Resolve-AuthorityLiteral $json.$field $Boundary $RunFolder $Aliases
+        $paths += Resolve-AuthorityLiteral $json.$field $Boundary $RunFolder $Aliases -NamedOriginal
     }
     $paths = @($paths | Sort-Object -Unique)
     foreach ($field in @('original_inherited_record_count', 'inherited_originals')) {
@@ -147,7 +152,7 @@ function Get-AuthorityInventory {
         $script:AuthorityCurrentBoundary = $boundary
         foreach ($original in $script:AuthorityEnumeratedPaths) { $pending.Enqueue($original) }
     }
-    foreach ($name in @('approvals.json', 'operator-notes.json', 'build-state.md', 'build-plan.md')) {
+    foreach ($name in $script:AuthorityRunRootNames) {
         $path = Join-Path $root $name
         if ($script:AuthorityEnumeratedPaths.Count -or (Test-Path -LiteralPath $path -PathType Leaf)) { $pending.Enqueue($path) }
     }
@@ -187,7 +192,15 @@ function Get-AuthorityInventory {
         if ($script:AuthorityEnumeratedPaths.Count -and $path -ne $checkpoint) { continue }
         $candidates = if ($path -eq $checkpoint) { $checkpointCandidates } else { @(Get-AuthorityCandidates $text $aliases) }
         foreach ($candidate in $candidates) {
+            if ($candidate.literal -match '[*?<>]|^~|(?i)(?<![a-z])(?:YYYY|MM|DD)(?![a-z])') {
+                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false })
+                continue
+            }
             $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases
+            if (-not $resolved) {
+                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false })
+                continue
+            }
             if ((Split-Path -Leaf $resolved) -in $script:AuthorityEvidenceOnlyNames) {
                 $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = 'evidence_only'; required = $false })
                 continue
