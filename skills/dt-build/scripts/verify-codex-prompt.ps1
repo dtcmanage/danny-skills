@@ -4,7 +4,11 @@ param(
 
     [string]$ExpectedRunId = "",
     [string]$ExpectedChunkId = "",
-    [ValidateRange(1, 2)][Nullable[int]]$ExpectedAttempt = $null,
+    [ValidateRange(1, 2147483647)][Nullable[int]]$ExpectedAttempt = $null,
+
+    # Attempts 3+ verify only with a dt-job-recorded approval, as in the wrappers (FS-112).
+    [string]$ApprovalOperation = "",
+    [string]$RunFolder = "",
 
     [switch]$Json
 )
@@ -101,8 +105,13 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedChunkId) -and $chunkId -ne $Expec
 if ($null -ne $ExpectedAttempt -and $attempt -ne [int]$ExpectedAttempt) {
     $errors.Add(("identity: attempt mismatch expected={0} actual={1}" -f [int]$ExpectedAttempt, $attempt))
 }
-if ($attemptMatch.Success -and $attempt -notin @(1, 2)) {
-    $errors.Add(("identity: attempt outside allowed automatic budget (1..2): {0}" -f $attempt))
+if ($attemptMatch.Success -and $attempt -lt 1) {
+    $errors.Add(("identity: attempt must be 1 or more: {0}" -f $attempt))
+}
+if ($attemptMatch.Success -and $attempt -gt 2) {
+    . (Join-Path $PSScriptRoot 'worker-verification.ps1')
+    try { Assert-WorkerAttemptApproval -RequestedAttempt $attempt -ApprovalName $ApprovalOperation -ApprovalRunFolder $RunFolder }
+    catch { $errors.Add(("identity: attempt {0} outside the automatic budget (1..2) without a verified approval: {1}" -f $attempt, $_.Exception.Message)) }
 }
 
 # Check 2: allowed character scan.

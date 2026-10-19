@@ -502,6 +502,16 @@ rationale: Framework limitation accepted with visible evidence.
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') `
         -ProjectPath $workingTree -Preflight -Attempt 3 *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Codex wrapper accepted automatic attempt 3"
+    # The prompt verify gate applies the same approval rule as the wrappers.
+    $verifyRun = Join-Path $tempRoot 'verify-attempt-run'
+    New-Item -ItemType Directory -Path $verifyRun -Force | Out-Null
+    Write-Utf8 (Join-Path $verifyRun 'approvals.json') '{"awaiting":null,"approvals":[{"operation":"retry-original"}]}'
+    $verifyPrompt = Join-Path $tempRoot 'verify-attempt-3.md'
+    Write-Utf8 $verifyPrompt "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 3`nfixture"
+    $denied = (& pwsh -NoProfile -File (Join-Path $scriptDir 'verify-codex-prompt.ps1') -PromptPath $verifyPrompt -Json 2>&1) -join ' '
+    Assert-True ($denied -match 'attempt 3 outside the automatic budget') 'prompt verify rejects attempt 3 without a recorded approval'
+    $allowed = (& pwsh -NoProfile -File (Join-Path $scriptDir 'verify-codex-prompt.ps1') -PromptPath $verifyPrompt -ApprovalOperation 'retry-original' -RunFolder $verifyRun -Json 2>&1) -join ' '
+    Assert-True ($allowed -notmatch 'identity: attempt') 'prompt verify accepts attempt 3 with a recorded approval'
 
     # Wrapper validates report shape, redacts retained output, and preserves
     # failure provenance even when a child never reads stdin.

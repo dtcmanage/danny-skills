@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.48.14
+  version: 2.48.15
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -203,7 +203,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 
 6. Execute milestones with deterministic execution-side procedures, **per-milestone in this order**:
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
-- b. **Assemble and verify the chunk prompt (both lanes).** `<skill>/scripts/assemble-codex-prompt.ps1` (single canonical implementation — the name is historical; both lane wrappers consume its verified output, which carries the identity headers and report contract each wrapper enforces; envelope boundary via repo-level `<danny-skills>/scripts/wrap-prompt-envelope.ps1`), then the four-check prompt verify gate through `<skill>/scripts/verify-codex-prompt.ps1` before every chunk invocation on either lane.
+- b. **Assemble and verify the chunk prompt (both lanes).** `<skill>/scripts/assemble-codex-prompt.ps1` (canonical for both lanes despite its name; it emits the identity headers and report contract both wrappers enforce; envelope via `<danny-skills>/scripts/wrap-prompt-envelope.ps1`), then the four-check gate `<skill>/scripts/verify-codex-prompt.ps1` before every chunk. An approved retry past the two-attempt budget passes the next `-Attempt` with `-ApprovalOperation <op> -RunFolder <run>` to all three.
 - c. **Run the chunk through the canonical lane.** For Codex, call `<skill>/scripts/invoke-codex-chunk.ps1`
   with the chunk's `-Category` (plus `-Protected` when earned), `-Effort <returned effort>` from the resolver, and `-SelectionReason`.
   For Claude, dispatch via CLAUDE_DISPATCH with the same brief and scoped worktree. Run the dispatch diagnosis before any

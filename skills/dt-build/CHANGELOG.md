@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.15
+
+- Fix FS-112 gap: verify-codex-prompt accepts attempts 3+ only with a dt-job-recorded -ApprovalOperation (was hard-capped at 2); SKILL.md step b names the approved-retry arguments (FS-127).
+
 ## 2.48.14
 
 - Fix FS-120: expose stop ownership and delivered Danny alerts in status; require delegate sessions to arm persistent decision watches. Also FS-121 (anchor managed-resume policy reads), FS-123 (digest skips missing bare artifact names in design/plan documents only), FS-124 (approve keeps -Reason on the approval record), FS-125 (balance whole test files; dry-run new orderings on a few slow files).
