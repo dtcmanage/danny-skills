@@ -1,12 +1,13 @@
 # dt-build host adapter: Codex
 
-Load this file only when the coordinator runs in Codex (interactive Codex CLI or `codex exec`). Other rules live in `SKILL.md`. `dt-job` below means `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
+For Codex coordinators (interactive Codex CLI, `codex exec`). Shared rules: `SKILL.md`. `dt-job`: `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
 
 ## Dispatch
 
 - Follow `SKILL.md` routing; dispatch pinned runs without `-Model`; omit pins from handoffs.
 - Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `<skill>/scripts/invoke-codex-chunk.ps1` or `<skill>/scripts/invoke-claude-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
 - Run tests/builds/browser checks as `-Kind test|command` jobs.
+- Commands run as PowerShell: never nest `pwsh -Command "...$..."`; run directly or use `-File`.
 - Never hand-roll `codex exec` or `claude -p` or use Codex subagents for chunks.
 
 ## Waiting and completion

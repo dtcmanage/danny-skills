@@ -209,6 +209,32 @@ function Assert-DtJobRunFolder {
     }
 }
 
+function Assert-DtJobCommand {
+    # The runner evaluates this text as PowerShell before a nested shell receives its arguments.
+    param([string]$Command)
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Command, [ref]$tokens, [ref]$errors)
+    foreach ($invocation in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+        $name = $invocation.GetCommandName()
+        if (-not $name -or ($name -split '[/\\]')[-1] -notin @('pwsh', 'pwsh.exe', 'powershell', 'powershell.exe')) { continue }
+        $elements = $invocation.CommandElements
+        for ($i = 1; $i -lt $elements.Count; $i++) {
+            $parameter = $elements[$i]
+            if ($parameter -isnot [System.Management.Automation.Language.CommandParameterAst]) { continue }
+            if ($parameter.ParameterName -in @('File', 'EncodedCommand')) { break }
+            if ($parameter.ParameterName -notin @('Command', 'c', 'CommandWithArgs')) { continue }
+            $argument = $parameter.Argument
+            if ($null -eq $argument -and $i + 1 -lt $elements.Count) { $argument = $elements[$i + 1] }
+            if ($argument -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and $argument.NestedExpressions.Count -gt 0) {
+                $references = @($argument.FindAll({ param($node) $node -is [System.Management.Automation.Language.VariableExpressionAst] }, $true) | ForEach-Object { $_.Extent.Text })
+                if ($references.Count -eq 0) { $references = @($argument.NestedExpressions | ForEach-Object { $_.Extent.Text }) }
+                throw "DT_JOB_NESTED_EXPANSION: $($references -join ', ') in $name -$($parameter.ParameterName) expands in the outer PowerShell before the inner script starts. Run the native command directly as the job command, use -File <script>, or single-quote the inner script."
+            }
+            break
+        }
+    }
+}
+
 function Set-DtJobCommandArgument {
     # Parse argument extents so quoted text and similarly named parameters are never replaced.
     param([string]$Command, [string]$Name, [string]$Value)
@@ -883,6 +909,7 @@ function Invoke-DtJobStart {
     if ([string]::IsNullOrWhiteSpace($Command) -eq [string]::IsNullOrWhiteSpace($ScriptPath)) {
         throw 'DT_JOB_USAGE: start takes exactly one of -Command or -ScriptPath.'
     }
+    if ($Command) { Assert-DtJobCommand -Command $Command }
     # No job is stopped on time: -TimeoutSec is the expected duration that check-ins compare against, and
     # only a stall the coordinator confirms ends a job.
     $expectedSec = $TimeoutSec
@@ -997,6 +1024,7 @@ function Invoke-DtJobRequeue {
         $newId = 'j-{0:D4}' -f ($max + 1)
         $jobDir = Join-Path $paths.Jobs $newId
         $specText = Read-DtJobText -Path (Join-Path $paths.Jobs "$($old.job_id)/spec.json")
+        Assert-DtJobCommand -Command ($specText | ConvertFrom-Json).command
         $record = ($old | ConvertTo-Json -Depth 8 | ConvertFrom-Json)
         $record.job_id = $newId
         $record.depends_on = @($deps)

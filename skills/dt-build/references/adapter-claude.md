@@ -1,12 +1,13 @@
 # dt-build host adapter: Claude Code
 
-Load only for Claude Code coordinators (CLI, Cowork, or `claude -p`). Shared rules: `SKILL.md`. `dt-job` means `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
+Claude Code coordinators; shared rules: `SKILL.md`. `dt-job`: `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
 
 ## Dispatch
 
 - Follow `SKILL.md` routing; dispatch pinned runs without `-Model`; omit pins from handoffs.
 - Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `<skill>/scripts/invoke-claude-chunk.ps1` or `<skill>/scripts/invoke-codex-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
 - Run tests/builds/browser checks as `-Kind test|command` jobs.
+- Commands run as PowerShell: never nest `pwsh -Command "...$..."`; run directly or use `-File`.
 - A Claude pick at the session's own effort may still use the Agent tool with the returned `agent_alias`. Any other effort goes through the wrapper as a job.
 
 ## Waiting and completion

@@ -370,11 +370,11 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
     Assert-True ($LASTEXITCODE -eq 0 -and $fallbackPath -eq $directPath) 'a missing ResolveLinkTarget falls back to the unresolved path without throwing'
     [IO.Directory]::Delete($junctionLink); $junctionLink = $null
 
-    # Start and succeed (nested pwsh command, the shape the wrappers use).
+    # Start and succeed with the command evaluated directly by the runner.
     $rf = New-RunFolder 'succeed'
     $release = Join-Path $rf "release's.txt"
-    $heldCommand = (New-HeldJobCommand $release).Replace('$', '`$')
-    $start = Invoke-DtJob @('start', '-RunFolder', $rf, '-Kind', 'test', '-Category', 'fixture', '-Command', "pwsh -NoProfile -Command `"'ok'; $heldCommand`"")
+    $heldCommand = New-HeldJobCommand $release
+    $start = Invoke-DtJob @('start', '-RunFolder', $rf, '-Kind', 'test', '-Category', 'fixture', '-Command', "'ok'; $heldCommand")
     Assert-True ($start.job_id -eq 'j-0001') 'first job id is j-0001'
     Assert-True ($start.status -in @('running', 'queued')) 'start returns at once with a live status'
     Write-Utf8 $release 'release'
@@ -554,9 +554,62 @@ exit 0
     $envelope = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $changedJob.job_id)
     Assert-True (@($envelope.changed_files) -contains 'src/a.txt') 'envelope reports changed files'
 
-    # Failure exit code.
+    # FS-129: reject expansion by the runner before a nested PowerShell starts (j-0148 shape).
+    $rf = New-RunFolder 'nested-expansion'
+    $unsafeCommand = 'pwsh -NoProfile -Command "Set-Location ''X''; & ''python.exe'' script.py --fixture; exit $LASTEXITCODE"'
+    $refusedCommands = @(
+        $unsafeCommand,
+        'pwsh.exe -c "exit ${LASTEXITCODE}"',
+        '& ''C:\Program Files\PowerShell\7\pwsh.exe'' -CommandWithArgs "Write-Output $env:PATH"',
+        'powershell -Command "Write-Output $(Get-Date)"',
+        '& ''C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'' -Command:"exit $code"',
+        '& ''/usr/bin/pwsh'' -c "Write-Output $name"',
+        'PWSH -COMMAND "Write-Output $(1 + 2)"'
+    )
+    foreach ($commandText in $refusedCommands) {
+        $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $rf -Command $commandText -AllowTempRunFolder -Json 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_NESTED_EXPANSION') "refuses unsafe nested expansion: $commandText"
+        Assert-True (-not (Test-Path (Join-Path $rf 'jobs/j-0001.json'))) 'refusal queues no job'
+    }
+    Assert-True (($raw -join ' ') -match 'single-quote' -and ($raw -join ' ') -match '-File <script>') 'refusal suggests safe alternatives'
+    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $rf -Command $unsafeCommand -AllowTempRunFolder -Json 2>&1
+    Assert-True (($raw -join ' ') -match '\$LASTEXITCODE') 'j-0148 refusal names the expanded variable'
+    $safeScript = Join-Path $rf 'safe.ps1'
+    Write-Utf8 $safeScript 'exit 0'
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Write-Output $PSVersionTable.PSVersion; exit 0'))
+    $allowedCommands = @(
+        'pwsh -NoProfile -Command ''Write-Output $PSVersionTable.PSVersion; exit 0''',
+        "pwsh -NoProfile -File '$safeScript'",
+        'pwsh -NoProfile -Command "Write-Output ok; exit 0"',
+        'cmd /c exit 0',
+        "pwsh -NoProfile -EncodedCommand $encoded"
+    )
+    foreach ($commandText in $allowedCommands) {
+        $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', $commandText)
+        Assert-True ((Wait-JobTerminal $rf $job.job_id).status -eq 'succeeded') "allows and runs safe command: $commandText"
+    }
+    $sourceJob = $job
+    $beforeCount = @(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json').Count
+    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $rf -FromJob $sourceJob.job_id -Command $unsafeCommand -AllowTempRunFolder -Json 2>&1
+    Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_NESTED_EXPANSION') 'FromJob validates an overridden command'
+    # Simulate an unsafe legacy spec; neither relaunch path may queue it unchanged.
+    $legacySpecPath = Join-Path $rf "jobs/$($sourceJob.job_id)/spec.json"
+    $legacySpec = Get-Content -Raw $legacySpecPath | ConvertFrom-Json
+    $legacySpec.command = $unsafeCommand
+    Write-Utf8 $legacySpecPath ($legacySpec | ConvertTo-Json -Depth 8)
+    $legacyRecordPath = Join-Path $rf "jobs/$($sourceJob.job_id).json"
+    $legacyRecord = Get-JobRecord $rf $sourceJob.job_id
+    $legacyRecord.status = 'cancelled'
+    Write-Utf8 $legacyRecordPath ($legacyRecord | ConvertTo-Json -Depth 8)
+    foreach ($relaunch in @(@('start', '-FromJob'), @('requeue', '-JobId'))) {
+        $raw = & pwsh -NoProfile -File $dtJob $relaunch[0] -RunFolder $rf $relaunch[1] $sourceJob.job_id -AllowTempRunFolder -Json 2>&1
+        Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_NESTED_EXPANSION') "$($relaunch[0]) rejects an unsafe stored command"
+    }
+    Assert-True (@(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json').Count -eq $beforeCount) 'relaunch refusals queue no additional jobs'
+
+    # Failure exit code from a plain native command, without a nested shell script.
     $rf = New-RunFolder 'fail'
-    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'pwsh -NoProfile -Command "exit 3"')
+    $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', 'cmd /c exit 3')
     $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
     Assert-True ($record.status -eq 'failed' -and $record.exit_code -eq 3) "failure recorded exit 3 (status $($record.status), exit $($record.exit_code))"
     $envelope = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $job.job_id)

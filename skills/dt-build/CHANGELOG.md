@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.1
+
+- Fix FS-129: reject nested PowerShell command strings that expand variables in the outer runner; retain native exit codes and document safe command forms.
+
 ## 2.49.0
 
 - Gate design coverage at intake, fixture clients from saved samples, run live API contract checks and surface owned go-live checklists (FS-122, FS-126).
