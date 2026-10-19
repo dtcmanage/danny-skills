@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.0
+
+- Gate design coverage at intake, fixture clients from saved samples, run live API contract checks and surface owned go-live checklists (FS-122, FS-126).
+
 ## 2.48.15
 
 - Fix FS-112 gap: verify-codex-prompt accepts attempts 3+ only with a dt-job-recorded -ApprovalOperation (was hard-capped at 2); SKILL.md step b names the approved-retry arguments (FS-127).

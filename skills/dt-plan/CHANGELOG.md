@@ -1,5 +1,7 @@
 # dt-plan changelog
 
+- 1.4.2 (2026-10-19): Require retained redacted raw auth and endpoint samples for named external API probes (FS-126).
+
 - 1.4.1 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 1.4.0 (2026-10-17): Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).

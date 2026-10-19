@@ -42,7 +42,7 @@ function Call([string]$File, [string[]]$Arguments, [switch]$AllowFailure) {
     if (-not $AllowFailure -and $code -ne 0) { throw "exit $code; $log; $($text.Substring(0,[Math]::Min(500,$text.Length)))" }
     [pscustomobject]@{ exit = $code; text = $text; path = $log }
 }
-function Job([string[]]$Arguments) { (Call $jobScript ($Arguments + '-Json')).text | ConvertFrom-Json }
+function Job([string[]]$Arguments) { (Call $jobScript ($Arguments + @('-AllowTempRunFolder', '-Json'))).text | ConvertFrom-Json }
 function Rows([string]$Path) { if (Test-Path -LiteralPath $Path) { foreach ($line in [IO.File]::ReadLines($Path)) { if ($line.Trim()) { $line | ConvertFrom-Json } } } }
 function Tick([DateTime]$Now = [DateTime]::UtcNow) {
     $env:DT_BUILD_WATCHER_NOW_UTC = $Now.ToString('o')

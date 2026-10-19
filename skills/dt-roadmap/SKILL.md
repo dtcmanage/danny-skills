@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.3.1
+  version: 1.4.0
   changelog: "Full changelog relocated to skills/dt-roadmap/CHANGELOG.md (newest first)."
 ---
 
@@ -86,6 +86,7 @@ The producer does NOT infer test paths, assign milestones to gates by prose matc
 - Redact any logs/provenance text with repo-level `<danny-skills>/scripts/security/redact-secrets.ps1`.
 
 3. Draft `roadmap.md` in the schema contract shape:
+- Read `references/design-coverage.md`; inventory every requirement from the full design and assign exactly one milestone or an owned out-of-build row. Split inputs carry the same shared coverage table and build registry.
 - Run `<skill>/scripts/build-roadmap.ps1 -DesignPath <design> -RoadmapPath <roadmap>`.
 - Resolve any throughput Producer Warnings before intake. Keep the plan's serial reasons and shard commands;
   put the chosen runnable shard command in Validation Gates so acceptance executes it verbatim.

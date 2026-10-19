@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.17.1
+  version: 1.17.2
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -24,9 +24,10 @@ Claude-authored drafts, a Claude reviewer for Codex-authored drafts) and evidenc
 reconciliation. It reviews logic and named evidence; it never treats an unverified current-system claim
 as fact.
 
-Retain only:
+Retain the final design and its cited redacted API evidence:
 
 - `design\design-final-<slug>.md`
+- `design\api-samples\<service>\` (see `references/input-modes.md`)
 
 Active scratch lives under `design\_review\` and is deleted only by deterministic finalization:
 

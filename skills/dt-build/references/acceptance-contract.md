@@ -4,6 +4,12 @@ Hard verification gate for every milestone dt-build executes. Replaces the prior
 
 ## Per-milestone protocol
 
+For a milestone adding or changing an external API client, also follow `fidelity-gates.md`: sample-derived
+fixtures, sample paths in the brief, and a read-only live auth plus representative read contract check
+before acceptance when credentials are available. The acceptance script consumes `External API Contracts`
+rows and blocks missing samples, missing/failed live commands, or unavailable credentials with a named
+residual. The semantic verifier checks complete client declarations against the diff.
+
 For each milestone in the roadmap, in DAG order with load-bearing milestones first within a layer:
 
 1. **Quote every verification check for the milestone.** Before writing any code, read **every** `CHK-MNN-*` row from the roadmap's `## Verification Manifest` section whose `milestone-id` matches the current milestone, and restate each procedure text verbatim in the milestone's `build-decision-log` entry. A milestone with three checks gets three quoted procedure blocks; the gate evaluates all of them.
@@ -26,6 +32,9 @@ For each milestone in the roadmap, in DAG order with load-bearing milestones fir
 **A milestone in any non-PASS state blocks every dependent milestone from starting**, regardless of the verify/fix loop budget. The two-attempt budget per milestone still governs how many times a chunk can be rebuilt; once the budget is exhausted in `BLOCKED` state, the milestone is escalated and dependent milestones do not start.
 
 ## Final ledger (replaces the build summary)
+
+Render all Design Coverage `out-of-build` rows as the go-live checklist (owner and reason included),
+and carry it to switch-on. A human/session must record completion evidence before enabling the system.
 
 Every dt-build run produces a milestone acceptance ledger as both `.md` and `.html` artifacts (`build-acceptance-ledger.{md,html}` in the run folder), one row per milestone, with the four-axis split above plus a blockers column. The ledger is the final answer. A build that ships a freeform summary instead of a ledger has not honored this contract.
 

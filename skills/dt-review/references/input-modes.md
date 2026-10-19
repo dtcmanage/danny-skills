@@ -56,6 +56,14 @@ code/data/docs once before Round 1 and write `design\_review\review-context.md`:
 Use file/symbol or query evidence. Mark anything not directly checked as `UNVERIFIED`. The final
 design carries the `Build-intake revalidation` table so `dt-build` can recheck named assumptions.
 
+For a named external API, require redacted raw live samples for authentication and every endpoint the
+build will call in `design/api-samples/<service>/`. Cite the saved files, endpoint and probe date in the
+draft's revalidation table. A scratchpad probe report without raw responses is UNVERIFIED. Remove
+secrets, tokens and personal data while retaining field names, nesting, types, pagination and nulls.
+Keep samples outside `design/_review/` so finalization retains them alongside the final design; carry
+their citations into the finalized design and every affected build input. Missing samples are an
+intake/revalidation finding, never permission to invent a response contract.
+
 Once `review-context.md` exists, `finalize-review.ps1` **refuses** a final design without a section headed
 exactly `## Build-intake revalidation` — and by finalization the reviewed draft is hash-bound, so the
 omission cannot be repaired in flow. Carry the table into the draft itself, not only into

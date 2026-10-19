@@ -112,6 +112,7 @@ if ($resolved) { $skillRoot = $resolved.FullName }
 $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 
 . (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1')
+. (Join-Path $scriptDir 'design-coverage.ps1')
 
 if ([string]::IsNullOrWhiteSpace($SchemaPath)) {
     $SchemaPath = Join-Path $skillRoot 'references\roadmap-schema.md'
@@ -360,6 +361,17 @@ foreach ($m in $milestones) {
 
     if ($artifactCount -eq 0 -and $commandCount -eq 0) {
         $errors.Add("VERIFICATION_NAMES_NO_RUNNABLE: milestone '$mid' names no runnable artifact (no backticked file path, no backticked or inline pytest/python/pwsh/node/npm/bun command) across acceptance-checks + matching verification-manifest procedures. dt-build's per-milestone acceptance gate will reject this milestone with 'roadmap verification check names no concrete test file or command'.")
+    }
+}
+
+# Roadmaps written before the coverage gate (no coverage_design marker and no Design Coverage section)
+# stay valid so in-flight builds can resume; they get a warning. build-roadmap.ps1 always writes both.
+$coverageLegacy = $roadmapRaw -notmatch '(?m)^coverage_design:' -and $roadmapRaw -notmatch '(?m)^##\s+Design Coverage\s*$'
+if ($coverageLegacy) {
+    $warnings.Add('COVERAGE_LEGACY: roadmap predates the design coverage gate; regenerate it with build-roadmap.ps1 before a new build.')
+} else {
+    foreach ($coverageError in @(Test-DesignCoverage $RoadmapPath $roadmapRaw $milestoneIds)) {
+        $errors.Add($coverageError)
     }
 }
 

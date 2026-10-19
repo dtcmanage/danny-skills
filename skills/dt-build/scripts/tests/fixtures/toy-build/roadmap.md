@@ -1,11 +1,24 @@
 ---
 schema_version: 1
-source_artifact: roadmap.md
+source_artifact: design.md
 generated_at_utc: 2026-10-10T00:00:00Z
 ---
 # Toy orchestration comparison
 
 Copy this folder to a temporary git repository for each host/style. Use identical checks for old-style foreground execution and new-style dt-job execution. Force one coordinator rotation between M01 and M02 in the new-style run; retain run folders and collect-usage ledger rows for compare-orchestration.ps1. Never infer live acceptance from canned data.
+
+## Design Coverage
+
+| requirement-id | requirement | build-id | milestone-id | owner | reason |
+| --- | --- | --- | --- | --- | --- |
+| L3 | Echo first milestone. | main | M01 | - | - |
+| L4 | Echo second milestone. | main | M02 | - | - |
+
+## Coverage Builds
+
+| build-id | input-path |
+| --- | --- |
+| main | design.md |
 
 ## Milestones
 

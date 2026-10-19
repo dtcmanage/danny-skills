@@ -33,6 +33,13 @@ generated_at_utc: <ISO-8601 timestamp>
 
 Body sections (required):
 
+Also require `## Design Coverage` and `## Coverage Builds`, with a full unsplit design in frontmatter
+`coverage_design` (legacy `source_artifact` accepted) and local `coverage_build` (default `main`).
+See `design-coverage.md` for the exact columns, requirement unit and split-build comparison rules.
+`COVERAGE_UNMAPPED` lists every omitted/unowned item; duplicate/stale/invalid ownership and missing
+sources fail closed. External API client milestones also carry `## External API Contracts` as defined
+in dt-build's `references/fidelity-gates.md`; the producer preserves this table for live acceptance.
+
 1. `## Milestones`
 - Markdown table required columns (exact names):
   - `id`

@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.48.15
+  version: 2.49.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -36,9 +36,6 @@ Follow `../../references/html-artifact-policy.md` for review artifacts. Keep pri
 outputs. Exception: `build-run-review.html` is on-request only (step 6.5).
 
 
-
-Execute finalized roadmap milestones on `build/<RUN_ID>`, cut from `main`; leave the tested branch for
-a separate human-authorized merge.
 
 ## When this fires
 
@@ -164,7 +161,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 
 2.6 Validate the roadmap contract before any build setup:
 - Run `<danny-skills>/skills/dt-roadmap/scripts/roadmap-validator.ps1 -RoadmapPath <roadmap> -SchemaPath <repo>/skills/dt-roadmap/references/roadmap-schema.md`.
-- Fail closed on validator error.
+- Fail closed on coverage or other validator errors; follow `references/fidelity-gates.md` for samples, client briefs and go-live checklists.
 
 2.7 Preflight named dependencies before consuming any implementation attempt:
 - Run the roadmap's environment, API, database, browser, credential-source, and toolchain probes against the

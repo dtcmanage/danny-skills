@@ -5,7 +5,7 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.4.1
+  version: 1.4.2
   changelog: "See skills/dt-plan/CHANGELOG.md."
 ---
 
@@ -199,6 +199,7 @@ Format — the same table `dt-review` expects, so it survives the verbatim copy 
 
 Rules:
 - One row per assumption the plan rests on about existing code, data, schema, or an external system.
+- For each named external API, save redacted raw live responses for authentication and every endpoint the build will call under `design/api-samples/<service>/`, outside review scratch. Remove secrets, tokens and personal data while preserving field names, nesting, types, pagination and nulls. Cite those files, probe date and endpoint in the revalidation table; a scratchpad report alone is not evidence. Mark unavailable probes UNVERIFIED and name the credential source/recheck gate.
 - **Premises first.** Before any dimension pass, name the two to five facts the plan's value depends on
   (a data population exists, a quota is hard, a mechanism is remote, a vendor supports the call) and
   check each one live: run the query, read the config, open the vendor page. Record each as a row. An

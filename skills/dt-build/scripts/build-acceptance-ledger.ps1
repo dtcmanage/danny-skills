@@ -201,6 +201,12 @@ if (-not (Test-Path -LiteralPath $verifyScript)) {
 }
 
 $roadmapText = Read-RoadmapText -Path $RoadmapPath
+$skillRoot = Split-Path -Parent $scriptsDir
+$resolved = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
+if ($resolved) { $skillRoot = $resolved.FullName }
+$repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
+. (Join-Path $repoRoot 'skills/dt-roadmap/scripts/design-coverage.ps1')
+$outOfBuildChecklist = (Get-OutOfBuildChecklist $roadmapText) -join "`n"
 $milestoneIds = @(Parse-MilestoneIds -RoadmapText $roadmapText)
 
 if ($milestoneIds.Count -eq 0) {
@@ -506,6 +512,7 @@ if ($deferredText) {
     $mdLines += ""
     $mdLines += $deferredText
 }
+if ($outOfBuildChecklist) { $mdLines += "`n$outOfBuildChecklist" }
 [System.IO.File]::WriteAllText($mdPath, ($mdLines -join "`n"))
 
 $htmlPath = Join-Path $OutDir "$artifactStem.html"
@@ -644,6 +651,7 @@ $($htmlRows -join "`n")
 <div class="summary">$summaryHtml</div>
 $detailHtml
 $deferredHtml
+$(if ($outOfBuildChecklist) { '<pre class="out-of-build-checklist">' + [System.Net.WebUtility]::HtmlEncode($outOfBuildChecklist) + '</pre>' })
 </body></html>
 "@
 [System.IO.File]::WriteAllText($htmlPath, $html)

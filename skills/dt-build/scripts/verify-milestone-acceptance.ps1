@@ -433,6 +433,13 @@ if ($RunTests -and $testStatus -eq "NO_COMMAND_NAMED") {
     if (-not $topBlockers.Contains($msg)) { $topBlockers.Add($msg) | Out-Null }
 }
 
+$repoRoot = Resolve-SkillRepoRoot
+. (Join-Path $repoRoot 'skills/dt-roadmap/scripts/design-coverage.ps1')
+. (Join-Path $PSScriptRoot 'external-api-contract.ps1')
+$apiContract = Test-ExternalApiContracts -RoadmapPath $RoadmapPath -Text $roadmapText -MilestoneId $mid -WorkingTree $WorkingTree -RunTests $RunTests.IsPresent -TimeoutMs $CommandTimeoutMs
+foreach ($b in $apiContract.blockers) { $topBlockers.Add($b) }
+$commandResults = @($commandResults) + @($apiContract.command_results)
+if (@($apiContract.command_results | Where-Object { $_.exit_code -ne 0 }).Count) { $testStatus = 'FAIL' }
 $blockers = $topBlockers.ToArray()
 
 $accepted = $RunTests -and ($blockers.Count -eq 0) -and ($presence.missing.Count -eq 0) -and ($testStatus -eq "PASS")
@@ -454,6 +461,7 @@ $result = [pscustomobject]@{
     accepted                  = $accepted
     status                    = $status
     blockers                  = @($blockers)
+    api_contract_residuals    = @($apiContract.residuals)
 }
 
 if ($Json) {

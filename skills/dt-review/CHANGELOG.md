@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.17.2 (2026-10-19): Require durable API sample citations at intake and retain samples outside review scratch (FS-126).
+
 - 1.17.1 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 1.17.0 (2026-10-17): Throughput and hardware: every long-running step gets an explicit parallel-or-serial decision with a named reason (Danny-directed 2026-10-17).

@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.4.0
+
+- Add deterministic full-design coverage, shared split-build ownership and out-of-build checklist data (FS-122). Roadmaps that predate the gate validate with a COVERAGE_LEGACY warning so in-flight builds resume.
+
 ## 1.3.1
 
 - Anchor runnable script paths to resolved skill and repository roots (FS-117).

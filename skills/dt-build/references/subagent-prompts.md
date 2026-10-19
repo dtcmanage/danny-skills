@@ -1,6 +1,7 @@
 # dt-build Subagent Prompts
 
 Execution parity scope:
+- For milestones adding/changing an external API client, the brief points to saved redacted auth and endpoint samples, with reference-pack entitlement; fixture clients from those samples, never invented shapes. Follow `fidelity-gates.md` for read-only live acceptance and named credential residuals.
 - Prompt templates remain reference artifacts so `SKILL.md` stays lean.
 - Deterministic procedures are enforced by scripts (`assemble-codex-prompt.ps1`, `verify-codex-prompt.ps1`, `branch-cas-update.ps1`).
 

@@ -340,6 +340,25 @@ gantt
 ```
 '@
 
+    # Intake validates real design coverage, including in synthetic roadmaps.
+    $fixtureDesign = Join-Path $tempRoot 'fixture-design.md'
+    Write-Utf8 -Path $fixtureDesign -Content "# Fixture`n## Requirements`n- Foundation.`n- Cutover.`n- JSON extraction.`n"
+    $coveredRoadmap = (Get-Content -Raw -LiteralPath $roadmap).Replace('source_artifact: fixture', "source_artifact: $fixtureDesign")
+    $coveredRoadmap += @"
+
+## Design Coverage
+| requirement-id | requirement | build-id | milestone-id | owner | reason |
+| --- | --- | --- | --- | --- | --- |
+| L3 | Foundation. | main | M01 | - | - |
+| L4 | Cutover. | main | M02 | - | - |
+| L5 | JSON extraction. | main | M03 | - | - |
+## Coverage Builds
+| build-id | input-path |
+| --- | --- |
+| main | $fixtureDesign |
+"@
+    Write-Utf8 -Path $roadmap -Content $coveredRoadmap
+
     # Multi-check load-bearing evidence must include the first check rather than
     # only the last row, and common production/cutover wording must classify.
     $loadJson = & pwsh -NoProfile -File (Join-Path $scriptDir 'identify-load-bearing.ps1') -RoadmapPath $roadmap -Json

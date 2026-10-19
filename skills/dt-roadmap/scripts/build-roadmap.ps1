@@ -30,6 +30,7 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 . (Join-Path $repoRoot 'scripts\security\redact-secrets.ps1')
 . (Join-Path $repoRoot 'scripts\visualize\mermaid-wrap.ps1')
 . (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1')
+. (Join-Path $scriptDir 'design-coverage.ps1')
 
 function Escape-Html {
     param([string]$Text)
@@ -455,10 +456,15 @@ if ($throughputWarnings.Count) {
 }
 $throughputBody = if ($throughput) { $throughput.Body.Trim() } else { 'UNRESOLVED: measure hosts and decide throughput before dispatch.' }
 
+$coverage = New-DesignCoverage ([IO.Path]::GetFullPath($DesignPath))
+$apiContracts = Get-CoverageSection $redacted 'External API Contracts'
+$apiSection = if ($apiContracts) { "## External API Contracts`n`n$apiContracts`n" } else { '' }
 $roadmap = @"
 ---
 schema_version: 1
 source_artifact: $DesignPath
+coverage_design: $($coverage.origin)
+coverage_build: $($coverage.build)
 generated_at_utc: $generatedUtc
 ---
 
@@ -466,6 +472,15 @@ generated_at_utc: $generatedUtc
 
 Derived from the finalized design source and prepared for Phase-7 dt-build intake.
 
+## Design Coverage
+
+$($coverage.table)
+
+## Coverage Builds
+
+$($coverage.builds)
+
+$apiSection
 ## Milestones
 
 | id | name | dependencies | chunks | verification-mode | baseline-floor | acceptance-checks | decision-basis | execution | test-execution |
