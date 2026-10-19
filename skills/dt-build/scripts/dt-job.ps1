@@ -1105,6 +1105,7 @@ function Invoke-DtJobStatus {
                     $awaiting.awaiting_owner = if ($delegatedTo) { 'delegate' } else { 'danny' }
                     $awaiting.delegated_to = $delegatedTo
                     $awaiting.message = if ($pending.PSObject.Properties['message']) { [string]$pending.message } else { $null }
+                    if ($pending.PSObject.Properties['host_conflicts']) { $awaiting.host_conflicts = @($pending.host_conflicts) }
                     $runIdNow = (Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $statePath -RunId $RunId).run_id
                     $alertKey = "dt-build:${runIdNow}:awaiting:$($awaiting.operation):$($awaiting.seq)"
                     $awaiting.alerted_danny = @(Get-DtJobNotifications -RunFolder $RunFolder | Where-Object {
@@ -1821,6 +1822,43 @@ function Invoke-DtJobRequestContinuation {
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx) -AsJson:$Json
 }
 
+function Test-DtJobHostDisruption {
+    param([string]$Operation, [string]$Message)
+    return ("$Operation $Message" -match '(?i)\b(?:power[\s-]+off|shutdown|shut[\s-]+down|reboot|restart[\s-]+(?:the[\s-]+)?(?:machine|host|PC|computer)|hard[\s-]+reset|pull[\s-]+the[\s-]+plug)\b')
+}
+
+function Get-DtJobHostConflicts {
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$RunId)
+    # The run registry is host-local; pinned_host identifies the model vendor, not a machine.
+    # Read other ledgers without reconciling or taking nested run locks.
+    foreach ($run in (Get-DtJobRegistryRuns)) {
+        if ([string]$run.run_id -eq $RunId -or (Test-DtPathEqual ([string]$run.run_folder) $RunFolder)) { continue }
+        foreach ($job in (Get-DtJobRecords -RunFolder $run.run_folder)) {
+            if ($job.status -ne 'running') { continue }
+            [pscustomobject][ordered]@{
+                run_id = [string]$run.run_id
+                job_id = [string]$job.job_id
+                kind = [string]$job.kind
+                started_utc = $job.started
+                run_folder = [string]$run.run_folder
+            }
+        }
+    }
+}
+
+function Get-DtJobHostConflictAlert {
+    param($Awaiting)
+    if (-not $Awaiting.PSObject.Properties['host_conflicts'] -or @($Awaiting.host_conflicts).Count -eq 0) { return '' }
+    $et = [TimeZoneInfo]::FindSystemTimeZoneById($(if ($IsWindows) { 'Eastern Standard Time' } else { 'America/New_York' }))
+    $jobs = foreach ($conflict in $Awaiting.host_conflicts) {
+        $started = if ($conflict.started_utc) {
+            [TimeZoneInfo]::ConvertTimeFromUtc((ConvertTo-DtJobUtc $conflict.started_utc), $et).ToString('yyyy-MM-dd h:mm tt', [Globalization.CultureInfo]::InvariantCulture) + ' ET'
+        } else { 'time unknown' }
+        "$($conflict.run_id)/$($conflict.job_id) (started $started)"
+    }
+    return "`nOther builds still have running jobs on this machine: $($jobs -join '; '). Wait for them before powering off or rebooting."
+}
+
 function Invoke-DtJobAwaitDanny {
     if (-not $Operation -or -not $Message) { throw 'DT_JOB_USAGE: await-danny requires -Operation and -Message.' }
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
@@ -1837,6 +1875,9 @@ function Invoke-DtJobAwaitDanny {
             Add-DtJobEvent -RunFolder $RunFolder -JobId 'run' -Type 'awaiting_danny' -Status 'awaiting_danny' -Reason "operation $Operation"
             $seq = Get-DtJobLastEventSeq -RunFolder $RunFolder
             $awaiting = [ordered]@{ operation = $Operation; message = $Message; since_utc = [DateTime]::UtcNow.ToString('o'); seq = $seq }
+            if (Test-DtJobHostDisruption -Operation $Operation -Message $Message) {
+                $awaiting.host_conflicts = @(Get-DtJobHostConflicts -RunFolder $ctx.run_folder -RunId $ctx.run_id)
+            }
             # A delegated run routes routine stops to the delegate; Danny is told only if it has not acted
             # in time, and always for production, install, Azure or irreversible steps.
             if ($null -ne $approvals.delegate -and -not (Test-DtJobMustNotifyDanny -Operation $Operation -Message $Message -AlwaysNotify:$AlwaysNotify)) {
@@ -1853,6 +1894,7 @@ function Invoke-DtJobAwaitDanny {
     if ($delegatedTo) { $alert = 'delegated' }
     else {
         $text = "dt-build run $($ctx.run_id) is paused for your approval before: $Operation. $Message To approve, run: /dt-build approve $($ctx.run_id) $Operation"
+        $text += Get-DtJobHostConflictAlert -Awaiting $pendingNow
         # Every boundary gets its own key (the await event's seq), so a later boundary for the same operation DMs again.
         $alert = Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:$($ctx.run_id):awaiting:${Operation}:$awaitSeq" -Message $text -RetryUntilDelivered
     }
@@ -2031,6 +2073,7 @@ function Send-DtJobDelegateEscalation {
         "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation). $($pending.delegated_to) is holding it on purpose since $heldEt ET: $($held.reason). Nothing is needed from you unless you want to decide it yourself: /dt-build approve $RunId $($pending.operation)"
     }
     else { "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation), and $($pending.delegated_to) has not approved it. $($pending.message) To approve, run: /dt-build approve $RunId $($pending.operation)" }
+    $text += Get-DtJobHostConflictAlert -Awaiting $pending
     return (Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:${RunId}:awaiting:$($pending.operation):$($pending.seq)" -Message $text -RetryUntilDelivered)
 }
 

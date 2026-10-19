@@ -1092,6 +1092,63 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $lastSeq = [int](@($parsed | Where-Object { $_.job_id -ne $job2.job_id -and $after.Count -ge 1 -and [int]$_.seq -lt $after[0] } | ForEach-Object { [int]$_.seq } | Measure-Object -Maximum).Maximum)
     Assert-True ($after.Count -ge 1 -and $after[0] -eq $lastSeq + 1 -and (($after -join ',') -eq (($lastSeq + 1)..($lastSeq + $after.Count) -join ','))) "events continue at the next seq ($lastSeq -> $($after -join ','))"
 
+    # FS-133: host-disruptive stops name other registered builds, using only fake alerts.
+    & {
+        . $dtJob
+        foreach ($wording in @('power off', 'power-off', 'SHUTDOWN', 'shut down', 'reboot', 'restart the machine', 'restart host', 'restart the PC', 'hard reset', 'pull the plug')) {
+            Assert-True (Test-DtJobHostDisruption -Operation 'fixture' -Message "Please $wording SNOWWHITE.") "host disruption recognizes $wording in Message"
+            Assert-True (Test-DtJobHostDisruption -Operation $wording -Message 'Fixture.') "host disruption recognizes $wording in Operation"
+        }
+        foreach ($wording in @('restart the app', 'review shutdowns', 'power officer', 'rebooting documentation')) {
+            Assert-True (-not (Test-DtJobHostDisruption -Operation 'review' -Message $wording)) "host disruption excludes unrelated wording: $wording"
+        }
+    }
+    $hostRegistry = $env:DT_BUILD_STATE_DIR
+    $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'host-conflict-registry'
+    $hostA = New-RunFolder 'host-a'
+    $hostB = New-RunFolder 'host-b'
+    $releaseA = Join-Path $hostA 'release'
+    $releaseB = Join-Path $hostB 'release'
+    try {
+        foreach ($fixture in @(@($hostA, 'host-a'), @($hostB, 'host-b'))) {
+            $state = Join-Path $fixture[0] '_build-state.md'
+            Write-Utf8 $state "run_status: runnable`nlast_consumed_event_seq: 0`n"
+            Invoke-DtJob @('register-run', '-RunFolder', $fixture[0], '-RunId', $fixture[1], '-BuildStatePath', $state, '-PinnedHost', 'codex', '-Managed') | Out-Null
+        }
+        $ownJob = Invoke-DtJob @('start', '-RunFolder', $hostA, '-Command', (New-HeldJobCommand $releaseA))
+        $otherJob = Invoke-DtJob @('start', '-RunFolder', $hostB, '-Command', (New-HeldJobCommand $releaseB), '-Kind', 'test')
+        $null = Wait-JobState $hostA $ownJob.job_id { param($r) $r.status -eq 'running' }
+        $otherRecord = Wait-JobState $hostB $otherJob.job_id { param($r) $r.status -eq 'running' }
+        # A fixed summer instant verifies Eastern daylight time independently of the host timezone.
+        $otherRecord.started = '2026-07-01T16:30:00Z'
+        Write-Utf8 (Join-Path $hostB "jobs/$($otherJob.job_id).json") ($otherRecord | ConvertTo-Json -Depth 8)
+        Invoke-DtJob @('await-danny', '-RunFolder', $hostA, '-Operation', 'crash-recovery', '-Message', 'Please POWER OFF SNOWWHITE.') | Out-Null
+        $awaiting = (Get-Content -Raw (Join-Path $hostA 'approvals.json') | ConvertFrom-Json).awaiting
+        $conflicts = @($awaiting.host_conflicts)
+        Assert-True ($conflicts.Count -eq 1 -and $conflicts[0].run_id -ceq 'host-b' -and $conflicts[0].job_id -ceq $otherJob.job_id) 'disruptive stop records only the other build running job, excluding its own'
+        Assert-True ($conflicts[0].kind -ceq 'test' -and ([datetime]$conflicts[0].started_utc).ToUniversalTime() -eq ([datetime]'2026-07-01T16:30:00Z').ToUniversalTime() -and $conflicts[0].run_folder -ceq $hostB) 'host conflict records kind, start instant and run folder'
+        $status = Invoke-DtJob @('status', '-RunFolder', $hostA)
+        Assert-True (($status.awaiting.host_conflicts | ConvertTo-Json -Compress) -ceq ($conflicts | ConvertTo-Json -Compress)) 'status JSON exposes the persisted host conflicts inside awaiting'
+        $dm = @((Get-Content $env:DT_TEST_DM_LOG | ForEach-Object { ($_ | ConvertFrom-Json).content }) | Where-Object { $_ -match 'host-a is paused' })[-1]
+        Assert-True ($dm.Contains("host-b/$($otherJob.job_id) (started 2026-07-01 12:30 PM ET)") -and $dm.Contains('Wait for them before powering off') -and -not $dm.Contains("host-a/$($ownJob.job_id)")) 'fake alert names the other job with Eastern daylight time and wait instruction'
+        Invoke-DtJob @('await-danny', '-RunFolder', $hostA, '-Operation', 'reboot-host', '-Message', 'Crash recovery fixture.') | Out-Null
+        $status = Invoke-DtJob @('status', '-RunFolder', $hostA)
+        Assert-True (@($status.awaiting.host_conflicts).Count -eq 1) 'disruption in Operation also collects conflicts'
+        Invoke-DtJob @('await-danny', '-RunFolder', $hostA, '-Operation', 'manual-review', '-Message', 'Review fixture output.') | Out-Null
+        $awaiting = (Get-Content -Raw (Join-Path $hostA 'approvals.json') | ConvertFrom-Json).awaiting
+        Assert-True (-not $awaiting.PSObject.Properties['host_conflicts']) 'non-disruptive stop records no host conflicts'
+        $dm = (Get-Content $env:DT_TEST_DM_LOG | Select-Object -Last 1 | ConvertFrom-Json).content
+        Assert-True (-not $dm.Contains('Other builds still have running jobs')) 'non-disruptive fake alert has no host warning'
+        Invoke-DtJob @('unregister-run', '-RunFolder', $hostB) | Out-Null
+        Invoke-DtJob @('await-danny', '-RunFolder', $hostA, '-Operation', 'shutdown', '-Message', 'Crash recovery fixture.') | Out-Null
+        $status = Invoke-DtJob @('status', '-RunFolder', $hostA)
+        Assert-True (@($status.awaiting.host_conflicts).Count -eq 0) 'unregistered jobs are not scanned and own running jobs remain excluded'
+    } finally {
+        Write-Utf8 $releaseA 'release'
+        Write-Utf8 $releaseB 'release'
+        $env:DT_BUILD_STATE_DIR = $hostRegistry
+    }
+
     # FS-110: launch-time delegation uses the operator verb's record and safety checks.
     $rf = New-RunFolder 'launch-delegate'
     $state = Join-Path $rf '_build-state.md'

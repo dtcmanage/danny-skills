@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.6
+
+- FS-133: warn before host-disruptive approval stops about other registered builds running jobs, persist host_conflicts in awaiting status, and require cross-run checks in both host adapters.
+
 ## 2.49.5
 
 - Fix FS-132: authority digest stops absolute-path candidates at another file's extension and treats bare artifact names in milestone briefs as non-authority.
