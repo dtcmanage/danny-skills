@@ -57,6 +57,11 @@ Size xdist and shard counts by how many subprocesses tests start at once, as wel
 Duration balancing must not co-schedule the process-launching tests: slowest-first ordering lined
 them up side by side and lost about 190 tests to this error in one pass. Cap their concurrency
 separately (an xdist group or a separate low-`-n` pass) while the rest stay duration-balanced.
+Size that cap; never default to near-serial. Pick the capped files by measured subprocess starts per
+file, not whole suites; start the capped group at about half the normal worker count and step down
+only if `0xC0000142` reappears. If the capped group projects to more than about three times the
+uncapped pass, widen the cap or narrow the group, and report the projected finish (one capped half
+once projected to 9 hours after the uncapped half took 7 minutes).
 Balance whole files, never individual tests across files: use xdist `--dist loadfile` or
 `loadgroup`, or a queue of whole files, so module- and class-scoped fixtures stay in one worker.
 Per-test reordering broke once-per-file setup and cost one full pass 40 errors. Before spending a

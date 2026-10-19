@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.2
+
+- Size the process-launch cap: pick launcher files by measured subprocess starts, start at half the worker count, and report projected finish when the capped group runs over 3x (FS-130).
+
 ## 2.49.1
 
 - Fix FS-129: reject nested PowerShell command strings that expand variables in the outer runner; retain native exit codes and document safe command forms.
