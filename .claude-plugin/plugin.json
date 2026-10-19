@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.25.19",
+  "version": "0.25.20",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.25.20 dt-build 2.49.4: Fix FS-131 by limiting coordinator repeat-read and context-wall checks to paths in reader command segments.",
       "0.25.19 dt-build 2.49.3: project capped test groups from recorded durations, not test counts (FS-130 correction).",
       "0.25.18 dt-build 2.49.2: size the process-launch test cap instead of running launchers near-serially (FS-130).",
       "0.25.17 dt-build 2.49.1: dt-job refuses nested pwsh -Command strings that would expand variables early and misreport crashed jobs as succeeded (FS-129).",

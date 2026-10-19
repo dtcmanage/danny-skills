@@ -267,6 +267,17 @@ function Test-HookShellStartsJob {
     return $false
 }
 
+function Get-HookReaderSegments {
+    # Only a reader invoked as the segment's command can own its path operands.
+    # A reader downstream in a pipeline does not read an upstream script's arguments.
+    param([string]$CommandText)
+    foreach ($segment in (Split-HookShellSegments $CommandText)) {
+        if ($segment -match '(?i)^\s*(?:&\s*|\.\s+)?(?:get-content|gc|cat|type|sed|awk|head|tail|less|more|select-string|sls|rg|grep|findstr|readalltext|readalllines|readlines|open)(?=\s|$)') {
+            $segment
+        }
+    }
+}
+
 function Get-HookWallDenyReason {
     # A file whose reads filled an earlier coordinator's room without a job started (context-wall.json,
     # written by the watcher) goes to a worker: a later coordinator may not read it directly. The
@@ -281,8 +292,12 @@ function Get-HookWallDenyReason {
     if ($Tool -ne 'Read' -and -not $isShell -and $Tool -notin @('Grep', 'exec', 'shell', 'local_shell', 'exec_command')) { return $null }
     $text = ($ToolInput | ConvertTo-Json -Compress -Depth 8) -replace '[\\/]+', '/'
     if ($isShell -and (Test-HookShellAllowed ([string](Get-HookProperty $ToolInput 'command')))) { return $null }
-    $readVerb = $Tool -in @('Read', 'Grep') -or $text -match '(?i)\b(get-content|gc|cat|type|sed|awk|head|tail|less|more|select-string|sls|rg|grep|findstr|readalltext|readalllines|readlines|open)\b'
-    if (-not $readVerb) { return $null }
+    if ($Tool -notin @('Read', 'Grep')) {
+        $commandText = [string](Get-HookProperty $ToolInput 'command')
+        if (-not $commandText) { $commandText = [string](Get-HookProperty $ToolInput 'cmd') }
+        $text = (@(Get-HookReaderSegments $commandText) -join "`n") -replace '[\\/]+', '/'
+        if (-not $text) { return $null }
+    }
     $lower = $text.ToLowerInvariant()
     foreach ($read in @($wall.reads)) {
         $key = ConvertTo-DtCtxPathKey ([string]$read.path)
@@ -313,12 +328,13 @@ function Get-HookRepeatReadDenyReason {
         elseif ($script:HookShellTools -contains $tool) {
             $commandText = [string](Get-HookProperty $inputObject 'command')
             if (Test-HookShellAllowed $commandText) { return $null }
-            # Same verbs as the wall check, but a hyphenated script name such as read-evidence.ps1
-            # is not a verb. This is a text heuristic, not a shell parser.
-            if ($commandText -notmatch '(?i)(?<![\w-])(get-content|gc|cat|type|sed|awk|head|tail|less|more|select-string|sls|rg|grep|findstr|readalltext|readalllines|readlines|open)(?![\w-])') { return $null }
+            $readerSegments = @(Get-HookReaderSegments $commandText)
+            if ($readerSegments.Count -eq 0) { return $null }
             $ext = '(?:md|json|jsonl|txt|log|ps1|py|yaml|yml|toml|csv)'
             $pattern = "(?i)'(?<path>[^']+\.$ext)'|`"(?<path>[^`"]+\.$ext)`"|(?<path>[^\s'`";|()]+\.$ext)(?=\s|$|[;|)])"
-            foreach ($match in [regex]::Matches($commandText, $pattern)) { $paths.Add($match.Groups['path'].Value) }
+            foreach ($segment in $readerSegments) {
+                foreach ($match in [regex]::Matches($segment, $pattern)) { $paths.Add($match.Groups['path'].Value) }
+            }
             # Simple slice markers: explicit reader flags, search commands, or head/tail/sed -n.
             $sliced = $commandText -match '(?i)(?<![\w-])-(?:Grep|Lines|TotalCount|Tail|Head)\b|\b(?:Select-String|sls|rg|grep|findstr|head|tail)\b|\bsed\s+-n\b'
         }

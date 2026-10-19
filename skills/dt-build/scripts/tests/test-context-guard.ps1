@@ -952,6 +952,18 @@ try {
     Assert-True ((Test-Denied $r) -and $r.hookSpecificOutput.permissionDecisionReason -match 'filled an earlier coordinator') 'a later coordinator is denied a ranged Read of a walled file'
     Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = "Get-Content -LiteralPath '$bigFile' -TotalCount 40" }))) 'a later coordinator is denied a shell read of a walled file'
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = "Copy-Item '$bigFile' '$smallFile.bak'" }))) 'a non-read command naming a walled file is allowed'
+    foreach ($commandText in @(
+        "cd `"$skillDir`" && pwsh -NoProfile -File scripts/read-authority-digest.ps1 -RunFolder `"$($wallRun.folder)`" -BuildStatePath `"$bigFile`" | head -40",
+        "pwsh -File s.ps1 -X '$bigFile' | head",
+        "python s.py -X '$bigFile' | head",
+        "Write-Output cat '$bigFile'",
+        "pwsh -File s.ps1 -X '$bigFile'; head '$smallFile'"
+    )) {
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = $commandText }))) "script operands do not trip the wall: $commandText"
+    }
+    foreach ($commandText in @("cat '$bigFile'", "Get-Content -Raw '$bigFile'", "head -40 '$bigFile'", "type '$bigFile'", "cat '$bigFile' | head", "Get-Content -Path '$bigFile'", "sed -n 1,5p '$bigFile'")) {
+        Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = $commandText }))) "reader operands still trip the wall: $commandText"
+    }
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $smallFile }))) 'files not on the wall are unaffected'
     $policyFiles = @('D:/Claude/_Claude-Workspace/00_Resources/model-routing.md', 'D:/Claude/CLAUDE.md', 'D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/skills/dt-build/references/subagent-prompts.md', 'D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/skills/dt-build/SKILL.md')
     $policyReads = @($policyFiles | ForEach-Object { [ordered]@{ path = $_; reads = 2; chars = 27000 } }) + @([ordered]@{ path = $bigFwd; reads = 3; chars = 90000 })
@@ -976,7 +988,27 @@ try {
     $repeatKey = ($repeatFile -replace '[\\/]+', '/').ToLowerInvariant()
     $repeatLedger = Join-Path $repeatRun.folder 'hook-reads.jsonl'
     Write-Lease -RunFolder $repeatRun.folder -CoordinatorId 'repeat-1' -LeaseHost 'claude' -SessionId 'sess-repeat'
-    $fullRead = "pwsh -NoProfile -Command `"Get-Content -LiteralPath '$repeatFile' -Raw`""
+    foreach ($commandText in @(
+        "cd `"$skillDir`" && pwsh -NoProfile -File scripts/read-authority-digest.ps1 -RunFolder `"$($repeatRun.folder)`" -BuildStatePath `"$repeatFile`" | head -40",
+        "pwsh -File s.ps1 -X '$repeatFile' | head",
+        "python s.py -X '$repeatFile' | head",
+        "Write-Output cat '$repeatFile'"
+    )) {
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = $commandText }))) "non-reader passes: $commandText"
+        Assert-True (-not (Test-Path -LiteralPath $repeatLedger)) 'script arguments never enter the read ledger'
+    }
+    $operandNumber = 0
+    foreach ($commandText in @("cat '$repeatFile'", "Get-Content -Raw '$repeatFile'", "head -40 '$repeatFile'", "type '$repeatFile'", "cat '$repeatFile' | head", "head -n 5 '$repeatFile'", "Get-Content -Path '$repeatFile'", "Get-Content -LiteralPath '$repeatFile'", "sed -n 1,5p '$repeatFile'", "& cat '$repeatFile'", ". Get-Content '$repeatFile'", "cat '$repeatFile' | cat '$repeatFile'")) {
+        $operandNumber++
+        $operandId = "operand-$operandNumber"
+        Write-Lease -RunFolder $repeatRun.folder -CoordinatorId $operandId -LeaseHost 'claude' -SessionId 'sess-repeat'
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = $commandText }))) "reader passes its first read: $commandText"
+        $operandRows = @(Get-Content -LiteralPath $repeatLedger | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.coordinator_id -ceq $operandId })
+        Assert-True ($operandRows.Count -eq 1 -and $operandRows[0].path -ceq $repeatKey) "reader command records the file exactly once: $commandText"
+    }
+    Remove-Item -LiteralPath $repeatLedger -Force
+    Write-Lease -RunFolder $repeatRun.folder -CoordinatorId 'repeat-1' -LeaseHost 'claude' -SessionId 'sess-repeat'
+    $fullRead = "Get-Content -LiteralPath '$repeatFile' -Raw"
     foreach ($number in 1..2) {
         Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = $fullRead }))) "full read $number passes"
     }

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.4
+
+- FS-131: Count shell reads only when the file is in the reader command segment, preventing script arguments from tripping repeat-read and context-wall guards.
+
 ## 2.49.3
 
 - Correct FS-130: project a capped group's finish from recorded durations or its last run, never from completed-test counts; drop the miscalculated 9-hour example.
