@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.9
+
+- Run affected tests and fingerprint checks before each full rerun after a fix round (FS-109).
+
 ## 2.48.8
 
 - FS-108 overlap starts only after testing and evidence collection end; never fix while a run tests the candidate.

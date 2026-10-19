@@ -37,6 +37,9 @@ Overlap the fix round with report-only work: once the independent review confirm
 its defect list, and no step still runs against or reads the candidate (testing and evidence collection
 are done), start the fix round in a separate worktree; report wording corrections run alongside. Never
 fix while a run is still testing the candidate.
+Before each full rerun after a fix round, run the tests that cover the changed files plus any
+fingerprint, manifest or hash checks over them (minutes, not the full pass); fix what they catch, then
+start the full pass. The full pass still decides; the quick pass only saves a wasted full run.
 
 For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
 external service/quota, order dependence, irreversible/production step or memory ceiling), evidence,
