@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.25.23",
+  "version": "0.26.0",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.26.0 Add dt-session-context 0.1.0: read-only lookup of what another Claude/Codex session on any machine was doing, from the session-context-hub digest cache.",
       "0.25.23 dt-build 2.49.7: fix rounds rerun only failed end-to-end groups; a final complete pass decides (FS-134).",
       "0.25.22 dt-build 2.49.6: FS-133 adds cross-run host-disruption conflicts to approval records, status JSON and Eastern-time alerts, with host adapter guidance and fake-alert regressions.",
       "0.25.21 dt-build 2.49.5: authority digest no longer fails closed on prose paths and milestone-brief artifact names (FS-132).",
