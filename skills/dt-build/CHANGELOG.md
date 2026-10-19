@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.7
+
+- Start the fix round once a failed verdict and defect list are confirmed; report-only corrections run alongside (FS-108).
+
 ## 2.48.6
 
 - Every pass runs end to end past failures; fix all findings in one round and repeat until one pass is fully clean (FS-107).
