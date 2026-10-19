@@ -67,7 +67,9 @@ function Get-AuthorityCandidates {
         ('`(?<path>[^`\r\n]+\.' + $ext + ')`'),
         ('\]\(<?(?<path>[^\r\n<>]+\.' + $ext + ')>?\)'),
         ('"(?<path>[^"\r\n]+\.' + $ext + ')"'),
-        ('(?<![\w])(?<path>[a-zA-Z]:[\\/][^`"<>|\r\n]*?\.' + $ext + ')(?=[\s,;.)\]]|$)'),
+        # FS-132: an absolute path may contain spaces but never runs past another file's extension
+        # followed by space or punctuation (e.g. "errors.log). Detail: x.md" is two tokens).
+        ('(?<![\w])(?<path>[a-zA-Z]:[\\/](?:(?!\.[A-Za-z0-9]{1,5}[)\],;.:]{0,2}\s)[^`"<>|\r\n])*?\.' + $ext + ')(?=[\s,;.)\]]|$)'),
         ('(?<![\w:/\\])(?<path>(?:[\w.-]+[\\/])+[\w.-]+\.' + $ext + ')')
     )
     if ($Aliases.Count) {
@@ -220,7 +222,8 @@ function Get-AuthorityInventory {
             # artifact the build will create, not an original. Boundaries, approvals, the checkpoint,
             # paths with a directory and enumerated authority files stay fail-closed.
             if ($required -and $candidate.literal -notmatch '[\\/]' -and $resolved -notin $script:AuthorityEnumeratedPaths -and
-                (Split-Path -Leaf $path) -match '(?i)^(design-final|plan-draft|roadmap|build-plan|build-input)') { $required = $false }
+                ((Split-Path -Leaf $path) -match '(?i)^(design-final|plan-draft|roadmap|build-plan|build-input)' -or
+                 $path -match '(?i)[\\/]milestones[\\/]')) { $required = $false }
             $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = $(if ($required) { 'missing_named_original' } else { 'non_authority_reference' }); required = $required })
             if ($required) { $missing.Add($resolved) }
         }

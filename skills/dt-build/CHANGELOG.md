@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.5
+
+- Fix FS-132: authority digest stops absolute-path candidates at another file's extension and treats bare artifact names in milestone briefs as non-authority.
+
 ## 2.49.4
 
 - FS-131: Count shell reads only when the file is in the reader command segment, preventing script arguments from tripping repeat-read and context-wall guards.

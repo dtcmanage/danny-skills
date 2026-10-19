@@ -355,6 +355,19 @@ try {
         $bare = @($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $name -and $_.reason -eq 'non_authority_reference' -and -not $_.required })
         Assert-True ($bare.Count -eq 1) "bare artifact name in a design document skipped as non-authority: $name"
     }
+    # FS-132: milestone briefs naming bare artifacts are not originals.
+    $briefDir = Join-Path $proseRoot 'milestones/M06'
+    New-Item -ItemType Directory -Path $briefDir -Force | Out-Null
+    $brief = Join-Path $briefDir 'fix-brief-3.md'
+    Write-Text $brief 'The verifier writes `verify-sources-progress.json`.'
+    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ brief = $brief } | ConvertTo-Json)
+    $briefInventory = @(Get-AuthorityInventory $proseRoot $proseCheckpoint)
+    Assert-True ($briefInventory.Count -ge 1 -and @($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq 'verify-sources-progress.json' -and -not $_.required }).Count -eq 1) 'bare artifact name in a milestone brief is not a named original'
+    # FS-132: an absolute path does not run across another file's extension into later prose.
+    $spanned = @(Get-AuthorityCandidates 'Errors go to D:\State Dir\errors.log). Detail: build-decision-log.md' @{})
+    Assert-True (@($spanned | Where-Object { $_.literal -match 'errors\.log\)' }).Count -eq 0) 'absolute path candidate stops at another extension instead of spanning prose'
+    $spaced = @(Get-AuthorityCandidates 'Read D:\Claude\Home Server\design\_build-state.md now.' @{})
+    Assert-True (@($spaced | Where-Object { $_.literal -ceq 'D:\Claude\Home Server\design\_build-state.md' }).Count -eq 1) 'absolute paths with spaces still resolve whole'
     Write-Text (Join-Path $proseRoot 'operator-notes.json') '{"source":"missing-bare-approval.md"}'
     $missingFailure = ''
     try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
