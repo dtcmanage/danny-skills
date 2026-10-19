@@ -40,6 +40,8 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-cleanup-accepted-chunk.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'accepted-chunk cleanup regressions pass'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-review-inputs.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'review input snapshot and path identity regressions pass'
     Push-Location $tempRoot

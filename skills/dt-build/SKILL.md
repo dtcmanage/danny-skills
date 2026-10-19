@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.48.12
+  version: 2.48.13
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -233,7 +233,9 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 - g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and
   resolved model, `category`, `escalated` (true when the accepted attempt used `-EscalateFrom`), selection reason, disclosure line, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
   and downgrade status. This append-only row is the final ledger's source of truth.
-- h. **Update the integration branch** (`<integration-branch>` from `build-plan.md`) via compare-and-swap through `<skill>/scripts/branch-cas-update.ps1 -RepoPath <project repo>` after the per-milestone acceptance gate passes. dt-build never writes to `main`; the final merge of the rehearsed branch to `main` is a separate human-authorized `/git-merge-feature` step.
+- h. **Update the integration branch** from `build-plan.md` via compare-and-swap through `<skill>/scripts/branch-cas-update.ps1 -RepoPath <project repo>` after milestone acceptance.
+  Run `<skill>/scripts/cleanup-accepted-chunk.ps1 -RepoPath <project repo> -ChunkBranch <chunk-branch> -IntegrationBranch <integration-branch> -Json` for each accepted chunk.
+  dt-build never writes to `main`; merge separately with human-authorized `/git-merge-feature`.
 - i. **Rewrite the pipeline checkpoint.** After the milestone's acceptance gate passes (e–g) and the integration branch is updated (h), atomically rewrite `_build-state.md` in the planning folder (beside `roadmap.md`, typically `<project>/design/`) from `skills/dt-pipeline/templates/build-state-template.md`; never duplicate its shape here. Record phase, milestone, completed list (with this milestone's SHA), in-flight work, last SHA, uncommitted work, next step. Preserve the `run_status` and `last_consumed_event_seq` lines exactly as they are: only `dt-job` changes them (`consume -Seq <n>` after handling an event). It is not the run-folder `build-state.md` (step 4's scaffold); it is the crash-resume checkpoint dt-pipeline and Danny read.
   Keep the checkpoint at most 8 KiB: detailed history goes in the run folder; keep active approvals, restrictions and boundary paths. Write the candidate to a run-folder file, then run `<skill>/scripts/write-resume-checkpoint.ps1 -RunFolder <folder> -BuildStatePath <checkpoint> -ContentPath <candidate>`; it archives the old file and replaces it atomically, keeping dt-job's owned fields.
   Then run the frontier-spend check (alert only): `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/check-frontier-spend.ps1"

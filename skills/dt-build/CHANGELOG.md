@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.13
+
+- Fix FS-119 with deterministic ancestry-checked accepted-chunk branch and worktree cleanup.
+
 ## 2.48.12
 
 - Fix FS-117 anchored commands, FS-118 explicit CAS repository, and FS-65 host-overhead bootstrap measurement.
