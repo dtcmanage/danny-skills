@@ -40,6 +40,10 @@ fix while a run is still testing the candidate.
 Before each full rerun after a fix round, run the tests that cover the changed files plus any
 fingerprint, manifest or hash checks over them (minutes, not the full pass); fix what they catch, then
 start the full pass. The full pass still decides; the quick pass only saves a wasted full run.
+For long end-to-end or durability suites made of independent groups (VM rows, scenario groups),
+iterate fix rounds on the failed groups only, plus any group that exercises the changed code; record
+which clean groups were skipped and why. Once those pass, run one complete pass of every group on the
+final candidate: that pass alone decides acceptance, because a fix can break a group that was clean.
 
 For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
 external service/quota, order dependence, irreversible/production step or memory ceiling), evidence,

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.7
+
+- Iterate long end-to-end fix rounds on failed groups plus groups touching changed code; one complete pass on the final candidate decides (FS-134).
+
 ## 2.49.6
 
 - FS-133: warn before host-disruptive approval stops about other registered builds running jobs, persist host_conflicts in awaiting status, and require cross-run checks in both host adapters.
