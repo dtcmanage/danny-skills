@@ -34,7 +34,9 @@ shards. Every gate run rewrites that durations file from its own results, so the
 current timings; never hand-paste a one-time snapshot. Put the parallel command in the roadmap's verification manifest before acceptance: the gate
 runs the named command verbatim. Keep the full test selection and fix-round budget.
 Overlap the fix round with report-only work: once the independent review confirms a failed verdict and
-its defect list, start the fix round; report wording corrections run alongside and never gate it.
+its defect list, and no step still runs against or reads the candidate (testing and evidence collection
+are done), start the fix round in a separate worktree; report wording corrections run alongside. Never
+fix while a run is still testing the candidate.
 
 For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
 external service/quota, order dependence, irreversible/production step or memory ceiling), evidence,

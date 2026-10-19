@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.48.8
+
+- FS-108 overlap starts only after testing and evidence collection end; never fix while a run tests the candidate.
+
 ## 2.48.7
 
 - Start the fix round once a failed verdict and defect list are confirmed; report-only corrections run alongside (FS-108).
