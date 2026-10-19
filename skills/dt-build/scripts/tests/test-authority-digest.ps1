@@ -344,6 +344,21 @@ try {
     $missingFailure = ''
     try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
     Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains('missing.md')) 'missing source-relative original under a real directory fails closed'
+    # FS-123: bare artifact names in prose (files the build will create) are not named originals.
+    $bareNames = @('index.json', 'requirements-dev.txt', 'open-sessions.json')
+    $designDoc = Join-Path $proseRoot 'design-final-fixture.md'
+    Write-Text $designDoc ("The hub writes " + (($bareNames | ForEach-Object { "``$_``" }) -join ', ') + '.')
+    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ design = $designDoc } | ConvertTo-Json)
+    $bareInventory = @(Get-AuthorityInventory $proseRoot $proseCheckpoint)
+    Assert-True ($bareInventory.Count -ge 1) 'missing bare artifact names in a design document do not block the inventory'
+    foreach ($name in $bareNames) {
+        $bare = @($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $name -and $_.reason -eq 'non_authority_reference' -and -not $_.required })
+        Assert-True ($bare.Count -eq 1) "bare artifact name in a design document skipped as non-authority: $name"
+    }
+    Write-Text (Join-Path $proseRoot 'operator-notes.json') '{"source":"missing-bare-approval.md"}'
+    $missingFailure = ''
+    try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
+    Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains('missing-bare-approval.md')) 'missing bare name outside a design document still fails closed'
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {

@@ -1071,6 +1071,17 @@ function Invoke-DtJobStatus {
                 if ($null -ne $pending) {
                     $awaiting = [ordered]@{ operation = [string]$pending.operation; seq = $null; since_utc = $null }
                     foreach ($field in @('seq', 'since_utc')) { if ($pending.PSObject.Properties[$field]) { $awaiting[$field] = $pending.$field } }
+                    # Use the stop's persisted routing decision, including -AlwaysNotify, rather than
+                    # reclassifying it from today's delegate or the operation's wording.
+                    $delegatedTo = if ($pending.PSObject.Properties['delegated_to']) { [string]$pending.delegated_to } else { $null }
+                    $awaiting.awaiting_owner = if ($delegatedTo) { 'delegate' } else { 'danny' }
+                    $awaiting.delegated_to = $delegatedTo
+                    $awaiting.message = if ($pending.PSObject.Properties['message']) { [string]$pending.message } else { $null }
+                    $runIdNow = (Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $statePath -RunId $RunId).run_id
+                    $alertKey = "dt-build:${runIdNow}:awaiting:$($awaiting.operation):$($awaiting.seq)"
+                    $awaiting.alerted_danny = @(Get-DtJobNotifications -RunFolder $RunFolder | Where-Object {
+                        [string]$_.key -ceq $alertKey -and (Test-DtJobNotificationDelivered $_)
+                    }).Count -gt 0
                 }
             }
         }
@@ -1916,6 +1927,8 @@ function Invoke-DtJobApprove {
         }
         $delegatedTo = if ($approvals.awaiting.PSObject.Properties['delegated_to']) { [string]$approvals.awaiting.delegated_to } else { $null }
         $receipt = [pscustomobject][ordered]@{ operation = $Operation; await_seq = $approvals.awaiting.seq; run_id = $ctx.run_id; build_state_path = $ctx.build_state_path; requested_by = [Environment]::UserName; requested_pid = $PID; requested_utc = [DateTime]::UtcNow.ToString('o'); delegated_to = $delegatedTo }
+        # FS-124: keep the approver's reason (the chosen option of a multi-option stop) on the record.
+        if (-not [string]::IsNullOrWhiteSpace($Reason)) { $receipt | Add-Member -NotePropertyName reason -NotePropertyValue $Reason.Trim() }
         if ($live) {
             if (Test-Path -LiteralPath $queuePath) {
                 $q = Read-DtJobText -Path $queuePath | ConvertFrom-DtJobJsonText

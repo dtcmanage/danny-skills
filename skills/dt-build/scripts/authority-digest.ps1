@@ -216,6 +216,11 @@ function Get-AuthorityInventory {
                 if ($required -and $resolved -notin $script:AuthorityEnumeratedPaths -and $line -notmatch '(?i)necessary\s*metadata\s+clarifications\s+grant\s+no\s*new\s*authority') { $script:AuthorityCheckpointFullReads += $resolved }
             }
             if (Test-Path -LiteralPath $resolved -PathType Leaf) { if ($required) { $pending.Enqueue($resolved) }; continue }
+            # FS-123: in a design or plan document, a missing bare file name (no directory part) names an
+            # artifact the build will create, not an original. Boundaries, approvals, the checkpoint,
+            # paths with a directory and enumerated authority files stay fail-closed.
+            if ($required -and $candidate.literal -notmatch '[\\/]' -and $resolved -notin $script:AuthorityEnumeratedPaths -and
+                (Split-Path -Leaf $path) -match '(?i)^(design-final|plan-draft|roadmap|build-plan|build-input)') { $required = $false }
             $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = $(if ($required) { 'missing_named_original' } else { 'non_authority_reference' }); required = $required })
             if ($required) { $missing.Add($resolved) }
         }

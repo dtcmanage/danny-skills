@@ -57,3 +57,7 @@ Size xdist and shard counts by how many subprocesses tests start at once, as wel
 Duration balancing must not co-schedule the process-launching tests: slowest-first ordering lined
 them up side by side and lost about 190 tests to this error in one pass. Cap their concurrency
 separately (an xdist group or a separate low-`-n` pass) while the rest stay duration-balanced.
+Balance whole files, never individual tests across files: use xdist `--dist loadfile` or
+`loadgroup`, or a queue of whole files, so module- and class-scoped fixtures stay in one worker.
+Per-test reordering broke once-per-file setup and cost one full pass 40 errors. Before spending a
+full pass on a new ordering or runner change, dry-run it on a few of the slowest files.

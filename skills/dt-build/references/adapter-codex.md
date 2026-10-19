@@ -14,8 +14,8 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 - Watchdogs: use `dt-job status -CoordinatorId <id> -Json`, `stalled` and heartbeat/activity age; checkpoint age must never be used alone (`_build-state.md`).
 - Codex has no in-session completion notice. Wait in the foreground: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` (at most 600) below the shell timeout.
 - On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again; nothing else between waits.
-- Never poll with `status`, `sleep` loops, or log tails.
-- Each `wait_timeout` is a check-in listing each running job's `progress`. Jobs have no time limit; for a `STALLED` job (20 silent minutes), check its output, then cancel and retry or keep waiting.
+- Coordinators never poll with `status`, `sleep` loops, or log tails; delegate watches are separate.
+- `wait_timeout` lists running jobs' `progress`. Jobs have no time limit; after 20 silent minutes (`STALLED`), check output, then cancel/retry or wait.
 - Waits of hours use managed mode (below).
 - The ledger is the truth: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and after any `wait_timeout`.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.
@@ -24,12 +24,13 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 
 - Managed resumes follow `managed-resume.md`: compact rulebook and the managed-resume authority read contract first, then mark bootstrap at once. A `dt-build-lean` bridge defers canonical-chain reads to their actions. New starts read the mandatory CLAUDE.md chain, MEMORY.md and governing references first.
 - No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
-- New starts register first: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost codex`. Add `-Managed` when requested. Interactive launch/monitor sessions pass `-Delegate <own session name>`; unattended/headless runs omit it.
-- Then, before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host codex`. Use one id, e.g. `<RUN_ID>-codex-<yyyyMMddHHmm>`, from the starting directory or add `-TranscriptPath <this session's rollout file>`.
-- An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host codex`. Any call with your id renews it through long waits. A watcher-launched coordinator already holds it.
+- Register: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost codex`. Add `-Managed` when requested. Interactive launch/monitor sessions pass `-Delegate <own session name>`; headless runs omit it.
+- On taking delegation (registration or `delegate`), immediately arm a persistent run-level watch: `dt-job status` with `-Json` (`run_status`, `awaiting`, `stalled`), surviving turns. When `awaiting.awaiting_owner=danny`, tell Danny the decision in your chat (`operation` and `message`), even if `alerted_danny=true`; `delegated_to` names the delegate.
+- Before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host codex`. Use one id; optionally `-TranscriptPath <rollout>`.
+- An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host codex`. Each call renews it through long waits; watcher-launched coordinators already hold it.
 - Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` reach a safe stopping point, then rotate; `rotate` rotate now.
 - `ROTATE_REQUIRED` from `dt-job start` means rotate now. Do not retry the dispatch.
-- Rotation steps, in order: consume handled events, rewrite `_build-state.md` (keep the `run_status` and `last_consumed_event_seq` lines as they are), write a coordinator handoff note in the run folder, `dt-job request-continuation -CoordinatorId <id> -Reason context_rotation`, `dt-job lease -Action release -CoordinatorId <id>`, then end. Interactive: tell Danny the one command to continue in a fresh session, `$dt-build <RUN_ID>`.
+- Rotation: consume handled events, rewrite `_build-state.md` (keep the `run_status` and `last_consumed_event_seq` lines), write the run-folder handoff, `dt-job request-continuation -CoordinatorId <id> -Reason context_rotation`, `dt-job lease -Action release -CoordinatorId <id>`, then end. Interactive: tell Danny the one command to continue in a fresh session, `$dt-build <RUN_ID>`.
 - Jobs survive rotation. Before an irreversible step run `dt-job irreversible -CoordinatorId <id> -Action begin -Operation <op>`, and `-Action end` after it; rotation waits while it is open.
 
 ## Hooks
@@ -48,7 +49,7 @@ Load this file only when the coordinator runs in Codex (interactive Codex CLI or
 - Before ending each headless turn, run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`, from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state it shows. An unconsumed trigger counts as a failed launch.
 - The launcher alone sets `DT_BUILD_COORDINATOR_ID`, for managed coordinators. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
 - At approval boundaries (merge, push, deploy, prod write, irreversible): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end; add `-AlwaysNotify` for production, Azure or irreversible. Never run `dt-job approve`, `resume`, `delegate` or `hold`; they are Danny's.
-- Danny's commands: `/dt-build approve <RUN_ID> <operation>` records his approval; `/dt-build resume <RUN_ID>` re-arms a stopped run; `/dt-build delegate <RUN_ID> <session>` (`-Clear` undoes) routes routine stops there; a delegate deliberately holding one runs the `hold` verb (`-Operation <op> -Reason "<why>"`) so the 15-minute DM says why (`$dt-build` in place of `/dt-build` when typed in Codex). Run the matching `dt-job` verb. Follow `operator_notes` in status and wait envelopes; only operators add them (`note` verb).
+- Danny's commands: `/dt-build approve <RUN_ID> <operation>` approves; `/dt-build resume <RUN_ID>` re-arms; `/dt-build delegate <RUN_ID> <session>` (`-Clear` undoes) routes routine stops there; a holding delegate runs `hold` (`-Operation <op> -Reason "<why>"`) so the 15-minute DM says why (`$dt-build` in place of `/dt-build` when typed in Codex). Use matching `dt-job` verbs. Follow `operator_notes`; operators add them (`note`).
 
 ## Evidence
 

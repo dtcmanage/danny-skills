@@ -1053,11 +1053,28 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $routine = Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'attempt-budget', '-Message', 'Retry fixture attempt.')
     $pending = (Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).awaiting
     Assert-True ($routine.alert -eq 'delegated' -and $pending.delegated_to -ceq 'launch-session' -and ([datetime]$pending.escalate_after_utc - [datetime]$pending.since_utc).TotalMinutes -ge 15 -and -not (Test-Path (Join-Path $rf 'notifications.jsonl'))) 'routine launch stop records delegation and defers Danny alert for fifteen minutes'
+    # FS-120: watches see the recorded owner, decision and delivery for the current stop.
+    $routineStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
+    Assert-True ($routineStatus.run_status -eq 'awaiting_danny' -and $routineStatus.awaiting.awaiting_owner -ceq 'delegate' -and $routineStatus.awaiting.delegated_to -ceq 'launch-session') 'routine stop status names the delegate owner'
+    Assert-True ($routineStatus.awaiting.operation -ceq $pending.operation -and $routineStatus.awaiting.since_utc -eq $pending.since_utc -and $routineStatus.awaiting.message -ceq $pending.message -and $routineStatus.awaiting.alerted_danny -eq $false) 'routine status retains stop details and reports no delivered Danny alert'
     $urgent = Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'irreversible-fixture', '-Message', 'Fixture only.')
     $pending = (Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).awaiting
     $notifications = @(Get-Content (Join-Path $rf 'notifications.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True ($urgent.alert -ne 'delegated' -and -not $pending.PSObject.Properties['delegated_to'] -and @($notifications | Where-Object { $_.key -match ':awaiting:irreversible-fixture:' }).Count -eq 1) 'irreversible launch stop immediately attempts Danny alert under the temp router guard'
     Assert-True ((Test-Path $env:DT_TEST_DM_LOG) -and (Get-Content -Raw $env:DT_TEST_DM_LOG) -match 'irreversible-fixture') 'irreversible fixture alert lands on the fake transport, not a live channel'
+    $urgentStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
+    Assert-True ($urgentStatus.awaiting.awaiting_owner -ceq 'danny' -and -not $urgentStatus.awaiting.delegated_to -and $urgentStatus.awaiting.operation -ceq 'irreversible-fixture' -and $urgentStatus.awaiting.alerted_danny -eq $true) 'irreversible stop status names Danny and confirms fake transport delivery'
+    # Delivery must match this boundary's sequence; another stop's DM or a pending row is insufficient.
+    $notificationPath = Join-Path $rf 'notifications.jsonl'
+    $deliveredLog = Get-Content -Raw $notificationPath
+    $currentKey = "dt-build:launch-delegate:awaiting:irreversible-fixture:$($pending.seq)"
+    Write-Utf8 $notificationPath (([ordered]@{ key = $currentKey; status = 'pending' } | ConvertTo-Json -Compress) + "`n" + ([ordered]@{ key = "${currentKey}-old"; status = 'delivered' } | ConvertTo-Json -Compress))
+    $pendingStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
+    Assert-True ($pendingStatus.awaiting.awaiting_owner -ceq 'danny' -and $pendingStatus.awaiting.alerted_danny -eq $false) 'pending delivery and another boundary delivery do not count as alerting Danny'
+    Write-Utf8 $notificationPath $deliveredLog
+    Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'manual-review', '-Message', 'Decide whether to retry.', '-AlwaysNotify') | Out-Null
+    $forcedStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
+    Assert-True ($forcedStatus.awaiting.awaiting_owner -ceq 'danny' -and $forcedStatus.awaiting.alerted_danny -eq $true) 'AlwaysNotify status reuses persisted routing even for routine wording'
     foreach ($invalid in @('blank', 'coordinator', 'job')) {
         $name = if ($invalid -eq 'blank') { '   ' } else { 'forbidden-session' }
         if ($invalid -eq 'coordinator') { $env:DT_BUILD_COORDINATOR_ID = 'fixture' }
@@ -1120,7 +1137,9 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     Invoke-DtJob @('request-continuation', '-RunFolder', $rf, '-Reason', 'fixture rotation') | Out-Null
     $stopped = Invoke-DtJob @('status', '-RunFolder', $rf)
     Assert-True ($stopped.run_status -eq 'awaiting_danny' -and $stopped.awaiting.operation -ceq 'immediate-review' -and [int64]$stopped.awaiting.seq -gt 0) 'run status reports awaiting_danny and the pending stop after a later continuation event'
-    Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'immediate-review') | Out-Null
+    Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'immediate-review', '-Reason', '  Danny chose option A.  ') | Out-Null
+    $reasonRecord = @((Get-Content -LiteralPath $pendingPath -Raw | ConvertFrom-Json).approvals)[-1]
+    Assert-True ($reasonRecord.operation -ceq 'immediate-review' -and $reasonRecord.reason -ceq 'Danny chose option A.') 'FS-124: approve stores the trimmed -Reason on the approval record'
     $resumed = Invoke-DtJob @('status', '-RunFolder', $rf)
     Assert-True ($resumed.run_status -eq 'runnable' -and $null -eq $resumed.awaiting) 'run status clears the pending stop after approval'
     Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'immediate-review') | Out-Null
