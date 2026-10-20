@@ -336,8 +336,10 @@ if ($featureTree -and -not $AllowLiveJobs) {
         if (-not (Test-Path -LiteralPath $jobsDir)) { continue }
         foreach ($jobFile in Get-ChildItem -LiteralPath $jobsDir -Filter 'j-*.json' -File -ErrorAction SilentlyContinue) {
             try { $job = Get-Content -LiteralPath $jobFile.FullName -Raw | ConvertFrom-Json } catch { continue }
-            if ([string]$job.status -notin @('queued', 'running')) { continue }
-            if (& $mentionsTree "$($job.working_directory) $($job.command)") {
+            # Job records vary by job kind; a missing field must not crash the
+            # ship under StrictMode (a running job without `command` did, 2026-10-20).
+            if ([string](Get-Prop $job 'status' '') -notin @('queued', 'running')) { continue }
+            if (& $mentionsTree "$(Get-Prop $job 'working_directory' '') $(Get-Prop $job 'command' '')") {
                 $users += "dt-job $($job.job_id) ($($job.status)) in $($run.run_id)"
             }
         }

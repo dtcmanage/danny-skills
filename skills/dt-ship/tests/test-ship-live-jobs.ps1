@@ -34,6 +34,9 @@ try {
         Set-Content -LiteralPath (Join-Path $state 'active-runs.json')
     @{ job_id = 'j-0001'; status = 'running'; working_directory = $tree; command = 'pytest' } | ConvertTo-Json |
         Set-Content -LiteralPath (Join-Path $runFolder 'jobs\j-0001.json')
+    # A running job record with no command/working_directory (other job kinds) must be skipped, not crash.
+    @{ job_id = 'j-0002'; status = 'running' } | ConvertTo-Json |
+        Set-Content -LiteralPath (Join-Path $runFolder 'jobs\j-0002.json')
     $env:DT_BUILD_STATE_DIR = $state
 
     Push-Location $repo
