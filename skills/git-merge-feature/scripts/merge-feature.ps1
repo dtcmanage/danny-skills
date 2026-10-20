@@ -4,7 +4,8 @@
 # 1. Verify repo + clean working tree on the feature branch.
 # 2. Resolve the branch name (supports bare <name>, feat/<name>, or feature/<name>).
 # 3. Refresh main (checkout + pull origin main).
-# 4. Rebase via repo-level scripts/git/rebase-onto-main.ps1.
+# 4. Rebase via repo-level scripts/git/rebase-onto-main.ps1, unless main is
+#    already an ancestor of the branch (rebase_status: not-needed).
 # 5. Fast-forward merge main <- feature (--ff-only; never --no-ff).
 # 6. Delete the local feature branch.
 #
@@ -145,7 +146,16 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
     $mainShaBefore = (Invoke-Git -GitArgs @('-C', $mainWorktree, 'rev-parse', 'main')).Output.Trim()
 
     # Rebase the feature branch inside its own worktree, onto the refreshed main.
-    $wtRebase = Invoke-Git -GitArgs @('-C', $branchWorktree, 'rebase', 'main')
+    # When main is already an ancestor, skip it: a rebase would linearize any
+    # merge commits and rewrite SHAs that an installed release may already pin.
+    $wtRebaseStatus = 'clean'
+    $wtRebase = [pscustomobject]@{ ExitCode = 0; Output = '' }
+    if ((Invoke-Git -GitArgs @('-C', $mainWorktree, 'merge-base', '--is-ancestor', 'main', $resolvedBranch)).ExitCode -eq 0) {
+        $wtRebaseStatus = 'not-needed'
+    }
+    else {
+        $wtRebase = Invoke-Git -GitArgs @('-C', $branchWorktree, 'rebase', 'main')
+    }
     if ($wtRebase.ExitCode -ne 0) {
         $null = Invoke-Git -GitArgs @('-C', $branchWorktree, 'rebase', '--abort')
         Fail "Rebase of '$resolvedBranch' onto main failed in worktree (conflicts). Resolve in '$branchWorktree', then retry. Do NOT fall back to --no-ff." @{ rebase = $wtRebase.Output; worktree_path = $branchWorktree }
@@ -221,7 +231,7 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
         branch = $Branch
         resolved_branch = $resolvedBranch
         main_pulled = $mainPulled
-        rebase_status = 'clean'
+        rebase_status = $wtRebaseStatus
         merge_status = 'ff-only'
         commit_range = $wtCommitRange
         branch_deleted = $wtBranchDeleted
@@ -275,15 +285,20 @@ if (-not $SkipPull) {
 
 $mainShaBefore = (Invoke-Git -GitArgs @('rev-parse', 'main')).Output.Trim()
 
-# Rebase via shared helper
-$rebaseOutput = & pwsh -NoProfile -File $rebaseScript -Branch $resolvedBranch -Json
-$rebaseExit = $LASTEXITCODE
-$rebaseParsed = $null
-try { $rebaseParsed = $rebaseOutput | ConvertFrom-Json -ErrorAction Stop } catch {
-    Fail "Could not parse rebase helper output: $rebaseOutput"
+# Rebase via shared helper, unless main is already an ancestor (see the
+# worktree path: a rebase there would only rewrite SHAs).
+if ((Invoke-Git -GitArgs @('merge-base', '--is-ancestor', 'main', $resolvedBranch)).ExitCode -eq 0) {
+    $rebaseParsed = [pscustomobject]@{ status = 'not-needed' }
+}
+else {
+    $rebaseOutput = & pwsh -NoProfile -File $rebaseScript -Branch $resolvedBranch -Json
+    $rebaseParsed = $null
+    try { $rebaseParsed = $rebaseOutput | ConvertFrom-Json -ErrorAction Stop } catch {
+        Fail "Could not parse rebase helper output: $rebaseOutput"
+    }
 }
 
-if ($rebaseParsed.status -ne 'clean') {
+if ($rebaseParsed.status -notin @('clean', 'not-needed')) {
     $detail = @{ rebase = $rebaseParsed }
     Fail "Rebase of '$resolvedBranch' onto main failed with status '$($rebaseParsed.status)'. Repo may be mid-rebase." $detail
 }

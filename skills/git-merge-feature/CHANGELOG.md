@@ -1,5 +1,7 @@
 # git-merge-feature changelog
 
+- 1.2.6 (2026-10-19): Skip the rebase when main is already an ancestor, so a fast-forwardable branch with merge commits lands with its SHAs intact; regression test added to the ship gate.
+
 - 1.2.5 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 1.2.4 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.
