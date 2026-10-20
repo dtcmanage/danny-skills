@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.10
+
+- hardware-parallelism: run full gates as their own dt-job, never as a child of a model worker that can drop out.
+
 ## 2.49.9
 
 - hardware-parallelism: correct the File Sorter example (the restart was the backup's planned stop; the load proof doubled its downtime).

@@ -52,6 +52,13 @@ restarts during such a run are damage from the test environment, not product evi
 2026-10-20: load proofs on SNOWWHITE caused 120 live search timeouts, doubled the nightly backup's
 planned downtime and failed its cloud copy).
 
+Never let a full gate or other long suite (more than about 15 minutes) run as a child of a model
+worker (a Codex or Claude chunk). A worker that hits its usage cap or drops out kills every child, and a
+pass only counts when it runs complete, so the whole suite restarts. Launch the suite as its own dt-job
+(`-Kind test`) that outlives the worker; the worker fixes code and the coordinator or a short worker
+reads the job's result (File Sorter 2026-10-20 6:01 AM: a Codex capacity dropout killed release g's
+full pass and cost a 35-minute restart).
+
 For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
 external service/quota, order dependence, irreversible/production step or memory ceiling), evidence,
 scope and isolation/offload workaround considered. Newly discovered contention requires a recorded
