@@ -108,6 +108,7 @@ return [pscustomobject]@{ id = 'fake' }
 '@
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeAlertTransport
     $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'registry'
+    $suiteRegistry = $env:DT_BUILD_STATE_DIR
     $env:DT_MODEL_ROUTER_STATE = Join-Path $tempRoot 'router-state'
     New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_STATE -Force | Out-Null
     Assert-True ([IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE).StartsWith([IO.Path]::GetFullPath($tempRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'router state stays under the suite temp directory'
@@ -330,6 +331,9 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
     Assert-True (-not $spec.environment.PSObject.Properties['DT_BUILD_RUN_PIN_VENDOR'] -and -not $spec.environment.PSObject.Properties['DT_BUILD_RUN_PIN_MODEL']) 'unpinned registry removes inherited pin hints'
     $null = Wait-JobTerminal $pinRun $pinJob.job_id
     foreach ($name in $pinEnvNames) { [Environment]::SetEnvironmentVariable($name, $pinSavedEnv[$name]) }
+    # Keep the suite's temp registry: restoring the outer value here sent later fixtures (launch-delegate,
+    # approval-queue) into Danny's real run registry, where they raised a real irreversible-fixture alert.
+    $env:DT_BUILD_STATE_DIR = $suiteRegistry
     # Tests that exercise operator verbs must not inherit the outer worker identity.
     Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
 
@@ -1150,6 +1154,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     }
 
     # FS-110: launch-time delegation uses the operator verb's record and safety checks.
+    Assert-True ([IO.Path]::GetFullPath($env:DT_BUILD_STATE_DIR).StartsWith([IO.Path]::GetFullPath($tempRoot), [StringComparison]::OrdinalIgnoreCase)) 'delegate fixtures register in the suite temp registry, never the real one'
     $rf = New-RunFolder 'launch-delegate'
     $state = Join-Path $rf '_build-state.md'
     Write-Utf8 $state "run_status: runnable`nlast_consumed_event_seq: 0`n"

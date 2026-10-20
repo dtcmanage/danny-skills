@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.11
+
+- test-dt-job: keep the suite's temp registry after the pin tests, so delegate fixtures never register in the real run registry (they had raised a real irreversible-fixture alert).
+
 ## 2.49.10
 
 - hardware-parallelism: run full gates as their own dt-job, never as a child of a model worker that can drop out.
