@@ -49,7 +49,8 @@ Never run a test that deliberately saturates CPU (load proofs, stress runs) on a
 live production app or another build's timing-sensitive jobs. Run it on a VM or fleet host, or cap it
 (a Windows Job Object CPU rate, or leave cores free) and record which. A live app's timeouts or
 restarts during such a run are damage from the test environment, not product evidence (File Sorter
-2026-10-20: three load proofs on SNOWWHITE caused 120 live search timeouts and a core-service restart).
+2026-10-20: load proofs on SNOWWHITE caused 120 live search timeouts, doubled the nightly backup's
+planned downtime and failed its cloud copy).
 
 For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
 external service/quota, order dependence, irreversible/production step or memory ceiling), evidence,

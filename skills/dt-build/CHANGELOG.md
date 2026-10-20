@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.9
+
+- hardware-parallelism: correct the File Sorter example (the restart was the backup's planned stop; the load proof doubled its downtime).
+
 ## 2.49.8
 
 - hardware-parallelism: never run CPU-saturating load proofs on a host serving a live production app; use a VM/fleet host or a CPU cap.
