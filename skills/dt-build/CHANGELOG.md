@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.8
+
+- hardware-parallelism: never run CPU-saturating load proofs on a host serving a live production app; use a VM/fleet host or a CPU cap.
+
 ## 2.49.7
 
 - Iterate long end-to-end fix rounds on failed groups plus groups touching changed code; one complete pass on the final candidate decides (FS-134).

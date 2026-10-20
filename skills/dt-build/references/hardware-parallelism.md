@@ -45,6 +45,12 @@ iterate fix rounds on the failed groups only, plus any group that exercises the 
 which clean groups were skipped and why. Once those pass, run one complete pass of every group on the
 final candidate: that pass alone decides acceptance, because a fix can break a group that was clean.
 
+Never run a test that deliberately saturates CPU (load proofs, stress runs) on a host that serves a
+live production app or another build's timing-sensitive jobs. Run it on a VM or fleet host, or cap it
+(a Windows Job Object CPU rate, or leave cores free) and record which. A live app's timeouts or
+restarts during such a run are damage from the test environment, not product evidence (File Sorter
+2026-10-20: three load proofs on SNOWWHITE caused 120 live search timeouts and a core-service restart).
+
 For a serial plan decision, retain the concrete cause (shared DB/file state, fixed ports, one live
 external service/quota, order dependence, irreversible/production step or memory ceiling), evidence,
 scope and isolation/offload workaround considered. Newly discovered contention requires a recorded
