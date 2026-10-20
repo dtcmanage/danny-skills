@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.3.3 (2026-10-20): Refuse to merge and purge a feature worktree that a live dt-job or process still uses (preflight-live-jobs; -AllowLiveJobs to override); regression test in the ship gate.
+
 - 0.3.2 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 0.3.1 (2026-10-13): Read .ship.json from the branch being shipped (worktree or git show), fall back to primary only when absent, and record config_source; preserve on-main and ConfigPath behavior.

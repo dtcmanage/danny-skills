@@ -39,6 +39,7 @@ param(
     [switch]$SkipGate,
     [switch]$SkipPush,
     [switch]$SkipPull,
+    [switch]$AllowLiveJobs,
     [switch]$Json
 )
 
@@ -311,6 +312,46 @@ if ($featureTree) {
         if ($cwdFull.StartsWith($featureTreeFull, [System.StringComparison]::OrdinalIgnoreCase)) {
             Fail-Step 'preflight-cwd' "You are invoking dt-ship from inside the worktree that will be purged ('$featureTree'). Re-run from the primary tree: Set-Location '$primary'"
         }
+    }
+}
+
+# --- Step: preflight-live-jobs ------------------------------------------------
+
+# The purge deletes the feature worktree. A queued or running dt-job (in any
+# registered run) or any live process that names that worktree would lose its
+# working folder mid-run (File Sorter VM run 7, 2026-10-20). Refuse before any
+# mutation unless -AllowLiveJobs says the job no longer needs the tree.
+if ($featureTree -and -not $AllowLiveJobs) {
+    $users = @()
+    # git prints forward slashes; job records and command lines usually carry backslashes.
+    $treeKey = ([System.IO.Path]::GetFullPath($featureTree) -replace '/', '\').TrimEnd('\')
+    $mentionsTree = { param([string]$Text) ($Text -replace '/', '\').IndexOf($treeKey, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }
+    $registryDir = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'dt-build' }
+    $registry = Join-Path $registryDir 'active-runs.json'
+    $runs = @()
+    try { if (Test-Path -LiteralPath $registry) { $runs = @((Get-Content -LiteralPath $registry -Raw | ConvertFrom-Json).runs) } } catch { $runs = @() }
+    foreach ($run in $runs) {
+        if (-not $run -or -not $run.run_folder) { continue }
+        $jobsDir = Join-Path ([string]$run.run_folder) 'jobs'
+        if (-not (Test-Path -LiteralPath $jobsDir)) { continue }
+        foreach ($jobFile in Get-ChildItem -LiteralPath $jobsDir -Filter 'j-*.json' -File -ErrorAction SilentlyContinue) {
+            try { $job = Get-Content -LiteralPath $jobFile.FullName -Raw | ConvertFrom-Json } catch { continue }
+            if ([string]$job.status -notin @('queued', 'running')) { continue }
+            if (& $mentionsTree "$($job.working_directory) $($job.command)") {
+                $users += "dt-job $($job.job_id) ($($job.status)) in $($run.run_id)"
+            }
+        }
+    }
+    try {
+        foreach ($proc in Get-CimInstance Win32_Process -ErrorAction Stop) {
+            if ($proc.ProcessId -eq $PID -or -not $proc.CommandLine) { continue }
+            if (& $mentionsTree $proc.CommandLine) {
+                $users += "process $($proc.ProcessId) ($($proc.Name))"
+            }
+        }
+    } catch { }
+    if ($users.Count -gt 0) {
+        Fail-Step 'preflight-live-jobs' "Worktree '$featureTree' is still used by: $(($users | Select-Object -Unique) -join '; '). Nothing was merged. Wait for them to finish, or re-run with -AllowLiveJobs if they no longer need the tree."
     }
 }
 

@@ -2,7 +2,7 @@
 name: dt-ship
 description: "One-command close-out for a finished feature: run the build/tests gate, rebase + ff-only merge to main via the shared merge machinery, push, deploy per the repo's .ship.json, PROVE the deploy is live (deployed commit hash must equal local main HEAD, plus browser-smoke on the configured routes), then purge the merged worktree and branch. Trigger on /dt-ship, 'ship it', 'push live', or 'ship and clean tree'. Do NOT use to create branches or worktrees (that is start-work), for design review (dt-review), or for build execution (dt-build)."
 metadata:
-  version: 0.3.2
+  version: 0.3.3
   changelog: See CHANGELOG.md.
 ---
 
@@ -39,6 +39,7 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
 
    The script, fail-closed (the first failing step stops everything and names itself in `failed_step`):
    - loads `.ship.json` from the branch being shipped: its worktree copy when checked out, otherwise its committed copy via `git show`; falls back to `<primary>\.ship.json` only when the branch has no config (on-main mode uses the primary copy; schema: `references/ship-config.md`; override with `-ConfigPath`),
+   - refuses before any mutation (`failed_step: preflight-live-jobs`) when a queued or running dt-job in any registered run, or any live process, names the feature worktree, since the purge would delete it mid-run; pass `-AllowLiveJobs` only when those jobs no longer need the tree,
    - runs the config's `gateCommand` (build/tests) inside the feature worktree — a red gate means NOT merged, NOT shipped,
    - merges by calling `<danny-skills>/skills/git-merge-feature/scripts/merge-feature.ps1 -PurgeWorktree` (rebase, ff-only merge, branch delete, worktree removal — the shared machinery, never reimplemented),
    - sweeps for leftovers: any surviving worktree or branch for the merged feature is removed, but only when fully merged and clean,
