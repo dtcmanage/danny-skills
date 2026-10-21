@@ -23,6 +23,15 @@ Execution resilience controls in Phase 7B:
   capacity backoff, offline recovery, the unexplained-failure retry) then fails closed with
   `failure_category: single-dispatch-refused`; provenance records `single_dispatch` and
   `single_dispatch_refused_branch` (and the dispatch count). Without the switch, behavior is unchanged.
+- Retry continuity: when `invoke-codex-chunk.ps1` re-dispatches after a retryable failure (capacity, offline,
+  unexplained), the new attempt's prompt starts with a `CONTINUATION:` preamble naming the attempt number, the prior
+  attempt's duration and failure, and the stream log, telling the worker that the job's own worktrees and commits are
+  its prior work. The original prompt follows unchanged and keeps its provenance hashes; each dispatch attempt
+  records `continuation_preamble`.
+- Stopped-short detection: a Codex dispatch that exits 0 but whose final message's last paragraph asks for
+  confirmation (`please confirm`, `confirm takeover`, `should I proceed`, ...; a closing follow-up offer such as "Do you want me to also..." is not a stop) fails with
+  `failure_category: needs_input` (`CODEX_NEEDS_INPUT`), the question in `failure_detail`, and a non-zero exit. It
+  is never retried.
 - Process custody: both wrappers join a fresh Windows job object before starting the worker CLI
   (`<skill>/scripts/worker-process-tree.ps1`), so every descendant is tracked even after its parent exits. Once the CLI
   exits or times out, output drains for at most 30 seconds; a descendant still holding the pipes is stopped,

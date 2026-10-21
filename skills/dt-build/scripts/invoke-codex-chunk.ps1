@@ -250,6 +250,37 @@ function Get-ReadOnlyTreeSnapshot {
     return @($parts)
 }
 
+function Get-CodexNeedsInputQuestion {
+    # A worker that exits 0 but ends by asking for confirmation has stopped short, not finished.
+    # Only the final paragraph is inspected, so questions quoted earlier in a report never match.
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $paragraphs = @([regex]::Split($Text.Trim(), '\r?\n[ \t]*\r?\n') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if (-not $paragraphs.Count) { return $null }
+    $final = ([string]$paragraphs[-1]).Trim()
+    $askPattern = '(?i)\b(please confirm|confirm (the )?takeover|should i (proceed|continue)|shall i (proceed|continue)|awaiting your (confirmation|go-ahead|input|answer|reply|response|instructions|decision))\b'
+    if ($final -notmatch $askPattern) { return $null }
+    $flat = ($final -replace '\s+', ' ').Trim()
+    if ($flat.Length -gt 300) { $flat = $flat.Substring(0, 297) + '...' }
+    return $flat
+}
+
+function Get-CodexContinuationPreamble {
+    # A retried dispatch starts a fresh Codex context; without this it treats the earlier attempt's
+    # worktrees and commits as someone else's work and stops to ask for takeover (j-0171, 2026-10-21).
+    param([Parameter(Mandatory)][int]$DispatchAttempt, [Parameter(Mandatory)]$Previous, [string]$StreamLogPath)
+    $minutes = [Math]::Round(([double]$Previous.duration_ms) / 60000, 1)
+    $category = if ($Previous.failure_category) { [string]$Previous.failure_category } else { 'failure' }
+    $detail = if ($Previous.failure_detail) { [string]$Previous.failure_detail } else { "codex exec exited $($Previous.exit_code)" }
+    $detail = ($detail -replace '\s+', ' ').Trim()
+    $lines = @(
+        "CONTINUATION: this is dispatch attempt $DispatchAttempt of the same job (same prompt). Attempt $($DispatchAttempt - 1) ran for $minutes minutes and ended with ${category}: $detail."
+        'Any worktrees, branches, commits or files it created for this task are YOUR OWN prior work: inspect git status/log and the output/stream log first, keep valid work, and continue from where it stopped. Do not ask for takeover confirmation for artifacts this job created.'
+    )
+    if ($StreamLogPath) { $lines += "Previous attempt stream log: $StreamLogPath" }
+    return ($lines -join "`n") + "`n`n"
+}
+
 function Get-ReadOnlyTreeChanges {
     # The snapshot entries that differ between two snapshots, at most five, for the violation message.
     param([string[]]$Before, [string[]]$After)
@@ -498,7 +529,14 @@ try {
     # deadlock the process. The same pattern protects high-volume verifier runs.
     $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
     $stderrTask = $proc.StandardError.ReadToEndAsync()
-    $stdinTask = $proc.StandardInput.WriteAsync($prompt)
+    # A retry keeps the original prompt byte-for-byte after a continuation preamble; prompt_sha256 and
+    # dispatched_prompt_sha256 stay the original prompt's, and the attempt record notes the preamble.
+    $continuationPreamble = $null
+    if (-not $Preflight -and $dispatchAttempts.Count -gt 0) {
+        $continuationPreamble = Get-CodexContinuationPreamble -DispatchAttempt ($dispatchAttempts.Count + 1) -Previous $dispatchAttempts[$dispatchAttempts.Count - 1] -StreamLogPath ([IO.Path]::GetFullPath($streamPath))
+    }
+    $dispatchPrompt = if ($continuationPreamble) { $continuationPreamble + $prompt } else { $prompt }
+    $stdinTask = $proc.StandardInput.WriteAsync($dispatchPrompt)
     $stdinClosed = $false
     while (-not $proc.HasExited -and (([datetimeoffset](& $script:RouterDiagnosisClock) - $dispatchStarted).TotalMilliseconds -lt $TimeoutMs)) {
         if (-not $stdinClosed -and $stdinTask.IsCompleted) {
@@ -530,6 +568,7 @@ try {
         duration_ms = [long](([datetimeoffset](& $script:RouterDiagnosisClock)) - $attemptStarted).TotalMilliseconds
         exit_code = $exitCode; timed_out = $timedOut
         model = $resolvedModel; effort = $Effort; failure_category = $null; failure_detail = $null
+        continuation_preamble = [bool]$continuationPreamble
     }
     $dispatchAttempts.Add($attemptRecord)
 
@@ -597,6 +636,15 @@ try {
         if ($shapeErrors.Count -gt 0) {
             $failureReason = "CODEX_OUTPUT_INVALID: $($shapeErrors -join '; '). Redacted output: $OutputPath"
             $failureCategory = 'model-output'
+        }
+    }
+    if (-not $failureReason -and -not $Preflight -and $exitCode -eq 0) {
+        # Exit 0 with a closing question is a stop, not a success; it is never retried.
+        $needsInputQuestion = Get-CodexNeedsInputQuestion -Text $lastMessage
+        if ($needsInputQuestion) {
+            $failureCategory = 'needs_input'
+            $failureDetail = $needsInputQuestion
+            $failureReason = "CODEX_NEEDS_INPUT: the worker exited 0 but stopped to ask instead of finishing: $needsInputQuestion Redacted output: $OutputPath"
         }
     }
 

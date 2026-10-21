@@ -413,7 +413,8 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
             Assert-True ($sleeps.Count -eq $sleepCount -and @($sleeps | Where-Object { $_ -ne '60000' }).Count -eq 0) "$lane $case waits only in bounded 60-second offline intervals"
             if ($count -eq 2) {
                 $calls = @(Get-Content ($env:DT_FAKE_DISPATCH_COUNTER + '.calls') | ConvertFrom-Json)
-                Assert-True ($calls[0].prompt -ceq $calls[1].prompt -and ($calls[0].args -join '|') -ceq ($calls[1].args -join '|')) "$lane $case identical arguments and prompt on retry"
+                $promptKept = if ($lane -eq 'codex') { ([string]$calls[1].prompt).StartsWith('CONTINUATION: this is dispatch attempt 2 of the same job') -and ([string]$calls[1].prompt).EndsWith([string]$calls[0].prompt) } else { $calls[0].prompt -ceq $calls[1].prompt }
+                Assert-True ($promptKept -and ($calls[0].args -join '|') -ceq ($calls[1].args -join '|')) "$lane $case identical arguments and original prompt on retry (codex adds a continuation preamble)"
             }
             if (-not $success -and $case -ne 'unexplained-invalid') {
                 $termination = if ($case -eq 'offline-timeout') { 'ROUTER_OFFLINE' } elseif ($case -in @('incident','offline-incident')) { 'ROUTER_VENDOR_INCIDENT' } else { 'ROUTER_UNEXPLAINED' }
@@ -518,7 +519,7 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     Assert-True ($imageResolverError -notmatch 'Unknown category' -and $imageResolverError -match 'No usable Codex model') 'Resolve-CodexModel accepts image-generation category'
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json'), $rosterPath -Force
     $buildSkill = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-build/SKILL.md')
-    Assert-True ($buildSkill -match 'resolve-model.ps1 -Category <c> -SendAlerts -Json' -and $buildSkill -match 'matching its returned' -and $buildSkill -notmatch 'Lane default: stay in the orchestrator') 'dt-build uses roster dispatch without family lane default'
+    Assert-True ($buildSkill -match 'resolve-model.ps1"? -Category <c> -SendAlerts -Json' -and $buildSkill -match 'matching its returned' -and $buildSkill -notmatch 'Lane default: stay in the orchestrator') 'dt-build uses roster dispatch without family lane default'
 
     # 4. Other consumers pass their fixed categories.
     $reviewRound = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-review/scripts/invoke-codex-round.ps1')

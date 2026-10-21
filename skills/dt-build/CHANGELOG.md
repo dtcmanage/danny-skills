@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.49.12
+
+- invoke-codex-chunk.ps1 retries after capacity/offline/unexplained failures now prepend a CONTINUATION preamble (attempt number, prior duration and failure, stream log) so the worker continues its own prior work instead of asking for takeover; an exit-0 dispatch whose final paragraph asks for confirmation fails as needs_input (CODEX_NEEDS_INPUT, non-zero, never retried).
+
 ## 2.49.11
 
 - test-dt-job: keep the suite's temp registry after the pin tests, so delegate fixtures never register in the real run registry (they had raised a real irreversible-fixture alert).

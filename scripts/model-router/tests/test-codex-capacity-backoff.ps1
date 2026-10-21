@@ -14,7 +14,7 @@ function Write-Utf8([string]$Path, [string]$Text) {
 
 # This entire suite uses PowerShell peers, temporary router state, and no Python.
 $saved = @{}
-foreach ($name in @('CODEX_HOME','DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_CODEX_SESSIONS','DT_MODEL_ROUTER_CLAUDE_CREDENTIALS','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_BUILD_DISPATCH_SEAMS','DT_BUILD_RUN_PIN_VENDOR','DT_BUILD_RUN_PIN_MODEL','FS63_COUNTER','FS63_SUCCEED','FS63_SIGNAL','FS63_WORK_MS','FS63_TIME_JUMP_MS')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+foreach ($name in @('CODEX_HOME','DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_CODEX_SESSIONS','DT_MODEL_ROUTER_CLAUDE_CREDENTIALS','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_BUILD_DISPATCH_SEAMS','DT_BUILD_RUN_PIN_VENDOR','DT_BUILD_RUN_PIN_MODEL','FS63_COUNTER','FS63_SUCCEED','FS63_SIGNAL','FS63_WORK_MS','FS63_TIME_JUMP_MS','FS63_FINAL')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 $temp = Join-Path $env:TEMP ('fs63-capacity-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($temp)
 try {
@@ -81,7 +81,7 @@ if ($n -lt [int]$env:FS63_SUCCEED) {
     [IO.File]::WriteAllText(($env:FS63_COUNTER + '.done'), 'done')
     exit 1
 }
-[IO.File]::WriteAllText($out, 'complete report')
+[IO.File]::WriteAllText($out, $(if ($env:FS63_FINAL) { $env:FS63_FINAL } else { 'complete report' }))
 '@
     function Run-Case([string]$Name, [int]$Succeed, [string]$Signal, [int]$JumpMs = 0, [switch]$Defaults, [switch]$NoRetry) {
         $env:FS63_COUNTER = Join-Path $temp $Name
@@ -107,7 +107,14 @@ $params = Get-Content $ArgFile -Raw | ConvertFrom-Json -AsHashtable
         $calls = @(Get-Content ($env:FS63_COUNTER + '.calls') | ConvertFrom-Json)
         $sleeps = @(if (Test-Path ($env:FS63_COUNTER + '.sleeps')) { Get-Content ($env:FS63_COUNTER + '.sleeps') })
         Check (@($calls | Where-Object had_output).Count -eq 0) "$Name removes stale and partial output before every exec"
-        Check (@($calls | Where-Object { ($_.argv -join '|') -cne ($calls[0].argv -join '|') -or $_.prompt -cne $calls[0].prompt }).Count -eq 0) "$Name identical model effort prompt and output argv"
+        Check (@($calls | Where-Object { ($_.argv -join '|') -cne ($calls[0].argv -join '|') }).Count -eq 0) "$Name identical model effort and output argv"
+        Check (-not $calls[0].prompt.StartsWith('CONTINUATION:')) "$Name first dispatch carries no continuation preamble"
+        for ($i = 1; $i -lt $calls.Count; $i++) {
+            $p = [string]$calls[$i].prompt
+            Check ($p.StartsWith("CONTINUATION: this is dispatch attempt $($i + 1) of the same job (same prompt). Attempt $i ran for ") -and $p.Contains('YOUR OWN prior work') -and $p.Contains('Do not ask for takeover confirmation') -and $p.Contains('.stream.log') -and $p.EndsWith([string]$calls[0].prompt)) "$Name retry $($i + 1) prepends a continuation preamble naming attempt $i and keeps the original prompt"
+            Check ($p.Contains("ended with capacity: $($prov.dispatch_attempts[$i - 1].failure_detail).") -and $prov.dispatch_attempts[$i - 1].failure_detail) "$Name retry $($i + 1) preamble names the prior capacity failure"
+        }
+        Check (@($prov.dispatch_attempts | Where-Object { [bool]$_.continuation_preamble -ne ($_.dispatch_attempt -gt 1) }).Count -eq 0) "$Name dispatch attempts record continuation_preamble on retries only"
         Check ($prov.resolved_model -ceq 'gpt-6.1-sol' -and $prov.effort -ceq 'medium' -and [string]::IsNullOrEmpty($prov.escalated_from) -and -not $prov.backup_pick) "$Name honors run pin without escalation or vendor switch"
         Check (@($calls | Where-Object { $_.argv[[Array]::IndexOf([object[]]$_.argv, '--model') + 1] -cne 'gpt-6.1-sol' -or $_.argv -cnotcontains 'model_reasoning_effort="medium"' }).Count -eq 0) "$Name actual CLI argv honors pinned model and effort"
         Check (@($prov.dispatch_attempts).Count -eq $calls.Count) "$Name records every dispatch attempt"
@@ -144,6 +151,32 @@ $params = Get-Content $ArgFile -Raw | ConvertFrom-Json -AsHashtable
     $r = Run-Case 'long-job' 3 'Selected model is at capacity' 4440000
     Check ($r.pass -and $r.dispatch_attempts[0].duration_ms -ge 4440000) '74-minute prior work cannot consume fresh capacity attempt timeout'
     $r = Run-Case 'quota' 99 'ERROR: usage limit reached; selected model is at capacity'
+
+    # Stopped short: exit 0 with a closing confirmation request is needs_input, non-zero, never retried.
+    Remove-Item -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
+    function Invoke-FinalCase([string]$Name, [string]$Final, [int]$Succeed = 1) {
+        $env:FS63_COUNTER = Join-Path $temp $Name; $env:FS63_SUCCEED = [string]$Succeed; $env:FS63_SIGNAL = 'Selected model is at capacity'
+        $env:FS63_WORK_MS = '0'; $env:FS63_TIME_JUMP_MS = '0'; $env:FS63_FINAL = $Final
+        $out = $env:FS63_COUNTER + '.output'
+        $argFile = Join-Path $temp "$Name.args.json"
+        Write-Utf8 $argFile (@{ ProjectPath=$project; PromptPath=$prompt; OutputPath=$out; CodexCliPath=$fake; AdHoc=$true; Effort='medium'; Category='complex-coding'; SelectionReason='needs-input fixture'; TimeoutMs=1000; Json=$true; CapacityBackoffMs=@(5, 10, 20) } | ConvertTo-Json)
+        try { & pwsh -NoProfile -File (Join-Path $temp 'recover.runner.ps1') (Join-Path $repoRoot 'skills/dt-build/scripts/invoke-codex-chunk.ps1') $argFile > ($out + '.stdout') 2> ($out + '.stderr') }
+        finally { $env:FS63_FINAL = $null }
+        return [pscustomobject]@{ code = $LASTEXITCODE; prov = (Get-Content ($out + '.provenance.json') -Raw | ConvertFrom-Json); calls = @(Get-Content ($env:FS63_COUNTER + '.calls')); stderr = (Get-Content ($out + '.stderr') -Raw) }
+    }
+    $question = 'Please confirm takeover or a separately named worktree.'
+    $r = Invoke-FinalCase 'needs-input' ("I found an existing worktree with three commits.`n`n" + $question)
+    Check ($r.code -ne 0 -and -not $r.prov.pass -and $r.prov.failure_category -ceq 'needs_input' -and $r.prov.failure_detail -ceq $question -and $r.prov.termination_reason -match '^CODEX_NEEDS_INPUT:') "exit-0 confirmation request is needs_input with a non-zero exit ($($r.code); $($r.prov.failure_category))"
+    Check ($r.calls.Count -eq 1 -and @($r.prov.dispatch_attempts).Count -eq 1 -and $r.prov.dispatch_attempts[0].failure_category -ceq 'needs_input' -and @($r.prov.capacity_backoffs).Count -eq 0) 'needs_input is never retried'
+    $r = Invoke-FinalCase 'needs-input-after-capacity' $question 2
+    Check ($r.code -ne 0 -and $r.prov.failure_category -ceq 'needs_input' -and $r.calls.Count -eq 2) 'a continued attempt that still stops short is needs_input, not success'
+    $r = Invoke-FinalCase 'quoted-question' ("Earlier the log said: please confirm takeover?`n`nDone: three commits on fix/x, tests 12/12 passed.")
+    Check ($r.code -eq 0 -and $r.prov.pass -and $null -eq $r.prov.failure_category) 'a question quoted before the final paragraph stays success'
+    $r = Invoke-FinalCase 'normal-final' 'Done: three commits on fix/x, tests 12/12 passed.'
+    Check ($r.code -eq 0 -and $r.prov.pass -and $null -eq $r.prov.failure_category -and $r.calls.Count -eq 1) 'a normal final answer stays success'
+    $longQ = 'Please confirm ' + ('x' * 400) + '?'
+    $r = Invoke-FinalCase 'long-question' $longQ
+    Check ($r.prov.failure_category -ceq 'needs_input' -and $r.prov.failure_detail.Length -le 300) 'needs_input failure_detail is truncated to 300 characters'
 
     # -SingleDispatch: a capacity refusal fails closed after one child, with the production backoff schedule left in place.
     # The quota case above leaves a Codex vendor block; this case is a fresh capacity outage.
