@@ -633,11 +633,14 @@ while ($probeAttempt -lt $maxProbeAttempts) {
             $outcome = 'non_json_body'
         }
     } elseif ($probeCommand) {
-        $probeOut = & pwsh -NoProfile -Command $probeCommand 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Fail-Step 'verify-hash' "NOT SHIPPED: commit probe command failed: $(Get-TailText (($probeOut | Out-String)))" 'not_shipped'
+        # Run through Invoke-ShipStep like deploy: file-backed std handles. A direct child inherited
+        # the host's console-less handles and ssh failed with "DuplicatedHandle" when ship.ps1 ran
+        # from the PowerShell tool (tcm-database, 2026-10-22).
+        $probeRun = Invoke-ShipStep -Step 'probe' -Command $probeCommand -WorkingDirectory $primary
+        if ($probeRun.ExitCode -ne 0) {
+            Fail-Step 'verify-hash' "NOT SHIPPED: commit probe command failed: $(Get-TailText $probeRun.Output)" 'not_shipped'
         }
-        $probeBody = ($probeOut | Out-String)
+        $probeBody = $probeRun.Output
         $hashMatch = [regex]::Match($probeBody, '[0-9a-fA-F]{40}')
         if (-not $hashMatch.Success) {
             $hashMatch = [regex]::Match($probeBody, '\b[0-9a-fA-F]{7,40}\b')
