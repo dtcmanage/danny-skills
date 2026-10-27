@@ -30,6 +30,10 @@ function Register-RouterSchedules {
         }
         & schtasks.exe /create /tn $item.name /tr $taskRun @scheduleArgs /f | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "Failed to register $($item.name)" }
+        # schtasks /create cannot set catch-up; runs missed while SNOWWHITE is off or in another OS fire on return.
+        $task = Get-ScheduledTask -TaskName $item.name
+        $task.Settings.StartWhenAvailable = $true
+        Set-ScheduledTask -InputObject $task | Out-Null
     }
     return @($tasks)
 }
