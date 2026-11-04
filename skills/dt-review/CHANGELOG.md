@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.17.3 (2026-11-04): Model router: add the classification-escalation category (deep thinker) so File Sorter's second-tier classification pass resolves a model; roster validator, roster builder, default roster, docs and tests updated.
+
 - 1.17.2 (2026-10-19): Require durable API sample citations at intake and retain samples outside review scratch (FS-126).
 
 - 1.17.1 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).

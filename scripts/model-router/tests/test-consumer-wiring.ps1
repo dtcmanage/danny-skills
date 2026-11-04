@@ -478,7 +478,7 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
 
     # Approved roster: both wrappers keep their lane member, and a wait launches no model.
     $categories = @(Get-RouterDispatchCategories)
-    Assert-True ($categories.Count -eq 11 -and @(@('math','analysis') | Where-Object { $categories -notcontains $_ }).Count -eq 0) 'dispatch category list has all 11 including math and analysis'
+    Assert-True ($categories.Count -eq 12 -and @(@('math','analysis','classification-escalation') | Where-Object { $categories -notcontains $_ }).Count -eq 0) 'dispatch category list has all 12 including math, analysis and classification-escalation'
     foreach ($category in $categories | Where-Object { $_ -ne 'image-generation' }) {
         $job = Get-RouterCategoryJob -Category $category
         $codexMember = if ($roster.jobs.$job.first_vendor -eq 'codex') { $roster.jobs.$job.first } else { $roster.jobs.$job.backup }

@@ -60,7 +60,7 @@ function Get-RouterCategories {
 }
 
 function Get-RouterDispatchCategories {
-    return @('complex-coding','routine-coding','code-review','ui-frontend','planning','deep-research','math','analysis','long-form-writing','mechanical','image-generation')
+    return @('complex-coding','routine-coding','code-review','ui-frontend','planning','deep-research','math','analysis','classification-escalation','long-form-writing','mechanical','image-generation')
 }
 
 function Test-RouterReadings {
@@ -104,7 +104,7 @@ function Get-RouterJobEffort {
 
 function Get-RouterCategoryJob {
     param([Parameter(Mandatory)][string]$Category)
-    $map = @{ mechanical='fast'; 'routine-coding'='coder'; 'complex-coding'='coder'; 'ui-frontend'='coder'; 'code-review'='deep-thinker'; planning='deep-thinker'; 'deep-research'='deep-thinker'; math='deep-thinker'; analysis='deep-thinker'; 'long-form-writing'='writer'; 'image-generation'='illustrator' }
+    $map = @{ mechanical='fast'; 'routine-coding'='coder'; 'complex-coding'='coder'; 'ui-frontend'='coder'; 'code-review'='deep-thinker'; planning='deep-thinker'; 'deep-research'='deep-thinker'; math='deep-thinker'; analysis='deep-thinker'; 'classification-escalation'='deep-thinker'; 'long-form-writing'='writer'; 'image-generation'='illustrator' }
     if (-not $map.ContainsKey($Category)) { throw "CATEGORY: Unknown category '$Category'" }
     return $map[$Category]
 }
@@ -141,7 +141,7 @@ function Test-RouterRoster {
     if ($Roster.approved -eq $true -and $null -eq $Roster.approved_at) { $errors.Add('ROSTER_APPROVED_AT: approved roster needs date') }
     if ($Roster.category_jobs -isnot [pscustomobject]) { $errors.Add('ROSTER_CATEGORY_JOBS: expected object') }
     else {
-        $categories = @('mechanical','routine-coding','complex-coding','ui-frontend','code-review','planning','deep-research','math','analysis','long-form-writing','image-generation')
+        $categories = @('mechanical','routine-coding','complex-coding','ui-frontend','code-review','planning','deep-research','math','analysis','classification-escalation','long-form-writing','image-generation')
         foreach ($category in $categories) {
             $p = $Roster.category_jobs.PSObject.Properties[$category]
             if (-not $p -or $p.Value -cne (Get-RouterCategoryJob -Category $category)) { $errors.Add("ROSTER_CATEGORY_JOB: $category") }

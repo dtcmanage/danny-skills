@@ -58,7 +58,7 @@ function Get-RouterProposalComparison {
 function Get-RouterProposalJobVerdict {
     param([string]$Job, [string]$Incumbent, [string]$Vendor, [hashtable]$Readings, [object]$Prices, [object]$Frontier)
     $primary = @{ fast='mechanical'; coder='complex-coding'; 'deep-thinker'='analysis'; writer='long-form-writing'; illustrator='image-generation' }[$Job]
-    $categories = @{ fast=@('mechanical'); coder=@('routine-coding','complex-coding','ui-frontend'); 'deep-thinker'=@('code-review','planning','deep-research','math','analysis'); writer=@('long-form-writing'); illustrator=@('image-generation') }[$Job]
+    $categories = @{ fast=@('mechanical'); coder=@('routine-coding','complex-coding','ui-frontend'); 'deep-thinker'=@('code-review','planning','deep-research','math','analysis','classification-escalation'); writer=@('long-form-writing'); illustrator=@('image-generation') }[$Job]
     $models = @($categories | ForEach-Object { if ($Readings.ContainsKey($_)) { $Readings[$_].readings | ForEach-Object { $_.results | ForEach-Object model } } } | Where-Object { $_ -and $_ -ne $Incumbent } | Sort-Object -Unique)
     $qualified = @(); $tradeoffs = @(); $hasFloorClearer = $false
     foreach ($model in $models) {

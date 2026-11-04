@@ -49,6 +49,7 @@ try {
         'deep-research' = @('gpt-6.1-sol','claude-opus-5-5')
         math = @('gpt-6.1-sol','claude-opus-5-5')
         analysis = @('gpt-6.1-sol','claude-opus-5-5')
+        'classification-escalation' = @('gpt-6.1-sol','claude-opus-5-5')
         'long-form-writing' = @('gpt-6.1-sol','claude-opus-5-5')
         'image-generation' = @('gpt-image-2',$null)
     }
@@ -60,7 +61,7 @@ try {
             Assert-True ($pick.PSObject.Properties['effort'] -and $pick.effort -ceq $(if ($want) { @{fast='low';coder='medium';'deep-thinker'='medium';writer='medium';illustrator=$null}[(Get-RouterCategoryJob $category)] } else { $null })) "state effort $category/$lane"
         }
     }
-    foreach ($category in @('routine-coding','complex-coding','ui-frontend','code-review','planning','deep-research','math','analysis')) {
+    foreach ($category in @('routine-coding','complex-coding','ui-frontend','code-review','planning','deep-research','math','analysis','classification-escalation')) {
         foreach ($lane in @('codex','claude')) {
             $pick = Resolve-RouterModel -Category $category -Lane $lane -Difficulty hard -DifficultyReason 'interacting constraints' -SkipModelCheck -Catalog $catalog
             Assert-True ($pick.effort -ceq 'high' -and $pick.difficulty -ceq 'hard') "fixed hard effort $category/$lane"
@@ -68,7 +69,7 @@ try {
     }
     $snapshot = @(Get-RouterPicksSnapshot)
     Assert-True (@($snapshot | Where-Object { -not $_.PSObject.Properties['effort'] }).Count -eq 0) 'snapshot carries effort'
-    Assert-True ($snapshot.Count -eq 42 -and @($snapshot | Where-Object { -not $_.lane }).Count -eq 0 -and @($snapshot | Where-Object { $_.category -in @('math','analysis') }).Count -eq 8) 'snapshot includes math and analysis in 42 rows'
+    Assert-True ($snapshot.Count -eq 46 -and @($snapshot | Where-Object { -not $_.lane }).Count -eq 0 -and @($snapshot | Where-Object { $_.category -in @('math','analysis','classification-escalation') }).Count -eq 12) 'snapshot includes math, analysis and classification-escalation in 46 rows'
     Assert-True ((Resolve-RouterModel -Category mechanical -Lane codex -Protected -Catalog $catalog).model -eq 'gpt-6.1-sol') 'protected mechanical uses coder'
     Assert-True ((Resolve-RouterModel -Category long-form-writing -Catalog $catalog).protected) 'writing always protected'
     foreach ($step in @(@('codex','gpt-6-luna','gpt-6.1-sol'),@('claude','claude-haiku-4-5-20251001','claude-sonnet-5'),@('claude','claude-sonnet-5','claude-opus-5-5'))) {

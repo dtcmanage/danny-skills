@@ -167,7 +167,7 @@ try {
     $script:blocked = @()
     $cli = & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../resolve-model.ps1') -Category analysis -SkipModelCheck -Json 2>$null | ConvertFrom-Json
     Assert-True ($LASTEXITCODE -eq 0 -and $cli.category -eq 'analysis' -and $cli.lane -eq 'claude') 'CLI without Lane returns JSON pick'
-    foreach ($category in @('math','analysis')) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category $category -Lane codex -Catalog $catalog).model -eq (Resolve-RouterModel -SkipModelCheck -Category planning -Lane codex -Catalog $catalog).model) "$category uses the same roster model as planning" }
+    foreach ($category in @('math','analysis','classification-escalation')) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category $category -Lane codex -Catalog $catalog).model -eq (Resolve-RouterModel -SkipModelCheck -Category planning -Lane codex -Catalog $catalog).model) "$category uses the same roster model as planning" }
     foreach ($case in @(@('codex','gpt-6.1-sol'),@('claude','claude-opus-5-5'))) { Assert-True ((Resolve-RouterModel -SkipModelCheck -Category routine-coding -Lane $case[0] -EscalateFrom $case[1] -Catalog $catalog).model -eq $case[1]) "escalation stops at the non-frontier ladder ceiling for $($case[0])" }
     # Exercise the real bounded catalog interface with a fake process provider.
     # PATH discovery sees only this fixture CLI; no vendor process is started.
