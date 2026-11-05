@@ -276,6 +276,55 @@ incident recovery and the bounded Codex catalog retry retain their existing
 behavior. A tie-selected vendor and a catalog fallback undergo the ordinary
 block evaluation, including its bounded Claude refresh. The weekly comparison
 itself adds no network or model call.
+
+# Claude output integrity (M03, 2026-11-05)
+
+Caller grep rerun across `scripts/` and `skills/` for `claude.*-p`, `'-p'`
+argument arrays, and `--print`; comments, parser diagnostics and fake CLI tests
+are not production callers. All five production callers are accounted for:
+
+| Caller | Result handling | Status |
+| --- | --- | --- |
+| `<danny-skills>/skills/dt-build/scripts/invoke-claude-chunk.ps1` | JSON result, including preflight and retries | Uses `New-ClaudeCliInvocation` settings arguments and byte-exact `ReadResult`; cleans temporary settings in `finally`. |
+| `<danny-skills>/skills/dt-review/scripts/invoke-claude-round.ps1` | JSON preflight and round | Both use the helper; strict prefix rejection precedes round JSON parsing. |
+| `<danny-skills>/scripts/model-router/run-router-research.ps1` | JSON research result | Uses the helper and verifies the selected model family; cleans settings on success, failure and timeout. |
+| `<danny-skills>/scripts/model-router/bench/run-bench.ps1` | JSON / image stream JSON | Already uses `--safe-mode`, which excludes plugins; unchanged. Retained canary tasks `code-review-planted` and `pelican` are task-bank entries. `Invoke-RouterTriggeredComparison` calls `Invoke-RouterBench`; the engine's task dispatch returns through `Invoke-BenchDispatchCall` to `Invoke-BenchCli`, including parallel runspaces, using the same safe-mode arguments. No separate canary CLI launcher exists. |
+| `<danny-skills>/skills/dt-build/scripts/launch-managed-coordinator.ps1` | Appends plain stdout/stderr to coordinator log | No JSON result reader or exact response check. It checks process exit and capacity text only; not exposed to the result-prefix defect. Keeps its existing coordinator hook settings. |
+
+Coordinator-run evidence lives under
+`model-router/dispatch-repair/.dt-build/router-dispatch-repair-20261105/probes/`:
+`claude-output-1/result.json` proved `settings-plugin-off` preserved exact UTF8
+text and model identity, and recorded a PreToolUse deny from a hook placed in
+the override file itself. Stream JSON retained the timestamp and failed.
+`m03-hook-inherit/guard-debug.log` shows Danny's configured read guard firing
+on PreToolUse and PostToolUse for a Read inside a real wrapper-launched worker
+using the production settings shape. Inheritance of configured hooks was shown
+by firing. The unattended exemption through `CLAUDE_CODE_SESSION_ATTENDED` is
+inferred by elimination: the probe cleared the three exemption variables and
+the payload has no `agent_id`; the variable itself was not measured. A real deny
+from a configured guard belongs to M05. `m03-claude-output/result.json` is the byte-exact live
+record: output bytes `4F4B` (`OK`), plugin active, PATH and settings unchanged.
+Production settings contain only
+`enabledPlugins.message-timestamps@zoharbabin-claude-tools=false` in the temporary
+override. A prefixed result fails the shared parser; research and benchmark
+parsers also reject prefixed replies, including fenced JSON. No timestamp
+stripping is supported. Removing brace extraction in `run-router-research.ps1`
+also rejects prose-wrapped JSON on both research lanes.
+
+Read-only measurement found 10 of 10 retained research failure artifacts with
+the line-start signature `^\[\d\d:\d\d:\d\d\] ` under the live router state's
+`research-failures/`: 10 files scanned, 10 signature matches, all from one run
+on 2026-10-07 between 1:00 and 1:17 AM ET. The signature occurs in the saved
+reply after the alert key and parse error, rather than at byte zero of the file.
+A separate scan of 2,111 retained stream logs found 0 timestamp-prefixed
+`result` strings. That count has limited historical coverage: the chunk wrapper
+saves stdout only on a parse failure, and the old parser accepted prefixed
+results. The verifier's later scan found a stdout section in only 18 of 2,113
+logs. Retained prefixed successes do exist in `bench-math-saved-answers.json`
+(`call-059`, `call-060`) and `bench-ddq-response.json` (`call-034`). Both scans
+included hidden and ignored files. These are retained-artifact counts, not
+claims about replies deleted or never retained.
+
 # Frontier requests
 
 Frontier requests are Windows-only; the Mac never raises them.

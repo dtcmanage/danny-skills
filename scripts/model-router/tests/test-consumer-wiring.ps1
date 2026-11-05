@@ -1,6 +1,9 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# This harness exercises standalone wrappers; do not inherit a managed job's record paths.
+Remove-Item Env:DT_JOB_ID, Env:DT_JOB_DIR, Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue
+
 $script:passed = 0
 function Assert-True([bool]$Condition, [string]$Name) {
     if (-not $Condition) { throw "FAIL: $Name" }
@@ -329,9 +332,9 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
 
     $env:DT_FAKE_CLAUDE_MODE = 'stamp'
     $stamped = Invoke-ClaudeWrapper 'claude-stamped-report' @('-Tier','standard')
-    Assert-True ($stamped.exit -eq 0 -and $stamped.prov.output_shape_errors.Count -eq 0) 'stamped Claude report parses'
+    Assert-True ($stamped.exit -ne 0 -and -not $stamped.prov.pass) 'stamped Claude report fails closed'
     $stamped = Invoke-ClaudeWrapper 'claude-stamped-preflight' @('-Preflight')
-    Assert-True ($stamped.exit -eq 0) 'stamped Claude OK passes preflight'
+    Assert-True ($stamped.exit -ne 0) 'stamped Claude OK fails preflight'
     $env:DT_FAKE_CLAUDE_MODE = $null
     foreach ($lane in @('codex','claude')) {
         foreach ($limit in @(@('complex-coding', @(), 2700000), @('code-review', @(), 1800000), @('mechanical', @(), 600000), @('complex-coding', @('-TimeoutMs','120000'), 120000))) {

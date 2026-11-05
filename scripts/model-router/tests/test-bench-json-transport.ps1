@@ -44,6 +44,13 @@ else:
     # Use only answer first so the failure offset is deterministic.
     $before=Probe ([ordered]@{value=[ordered]@{answer=$saved.answer}})
     Assert ($before.error -ceq 'Invalid control character at: line 1 column 196 (char 195)' -and $before.control -eq 21) 'Original failure was not reproduced exactly'
+    # Retain the historical prefixed success as rejection evidence. The transport
+    # success case uses a prefix-free copy, as required by the current contract.
+    $prefixedSaved=$saved
+    $saved=($prefixedSaved|ConvertTo-Json -Depth 40)|ConvertFrom-Json -AsHashtable
+    Assert ($saved.answer -match '^\[\d\d:\d\d:\d\d\] ') 'Saved fixture prefix changed'
+    $saved.answer=$saved.answer.Substring(11)
+    $saved.raw.result=$saved.raw.result.Substring(11)
     $after=Probe @{value=$saved} -Utf8
     Assert ($after.value.answer -ceq $saved.answer -and $after.value.raw.result -ceq $saved.raw.result) 'Saved DDQ answer/raw result changed through UTF-8 IPC'
     $unicode="§ snow 雪 emoji 😀 Tibetan བོད་`nline two`ttab and quote `""
@@ -81,20 +88,29 @@ $answer=[Console]::In.ReadToEnd()
         }
     }
     $envelope={param($a)
-        Assert ($a -ceq $saved.answer.Substring(11)) 'Engine answer body changed before envelope'
+        Assert ($a -ceq $saved.answer) 'Engine answer body changed before envelope'
         $script:envelopes++
         New-PromptEnvelope -Label 'BENCH ANSWER EVIDENCE' -Content $a
     }
-    # The judge sees the timestamp-stripped body, so test that exact form.
+    # The judge receives the prefix-free answer without any parser repair.
     $invoke={param($r)
         if($r.purpose -eq 'answer'){$script:answers++;return $saved}
-        Assert ($r.prompt.Contains($saved.answer.Substring(11))) 'Unicode answer changed in judge prompt'
+        Assert ($r.prompt.Contains($saved.answer)) 'Unicode answer changed in judge prompt'
         $scores=@{};foreach($line in $rubric.lines){$scores[$line.id]=1}
         @{status='ok';answer=(@{scores=$scores}|ConvertTo-Json -Compress)}
     }
     $result=Invoke-RouterBench -Job deep-thinker -Candidate claude-opus-5-5 -Incumbent gpt-6.1-sol -StateDir $root -Tasks $tasks -CliInvoker $invoke -Limits {param($v) @{blocked=$false}} -Outcome $outcome -Envelope $envelope -NoAlerts
     Assert ($result.raw_gate -eq 'pass' -and $result.candidate.unknown -eq 0 -and $result.incumbent.unknown -eq 0) 'Saved successful response became unknown in real engine'
     Assert ($script:answers -eq 9 -and $script:outcomes -eq 9 -and $script:envelopes -eq 9) 'Unexpected retries or missing answer/envelope/outcome callbacks'
+    $rejectPrefix={param($r)
+        Assert ($r.purpose -eq 'answer') 'Prefixed answer must never reach a judge'
+        return $prefixedSaved
+    }
+    $rejected=Invoke-RouterBench -Job deep-thinker -Candidate claude-opus-5-5 -Incumbent gpt-6.1-sol -StateDir $root -Tasks $tasks -CliInvoker $rejectPrefix -Limits {param($v) @{blocked=$false}} -NoAlerts
+    Assert ($rejected.outcomes.Count -gt 0) 'Missing prefixed answer outcomes'
+    foreach($row in $rejected.outcomes){
+        Assert ($row.grading.status -eq 'fail' -and $row.grading.failure_category -eq 'answer_format' -and $row.grading.detail -match 'Timestamp prefix') 'Prefixed saved reply must fail answer_format'
+    }
     Write-Output 'PASS: IBM437 column196 reproduction, saved response, multilingual bidirectional IPC, real callback no retries'
 } finally {Exit-RouterTestCodexHome $fixtureCodexHome;Remove-CodexTempDirectory -Path $root -ExpectedLeafPrefix 'router-bench-json-'}
 Write-Output "SUMMARY: $script:checks passed; 0 failed"

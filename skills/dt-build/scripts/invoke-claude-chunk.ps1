@@ -340,6 +340,7 @@ $dispatchCount = 0
 $workerOrphansStopped = [System.Collections.Generic.List[object]]::new()
 $started = Get-Date
 $proc = $null
+$outputInvocation = $null
 $streamPath = "$OutputPath.stream.log"
 $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
@@ -348,6 +349,8 @@ $startCommit = if (-not $Preflight -and -not $ReadOnly) {
 } else { $null }
 
 try {
+    $outputInvocation = New-ClaudeCliInvocation
+    $args += $outputInvocation.Arguments
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
     $cliExtension = [System.IO.Path]::GetExtension($claudeCli).ToLowerInvariant()
@@ -423,12 +426,11 @@ try {
     $cliResult = $null
     $cliResultError = $null
     if (-not $timedOut -and $exitCode -eq 0) {
-        try { $cliResult = ConvertFrom-ClaudeCliResult -Stdout $stdout -RequestedModel $resolvedModel }
+        try { $cliResult = $outputInvocation.ReadResult($stdout, $resolvedModel) }
         catch { $cliResultError = $_.Exception.Message }
     }
     if ($cliResult) { $actualModel = $cliResult.resolved_model }
     $lastMessage = Invoke-SecretRedaction -Text $(if ($cliResult) { $cliResult.result } else { '' })
-    $lastMessage = [regex]::Replace($lastMessage, '\A(?:\[\d{1,2}:\d{2}(?::\d{2})?\][ \t]*)+', '')
     $streamText = Invoke-SecretRedaction -Text $stderr
     if (-not $cliResult) { $streamText += "`n--- stdout ---`n" + (Invoke-SecretRedaction -Text $stdout) }
     [System.IO.File]::WriteAllText($streamPath, $streamText)
@@ -671,6 +673,7 @@ catch {
     throw
 }
 finally {
+    if ($outputInvocation) { $outputInvocation.Dispose() }
     if ($proc) { $proc.Dispose() }
     if ($temporaryOutput) {
         Remove-Item -LiteralPath $OutputPath, "$OutputPath.stream.log" -Force -ErrorAction SilentlyContinue

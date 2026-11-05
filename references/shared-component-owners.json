@@ -1,4 +1,5 @@
 {
+  "scripts/model-router/tests/test-claude-output-integrity.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/probe-claude-output.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/probe-native-hooks.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-hook-probes.ps1": {"consumers": [], "summary_token": "model router"},
@@ -340,8 +341,8 @@
     "summary_token": "file-link contract"
   },
   "scripts/claude-cli-result.ps1": {
-    "consumers": ["dt-build", "dt-review"],
-    "summary_token": ""
+    "consumers": ["dt-build", "dt-review", "dt-image-gen", "dt-writing-draft", "dt-writing-edit"],
+    "summary_token": "model router"
   },
   "scripts/resolve-codex-model.ps1": {
     "consumers": ["dt-build", "dt-review"],

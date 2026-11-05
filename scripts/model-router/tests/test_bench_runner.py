@@ -340,7 +340,10 @@ def test_rubric_self_weight_and_effort_up(tmp_path: Path) -> None:
 
 def test_binary_scores_and_strip() -> None:
     rubric = {'lines': [{'id': 'one'}]}
-    assert engine.answer_body('[12:23:34] ```json\n{}\n```') == '{}'
+    for answer in ('[12:23:34] ```json\n{}\n```', '[12:23:34] {}'):
+        for structured in (True, False):
+            with pytest.raises(ValueError, match='Timestamp prefix'):
+                engine.answer_body(answer, structured=structured)
     for value in (True, .5, '1'):
         with pytest.raises(ValueError):
             engine.judge_score(rubric, json.dumps({'scores': {'one': value}}))
@@ -810,12 +813,17 @@ def test_ambiguous_fenced_answers_rejected():
     assert engine.grade_answer(BENCH / 'tasks/math-return-series', text)['status'] == 'fail'
 
 
-def test_saved_correct_math_answers_replay():
+def test_saved_timestamp_prefixed_math_answers_rejected():
     saved = json.loads(Path(__file__).with_name('fixtures').joinpath('bench-math-saved-answers.json').read_text(encoding='utf-8'))
     assert len(saved) == 2
     for record in saved:
         assert record['bank_sha256'] == '154bde92847354319143dcf5052029edd930dc3a3714e2bd7446a35c04330bd7'
-        assert engine.grade_answer(BENCH / 'tasks/math-return-series', record['answer'])['status'] == 'pass'
+        result = engine.grade_answer(BENCH / 'tasks/math-return-series', record['answer'])
+        assert result['status'] == 'fail' and result['failure_category'] == 'answer_format'
+        assert 'Timestamp prefix' in result['detail']
+        assert record['answer'][:11].endswith('] ')
+        plain = engine.grade_answer(BENCH / 'tasks/math-return-series', record['answer'][11:])
+        assert plain['status'] == 'pass'
 
 
 @pytest.mark.parametrize('key', ['developer_instructions', 'instructions'])

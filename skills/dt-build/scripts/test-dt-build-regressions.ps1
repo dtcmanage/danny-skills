@@ -1062,11 +1062,11 @@ Write-Envelope $report
     Assert-True ($LASTEXITCODE -eq 0) 'Claude preflight works without -Effort'
     $env:DT_FAKE_CLAUDE_MODE = 'stamped-preflight'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-stamped-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
-    Assert-True ($LASTEXITCODE -eq 0) 'timestamp-prefixed Claude OK passes preflight'
+    Assert-True ($LASTEXITCODE -ne 0) 'timestamp-prefixed Claude OK fails preflight'
     $env:DT_FAKE_CLAUDE_MODE = 'stamped-report'
     $stampedOutput = Join-Path $tempRoot 'claude-stamped-report.md'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $stampedOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'stamped report regression' -Json *> $null
-    Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw $stampedOutput) -match '\ADT_BUILD_REPORT_VERSION:') 'timestamp-prefixed Claude structured report parses and is retained without stamp'
+    Assert-True ($LASTEXITCODE -ne 0 -and [string]::IsNullOrEmpty([IO.File]::ReadAllText($stampedOutput))) 'timestamp-prefixed Claude structured report fails without retaining a stripped answer'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
 
     # Peers rely on inherited console defaults, just like installed PS1 shims.

@@ -15,16 +15,41 @@ function Get-ClaudeModelFamily {
     return $m
 }
 
+function New-ClaudeCliInvocation {
+    # --settings merges this single plugin override with configured settings. Do not
+    # supply hooks or restrict setting sources: inherited PreToolUse hooks must still run.
+    $path = Join-Path ([IO.Path]::GetTempPath()) ('claude-output-' + [guid]::NewGuid().ToString('N') + '.json')
+    try {
+        [IO.File]::WriteAllText($path, '{"enabledPlugins":{"message-timestamps@zoharbabin-claude-tools":false}}', [Text.UTF8Encoding]::new($false))
+        $invocation = [pscustomobject]@{ Arguments = @('--settings', $path); SettingsPath = $path }
+        $invocation | Add-Member -MemberType ScriptMethod -Name ReadResult -Value {
+            param([string]$Stdout, [string]$RequestedModel)
+            ConvertFrom-ClaudeCliResult -Stdout $Stdout -RequestedModel $RequestedModel
+        }
+        $invocation | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
+            Remove-Item -LiteralPath $this.SettingsPath -Force -ErrorAction SilentlyContinue
+        }
+        return $invocation
+    } catch {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        throw
+    }
+}
+
 function ConvertFrom-ClaudeCliResult {
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Stdout,
         # The alias or full id passed to --model; its family must match what ran.
         [Parameter(Mandatory)][string]$RequestedModel
     )
-    try { $envelope = $Stdout.Trim() | ConvertFrom-Json }
+    # Keep ISO-looking result strings literal instead of coercing them to DateTime.
+    try { $envelope = $Stdout.Trim() | ConvertFrom-Json -DateKind String }
     catch { throw "claude -p JSON envelope is unparseable: $($_.Exception.Message)" }
     if (-not $envelope -or -not $envelope.PSObject.Properties['result']) {
         throw 'claude -p JSON envelope has no result field.'
+    }
+    if ([string]$envelope.result -match '^\[\d\d:\d\d:\d\d\] ') {
+        throw 'claude -p result has a timestamp prefix; byte-exact output contract failed.'
     }
 
     $modelsUsed = @()

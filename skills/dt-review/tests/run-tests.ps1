@@ -176,6 +176,7 @@ try {
     Assert-True ($parseErrors.Count -eq 0) 'Claude invoker did not parse'
     $argAssignments = @($ast.FindAll({ param($node)
         $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Operator -eq [System.Management.Automation.Language.TokenKind]::Equals -and
         $node.Left.Extent.Text -in @('$preflightArgs', '$arguments')
     }, $true))
     Assert-True ($argAssignments.Count -eq 2) 'Claude preflight or round argument assembly is missing'
@@ -196,6 +197,10 @@ param([switch]$p, [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)
 $effortIndex = [array]::IndexOf($Rest, '--effort')
 if ($effortIndex -lt 0 -or $Rest[$effortIndex + 1] -notin @('high', 'medium')) { exit 9 }
 if ($Rest[[array]::IndexOf($Rest, '--model') + 1] -ne 'opus') { exit 10 }
+$settingsIndex = [array]::IndexOf($Rest, '--settings')
+if ($settingsIndex -lt 0) { exit 12 }
+$settings = Get-Content -LiteralPath $Rest[$settingsIndex + 1] -Raw | ConvertFrom-Json -AsHashtable
+if ($settings.Count -ne 1 -or $settings.enabledPlugins.Count -ne 1 -or $settings.enabledPlugins['message-timestamps@zoharbabin-claude-tools'] -ne $false) { exit 13 }
 if ([Console]::In.ReadToEnd() -notmatch 'single word OK') { exit 11 }
 '{"type":"result","is_error":false,"result":"OK","modelUsage":{"claude-opus-5-5":{"inputTokens":1,"outputTokens":1}}}'
 '@
@@ -208,6 +213,31 @@ if ([Console]::In.ReadToEnd() -notmatch 'single word OK') { exit 11 }
     }
     Assert-Throws { & $claudeInvoker -ProjectPath $project -Preflight -ReasoningEffort low -ClaudeCliPath $fakeClaude } 'EffortReason' 'Claude effort override without a reason was accepted'
     Assert-Throws { & $claudeInvoker -ProjectPath $project -Preflight -Model other -ClaudeCliPath $fakeClaude } 'ModelReason' 'Claude model override without a reason was accepted'
+
+    # Drive the real wrapper's failure and timeout paths with a fake CLI. Each
+    # peer records the settings path before failing so cleanup is observable.
+    $settingsReceipt = Join-Path $testRoot 'claude-settings-path.txt'
+    $failingClaude = Join-Path $testRoot 'failing-claude.ps1'
+    foreach ($mode in @('prefix', 'exit', 'timeout')) {
+        $peerBody = @'
+$index = [array]::IndexOf($args, '--settings')
+if ($index -lt 0) { throw 'missing settings' }
+[IO.File]::WriteAllText('__RECEIPT__', $args[$index+1])
+$null = [Console]::In.ReadToEnd()
+switch ('__MODE__') {
+    'exit' { exit 9 }
+    'timeout' { Start-Sleep -Seconds 30; exit 8 }
+    'prefix' { '{"result":"[04:15:28] OK","modelUsage":{"claude-opus-5-5":{"outputTokens":1}}}' }
+}
+'@
+        Write-Utf8 $failingClaude ($peerBody.Replace('__RECEIPT__', $settingsReceipt.Replace("'", "''")).Replace('__MODE__', $mode))
+        $pattern = switch ($mode) { 'prefix' { 'timestamp prefix' }; 'exit' { 'exited 9' }; 'timeout' { 'exceeded' } }
+        Assert-Throws { & $claudeInvoker -ProjectPath $project -Preflight -ClaudeCliPath $failingClaude -TimeoutMs 3000 } $pattern "Claude wrapper accepted $mode peer"
+        Assert-True (Test-Path -LiteralPath $settingsReceipt) "$mode peer did not start"
+        $temporarySettings = [IO.File]::ReadAllText($settingsReceipt)
+        Assert-True (-not (Test-Path -LiteralPath $temporarySettings)) "Claude wrapper leaked settings after $mode"
+        Remove-Item -LiteralPath $settingsReceipt
+    }
 
     # Claude CLI envelope parser records the exact model version and fails closed on a
     # family mismatch or a missing model report.

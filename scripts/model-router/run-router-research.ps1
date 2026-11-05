@@ -24,16 +24,11 @@ function Format-RouterCodexFailure {
 }
 
 function Get-RouterResearchJsonBody {
-    # The reply is one JSON object, possibly fenced. On 2026-10-07 every Claude reply opened with a "[HH:mm:ss] " preface
-    # (the local-time note each prompt carries, echoed back) and all nine categories failed to parse, so text before the
-    # first brace or after the last is dropped.
+    # JSON permits surrounding whitespace. Accept a complete Markdown JSON fence
+    # for research replies, but leave any other surrounding text for the JSON parser to reject.
     param([string]$Text)
     $body = ([string]$Text).Trim()
     if ($body -match '^```(?:json)?\s*([\s\S]*?)\s*```$') { $body = $Matches[1].Trim() }
-    if (-not $body.StartsWith('{')) {
-        $start = $body.IndexOf('{'); $end = $body.LastIndexOf('}')
-        if ($start -ge 0 -and $end -gt $start) { $body = $body.Substring($start, $end - $start + 1) }
-    }
     return $body
 }
 
@@ -209,21 +204,29 @@ function Invoke-RouterCategoryCall {
         $psi.FileName = (Get-Command pwsh -ErrorAction Stop).Source
         foreach ($arg in @(Get-Utf8PowerShellArguments -ScriptPath $cli)) { [void]$psi.ArgumentList.Add($arg) }
     } else { $psi.FileName = $cli }
-    foreach ($arg in @(Get-RouterCategoryCallArguments -Lane claude -OutPath '')) { [void]$psi.ArgumentList.Add($arg) }
+    . (Join-Path $PSScriptRoot '../claude-cli-result.ps1')
+    $callArguments = @(Get-RouterCategoryCallArguments -Lane claude -OutPath '')
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
     $utf8 = [Text.UTF8Encoding]::new($false)
     $psi.StandardInputEncoding = $utf8; $psi.StandardOutputEncoding = $utf8; $psi.StandardErrorEncoding = $utf8
-    $process = [Diagnostics.Process]::Start($psi)
+    $process = $null
+    $outputInvocation = $null
     try {
+        $outputInvocation = New-ClaudeCliInvocation
+        foreach ($arg in @($callArguments) + @($outputInvocation.Arguments)) { [void]$psi.ArgumentList.Add($arg) }
+        $process = [Diagnostics.Process]::Start($psi)
         $output = $process.StandardOutput.ReadToEndAsync()
         $errors = $process.StandardError.ReadToEndAsync()
         $process.StandardInput.Write($Prompt); $process.StandardInput.Close()
         if (-not $process.WaitForExit($TimeoutMs)) { $process.Kill($true); throw 'Category research timed out.' }
         if ($process.ExitCode -ne 0) { throw ('Category research failed: ' + $errors.Result) }
-        $response = $output.Result | ConvertFrom-Json -Depth 40
-        if ($response.PSObject.Properties['result']) { return [string]$response.result }
-        return [string]$output.Result
-    } finally { $process.Dispose() }
+        $response = $outputInvocation.ReadResult($output.Result, $script:RouterResearchCurrentModel)
+        if ($response.is_error) { throw 'Category research returned an error result.' }
+        return $response.result
+    } finally {
+        if ($process) { $process.Dispose() }
+        if ($outputInvocation) { $outputInvocation.Dispose() }
+    }
 }
 
 function Get-RouterNonComparableModels {

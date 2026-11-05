@@ -42,7 +42,8 @@ try {
     $unicode="§ snow 雪 emoji 😀 Tibetan བོད་`nline two`ttab and quote `""
     $nativePeer=Join-Path $temp 'unicode-peer.cjs'
     $receivedPath=Join-Path $temp 'unicode-received.txt'
-    [IO.File]::WriteAllText($nativePeer,'const fs=require("node:fs");let text="";process.stdin.setEncoding("utf8");process.stdin.on("data",chunk=>text+=chunk);process.stdin.on("end",()=>{fs.writeFileSync(process.argv[2],text);process.stdout.write(JSON.stringify({result:text}));process.stderr.write(text);});')
+    [IO.File]::WriteAllText($nativePeer,'const fs=require("node:fs");let text="";process.stdin.setEncoding("utf8");process.stdin.on("data",chunk=>text+=chunk);process.stdin.on("end",()=>{fs.writeFileSync(process.argv[2],text);process.stdout.write(JSON.stringify({result:text,modelUsage:{"claude-opus-5-5":{inputTokens:1,outputTokens:1}}}));process.stderr.write(text);});')
+    $script:RouterResearchCurrentModel = 'opus'
     $native=(Get-Command node).Source
     $priorArguments=(Get-Item Function:Get-RouterCategoryCallArguments).ScriptBlock
     function Get-RouterCategoryCallArguments {param($Lane,$OutPath) @($nativePeer,$receivedPath)}
@@ -56,18 +57,29 @@ $text=[Console]::In.ReadToEnd()
 [IO.File]::WriteAllText($args[0],$text)
 [IO.File]::WriteAllText($args[0]+'.args.json',(ConvertTo-Json -InputObject @($args) -Compress))
 if($args -contains '--fail'){[Console]::Error.Write($text);exit 9}
-[Console]::Write((@{result=$text}|ConvertTo-Json -Compress))
+[Console]::Write((@{result=$text;modelUsage=@{'claude-opus-5-5'=@{inputTokens=1;outputTokens=1}}}|ConvertTo-Json -Depth 5 -Compress))
 '@)
         $native=$psPeer
         $peerArgs=@($receivedPath,'','space value','quote " value',$unicode,'literal $(throw "must not execute"); &')
         function Get-RouterCategoryCallArguments {param($Lane,$OutPath) $peerArgs}
         $reply=Invoke-RouterCategoryCall -Category deep-research -Lane claude -Prompt $unicode -TimeoutMs 10000
         Assert-True ($reply -ceq $unicode -and (Get-Content -Raw $receivedPath) -ceq $unicode) 'PS1 Claude research defaults Unicode prompt/answer exact'
-        Assert-True ((Get-Content -Raw ($receivedPath+'.args.json')) -ceq (ConvertTo-Json -InputObject $peerArgs -Compress)) 'PS1 Claude research preserves empty, spaced, quoted, Unicode and literal shell argv'
+        $actualArgs = @(Get-Content -Raw ($receivedPath+'.args.json') | ConvertFrom-Json)
+        Assert-True ((ConvertTo-Json -InputObject @($actualArgs | Select-Object -First $peerArgs.Count) -Compress) -ceq (ConvertTo-Json -InputObject $peerArgs -Compress)) 'PS1 Claude research preserves empty, spaced, quoted, Unicode and literal shell argv'
+        Assert-True ($actualArgs[-2] -ceq '--settings' -and -not (Test-Path -LiteralPath $actualArgs[-1])) 'research invocation settings cleaned after success'
         $peerArgs+=@('--fail')
         $errorText=''
         try {Invoke-RouterCategoryCall -Category deep-research -Lane claude -Prompt $unicode -TimeoutMs 10000;throw 'accepted failed peer'} catch {$errorText=$_.Exception.Message}
         Assert-True ($errorText -ceq ('Category research failed: '+$unicode)) 'PS1 Claude research Unicode stderr retained on nonzero exit'
+        $failedArgs = @(Get-Content -Raw ($receivedPath+'.args.json') | ConvertFrom-Json)
+        Assert-True (-not (Test-Path -LiteralPath $failedArgs[-1])) 'research invocation settings cleaned after failure'
+        [IO.File]::WriteAllText($psPeer, [IO.File]::ReadAllText($psPeer).Replace("if(`$args -contains '--fail')", "if(`$args -contains '--timeout'){Start-Sleep -Seconds 30};if(`$args -contains '--fail')"))
+        $peerArgs=@($receivedPath,'--timeout')
+        $errorText=''
+        try {Invoke-RouterCategoryCall -Category deep-research -Lane claude -Prompt $unicode -TimeoutMs 3000;throw 'accepted timeout peer'} catch {$errorText=$_.Exception.Message}
+        Assert-True ($errorText -ceq 'Category research timed out.') 'research wrapper enforces fake CLI timeout'
+        $timeoutArgs = @(Get-Content -Raw ($receivedPath+'.args.json') | ConvertFrom-Json)
+        Assert-True (-not (Test-Path -LiteralPath $timeoutArgs[-1])) 'research invocation settings cleaned after timeout'
     } finally {Remove-Item Function:Get-Command;Set-Item Function:Get-RouterCategoryCallArguments $priorArguments}
     $good = Fixture 'complex-coding' 'gpt-6.1-sol'
     Assert-True (Test-RouterReadings $good 'complex-coding' @('gpt-6.1-sol')) 'good schema'
@@ -102,16 +114,29 @@ if($args -contains '--fail'){[Console]::Error.Write($text);exit 9}
     $null = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol') -Lane claude
     $stored = Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json
     Assert-True ($stored.readings.Count -eq 3 -and @($stored.readings | Where-Object { $_.effort_class -eq 'low' -and $_.results[0].score -eq 92 }).Count -eq 1) 'a reading with a different independence flag never overwrites or inherits another'
-    # A reply with a timestamp preface before the object (every Claude reply on 2026-10-07) and a fenced one both parse.
-    Assert-True ((Get-RouterResearchJsonBody -Text ('[01:15:12] ' + '{"a":1}')) -ceq '{"a":1}') 'timestamp preface dropped'
-    Assert-True ((Get-RouterResearchJsonBody -Text ("[01:15:12] ``````json`n{`"a`":1}`n``````")) -ceq '{"a":1}') 'preface before a fence dropped'
+    # Preserve invalid surrounding text so parsing rejects it; a complete fence is supported.
+    foreach ($text in @('[01:15:12] {"a":1}', "[01:15:12] ``````json`n{`"a`":1}`n``````")) {
+        $rejected = $false
+        try { Get-RouterResearchJsonBody -Text $text | ConvertFrom-Json | Out-Null } catch { $rejected = $true }
+        Assert-True $rejected 'timestamp-prefaced research JSON rejected'
+    }
     Assert-True ((Get-RouterResearchJsonBody -Text ("``````json`n{`"a`":1}`n``````")) -ceq '{"a":1}') 'fence alone stripped'
-    $script:RouterResearchInvoker = { param($category,$lane,$prompt) return ('[01:15:12] ' + (Fixture $category 'gpt-6.1-sol' '2026-09-15' 93 | ConvertTo-Json -Depth 20)) }
-    $prefaced = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol') -Lane claude
-    Assert-True (-not ($prefaced.failed_categories -contains 'complex-coding') -and @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt' -ErrorAction SilentlyContinue).Count -eq 0) 'a reply with a timestamp preface before the JSON object is read'
+    foreach ($lane in @('claude','codex')) {
+        foreach ($fenced in @($false,$true)) {
+            $script:RouterResearchInvoker = { param($category,$lane,$prompt)
+                $json = Fixture $category 'gpt-6.1-sol' '2026-09-15' 93 | ConvertTo-Json -Depth 20
+                if ($fenced) { $json = "``````json`n$json`n``````" }
+                return ('[01:15:12] ' + $json)
+            }
+            $priorFailures = @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt' -ErrorAction SilentlyContinue).Count
+            $prefaced = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol') -Lane $lane
+            Assert-True ($prefaced.failed_categories -contains 'complex-coding' -and @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt').Count -eq ($priorFailures + 1)) "$lane timestamp-prefaced reply records failure (fenced=$fenced)"
+        }
+    }
+    $priorFailures = @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt').Count
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) return 'refused' }
     $pass = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol')
-    Assert-True ($pass.failed_categories -contains 'complex-coding' -and @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt').Count -eq 1 -and ((Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json).readings[0].results[0].score -eq 91)) 'invalid saved and stored reading untouched'
+    Assert-True ($pass.failed_categories -contains 'complex-coding' -and @(Get-ChildItem (Join-Path $temp 'research-failures') -Filter 'complex-coding@*.txt').Count -eq ($priorFailures + 1) -and ((Get-Content (Join-Path $temp 'readings/complex-coding.json') -Raw | ConvertFrom-Json).readings[0].results[0].score -eq 91)) 'invalid saved and stored reading untouched'
     $orphan = Join-Path $temp 'readings/.pass-orphan'; New-Item -ItemType Directory -Path $orphan | Out-Null
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) return (Fixture $category 'gpt-6.1-sol' | ConvertTo-Json -Depth 20) }
     $null = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol')

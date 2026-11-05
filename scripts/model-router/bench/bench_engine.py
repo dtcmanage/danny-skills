@@ -88,7 +88,9 @@ def candidate_prompt(task: Path, *, private: bool = False) -> str:
 
 
 def answer_body(answer: str, *, structured: bool = True) -> str:
-    answer = re.sub(r'^\s*\[\d{2}:\d{2}:\d{2}\]\s*', '', answer).strip()
+    if re.match(r'^\[\d\d:\d\d:\d\d\] ', answer):
+        raise ValueError('Timestamp prefix violates the byte-exact output contract')
+    answer = answer.strip()
     fences = list(re.finditer(r'(?m)^[ \t]{0,3}(`{3,})([^\r\n]*)\r?$', answer))
     whole = bool(fences and not answer[:fences[0].start()].strip() and not answer[fences[-1].end():].strip())
     # Rubric answers are prose: a quoted block inside the answer is evidence, not its entirety.

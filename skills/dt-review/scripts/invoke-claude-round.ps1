@@ -203,14 +203,17 @@ $executionDir = Join-Path $env:TEMP ("dt-review-claude-exec-{0}" -f [guid]::NewG
 New-Item -ItemType Directory -Path $executionDir -Force | Out-Null
 
 if ($Preflight) {
+    $outputInvocation = $null
     try {
+        $outputInvocation = New-ClaudeCliInvocation
         $preflightArgs = @('-p', '--model', $RequestedModel, '--effort', $ReasoningEffort, '--permission-mode', 'default', '--output-format', 'json')
+        $preflightArgs += $outputInvocation.Arguments
         $result = Invoke-ClaudeProcess -CliPath $claudeCli -Arguments $preflightArgs `
             -Prompt 'Reply with the single word OK and nothing else. Do not inspect or modify files.' `
             -WorkingDirectory $executionDir -TimeoutMs $TimeoutMs
         if ($result.timed_out) { throw "Claude preflight exceeded ${TimeoutMs}ms." }
         if ($result.exit_code -ne 0) { throw "Claude preflight exited $($result.exit_code): $($result.stderr.Trim())" }
-        $parsed = ConvertFrom-ClaudeCliResult -Stdout $result.stdout -RequestedModel $RequestedModel
+        $parsed = $outputInvocation.ReadResult($result.stdout, $RequestedModel)
         if ($parsed.is_error -or $parsed.result.Trim() -ne 'OK') { throw "Claude preflight expected OK, received '$($parsed.result.Trim())'." }
         [pscustomobject]@{
             status = 'ok'
@@ -229,6 +232,7 @@ if ($Preflight) {
         return
     }
     finally {
+        if ($outputInvocation) { $outputInvocation.Dispose() }
         Remove-Item -LiteralPath $executionDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
@@ -302,7 +306,9 @@ $suffixSha256 = [System.BitConverter]::ToString(
     [System.Security.Cryptography.SHA256]::HashData(
         [System.Text.UTF8Encoding]::new($false).GetBytes($stdinSuffix))).Replace('-', '').ToUpperInvariant()
 
+$outputInvocation = $null
 try {
+    $outputInvocation = New-ClaudeCliInvocation
     $cliVersion = ((Invoke-ClaudeProcess -CliPath $claudeCli -Arguments @('--version') -Prompt '' `
         -WorkingDirectory $executionDir -TimeoutMs 30000).stdout).Trim()
     Assert-DtReviewInvocationReceipt -Receipt $inputReceipt -Round $Round -Tier $Tier
@@ -313,6 +319,7 @@ try {
         '--permission-mode', 'default',
         '--output-format', 'json'
     )
+    $arguments += $outputInvocation.Arguments
     $processResult = Invoke-ClaudeProcess `
         -CliPath $claudeCli `
         -Arguments $arguments `
@@ -328,7 +335,7 @@ try {
     if ($processResult.exit_code -ne 0) {
         throw "Claude round $Round failed with exit code $($processResult.exit_code). Redacted stream: $streamPath"
     }
-    try { $cliResult = ConvertFrom-ClaudeCliResult -Stdout $processResult.stdout -RequestedModel $RequestedModel }
+    try { $cliResult = $outputInvocation.ReadResult($processResult.stdout, $RequestedModel) }
     catch { throw "Claude round ${Round}: $($_.Exception.Message) Redacted stream: $streamPath" }
     if ($cliResult.is_error) {
         throw "Claude round $Round reported is_error. Redacted stream: $streamPath"
@@ -430,5 +437,6 @@ try {
     } | ConvertTo-Json -Depth 6 -Compress
 }
 finally {
+    if ($outputInvocation) { $outputInvocation.Dispose() }
     Remove-Item -LiteralPath $executionDir -Recurse -Force -ErrorAction SilentlyContinue
 }
