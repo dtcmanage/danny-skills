@@ -1,0 +1,20 @@
+[
+  {
+    "tool_use_id": "toolu_01KYDn4nysSRYHLM2vTmzzSw",
+    "tool_name": "Agent",
+    "session_id": "<redacted>",
+    "tool_input": {
+      "prompt": "<redacted>",
+      "description": "<redacted>",
+      "subagent_type": "fork"
+    },
+    "effort": {
+      "level": "medium"
+    },
+    "transcript_path": "<redacted>",
+    "permission_mode": "bypassPermissions",
+    "cwd": "<redacted>",
+    "hook_event_name": "PreToolUse",
+    "prompt_id": "<redacted>"
+  }
+]

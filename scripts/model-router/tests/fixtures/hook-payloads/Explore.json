@@ -1,0 +1,20 @@
+[
+  {
+    "tool_use_id": "toolu_016uQVGz4GmhgS8eP7tqLfa5",
+    "tool_input": {
+      "prompt": "<redacted>",
+      "description": "<redacted>",
+      "subagent_type": "Explore"
+    },
+    "session_id": "<redacted>",
+    "prompt_id": "<redacted>",
+    "tool_name": "Agent",
+    "transcript_path": "<redacted>",
+    "permission_mode": "bypassPermissions",
+    "cwd": "<redacted>",
+    "hook_event_name": "PreToolUse",
+    "effort": {
+      "level": "medium"
+    }
+  }
+]

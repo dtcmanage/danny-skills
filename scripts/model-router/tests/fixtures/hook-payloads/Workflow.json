@@ -1,0 +1,19 @@
+[
+  {
+    "tool_input": {
+      "description": "<redacted>",
+      "script": "export const meta = {\n  name: 'protocol-test-single-agent',\n  description: 'Protocol test: one general-purpose agent asked to return OK',\n  phases: [{ title: 'Test' }],\n}\n\nconst result = await phase('Test', () =>\n  agent('return OK', { label: 'protocol-test', phase: 'Test' })\n)\nreturn result\n"
+    },
+    "tool_use_id": "toolu_018uTnJUP1HmiSLYWZAN6hZB",
+    "tool_name": "Workflow",
+    "session_id": "<redacted>",
+    "prompt_id": "<redacted>",
+    "effort": {
+      "level": "medium"
+    },
+    "transcript_path": "<redacted>",
+    "permission_mode": "bypassPermissions",
+    "cwd": "<redacted>",
+    "hook_event_name": "PreToolUse"
+  }
+]

@@ -1,0 +1,21 @@
+[
+  {
+    "tool_input": {
+      "model": "sonnet",
+      "prompt": "<redacted>",
+      "description": "<redacted>",
+      "subagent_type": "general-purpose"
+    },
+    "tool_use_id": "toolu_01KNVUTU3NVuyFHJtE1TdTGS",
+    "tool_name": "Agent",
+    "hook_event_name": "PreToolUse",
+    "session_id": "<redacted>",
+    "prompt_id": "<redacted>",
+    "effort": {
+      "level": "medium"
+    },
+    "transcript_path": "<redacted>",
+    "cwd": "<redacted>",
+    "permission_mode": "bypassPermissions"
+  }
+]

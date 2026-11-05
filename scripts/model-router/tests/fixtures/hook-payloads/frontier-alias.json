@@ -1,0 +1,21 @@
+[
+  {
+    "tool_use_id": "toolu_01LL2w5gqqfDphEjN3ek8iHx",
+    "tool_input": {
+      "model": "opus",
+      "prompt": "<redacted>",
+      "description": "<redacted>",
+      "subagent_type": "general-purpose"
+    },
+    "hook_event_name": "PreToolUse",
+    "session_id": "<redacted>",
+    "prompt_id": "<redacted>",
+    "tool_name": "Agent",
+    "transcript_path": "<redacted>",
+    "cwd": "<redacted>",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "medium"
+    }
+  }
+]
