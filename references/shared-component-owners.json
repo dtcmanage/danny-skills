@@ -1,6 +1,9 @@
 {
   "scripts/model-router/tests/test_dispatch_reporting.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/codex-rollout-exec-shape.jsonl": {"consumers": [], "summary_token": "model router"},
+  "references/model-router/dispatch-guard-staged-edits.md": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/probe-fixed-paths.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test-dispatch-migration.ps1": {"consumers": [], "summary_token": "model router"},
   "references/model-router/dispatch-guard-release.md": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-guard-settings.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test_dispatch_guard.py": {"consumers": [], "summary_token": "model router"},

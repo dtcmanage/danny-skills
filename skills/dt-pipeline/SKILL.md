@@ -3,7 +3,7 @@ name: dt-pipeline
 description: "Run the full plan -> review -> build pipeline as one command. Trigger on /dt-pipeline <objective-or-handoff-path>, 'run the full pipeline on X', or 'plan, review, and build X'. Do NOT use for single-file fixes (do those directly) or for fuzzy objectives that still need grilling to define the endgame (that is dt-plan first)."
 disable-model-invocation: false
 user-invocable: true
-allowed-tools: "Bash(git:*) Bash(pwsh:*) Read Write Edit Agent AskUserQuestion ScheduleWakeup"
+allowed-tools: "Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion ScheduleWakeup"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
   version: 0.1.5
@@ -24,8 +24,8 @@ If this skill has stricter domain-specific behavior, keep that stricter behavior
 
 `dt-pipeline` runs the whole delivery pipeline — author the plan, converge it through `dt-review`, execute
 it through `dt-build` — as one command, with a rolling crash-resume checkpoint and a steady status pulse.
-It replaces the hand-dictated orchestration ("you author the plan, send it to a subagent for dt-review,
-then use a subagent to send it to dt-build") with a single invocation.
+It replaces hand-dictated orchestration of each stage with a single invocation. Review and build run as
+headless workers under `dt-job`, never as spawned subagents.
 
 ## When this fires
 
@@ -79,23 +79,29 @@ Rules:
    `## Implementation Sequence` and `## Validation Gates` surface so the downstream roadmap producer has
    something to lift). Rewrite `_build-state.md` (`phase: plan` complete, next: review).
 
-2. **Review.** Spawn a subagent to run `dt-review` on the plan to convergence. The subagent runs the full
-   adversarial loop and returns the finalized design doc — `design-final-<slug>.md` (slug describing what
-   is being built) in the planning folder. The spawn prompt MUST state dt-review's subagent contract
-   explicitly: on any `USER_DECISION` cap gate or A/B/C adjudication, the agent immediately sends the
-   full decision package (options, unresolved findings, state, recommendation) via SendMessage to this
-   session and stays responsive for the relayed decision — never idles waiting for Danny directly.
-   Relay each round's verdict in the status pulse; surface A/B/C adjudication questions to Danny
-   immediately (that is a genuine fork, not a pause-for-approval).
+2. **Review.** Write a worker prompt to `review-stage-prompt.md` in the planning folder that runs
+   `dt-review` on the plan to convergence, then launch it as a job, not a spawned subagent:
+   `pwsh -NoProfile -File "<danny-skills>/skills/dt-build/scripts/dt-job.ps1" -Verb start -RunFolder <planning-folder> -Kind worker -Category planning -Command "pwsh -NoProfile -File '<danny-skills>/scripts/model-router/dispatch.ps1' -ProjectPath '<dir>' -Category planning -PromptPath '<planning-folder>/review-stage-prompt.md' -OutputPath '<planning-folder>/review-stage-result.md' -SelectionReason '<one line>' -AdHoc -SingleDispatch -AllowOutputInProject -Live"`.
+   Use `invoke-claude-chunk.ps1` or `invoke-codex-chunk.ps1` with `-AdHoc` under the same job only when a
+   lane is fixed. The worker runs the full adversarial loop and leaves the finalized design doc —
+   `design-final-<slug>.md` (slug describing what is being built) in the planning folder. The prompt MUST
+   state dt-review's worker contract explicitly: on any `USER_DECISION` cap gate or A/B/C adjudication,
+   the worker immediately writes the full decision package (options, unresolved findings, state,
+   recommendation) to `decision-needed.md` in the planning folder and returns its path — never idles
+   waiting for Danny directly. When the job ends, check for that file before treating the phase as done:
+   surface its questions to Danny immediately (that is a genuine fork, not a pause-for-approval), record
+   his answer beside it, and start a fresh worker with the answer in its prompt.
+   Relay each round's verdict in the status pulse.
    Rewrite `_build-state.md` (`phase: review` complete, design path recorded, next: build).
 
-3. **Build.** Spawn a subagent to run `dt-build` from the design (or `roadmap.md` when one exists —
+3. **Build.** Launch a job the same way, not a spawned subagent, with a `build-stage-prompt.md` that runs
+   `dt-build` from the design (or `roadmap.md` when one exists —
    dt-build auto-generates the roadmap from a design otherwise; for heavy builds prefer a deliberate
    `dt-roadmap` pass first, per dt-build's own guidance). dt-build rewrites `_build-state.md` after every
    milestone's acceptance gate passes (its step 6.h), so the checkpoint stays current without this
    orchestrator polling. Rewrite it yourself at the phase boundary (`phase: build` entered / complete).
 
-4. **Status cadence (default on).** While any subagent runs, post a one-line progress update to Danny
+4. **Status cadence (default on).** While any phase job runs, post a one-line progress update to Danny
    roughly every 10 minutes — phase, current milestone/round, and whether anything is blocked
    (e.g. `build: M03/M07 accepted, M04 in verify/fix attempt 1, no blockers`). Use `ScheduleWakeup`
    where available rather than blocking. Danny can turn the pulse off ("quiet mode") or retune the
@@ -110,8 +116,8 @@ Rules:
 6. **Prod-write single-threading (binding restatement of the standing global rule).** When any pipeline
    step writes to a live system — a prod database, a deployed service, a live branch, an external API
    with side effects — single-thread it: send the full instruction for that one step, wait for the write
-   to confirm, verify the result against the live system, and only then queue the next instruction to the
-   subagent. Never batch a second instruction behind an unconfirmed prod write; async messages cross and
+   to confirm, verify the result against the live system, and only then start a worker with the next
+   instruction. Never batch a second instruction behind an unconfirmed prod write; async messages cross and
    a stale instruction can land after a correction.
 
 7. **Completion.** When dt-build's acceptance ledger lands: rewrite `_build-state.md` with
@@ -126,7 +132,7 @@ Rules:
 
 - One pipeline per project at a time: an unfinished `_build-state.md` blocks a fresh start (step 5).
 - The orchestrator never redoes a converged stage; stage detection (step 0) is the entry contract.
-- Subagents own their stage end-to-end; this skill does not reach into dt-review/dt-build internals —
+- Workers own their stage end-to-end; this skill does not reach into dt-review/dt-build internals —
   it feeds inputs, relays status, and reads outputs.
 - Checkpoints only at genuine forks (A/B/C adjudication, a real blocker, an irreversible or
   outward-facing boundary) — the pipeline is an already-authorized multi-step process and runs start to

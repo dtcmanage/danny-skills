@@ -38,9 +38,9 @@ function Test-RouterCodexSelectable {
 }
 
 function Get-RouterAgentAlias {
-    # Host-native Agent dispatch takes a family alias, not a model id: map the router's
+    # dt-review's Claude invoker takes a family alias, not a model id: map the router's
     # Claude pick (claude-<family>-...) to opus, sonnet, haiku, or fable. Null when the
-    # model has no Agent alias; dispatch it through invoke-claude-chunk.ps1 instead.
+    # model has no family alias.
     param([Parameter(Mandatory)][string]$Model)
     $match = [regex]::Match($Model.ToLowerInvariant(), '^claude-(opus|sonnet|haiku|fable)-')
     if (-not $match.Success) { return $null }

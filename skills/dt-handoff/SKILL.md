@@ -109,7 +109,7 @@ Write it as a starting prompt, not a status report. Use this structure:
 - **Decisions & gotchas** — choices already made and traps to avoid.
 - **Execution setup** — include by default for any build-type handoff (the next session writes code, runs migrations, or touches prod). Keep it one tight paragraph in this shape:
 
-  > Run this build as an orchestrator: delegate the work to named subagents (e.g. `builder`, `verifier`) and keep the orchestrator itself out of file-editing. Single-thread all prod writes and other irreversible steps — issue one instruction, wait for it to complete, verify the result against the live system, then send the next; never queue instructions across an irreversible boundary. Maintain a rolling `_build-state.md` checkpoint in the project root: update it after each completed step with what shipped, what was verified, and what is next, so an interrupted build can resume cold.
+  > Run this build as an orchestrator: delegate the work to named dt-job workers (e.g. `builder`, `verifier`), started through dt-build's wrappers or the model router's `dispatch.ps1`, and keep the orchestrator itself out of file-editing. Single-thread all prod writes and other irreversible steps — issue one instruction, wait for it to complete, verify the result against the live system, then send the next; never queue instructions across an irreversible boundary. Maintain a rolling `_build-state.md` checkpoint in the project root: update it after each completed step with what shipped, what was verified, and what is next, so an interrupted build can resume cold.
 
   Skip this section only for non-build handoffs (research, drafting, review).
 - **Suggested skills** — skills the next session should invoke, if any.

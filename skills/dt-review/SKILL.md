@@ -3,7 +3,7 @@ name: dt-review
 description: "Run an adversarial Claude-vs-Codex architecture/design review on a substantive plan until it converges or reaches an explicit cap decision. Trigger on /dt-review, 'dt-review [plan-path]', or requests to pressure-test a non-trivial design. Do NOT use for small bug fixes, single-file edits, initial planning, or build execution."
 disable-model-invocation: false
 user-invocable: true
-allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion SendMessage"
+allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
   version: 1.17.3
@@ -254,11 +254,12 @@ when the open findings are coherence or completeness gaps inside machinery the r
 recommend residual-risk finalization (or cutting the machinery) instead — extension rounds are where
 light reviews accrete.
 
-**Subagent contract.** When this skill runs inside a subagent (dt-pipeline's review phase or any
-spawned agent), there is no direct channel to Danny: on `USER_DECISION` (and any A/B/C adjudication),
-immediately send the full decision package — the options, the unresolved findings, current state, and
-a recommendation — via SendMessage to the spawning session, then stay responsive for the relayed
-decision. Going idle without having sent the package is a contract violation.
+**Worker contract.** When this skill runs as a worker (dt-pipeline's review phase or any other
+headless launch), there is no direct channel to Danny and no message channel to the caller: on
+`USER_DECISION` (and any A/B/C adjudication), immediately write `decision-needed.md` in the planning
+folder with the full decision package — the options, the unresolved findings, current state, and a
+recommendation — then end with its path as your final message. The caller relays the decision and
+starts a fresh worker with it. Returning without having written the package is a contract violation.
 
 If Danny selects an extension, persist it before assembling the next prompt:
 
@@ -283,5 +284,5 @@ Follow `references/finalization.md`: carry the build-intake revalidation table, 
 under A1-A8, then run `<skill>/scripts/finalize-review.ps1`. Only that script may write the final artifact and
 delete scratch. Do not generate HTML; that is `dt-visualize-design` on explicit request.
 
-When called by `dt-pipeline` or a subagent, return the final paths to the caller without asking whether to
+When called by `dt-pipeline` or as a worker, return the final paths to the caller without asking whether to
 implement. Otherwise hand off the final path and stop.

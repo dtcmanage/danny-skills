@@ -92,7 +92,8 @@ try {
     $codexText = Get-Content -Raw -LiteralPath (Join-Path $refDir 'adapter-codex.md')
     Assert-True ($claudeText -match 'run_in_background: true' -and $claudeText -match 'Monitor heartbeats') 'Claude waits through one background Bash call and bans Monitor heartbeats'
     Assert-True ($claudeText.Contains('Interactive approve/resume refusal is instruction-only (no env var), a known residual.')) 'Claude documents the interactive approve/resume residual'
-    Assert-True ($claudeText -match 'Agent tool') 'Claude adapter keeps the Agent tool path'
+    Assert-True (-not ($claudeText -match 'agent_alias|use the Agent tool|Agent-tool')) 'Claude adapter has no native Agent dispatch path'
+    Assert-True ($claudeText.Contains('Launch every worker as a job') -and $claudeText.Contains('<skill>/scripts/invoke-claude-chunk.ps1')) 'Claude adapter launches every worker through a wrapper job'
     Assert-True ($claudeText -match 'the PreToolUse hook denies it' -and $claudeText -match 'Agent, `dt-job start`, and every shell command') 'Claude adapter names the hook denial of dt-job start past the hard limit'
     Assert-True ($codexText -match 'in the foreground' -and $codexText -match 'call `dt-job wait` again') 'Codex waits in the foreground and re-calls on wait_timeout'
     Assert-True (-not $codexText.Contains('CronCreate')) 'Codex adapter does not mention CronCreate'
@@ -109,6 +110,12 @@ try {
     Assert-True ($adapterSection -match 'everything else in this SKILL\.md is shared') 'SKILL.md says the rest is shared'
     Assert-True ((Get-WordCount $skillText) -le $skillWordCap) "SKILL.md is $(Get-WordCount $skillText) words, over $skillWordCap"
     Assert-True ($skillText.Contains('measure-build-host.ps1') -and $skillText.Contains('computed cap') -and $skillText.Contains('exclusive_reason') -and $skillText.Contains('plan''s named cause')) 'dt-build requires measured throughput and scoped serial reasons'
+
+    foreach ($stale in @('host-native Agent', 'agent_alias', 'TaskStop', 'Agent-tool dispatch', 'has the Agent tool')) {
+        Assert-True (-not $skillText.Contains($stale)) "SKILL.md has no native Agent path: $stale"
+    }
+    Assert-True ($skillText -match 'Every pick goes through its wrapper') 'SKILL.md sends every pick through its wrapper'
+    Assert-True ($skillText -notmatch '(?m)^allowed-tools:.*\bAgent\b') 'SKILL.md does not request the Agent tool'
 
     # SKILL.md: Context discipline carries the script rules and keeps the advisory ones.
     $discipline = [regex]::Match($skillText, '(?s)## Context discipline\s*(.*?)(?=\r?\n## )').Groups[1].Value

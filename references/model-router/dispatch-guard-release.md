@@ -102,8 +102,41 @@ preserves an unknown actual model, and leaves independent acceptance null. It
 does not strip timestamps. Raw prompts and raw guard reasons containing paths
 are not persisted. The temporary hooks and settings are removed afterward.
 
-## M06 collateral inventory (reserved)
+## M06 collateral inventory
 
-Pending M06: list every outside-pack Agent caller, its measured or expected
-effect, and its release disposition. Do not activate while this inventory and
-the staged out-of-repo edits remain pending.
+Read-only inventory, 2026-11-06 at 12:46 AM ET, Claude Code 2.1.319. Effects are
+expected from the text, not measured: nothing here was run. Plugin paths are under
+`D:/Claude/plugins/cache/claude-plugins-official/`. There is no special bypass for
+any of them: once the hook is installed, each Agent call below is denied like any
+other, and the deny reason names `dispatch.ps1`.
+
+| Caller | Path | How it calls Agent | Expected effect | Disposition |
+| :-- | :-- | :-- | :-- | :-- |
+| code-review plugin command (enabled) | `code-review/1.0.1/commands/code-review.md` | Prompt text tells the session to launch haiku, sonnet and opus agents, in parallel at steps 4-5 | Cannot run its review | Use dt-review, or `dispatch.ps1 -Category code-review`, for reviews. Five older cached copies of this command are not the installed version. |
+| skill-creator plugin skill (enabled) | `skill-creator/1aa4a4b10e6c/skills/skill-creator/SKILL.md` lines 60, 171, 225 | Prompt text tells the session to spawn test-case and grader subagents | Its eval loop cannot run | Accept: danny-skills is not routed through this harness. |
+| code-simplifier plugin agent (enabled) | `code-simplifier/1.0.0/agents/code-simplifier.md` | An agent definition, reachable only through an Agent call | Cannot be started | Accept. |
+| claude-code-setup plugin skill (enabled) | `claude-code-setup/1.0.0/skills/claude-automation-recommender/` | Recommends subagents as output; no launch instruction found | None expected | Accept. |
+| claude-md-management, commit-commands, frontend-design (enabled); zoharbabin message-timestamps (enabled) | Their install folders | No launch instruction found | None expected | Accept. |
+| security-guidance, ralph-loop (disabled) | Their install folders | security-guidance mentions subagents in its own hook code; ralph-loop has no launch instruction | None while disabled | Recheck if enabled. |
+| `/batch` (bundled) | `C:/Users/Danny/.local/bin/claude.exe`, string scan | Its prompt launches research subagents and background worker agents | Cannot run | Accept; use dt-build for large changes. |
+| `/fork`, `/subtask` (bundled) | Same binary | Spawn a background agent or a subagent with the full conversation. A second `/fork` entry copies the conversation into a new session | Spawning forms denied if they pass the hook; not measured beyond the M02 fork payload | Accept. |
+| Plan mode's exploration prompt (bundled) | Same binary | Tells the session to launch Explore agents in parallel | Each launch denied; plan mode continues with direct reads | Accept. |
+| An unattributed prompt listing `Task` in its allowed tools, and one saying "Use the Task tool to spawn parallel agents" (bundled) | Same binary | Prompt text; the scan could not tie these to a command name. `security-review` is one unconfirmed candidate | Those launches denied | Accept; reports as a denied call if met. |
+| deep-research workflow (bundled) | Same binary | A Workflow that fans out agents | Workflow entry is allowed; M02 saw no inner Agent reach the hook, so it stays unsupported, not enforced | Measured by the collector's Workflow count. |
+| `/ultrareview` (bundled) | Same binary | Runs in a cloud session | Local hook does not apply | None. |
+
+The scan found no bundled `/simplify`, `/review` or `/code-review` command by name in
+this build; a later Claude Code update can add callers, and a denied call says so
+when it happens.
+
+**Capability lost.** A native Agent can use MCP servers and inherit the live
+conversation. Dispatch workers cannot. Ad hoc Claude workers keep `WebSearch` and
+`WebFetch`, and context passes in the prompt file, but work that needs an MCP server
+or the live conversation stays in the parent session, with no worker option.
+
+**To reverse it.** Set `ROUTER_GUARD_OFF=1` before a session starts, for that
+session, or remove the hook entry from `D:/Claude/settings.json`, for all of them.
+Setting the variable inside a running session does not help.
+
+Staged out-of-repo text, the repo item checklist and every grep disposition are in
+`dispatch-guard-staged-edits.md`.

@@ -50,7 +50,7 @@ If the request is vague about the surface ("start work on X", "I need to do Y") 
 1. Confirm the working directory is a git repo. If not, stop and say so. Then capture the **launch guard**: run `git rev-parse --show-toplevel` and `git worktree list`. Isolation is a property of the working *tree* (a directory with its own HEAD), not the branch — a `feat/` branch in the shared primary tree gives zero isolation, because one directory has one HEAD and another session's checkout flips it out from under you. If another session shares this toplevel, treat the work as needing its own worktree.
 
 2. **Apply the worktree gate FIRST, before scoring size.** A worktree is **mandatory — no judgment call** — if ANY of these holds:
-   - an **agent** (Codex or a Claude sub-agent) is doing the work, rather than Danny editing interactively by hand;
+   - an **agent** (a Codex or Claude worker) is doing the work, rather than Danny editing interactively by hand;
    - **another session or worktree is, or may be, open** on this repo (concurrent / multi-session);
    - an **app or server runs from this checkout** (switching the primary tree to an in-progress branch hijacks a running app that auto-reloads templates/assets — it serves the new files against stale in-memory code and 500s);
    - the work touches a **prod-critical path** (NAV, money, DB schema/migration, auth, the live deploy).

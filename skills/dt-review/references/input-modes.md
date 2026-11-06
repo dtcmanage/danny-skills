@@ -34,7 +34,7 @@ Record the draft's primary author family at Round 0 and fix the reviewer lane to
 lane are both immutable for the review.
 
 Use the pinned model for the inferred tier and lane. Ask only when the scope truly straddles tiers or
-Danny explicitly requests a model choice. Pipeline/subagent invocation is noninteractive unless a
+Danny explicitly requests a model choice. Pipeline/worker invocation is noninteractive unless a
 genuine fork appears.
 
 ## Evidence map

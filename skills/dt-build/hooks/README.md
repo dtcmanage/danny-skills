@@ -20,7 +20,7 @@ Managed Codex coordinators get both hooks as session flags (`codex exec -c hooks
 
 Checked 2026-10-10 (ET), read-only, on Danny's Windows PC:
 
-- `CLAUDE_CONFIG_DIR` is set to `D:\Claude` at User scope, so Claude Code reads its user settings from `D:\Claude\settings.json` and writes transcripts under `D:\Claude\projects\`. That file is the live one. It has no `hooks` key today.
+- `CLAUDE_CONFIG_DIR` is set to `D:\Claude` at User scope, so Claude Code reads its user settings from `D:\Claude\settings.json` and writes transcripts under `D:\Claude\projects\`. That file is the live one. On that date it had no `hooks` key; it now carries the read-guard entries that `ensure_hook.py` maintains, and still none of the coordinator hooks.
 - `C:\Users\Danny\.claude\settings.json` holds a SessionStart hook that runs `D:\Claude\_system-tools\workspace-sync\pull-workspace.ps1`, which logs `START session-start-pull` to `D:\Claude\_system-tools\workspace-sync\sync.log` on every run. The log, covering 2026-10-02 through 2026-10-10 with 127 full-sync runs and many Claude sessions, holds no session-start entry. That file is not loaded.
 
 Adoption target: merge the `hooks` block from `settings-snippet.json` into `D:\Claude\settings.json`. Do not edit `C:\Users\Danny\.claude\settings.json` for these hooks.

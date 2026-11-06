@@ -8,13 +8,12 @@ Claude Code coordinators; shared rules: `SKILL.md`. `dt-job`: `pwsh -NoProfile -
 - Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `<skill>/scripts/invoke-claude-chunk.ps1` or `<skill>/scripts/invoke-codex-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
 - Run tests/builds/browser checks as `-Kind test|command` jobs.
 - Commands run as PowerShell: never nest `pwsh -Command "...$..."`; run directly or use `-File`.
-- A Claude pick at the session's own effort may still use the Agent tool with the returned `agent_alias`. Any other effort goes through the wrapper as a job.
 
 ## Waiting and completion
 
 - Watchdogs: use `dt-job status -CoordinatorId <id> -Json`, `stalled` and heartbeat/activity age; checkpoint age must never be used alone (`_build-state.md`).
 - Top-level coordinators: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 600 -Json`, Bash `run_in_background: true`, longer Bash `timeout`; end the turn and await notification.
-- Subagent/teammate coordinators (Agent-tool launched, or no direct user turn): foreground wait with `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 540 -Json`, Bash `run_in_background: false`, `timeout: 600000`. Repeat after every `wait_timeout` check-in; never end the turn while jobs run.
+- Subagent/teammate coordinators (no direct user turn): foreground wait with `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 540 -Json`, Bash `run_in_background: false`, `timeout: 600000`. Repeat after every `wait_timeout` check-in; never end the turn while jobs run.
 - `wait_timeout` lists running jobs' `progress`. Jobs have no time limit; after 20 silent minutes (`STALLED`), check output, then cancel/retry or wait.
 - Coordinators never use CronCreate, Monitor heartbeats, `sleep` loops, or repeated `status` calls; delegate watches are separate.
 - Run `dt-job reconcile -CoordinatorId <id>` at start, resume and `wait_timeout`, then repeat the appropriate wait for remaining jobs.

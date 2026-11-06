@@ -39,7 +39,7 @@ current_milestone: __CURRENT_MILESTONE__
 __COMPLETED_LIST__
 
 ### In flight
-<!-- What is being worked on RIGHT NOW (subagent + milestone/chunk), or `- none`. -->
+<!-- What is being worked on RIGHT NOW (worker + milestone/chunk), or `- none`. -->
 __IN_FLIGHT__
 
 ## Git

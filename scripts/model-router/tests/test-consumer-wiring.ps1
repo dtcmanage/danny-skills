@@ -224,8 +224,10 @@ $report
     $r = Invoke-CodexWrapper 'codex-escalate' @('-Category','complex-coding','-Protected','-EscalateFrom','gpt-6-luna')
     Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6.1-sol' -and $r.prov.escalated_from -eq 'gpt-6-luna' -and $r.prov.protected -eq $true) 'codex wrapper -EscalateFrom moves one step up'
     Assert-True ($r.prov.disclosure_line -match '\(complex-coding, protected, escalated from gpt-6-luna, effort medium\)' -and $r.prov.router_reason -match 'Escalation') 'codex escalation disclosed'
-    $r = Invoke-CodexWrapper 'codex-override' @('-Tier','standard','-Model','gpt-6-astra')
-    Assert-True ($r.exit -eq 0 -and $r.prov.resolved_model -eq 'gpt-6-astra' -and $r.prov.router_reason -match '^Explicit -Model override') 'codex wrapper -Model override honored and disclosed'
+    $frontierNoRequest = Invoke-CodexWrapper 'codex-frontier-no-request' @('-Tier','standard','-Model','gpt-6-astra')
+    Assert-True ($frontierNoRequest.exit -ne 0 -and $frontierNoRequest.stderr -match 'FRONTIER_REQUEST_REQUIRED') 'codex wrapper refuses a frontier -Model without an approved request'
+    $r = Invoke-CodexWrapper 'codex-override' @('-Tier','standard','-Model','gpt-6-luna')
+    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'gpt-6-luna' -and @($r.prov.dispatch_attempts)[0].model -eq 'gpt-6-luna' -and $r.prov.override_reason -eq 'fixture reason' -and $r.prov.router_reason -match '^Explicit -Model override') 'codex wrapper -Model override launches the named model and records the reason'
     $r = Invoke-CodexWrapper 'codex-bad-override' @('-Tier','standard','-Model','gone-model')
     Assert-True ($r.exit -ne 0) 'codex wrapper unselectable -Model fails closed'
     $env:DT_FAKE_CODEX_MODE = 'limit'
@@ -233,7 +235,7 @@ $report
     Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.termination_reason -match '^ROUTER_LIMIT: codex ' -and $r.prov.vendor_block.vendor -eq 'codex') 'codex refusal records vendor block and environment failure'
     Assert-True ($r.prov.termination_reason -match '% used / .+% left' -and $r.prov.termination_reason -match ' ET') 'Codex chunk limit reason shows used/left and Eastern resume time'
     $env:DT_FAKE_CODEX_MODE = $null
-    $r = Invoke-CodexWrapper 'codex-blocked-override' @('-Tier','standard','-Model','gpt-6-astra')
+    $r = Invoke-CodexWrapper 'codex-blocked-override' @('-Tier','standard','-Model','gpt-6-luna')
     Assert-True ($r.exit -ne 0 -and $r.prov.router_status -eq 'wait') 'blocked vendor stops explicit Codex override'
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
     $env:DT_FAKE_CODEX_MODE = 'source-text'
@@ -300,14 +302,14 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.protected -eq $true) 'claude wrapper -Tier complex maps to complex-coding protected'
     $r = Invoke-ClaudeWrapper 'claude-escalate' @('-Category','complex-coding','-EscalateFrom','claude-sonnet-5')
     Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-opus-5-5' -and $r.prov.escalated_from -eq 'claude-sonnet-5') 'claude wrapper -EscalateFrom moves one step up'
-    $r = Invoke-ClaudeWrapper 'claude-override' @('-Category','planning','-Model','claude-fable-5-1')
-    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-fable-5-1' -and $r.prov.router_reason -match '^Explicit -Model override') 'claude wrapper -Model override honored and disclosed'
+    $r = Invoke-ClaudeWrapper 'claude-override' @('-Category','planning','-Model','claude-haiku-5-5')
+    Assert-True ($r.exit -eq 0 -and $r.prov.requested_model -eq 'claude-haiku-5-5' -and $r.prov.router_reason -match '^Explicit -Model override') 'claude wrapper -Model override honored and disclosed'
     $env:DT_FAKE_CLAUDE_MODE = 'limit'
     $r = Invoke-ClaudeWrapper 'claude-limit' @('-Tier','standard')
     Assert-True ($r.exit -ne 0 -and $r.prov.failure_category -eq 'environment' -and $r.prov.termination_reason -match '^ROUTER_LIMIT: claude ' -and $r.prov.vendor_block.vendor -eq 'claude') 'claude refusal records vendor block and environment failure'
     Assert-True ($r.prov.termination_reason -match '% used / .+% left' -and $r.prov.termination_reason -match ' ET') 'Claude chunk limit reason shows used/left and Eastern resume time'
     $env:DT_FAKE_CLAUDE_MODE = $null
-    $r = Invoke-ClaudeWrapper 'claude-blocked-override' @('-Tier','standard','-Model','claude-fable-5-1')
+    $r = Invoke-ClaudeWrapper 'claude-blocked-override' @('-Tier','standard','-Model','claude-haiku-5-5')
     Assert-True ($r.exit -ne 0 -and $r.prov.router_status -eq 'wait') 'blocked vendor stops explicit Claude override'
     Remove-Item -LiteralPath (Join-Path $state 'vendor-blocks.json')
     $env:DT_FAKE_CLAUDE_MODE = 'max-turns'
@@ -451,6 +453,12 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
                 $updateLog = Join-Path $temp "$lane-outcome-update.log"
                 & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/model-router/update-outcomes.ps1') -SourcesPath $sources -Json *> $updateLog
                 Assert-True ($LASTEXITCODE -eq 0) "$lane stopped provenance updater passes"
+                $duplicateRows = @(Get-Content (Join-Path $state 'outcomes.jsonl') | ConvertFrom-Json | Where-Object { $_.key -eq ($lane + '-stopped:piece.provenance:1') })
+                Assert-True ($duplicateRows.Count -eq 0) "$lane correlated provenance adds no second outcome row"
+                # An older record has no dispatch identity, so the scan derives its row.
+                Write-Utf8 (Join-Path $fixtureRun 'piece.provenance.json') (($r.prov | Select-Object * -ExcludeProperty dispatch_id, logical_task_id) | ConvertTo-Json -Depth 8)
+                & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/model-router/update-outcomes.ps1') -SourcesPath $sources -Json *> $updateLog
+                Assert-True ($LASTEXITCODE -eq 0) "$lane legacy provenance updater passes"
                 $derivedRows = @(Get-Content (Join-Path $state 'outcomes.jsonl') | ConvertFrom-Json | Where-Object { $_.key -eq ($lane + '-stopped:piece.provenance:1') })
                 Assert-True ($derivedRows.Count -eq 1 -and $eventRows.Count -eq 1 -and $derivedRows[0].diagnosis -eq 'unexplained' -and $derivedRows[0].repo -eq $eventRows[0].repo) "$lane stopped piece has one wrapper row and one derived row with matching repo"
             }
@@ -500,9 +508,9 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     Assert-True ($codexTop.exit -eq 0 -and $codexTop.prov.resolved_model -eq 'gpt-6.1-sol' -and $claudeTop.exit -eq 0 -and $claudeTop.prov.requested_model -eq 'claude-opus-5-5') 'wrappers cannot retry past top non-frontier model'
     $driftPath = Join-Path $state 'drift-marks.json'
     Write-Utf8 $driftPath (@(@{ job='coder'; model='gpt-6.1-sol' }, @{ job='coder'; model='claude-opus-5-5' }) | ConvertTo-Json -Depth 4)
-    $codexDriftOverride = Invoke-CodexWrapper 'codex-drift-override' @('-Category','complex-coding','-Model','gpt-6-astra')
-    $claudeDriftOverride = Invoke-ClaudeWrapper 'claude-drift-override' @('-Category','complex-coding','-Model','claude-fable-5-1')
-    Assert-True ($codexDriftOverride.exit -eq 0 -and $codexDriftOverride.prov.resolved_model -eq 'gpt-6-astra' -and $claudeDriftOverride.exit -eq 0 -and $claudeDriftOverride.prov.requested_model -eq 'claude-fable-5-1') 'explicit overrides bypass constrained roster drift waits'
+    $codexDriftOverride = Invoke-CodexWrapper 'codex-drift-override' @('-Category','complex-coding','-Model','gpt-6-luna')
+    $claudeDriftOverride = Invoke-ClaudeWrapper 'claude-drift-override' @('-Category','complex-coding','-Model','claude-haiku-5-5')
+    Assert-True ($codexDriftOverride.exit -eq 0 -and $codexDriftOverride.prov.requested_model -eq 'gpt-6-luna' -and $claudeDriftOverride.exit -eq 0 -and $claudeDriftOverride.prov.requested_model -eq 'claude-haiku-5-5') 'explicit overrides bypass constrained roster drift waits'
     Remove-Item -LiteralPath $driftPath
     $blockedUntil = [datetimeoffset]::UtcNow.AddHours(1).ToString('o')
     Write-Utf8 (Join-Path $state 'vendor-blocks.json') (@(
@@ -539,10 +547,10 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     $genImage = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'skills/dt-image-gen/scripts/gen-image.sh')
     Assert-True ($image.model -eq 'gpt-image-2' -and $genImage -match '-Category image-generation -Lane codex' -and $genImage -match 'engine stays gpt-image-2') 'dt-image-gen records the advisory image-generation pick'
 
-    # 5. Alias mapping for host-native Agent dispatch.
+    # 5. Family alias mapping for dt-review's Claude invoker.
     $aliases = @{ 'claude-opus-5-5' = 'opus'; 'claude-sonnet-5' = 'sonnet'; 'claude-haiku-4-5-20251001' = 'haiku'; 'claude-fable-5-1' = 'fable' }
     foreach ($id in $aliases.Keys) { Assert-True ((Get-RouterAgentAlias -Model $id) -eq $aliases[$id]) "alias $id -> $($aliases[$id])" }
-    Assert-True ($null -eq (Get-RouterAgentAlias -Model 'gpt-6.1-sol')) 'non-Claude model has no Agent alias'
+    Assert-True ($null -eq (Get-RouterAgentAlias -Model 'gpt-6.1-sol')) 'non-Claude model has no family alias'
     $pick = Resolve-RouterModel -Category routine-coding -Lane claude -SkipModelCheck
     $codexPick = Resolve-RouterModel -Category routine-coding -Lane codex -SkipModelCheck -Catalog (Get-Content -Raw -LiteralPath $cachePath | ConvertFrom-Json)
     Assert-True ($pick.agent_alias -eq 'opus' -and $null -eq $codexPick.agent_alias) 'router result carries agent_alias on the Claude lane only'

@@ -15,7 +15,7 @@ Required templates:
 
 Lane routing:
 - Follow `SKILL.md` "## Model routing" for category, protection, selection disclosure, and retry rules.
-- Use CLAUDE_DISPATCH and VERIFY_DISPATCH as defined in `SKILL.md`; stop each subagent after collecting its report.
+- Use CLAUDE_DISPATCH and VERIFY_DISPATCH as defined in `SKILL.md`.
 - A fresh non-builder verifier via VERIFY_DISPATCH must verify every load-bearing, security-sensitive, live-write, or agent-verification milestone before acceptance.
 - In managed runs, write the worker's restrictions into its brief and name only the authority originals its task consumes; never tell a worker to re-read the whole authority set (`managed-resume.md`, Worker authority scope).
 - When a review uses mutable operator context, follow `review-inputs.md`: prepare a tooling snapshot packet, pin its hash in the dispatch record, give the verifier its review paths, and verify the packet before dispatch and before consuming the verdict. Report live context changes as information; existing run-authored authority pins and boundaries still govern adoption.
@@ -63,8 +63,7 @@ Standing execution rules (every build, fix, verification, and review prompt):
 - Set `-MaxFixRounds N` on the assembler or Codex wrapper to change the default of 2; it must be a positive integer. The wrapper preserves an assembled budget unless this option is explicitly passed. Ad-hoc briefs receive the same rule from `worker-standing-rules.ps1`. This worker fix budget is separate from the wrapper's `-Attempt` identity and dispatch retry limits.
 - For `invoke-codex-chunk.ps1 -AdHoc`, place `-OutputPath` outside the project tree. An intentional in-project report requires `-AllowOutputInProject`. New nonignored untracked paths are warned about and retained in provenance as `untracked_created`; nothing is deleted.
 - Use `-ValidateOnly` with the same dispatch arguments to run pre-dispatch checks without invoking Codex or reserving work. Model and effort checks use `CODEX_HOME/models_cache.json`; a missing cache fails validation. The effective selection reason includes the run-pin suffix and must fit the 240-character cap. Validation writes no report or provenance.
-- `assemble-codex-prompt.ps1` appends them to every assembled prompt; a host-native Agent prompt must carry
-  the same text. No nested agents. Command output goes to a file and only the summary or tail is read. No
+- `assemble-codex-prompt.ps1` appends them to every assembled prompt. No nested agents. Command output goes to a file and only the summary or tail is read. No
   idle waits on long commands. Checkpoint after about 100 tool calls: write the state note to the path the
   brief names (`<run-folder>/milestones/<mid>/continuation-<n>.md`) and return it in `CONTINUATION_STATE`.
 - The orchestrator continues a checkpointed chunk in a fresh session and never sends follow-up messages to

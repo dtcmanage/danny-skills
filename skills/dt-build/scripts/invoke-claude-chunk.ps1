@@ -37,9 +37,8 @@ param(
 
 # invoke-claude-chunk.ps1
 # -----------------------
-# Claude-lane wrapper for codex-host orchestrators and for Claude chunks whose
-# roster effort differs from the session's effort. A claude-host chunk at matching
-# effort may use the host-native Agent tool with an explicit resolved model.
+# Claude-lane wrapper for every dt-build Claude chunk, and the Claude adapter under
+# scripts/model-router/dispatch.ps1.
 #
 # The model comes from the shared model router (scripts/model-router/resolve-model.ps1,
 # Claude lane) for the chunk's category; -Tier alone maps to a category the same way
@@ -341,8 +340,9 @@ $permissionMode = if ($Preflight -or $Scrutiny) { 'default' } else { 'bypassPerm
 # Slim session: no MCP servers and only the built-in tools a chunk needs. This
 # cuts the cold-start context (measured 2026-09-19: 42K -> 25K tokens) and removes
 # the Agent tool, so a chunk cannot spawn nested agents outside the tier policy.
-# -ReadOnly (verifier/review chunks) also drops the file-writing tools.
-$toolList = if ($Scrutiny) { '' } elseif ($Preflight) { 'Read' } elseif ($ReadOnly) { 'Bash,Read,Glob,Grep' } else { 'Bash,Read,Edit,Write,Glob,Grep' }
+# -ReadOnly (verifier/review chunks) also drops the file-writing tools; managed
+# verifiers keep Bash to run tests, an ad hoc read-only call has no such need.
+$toolList = if ($Scrutiny) { '' } elseif ($Preflight) { 'Read' } elseif ($AdHoc -and $ReadOnly) { 'Read,Glob,Grep' } elseif ($ReadOnly) { 'Bash,Read,Glob,Grep' } else { 'Bash,Read,Edit,Write,Glob,Grep' }
 if ($AdHoc -and -not $Preflight -and -not $Scrutiny) { $toolList += ',WebSearch,WebFetch' }
 $args = @(
     '-p',

@@ -147,7 +147,7 @@ if ($args -contains 'exec') {
             } else {
                 Check ($code -eq 0 -and $printedRow.execution_result -eq 'success' -and $printedRow.pass -and (Test-Path (Join-Path $printedRepo '_dispatch/task-output.md'))) "printed read-only command succeeds on the $lane lane"
                 $laneArgs=[IO.File]::ReadAllText($env:M04_FAKE_ARGS)
-                Check ($laneArgs -match "^$lane\|" -and $laneArgs -match $(if($lane -eq 'codex'){'read-only'}else{'Bash,Read,Glob,Grep'})) "printed read-only command reaches the $lane lane read-only"
+                Check ($laneArgs -match "^$lane\|" -and $laneArgs -match $(if($lane -eq 'codex'){'read-only'}else{'(?<!Bash,)Read,Glob,Grep'})) "printed read-only command reaches the $lane lane read-only"
             }
         }
         if ($SnapshotOnly) { "SUMMARY: $checks snapshot checks; fake CLIs only"; return }
@@ -161,7 +161,7 @@ if ($args -contains 'exec') {
         Check ($r.execution_result -eq 'success' -and $r.lane -eq $lane -and $r.finished_utc) "real $lane wrapper completes with lane"
         Check ($r.actual_model -and $r.usage -and $null -eq $r.independent_acceptance) "real $lane telemetry evidence, acceptance unknown"
         Check ([IO.File]::ReadAllText($ledger).StartsWith($bench)) 'keyless bench bytes and order survive sync'
-        if($lane -eq 'claude') { Check ($r.tools -eq 'Bash,Read,Glob,Grep,WebSearch,WebFetch') 'ad hoc read-only web tools' }
+        if($lane -eq 'claude') { Check ($r.tools -eq 'Read,Glob,Grep,WebSearch,WebFetch') 'ad hoc read-only web tools' }
     }
     $env:M04_FAKE_MODE='no-rollout'; $o=$base.Clone(); $o.Lane='codex'; $r=Invoke-RouterDispatch $o $real
     Check ($null -eq $r.actual_model -and $null -eq $r.usage -and $r.lane -eq 'codex') 'no session evidence means null telemetry with known Codex lane'
