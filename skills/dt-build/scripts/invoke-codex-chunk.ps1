@@ -494,11 +494,9 @@ $workerOrphansStopped = [System.Collections.Generic.List[object]]::new()
 $capacityBackoffs = [System.Collections.Generic.List[object]]::new()
 $started = Get-Date
 $proc = $null
-$completedSuccessfully = $false
 $streamPath = "$OutputPath.stream.log"
 $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
-$DispatchContext.category = $Category
 
 if (-not $DispatchContext.requested_model) { $DispatchContext.requested_model = $resolvedModel }
 if (-not $temporaryOutput) {
@@ -964,7 +962,6 @@ try {
     if (-not $result.pass) { throw $failureReason }
     if ($Json) { $result | ConvertTo-Json -Depth 5 }
     else { $result }
-    $completedSuccessfully = $true
 }
 catch {
     if (-not $temporaryOutput -and -not $provenanceWritten) {

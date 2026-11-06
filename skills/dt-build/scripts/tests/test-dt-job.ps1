@@ -356,9 +356,9 @@ guard-body-strict-undefined|0|1|Set-StrictMode -Version Latest; cmd /c exit 3; i
 strict-unset-exact-exit|0|1|Set-StrictMode -Version Latest; Write-Output x; exit $LASTEXITCODE
 '@
     # Limitation: strict mode with an unset code on an exact exit fails closed, matching native -Command.
-    # Attempt 9 coordinator allowlist ruling: guard-parse-int, guard-strict-undefined,
-    # guard-null-method, guard-bad-cast, guard-divide-zero and guard-inline-throw now
-    # require HEAD's exact bytes AND exit, replacing their a7/a8 reader exceptions.
+    # guard-parse-int, guard-strict-undefined, guard-null-method, guard-bad-cast,
+    # guard-divide-zero and guard-inline-throw require HEAD's exact bytes AND exit,
+    # so they are not reader exceptions.
     $exceptionNames=@('exit-reader-plain','exit-reader-scoped-braced','gate-exit-code','gate-exit-1','unset-gate-ne','strict-unset-guard','guard-not-taken-exit',
         'guard-shadowed-get-variable','guard-body-parse-error','guard-body-strict-undefined','strict-unset-exact-exit')
     foreach ($line in ($pins -split "`n")) {

@@ -1,4 +1,4 @@
-"""Read-only installed-guard smoke, based on M04 verifier-a1 guard-smoke.py."""
+"""Read-only installed-guard smoke."""
 import json
 import os
 from pathlib import Path

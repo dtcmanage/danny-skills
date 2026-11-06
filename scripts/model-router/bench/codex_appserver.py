@@ -932,7 +932,6 @@ def validate_turn(turn: Any, image_paths: frozenset[str] = frozenset()) -> None:
 
 
 if __name__ == '__main__':
-    import sys
     if sys.argv[1:] == ['--classify-failure']:
         print(json.dumps(classify_failure(json.loads(sys.stdin.readline()))))
         sys.exit(0)

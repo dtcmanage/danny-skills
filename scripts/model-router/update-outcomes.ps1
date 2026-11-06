@@ -81,7 +81,6 @@ function Update-RouterOutcomesLocked {
             foreach ($row in $archived.records.Values) { if (Get-DispatchValue $row 'dispatch_id') { $archivedDispatchRows.Add($row) } }
         }
     }
-    $newCount = 0
     # dt-build keeps run provenance in the worktree it built in, so scan each root's linked worktrees too;
     # their rows carry the root's repo name.
     $scanRoots = [System.Collections.Generic.List[object]]::new()
@@ -124,7 +123,6 @@ function Update-RouterOutcomesLocked {
                 }
                 if ($records.Contains($key) -and (($records[$key] | ConvertTo-Json -Depth 40 -Compress) -ceq ([pscustomobject]$row | ConvertTo-Json -Depth 40 -Compress))) { continue }
                 $records[$key] = [pscustomobject]$row
-                $newCount++
     }
     foreach ($scanRoot in $scanRoots) {
         $build = Join-Path ([string]$scanRoot.path) '.dt-build'
@@ -164,7 +162,6 @@ function Update-RouterOutcomesLocked {
                     $records[$key] | Add-Member -NotePropertyName failure_detail -NotePropertyValue $(if ($failureCategory -in @('environment','capacity')) { Get-RouterOutcomeValue $item @('failure_detail') } else { $null })
                     $records[$key] | Add-Member -NotePropertyName workstation -NotePropertyValue $(if ([string]$scanRoot.path -match '[/\\]_Claude-Workspace[/\\]([^/\\]+)') { $Matches[1] } else { Split-Path -Leaf (Split-Path -Parent $scanRoot.path) })
 
-                    $newCount++
                 }
                 $acceptance = Join-Path $folder 'acceptance-rows.jsonl'
                 if (-not (Test-Path -LiteralPath $acceptance)) { continue }
@@ -219,7 +216,6 @@ function Update-RouterOutcomesLocked {
                     if ($failureCategory -ne 'environment' -or $diagnosis -cnotin @('offline','vendor_incident','unexplained')) { $diagnosis = $null }
                     $records[$key] = [pscustomobject]@{ key=$key; run_id=$run.Name; repo=$repo; at=$at; lane=$lane; model=$model; category=(Get-RouterOutcomeCategory $item $tier ([string]$chunk)); attempt=(ConvertTo-RouterOutcomeAttempt $attempt); pass=([string](Get-RouterOutcomeValue $item @('status')) -eq 'PASS'); escalated=$false; failure_category=$failureCategory; diagnosis=$diagnosis; source='dt-build'; tier=$tier }
                     $records[$key] | Add-Member -NotePropertyName failure_detail -NotePropertyValue $(if ($failureCategory -in @('environment','capacity')) { Get-RouterOutcomeValue $item @('failure_detail') } else { $null })
-                    $newCount++
                 }
             }
         }

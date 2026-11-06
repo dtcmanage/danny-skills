@@ -1,4 +1,4 @@
-param([switch]$A5Only, [switch]$A6Only, [switch]$SnapshotOnly)
+param([switch]$RecoveryOnly, [switch]$EvidenceOnly, [switch]$SnapshotOnly)
 foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:'+$name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -27,6 +27,47 @@ $real={ param($Vendor,$Arguments)
     & (Join-Path $PSScriptRoot "../../../skills/dt-build/scripts/invoke-$Vendor-chunk.ps1") @adapter | Out-Null
 }
 function Read-Evidence([string]$Path) { Get-Content -LiteralPath ($Path+'.provenance.json') -Raw | ConvertFrom-Json -Depth 40 -DateKind String }
+function Invoke-FakeCliWrapper([string]$Vendor,[hashtable]$Arguments) {
+    $safe=$Arguments.Clone()
+    $safe[$Vendor+'CliPath']=$fakeCli
+    if ((Resolve-Path -LiteralPath $safe[$Vendor+'CliPath']).Path -cne $fakeCli) { throw 'FAKE_CLI_REQUIRED' }
+    & (Join-Path $env:M04_REPO_ROOT "skills/dt-build/scripts/invoke-$Vendor-chunk.ps1") @safe | Out-Null
+}
+function New-FakeCliWrapperArguments([string]$Name) {
+    @{ProjectPath=$repo;PromptPath=$prompt;OutputPath=(Join-Path $temp ($Name+'.md'));Category='routine-coding';Effort='medium';SelectionReason='fake CLI fixture';AdHoc=$true;ReadOnly=$true;Json=$true}
+}
+function Invoke-LaneDispatch([string]$Lane,[string]$Name) {
+    $o=$base.Clone(); $o.Lane=$Lane; $o.OutputPath=Join-Path $temp ($Name+'.md')
+    Invoke-RouterDispatch $o $real
+}
+function Reset-SourceRootState([string]$Name) {
+    $env:DT_MODEL_ROUTER_STATE=Join-Path $temp $Name
+    [void][IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_STATE)
+    [IO.File]::WriteAllText((Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json'),$sourceRootRoster)
+    $script:ledger=Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl'
+    $script:sources=Join-Path $env:DT_MODEL_ROUTER_STATE 'sources.json'
+    # Earlier cases leave legacy acceptance rows in $repo. Discovery gets a
+    # fresh root per case; direct-index output must remain outside that root.
+    $script:sourceRootFolder=Join-Path $env:DT_MODEL_ROUTER_STATE 'source-root'
+    [void][IO.Directory]::CreateDirectory($script:sourceRootFolder)
+    ConvertTo-Json -InputObject @($script:sourceRootFolder) | Set-Content $sources
+}
+function Reset-EmptySourcesState([string]$Name) {
+    $env:DT_MODEL_ROUTER_STATE=Join-Path $temp ('recovery-'+$Name)
+    [void][IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_STATE)
+    $defaultApprovedRoster | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json')
+    $script:ledger=Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl'
+    $script:sources=Join-Path $env:DT_MODEL_ROUTER_STATE 'sources.json'
+    '[]' | Set-Content $sources
+}
+function Reset-RosterOnlyState([string]$Name) {
+    $env:DT_MODEL_ROUTER_STATE=Join-Path $temp ('evidence-'+$Name)
+    [void][IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_STATE)
+    $roster | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json')
+}
+function New-EvidenceRecord([string]$Id) {
+    [pscustomobject]@{dispatch_id=$Id;logical_task_id=$Id;project=$repo;started_utc='2026-11-05T00:00:00Z';finished_utc='2026-11-05T00:01:00Z';execution_result='success';independent_acceptance=$null;unknown_fixture='keep these bytes'}
+}
 try {
     $seam=Join-Path $temp 'seams.ps1'
     @'
@@ -57,7 +98,10 @@ $script:RouterDiagnosisHttp = {
     $out=Join-Path $temp 'result.md'
     $base=@{ProjectPath=$repo;Category='routine-coding';PromptPath=$prompt;OutputPath=$out;SelectionReason='fixture';AdHoc=$true;ReadOnly=$true}
     $ledger=Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl'
-    if (-not $A5Only -and -not $A6Only) {
+    $fakeCli=(Resolve-Path -LiteralPath (Join-Path $fixture.root 'dispatch-fake-cli.ps1')).Path
+    $defaultApprovedRoster=Get-Content (Join-Path $env:M04_REPO_ROOT 'references/model-router/default-roster.json') -Raw | ConvertFrom-Json
+    $defaultApprovedRoster.approved=$true; $defaultApprovedRoster.approved_at='2026-11-05T00:00:00Z'
+    if (-not $RecoveryOnly -and -not $EvidenceOnly) {
         $lockedPath=Join-Path $repo 'held-open.log'
         [IO.File]::WriteAllText($lockedPath,'same content')
         $lockHandle=[IO.File]::Open($lockedPath,'Open','Read',[IO.FileShare]::None)
@@ -152,7 +196,7 @@ if ($args -contains 'exec') {
         }
         if ($SnapshotOnly) { "SUMMARY: $checks snapshot checks; fake CLIs only"; return }
     }
-    if (-not $A5Only -and -not $A6Only) {
+    if (-not $RecoveryOnly -and -not $EvidenceOnly) {
     # Production bench shape has neither key nor dispatch identity.
     $bench="{ `"source`": `"bench`", `"attempt`": 1, `"at`": `"2026-11-05T00:00:00Z`", `"model`": `"gpt-6.1-sol`", `"lane`": `"codex`", `"category`": `"routine-coding`", `"failure_category`": null, `"pass`": true }`r`n"
     [IO.File]::WriteAllText($ledger,$bench)
@@ -272,11 +316,14 @@ if ($args -contains 'exec') {
     $archiveHash=(Get-FileHash $archive[0].FullName).Hash; $archiveTime=$archive[0].LastWriteTimeUtc; $ledgerTime=(Get-Item $ledger).LastWriteTimeUtc
     $repeat=Update-RouterOutcomes -SourcesPath $sources -Now $future.AddDays(1)
     Check ($repeat.new_records -eq 0 -and @(Get-ChildItem (Join-Path $env:DT_MODEL_ROUTER_STATE '_archive') -File).Count -eq 1 -and (Get-FileHash $archive[0].FullName).Hash -eq $archiveHash -and (Get-Item $archive[0].FullName).LastWriteTimeUtc -eq $archiveTime -and (Get-Item $ledger).LastWriteTimeUtc -eq $ledgerTime) 'aged rows are not reimported next day; ledger and archive untouched'
-    . (Join-Path $PSScriptRoot 'dispatch-repair-a3-cases.ps1')
-    . (Join-Path $PSScriptRoot 'dispatch-repair-a4-cases.ps1')
     }
-    if (-not $A6Only) { . (Join-Path $PSScriptRoot 'dispatch-repair-a5-cases.ps1') }
-    . (Join-Path $PSScriptRoot 'dispatch-repair-a6-cases.ps1')
+    $sourceRootRoster=[IO.File]::ReadAllText((Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json'))
+    if (-not $RecoveryOnly -and -not $EvidenceOnly) { . (Join-Path $PSScriptRoot 'dispatch-wrapper-lane-cases.ps1') }
+    if (-not $EvidenceOnly) {
+        . (Join-Path $PSScriptRoot 'dispatch-outcome-recovery-cases.ps1')
+        . (Join-Path $PSScriptRoot 'dispatch-cli-guard-cases.ps1')
+    }
+    . (Join-Path $PSScriptRoot 'dispatch-evidence-cases.ps1')
     "SUMMARY: $checks real-wrapper checks; fake CLIs only"
 } finally {
     Exit-RouterTestCodexHome $fixture

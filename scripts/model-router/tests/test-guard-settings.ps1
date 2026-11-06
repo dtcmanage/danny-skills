@@ -4,6 +4,7 @@ foreach ($key in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID','ROUTER_GU
 $root = Join-Path ([IO.Path]::GetTempPath()) ('m05-harness-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $root
 $failures = [Collections.Generic.List[string]]::new()
+$keptCaseFolders = [Collections.Generic.List[string]]::new()
 $checks = 0
 function Assert { param([bool]$Condition,[string]$Message) if (-not $Condition) { throw $Message } }
 function Check {
@@ -111,6 +112,7 @@ if ($env:M05_FAKE_CASE -ne 'no-retry') {
         Check "fake CLI guard deny and retry $case" {
             $env:M05_FAKE_CASE = $case
             $r = Invoke-DispatchGuardProbe $fake (Join-Path $root $case)
+            if ($r['kept_case_folder']) { $keptCaseFolders.Add($r['kept_case_folder']) }
             Assert (-not $r.probe_error) ($r | ConvertTo-Json -Depth 60 -Compress)
             Assert ($r.forms.Count -eq 3) 'Missing required forms'
             Assert ($r.accepted -eq ($case -eq 'ok')) 'Invalid probe acceptance'
@@ -120,6 +122,10 @@ if ($env:M05_FAKE_CASE -ne 'no-retry') {
     }
 } finally {
     [Environment]::SetEnvironmentVariable('M05_FAKE_CASE',$null,'Process')
+    # A rejected case keeps its folder as evidence for a real probe; a fake CLI run has no use for it.
+    foreach ($folder in $keptCaseFolders) {
+        if ([IO.Path]::GetFullPath($folder).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))) { Remove-Item -LiteralPath $folder -Recurse -Force }
+    }
     # Only remove the uniquely created harness root after confirming containment.
     if ([IO.Path]::GetFullPath($root).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))) { Remove-Item -LiteralPath $root -Recurse -Force }
 }

@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('m02-harness-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $root
 $failures = [Collections.Generic.List[string]]::new()
+$keptCaseFolders = [Collections.Generic.List[string]]::new()
 $checks = 0
 function Check {
     param([string]$Name, [scriptblock]$Body)
@@ -225,6 +226,7 @@ exit 0
             $env:M02_FAKE_CASE = $case
             $destination = Join-Path $root $case
             $r = Invoke-DispatchGuardProbe $fake $destination
+            if ($r['kept_case_folder']) { $keptCaseFolders.Add($r['kept_case_folder']) }
             Assert (-not $r.probe_error) ($r | ConvertTo-Json -Depth 8 -Compress)
             Assert ($r.forms.Count -eq 3) 'Missing guard forms'
             $saved = Get-Content (Join-Path $destination 'result.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -263,6 +265,10 @@ exit 0
     $env:M02_FAKE_AUDIT = $priorAudit
     $env:M05_FAKE_DISPATCH = $priorDispatch
     $env:M05_TEST_SCRIPTS = $priorScripts
+    # A rejected case keeps its folder as evidence for a real probe; a fake CLI run has no use for it.
+    foreach ($folder in $keptCaseFolders) {
+        if ([IO.Path]::GetFullPath($folder).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))) { Remove-Item -LiteralPath $folder -Recurse -Force }
+    }
     Write-Output "Harness evidence: $root"
 }
 Write-Output "Checks: $checks; failures: $($failures.Count)"

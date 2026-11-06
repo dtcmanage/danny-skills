@@ -166,7 +166,6 @@ function Read-RouterCodexExecutionEvidence {
     $id = $idMatch.Groups[1].Value
     $sessionRoot = if ($env:DT_MODEL_ROUTER_CODEX_SESSIONS) { $env:DT_MODEL_ROUTER_CODEX_SESSIONS } elseif ($env:CODEX_HOME) { Join-Path $env:CODEX_HOME 'sessions' } else { Join-Path $HOME '.codex/sessions' }
     if (-not (Test-Path -LiteralPath $sessionRoot -PathType Container)) { return $result }
-    $files = @()
     # UTC/local day and the previous day cover a launch across midnight. Flat
     # fixture/legacy roots are checked directly without recursive enumeration.
     # Codex session ids are UUIDv7: their creation date identifies the rollout
@@ -343,7 +342,6 @@ function Set-RouterDispatchAcceptance {
     # Only the deterministic acceptance producers call this, never a worker exit.
     param([string]$ProvenancePath, [string]$DispatchId, [bool]$Accepted)
     if (-not $DispatchId -or -not $ProvenancePath) { throw 'DISPATCH_ACCEPTANCE_ID_REQUIRED' }
-    . (Join-Path $PSScriptRoot 'router-common.ps1')
     Use-RouterOutcomeMutex -StateDir (Get-RouterStateDir) -Action {
         $row = Read-RouterDispatchEvidence -Path $ProvenancePath
         if ((Get-DispatchValue $row 'dispatch_id') -cne $DispatchId) { throw 'DISPATCH_ACCEPTANCE_ID_MISMATCH' }

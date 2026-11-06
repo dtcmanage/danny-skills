@@ -370,7 +370,6 @@ $outputInvocation = $null
 $streamPath = "$OutputPath.stream.log"
 $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
-$DispatchContext.category = $Category
 
 if (-not $DispatchContext.requested_model) { $DispatchContext.requested_model = $resolvedModel }
 if (-not $temporaryOutput) {

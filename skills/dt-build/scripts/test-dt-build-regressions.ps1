@@ -477,7 +477,7 @@ rationale: Framework limitation accepted with visible evidence.
     Write-Utf8 (Join-Path $runFolder 'acceptance-rows.jsonl') $unavailablePass
     $sidecarOut=Join-Path $tempRoot 'ledger-sidecar'
     $sidecarSummary = & pwsh -NoProfile -File (Join-Path $scriptDir 'build-acceptance-ledger.ps1') -RoadmapPath $roadmap -WorkingTree $workingTree -OutDir $sidecarOut -RunFolder $runFolder
-    Assert-True (($sidecarSummary -join "`n") -notmatch 'Router acceptance: unknown' -and (Get-Content $unavailableProv -Raw | ConvertFrom-Json).finished_utc) 'A5 ledger prefers finished sidecar over started provenance'
+    Assert-True (($sidecarSummary -join "`n") -notmatch 'Router acceptance: unknown' -and (Get-Content $unavailableProv -Raw | ConvertFrom-Json).finished_utc) 'ledger prefers finished sidecar over started provenance'
 
     $storedMissingTests = [ordered]@{ milestone_id='M01'; status='PASS'; commit_sha=$workingSha } | ConvertTo-Json -Compress
     Write-Utf8 -Path (Join-Path $runFolder 'acceptance-rows.jsonl') -Content $storedMissingTests
