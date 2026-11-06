@@ -41,7 +41,7 @@ ALL_SESSIONS_CACHE_VERSION = 4
 SELECTION_RE = re.compile(r"MODEL_SELECTION:[^\r\n]*?\(([^,()]+)(?:,[^()]*)?,\s*effort\s+([^(),\s]+)\)")
 WRAPPER_RE = re.compile(r"invoke-(?:codex|claude)-chunk\.ps1", re.IGNORECASE)
 COMMAND_TOKEN_RE = re.compile(
-    r'''(?:'[^']*'|"(?:`.|\\.|[^"\\])*"|[^\s;|&(){}'"#])+|&&|\|\||[;|&(){}\n]|\#[^\n]*''')
+    r'''(?:'[^']*'|"(?:`"|\\.|[^"\\])*"|[^\s;|&(){}'"#])+|&&|\|\||[;|&(){}\n]|\#[^\n]*''')
 
 
 def executed_dispatch(command: str, depth: int = 0) -> bool | None:
@@ -88,12 +88,29 @@ def executed_dispatch_details(command: str, depth: int = 0) -> list[dict]:
             segments.append([])
         else:
             # Remove literal quote delimiters; retain Windows path backslashes.
-            parts = re.findall(r''''([^']*)'|"((?:`.|\\.|[^"\\])*)"|([^'"\s]+)''', token)
+            parts = re.findall(r''''([^']*)'|"((?:`"|\\.|[^"\\])*)"|([^'"\s]+)''', token)
             segments[-1].append("".join(a or b or c for a, b, c in parts))
     calls: list[dict] = []
     for args in segments:
-        while args and (args[0] == "." or re.match(r"^[A-Za-z_]\w*=", args[0])):
-            args = args[1:]
+        while args:
+            if args[0] in (".", "do", "then", "else", "!") or re.match(r"^[A-Za-z_]\w*=", args[0]):
+                args = args[1:]
+            elif re.match(r"^\$[A-Za-z_]\w*=", args[0]):
+                args[0] = args[0].split("=", 1)[1]
+                if not args[0]:
+                    args = args[1:]
+            elif re.fullmatch(r"\$[A-Za-z_]\w*", args[0]) and args[1:2] == ["="]:
+                args = args[2:]
+            elif args[0] == "timeout":
+                args = args[1:]
+                while args and args[0].startswith("-"):
+                    args = args[2:] if args[0] in ("-k", "-s", "--kill-after", "--signal") else args[1:]
+                if args and re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", args[0]):
+                    args = args[1:]
+                else:
+                    break
+            else:
+                break
         if not args:
             continue
         executable = re.split(r"[\\/]", args[0])[-1].lower()
@@ -121,7 +138,9 @@ def executed_dispatch_details(command: str, depth: int = 0) -> list[dict]:
                 }.get(options.get("-tier", "standard").lower(), "routine-coding")
                 calls.append({"wrapper": True, "explicit": "-model" in options,
                               "category": category, "effort": options.get("-effort")})
-        elif executable in ("codex", "codex.exe") and args[1:2] == ["exec"]:
+        elif ((executable in ("codex", "codex.exe", "codex.cmd") and args[1:2] == ["exec"])
+              or (executable in ("claude", "claude.exe", "claude.cmd")
+                  and any(arg in ("-p", "--print") for arg in args[1:]))):
             explicit = any(arg == "-m" and i + 1 < len(args) and bool(args[i + 1])
                            for i, arg in enumerate(args[2:], start=2))
             calls.append({"wrapper": False, "explicit": explicit})

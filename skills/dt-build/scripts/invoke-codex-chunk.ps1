@@ -252,7 +252,18 @@ function Get-ReadOnlyTreeSnapshot {
             $full = [System.IO.Path]::GetFullPath((Join-Path $top $rel))
             if (& $skip $full) { continue }
             $parts.Add($line)
-            if ($line.StartsWith('??') -and (Test-Path -LiteralPath $full -PathType Leaf)) { $parts.Add((Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash) }
+            if ($line.StartsWith('??') -and (Test-Path -LiteralPath $full -PathType Leaf)) {
+                try { $parts.Add((Get-FileHash -LiteralPath $full -Algorithm SHA256 -ErrorAction Stop).Hash) }
+                catch {
+                    $errorCause = $_.Exception
+                    while ($errorCause.InnerException) { $errorCause = $errorCause.InnerException }
+                    $nativeCode = $errorCause.HResult -band 0xffff
+                    if ($errorCause -isnot [UnauthorizedAccessException] -and
+                        -not ($errorCause -is [IO.IOException] -and $nativeCode -in @(5,32,33))) { throw }
+                    $parts.Add("${rel}:unreadable")
+                    [void]$script:readOnlyWarnings.Add("Read-only check could not verify contents of unreadable file: $rel")
+                }
+            }
         }
         if ($head) { $parts.Add('diff:' + ((& git -C $Root diff HEAD --no-ext-diff --binary 2>$null) -join "`n")) }
     }
@@ -444,6 +455,7 @@ $sandbox = if ($Preflight -or $ReadOnly) { 'read-only' } else { 'workspace-write
 # use a real read-only sandbox; the tree check is only a defensive backstop.
 $windowsUnsandboxed = (-not $Preflight) -and (-not $ReadOnly) -and ($env:OS -eq 'Windows_NT')
 $verifyReadOnly = $ReadOnly -and -not $Preflight
+$script:readOnlyWarnings = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 if ($windowsUnsandboxed) { $sandbox = 'danger-full-access (windows: codex sandbox removed upstream)' }
 $sandboxArgs = if ($windowsUnsandboxed) {
     @('-c', 'default_permissions=":danger-full-access"')
@@ -644,6 +656,9 @@ try {
     $blockedReportDetail = Get-CodexBlockedReportDetail -Text $lastMessage
     $shapeErrors = @()
     $reportVersionWarning = $null
+    $readOnlyChanged = if ($verifyReadOnly) {
+        @(Get-ReadOnlyTreeChanges -Before $readOnlyBefore -After (Get-ReadOnlyTreeSnapshot -Root $projectRoot -IgnoreDir (Split-Path -Parent $OutputPath)))
+    } else { @() }
     if ($timedOut) {
         $failureReason = "CODEX_INVOKE_TIMEOUT: codex exec exceeded ${TimeoutMs}ms and its process tree was terminated. Redacted stream: $streamPath"
         $failureCategory = 'tooling'
@@ -658,8 +673,7 @@ try {
         $failureCategory = 'tooling'
     }
 
-    elseif ($verifyReadOnly -and @(Get-ReadOnlyTreeChanges -Before $readOnlyBefore -After (Get-ReadOnlyTreeSnapshot -Root $projectRoot -IgnoreDir (Split-Path -Parent $OutputPath))).Count -gt 0) {
-        $readOnlyChanged = @(Get-ReadOnlyTreeChanges -Before $readOnlyBefore -After (Get-ReadOnlyTreeSnapshot -Root $projectRoot -IgnoreDir (Split-Path -Parent $OutputPath)))
+    elseif ($verifyReadOnly -and @($readOnlyChanged).Count -gt 0) {
         $failureReason = "CODEX_READONLY_VIOLATION: the read-only worker changed files under ${projectRoot}: $($readOnlyChanged -join '; '). Its report is rejected. Redacted stream: $streamPath"
         $failureCategory = 'model-output'
     }
@@ -869,7 +883,7 @@ try {
         approval_operation = $ApprovalOperation
         start_commit = $startCommit
         actual_changed_files = @(if ($changedFileCheck) { $changedFileCheck.actual_changed_files })
-        warnings = @(if ($changedFileCheck) { $changedFileCheck.warnings })
+        warnings = @(if ($changedFileCheck) { $changedFileCheck.warnings }; $script:readOnlyWarnings | Sort-Object)
         rollout_path           = $executionEvidence.rollout_path
         untracked_created      = @($untrackedCreated)
         pass                   = [string]::IsNullOrWhiteSpace($failureReason)

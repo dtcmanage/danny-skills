@@ -12,6 +12,8 @@ function Check {
 function Assert { param([bool]$Condition, [string]$Message) if (-not $Condition) { throw $Message } }
 $priorCase = $env:M02_FAKE_CASE
 $priorAudit = $env:M02_FAKE_AUDIT
+$priorDispatch = $env:M05_FAKE_DISPATCH
+$priorScripts = $env:M05_TEST_SCRIPTS
 $pathBefore = $env:PATH
 try {
     $fake = Join-Path $root 'fake-claude.ps1'
@@ -24,6 +26,46 @@ function ArgValue([string]$Name) { $i = [array]::IndexOf($argsCopy, $Name); retu
 $argsCopy = $args
 $promptText = [Console]::In.ReadToEnd()
 if ((ArgValue '--model') -ne 'haiku') { throw 'Outer model must be haiku' }
+if ($promptText.Contains('The real dispatch guard must deny')) {
+    if ([int](ArgValue '--max-turns') -gt 5) { throw 'Unbounded guard turns' }
+    & git rev-parse --is-inside-work-tree *> $null
+    if ($LASTEXITCODE -ne 0) { throw 'Case root is not a git repo' }
+    & git rev-parse --verify HEAD *> $null
+    if ($LASTEXITCODE -ne 0) { throw 'Case root has no empty commit' }
+    $cfg = Get-Content (ArgValue '--settings') -Raw | ConvertFrom-Json -AsHashtable
+    $hookPath = [regex]::Match($cfg.hooks.PreToolUse[0].hooks[0].command, '-File "([^"]+)"').Groups[1].Value
+    $inputData = if ($promptText.Contains('no Agent tool')) { @{ command = 'claude -p --version' } }
+        elseif ($promptText.Contains('subagent_type fork')) { @{ subagent_type = 'fork' } }
+        else { @{ subagent_type = 'general-purpose'; model = 'opus' } }
+    $tool = if ($inputData.ContainsKey('command')) { 'Bash' } else { 'Agent' }
+    $payload = @{ hook_event_name = 'PreToolUse'; tool_name = $tool; tool_input = $inputData }
+    $decision = ($payload | ConvertTo-Json -Depth 10 -Compress) | & pwsh -NoProfile -File $hookPath | ConvertFrom-Json
+    if ($decision.hookSpecificOutput.permissionDecision -ne 'deny') { throw 'Real guard did not deny' }
+    $retry = [regex]::Match($promptText, 'pwsh -NoProfile -File "([^"\\]+/retry-dispatch\.ps1)"')
+    if (-not $retry.Success -or $retry.Value.Length -gt 180 -or $promptText.Contains('-EncodedCommand')) { throw 'Short literal retry missing' }
+    $retryPath = $retry.Groups[1].Value
+    $body = Get-Content $retryPath -Raw
+    $dispatchPath = [IO.Path]::GetFullPath((Join-Path $env:M05_TEST_SCRIPTS '../dispatch.ps1'))
+    if (-not $body.StartsWith(('& pwsh -NoProfile -File ' + "'" + $dispatchPath.Replace("'","''") + "' ")) -or $body -notmatch '-Category routine-coding -PromptPath ') { throw 'Retry script does not call categorized dispatch' }
+    if ((Split-Path $retryPath -Parent) -ne (Split-Path (Get-Location).Path -Parent)) { throw 'Retry script is not outside project in case root' }
+    if ($env:M02_FAKE_CASE -ne 'guard-no-retry') {
+        $command = if ($env:M02_FAKE_CASE -eq 'guard-wrong-retry-path') { $retry.Value.Replace('/retry-dispatch.ps1', '/other-retry-dispatch.ps1') } else { $retry.Value }
+        $payload = @{ hook_event_name = 'PreToolUse'; tool_name = 'PowerShell'; tool_input = @{ command = $command } }
+        $allowed = ($payload | ConvertTo-Json -Depth 10 -Compress) | & pwsh -NoProfile -File $hookPath
+        if ($allowed) { throw 'Routed retry was denied' }
+    }
+    if ($env:M02_FAKE_CASE -ne 'guard-not-started') {
+        # Substitute only the executable; exercise the built quoting, arguments
+        # and redirections in a separate script that cannot call a model.
+        $body = $body.Replace($dispatchPath.Replace("'","''"), $env:M05_FAKE_DISPATCH.Replace("'","''"))
+        $fakeRetry = Join-Path (Split-Path $retryPath -Parent) 'fake-retry.ps1'
+        $body | Set-Content $fakeRetry -Encoding utf8NoBOM
+        if ($env:M02_FAKE_CASE -eq 'guard-files-in-project') { 'harness' | Set-Content 'harness.txt' }
+        & pwsh -NoProfile -File $fakeRetry
+    }
+    [Console]::WriteLine('{"type":"assistant","message":{"model":"claude-haiku-test","content":[{"type":"text","text":"OK"}]}}')
+    exit 0
+}
 if ([int](ArgValue '--max-turns') -gt 3) { throw 'Unbounded turns' }
 if ($args -notcontains '--no-session-persistence') { throw 'Persistence flag missing' }
 $cfg = Get-Content (ArgValue '--settings') -Raw | ConvertFrom-Json -AsHashtable
@@ -70,6 +112,31 @@ if ((ArgValue '--output-format') -eq 'stream-json') {
 } else { [Console]::Write((@{ type = 'result'; result = $answer; modelUsage = $usage } | ConvertTo-Json -Depth 10 -Compress)) }
 if ($env:M02_FAKE_CASE -eq 'nonzero') { exit 7 }
 '@ | Set-Content $fake -Encoding utf8NoBOM
+    # A space in this executable path exercises the exact retry quoting.
+    $fakeDir = Join-Path $root 'fake dispatch'
+    $null = New-Item -ItemType Directory $fakeDir
+    $env:M05_FAKE_DISPATCH = Join-Path $fakeDir 'dispatch.ps1'
+    $env:M05_TEST_SCRIPTS = $PSScriptRoot
+    @'
+param([string]$ProjectPath, [string]$Category, [string]$PromptPath, [string]$OutputPath, [string]$SelectionReason, [switch]$AdHoc, [switch]$ReadOnly, [switch]$AllowOutputInProject, [switch]$Live)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+& git -C $ProjectPath rev-parse --verify HEAD *> $null
+if ($LASTEXITCODE -ne 0) { throw 'Retry project is not a committed git repo' }
+if ($AllowOutputInProject -or $OutputPath.StartsWith($ProjectPath) -or $PromptPath.StartsWith($ProjectPath)) { throw 'Harness input/output appeared inside retry project' }
+$projectFiles=@(& git -C $ProjectPath ls-files --cached --others --exclude-standard)
+if ($projectFiles.Count -ne 0) { throw ('Harness files appeared inside retry project: ' + ($projectFiles -join ', ')) }
+if ((Split-Path $ProjectPath -Leaf) -ne 'project') { throw 'Retry project is not isolated from case root' }
+if ($Category -ne 'routine-coding' -or -not (Test-Path $PromptPath) -or $SelectionReason -ne 'M05 guard retry probe') { throw 'Retry arguments corrupted' }
+if ($env:M02_FAKE_CASE -ne 'guard-no-output') { 'M05_DISPATCH_OK' | Set-Content $OutputPath }
+if ($env:M02_FAKE_CASE -ne 'guard-no-provenance') {
+    @{ execution_result = if ($env:M02_FAKE_CASE -eq 'guard-failure') { 'failure' } else { 'success' }; actual_model = 'fake-codex' } | ConvertTo-Json | Set-Content ($OutputPath + '.provenance.json')
+}
+[Console]::Out.Write(('x' * 900) + ' stdout-end D:/private/location')
+[Console]::Error.Write(('y' * 900) + ' stderr-end D:/private/location')
+# A successful process exit does not imply semantic success.
+exit 0
+'@ | Set-Content $env:M05_FAKE_DISPATCH -Encoding utf8NoBOM
     $env:M02_FAKE_AUDIT = Join-Path $root 'audit.jsonl'
     foreach ($scriptName in @('probe-claude-output.ps1','probe-native-hooks.ps1')) {
         Check "refusal $scriptName" {
@@ -153,6 +220,39 @@ if ($env:M02_FAKE_CASE -eq 'nonzero') { exit 7 }
         Assert ([bool]$r.probe_error) 'Missing executable not reported'
         Assert (Test-Path (Join-Path $root 'missing/result.json')) 'Missing result file'
     }
+    foreach ($case in @('guard-success','guard-failure','guard-no-provenance','guard-no-output','guard-not-started','guard-no-retry','guard-wrong-retry-path','guard-files-in-project')) {
+        Check "$case requires committed repo, semantic result, output and provenance" {
+            $env:M02_FAKE_CASE = $case
+            $destination = Join-Path $root $case
+            $r = Invoke-DispatchGuardProbe $fake $destination
+            Assert (-not $r.probe_error) ($r | ConvertTo-Json -Depth 8 -Compress)
+            Assert ($r.forms.Count -eq 3) 'Missing guard forms'
+            $saved = Get-Content (Join-Path $destination 'result.json') -Raw | ConvertFrom-Json -AsHashtable
+            foreach ($f in $saved.forms) {
+                Assert ($f.cli_exit_code -eq 0 -and $f.real_guard_denied) 'Fake did not exercise real deny'
+                Assert ($f.retry_observed -eq ($case -notin @('guard-no-retry','guard-wrong-retry-path'))) 'Retry observation did not require exact script command'
+                Assert ($null -eq $f.independent_acceptance) 'Execution became independent acceptance'
+                if ($case -eq 'guard-success') {
+                    Assert ($f.accepted -and $f.retry_provenance_present -and $f.retry_output_present -and $f.retry_execution_result -eq 'success') 'Valid retry rejected (repo or quoting broken)'
+                } else {
+                    Assert (-not $f.accepted) 'Incomplete or failed retry accepted on exit status alone'
+                    if ($case -eq 'guard-not-started') { Assert ($f.retry_reason -eq 'retry-command-did-not-start') 'Missing command-start reason' }
+                    elseif ($case -in @('guard-no-retry','guard-wrong-retry-path')) {
+                        Assert ($f.retry_output_present -and $f.retry_provenance_present -and $f.retry_execution_result -eq 'success') 'Missing observation case must otherwise succeed'
+                    }
+                    elseif ($case -eq 'guard-files-in-project') {
+                        Assert (-not $f.retry_provenance_present -and $f.retry_stderr_tail -match 'Harness files appeared inside retry project') 'Project contamination was not rejected'
+                    }
+                    else {
+                        Assert ($f.retry_stdout_tail.Length -eq 800 -and $f.retry_stderr_tail.Length -eq 800) 'Retry tails not bounded/preserved'
+                        Assert ($f.retry_stdout_tail -match 'stdout-end <path>' -and $f.retry_stderr_tail -match 'stderr-end <path>') 'Retry tails not sanitized'
+                    }
+                    if ($case -eq 'guard-no-provenance') { Assert ($f.retry_reason -eq 'retry-provenance-missing' -and -not $f.retry_provenance_present) 'Missing provenance reason' }
+                }
+            }
+            Assert ($r.accepted -eq ($case -eq 'guard-success')) 'Overall acceptance wrong'
+        }
+    }
     Check 'PATH unchanged and no raw prompts persisted' {
         Assert ($env:PATH -ceq $pathBefore) 'PATH changed'
         $stored = (Get-ChildItem $root -Recurse -File | Where-Object { $_.Extension -in @('.json','.jsonl') } | Get-Content -Raw) -join ''
@@ -161,6 +261,8 @@ if ($env:M02_FAKE_CASE -eq 'nonzero') { exit 7 }
 } finally {
     $env:M02_FAKE_CASE = $priorCase
     $env:M02_FAKE_AUDIT = $priorAudit
+    $env:M05_FAKE_DISPATCH = $priorDispatch
+    $env:M05_TEST_SCRIPTS = $priorScripts
     Write-Output "Harness evidence: $root"
 }
 Write-Output "Checks: $checks; failures: $($failures.Count)"

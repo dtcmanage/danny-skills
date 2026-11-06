@@ -1,4 +1,4 @@
-param([switch]$A5Only, [switch]$A6Only)
+param([switch]$A5Only, [switch]$A6Only, [switch]$SnapshotOnly)
 foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:'+$name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -57,6 +57,101 @@ $script:RouterDiagnosisHttp = {
     $out=Join-Path $temp 'result.md'
     $base=@{ProjectPath=$repo;Category='routine-coding';PromptPath=$prompt;OutputPath=$out;SelectionReason='fixture';AdHoc=$true;ReadOnly=$true}
     $ledger=Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl'
+    if (-not $A5Only -and -not $A6Only) {
+        $lockedPath=Join-Path $repo 'held-open.log'
+        [IO.File]::WriteAllText($lockedPath,'same content')
+        $lockHandle=[IO.File]::Open($lockedPath,'Open','Read',[IO.FileShare]::None)
+        try {
+            $o=$base.Clone(); $o.Lane='codex'
+            $r=Invoke-RouterDispatch $o $real
+            Check ($r.execution_result -eq 'success' -and $r.pass -and -not $r.failure_category -and $null -eq $r.independent_acceptance) 'locked untracked file does not abort real wrapper dispatch'
+            Check (($r.warnings -join ' ') -match 'held-open\.log' -and ($r.warnings -join ' ') -match 'could not verify') 'locked path warning explicitly records unverified contents'
+        } finally { $lockHandle.Dispose() }
+
+        # Markers stay outside the project. The fake CLI releases this bounded helper
+        # between the real wrapper's before/after snapshots, without changing bytes.
+        $signal=Join-Path $temp 'snapshot-lock'
+        $holderScript=Join-Path $temp 'snapshot-lock.ps1'
+        @'
+param($Path,$Signal)
+$ErrorActionPreference='Stop'
+$handle=[IO.File]::Open($Path,'Open','Read',[IO.FileShare]::None)
+try {
+    [IO.File]::WriteAllText($Signal+'.ready','ready')
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path ($Signal+'.release'))) {
+        if ($watch.Elapsed.TotalSeconds -gt 60) { throw 'Snapshot lock release timed out' }
+        Start-Sleep -Milliseconds 20
+    }
+} finally { $handle.Dispose() }
+[IO.File]::WriteAllText($Signal+'.done','done')
+'@ | Set-Content $holderScript
+        $psi=[Diagnostics.ProcessStartInfo]::new('pwsh')
+        $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true
+        foreach($arg in @('-NoProfile','-File',$holderScript,$lockedPath,$signal)) { [void]$psi.ArgumentList.Add($arg) }
+        $holder=[Diagnostics.Process]::Start($psi)
+        $fakePath=Join-Path $fixture.root 'dispatch-fake-cli.ps1'
+        $fakeText=[IO.File]::ReadAllText($fakePath)
+        try {
+            $watch=[Diagnostics.Stopwatch]::StartNew()
+            while (-not (Test-Path ($signal+'.ready'))) {
+                if ($holder.HasExited -or $watch.Elapsed.TotalSeconds -gt 15) { throw 'Snapshot lock helper failed to start' }
+                Start-Sleep -Milliseconds 20
+            }
+            $release=@'
+if ($args -contains 'exec') {
+    [IO.File]::WriteAllText('__SIGNAL__.release','release')
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path '__SIGNAL__.done')) {
+        if ($watch.Elapsed.TotalSeconds -gt 15) { throw 'Snapshot helper failed to release lock' }
+        Start-Sleep -Milliseconds 20
+    }
+}
+'@
+            [IO.File]::WriteAllText($fakePath,($release.Replace('__SIGNAL__',$signal.Replace("'","''"))+"`n"+$fakeText))
+            $r=Invoke-RouterDispatch $o $real
+            Check (-not $r.pass -and $r.failure_category -eq 'model-output' -and $r.termination_reason -match 'CODEX_READONLY_VIOLATION') 'unreadable to readable transition rejects real wrapper report'
+        } finally {
+            [IO.File]::WriteAllText($fakePath,$fakeText)
+            if (-not $holder.HasExited) { $holder.Kill($true); $holder.WaitForExit() }
+            $holder.Dispose()
+            Remove-Item -LiteralPath $lockedPath
+        }
+        # The command printed for a denied Explore or Plan call runs as printed on both lanes, read-only check active.
+        $guardScript=(Resolve-Path (Join-Path $PSScriptRoot '../dispatch-guard.py')).Path
+        $publicDispatch=(Resolve-Path (Join-Path $PSScriptRoot '../dispatch.ps1')).Path
+        $fakePath=Join-Path $fixture.root 'codex.ps1'
+        $fakeText=[IO.File]::ReadAllText($fakePath)
+        foreach($case in @(@{Lane='codex';Write=$false},@{Lane='claude';Write=$false},@{Lane='codex';Write=$true})) {
+            $lane=$case.Lane
+            $printedRepo=Join-Path $temp "_Claude-Workspace/Fixture/printed-$lane-$($case.Write)"; [void][IO.Directory]::CreateDirectory($printedRepo)
+            & git -C $printedRepo init -q
+            & git -C $printedRepo -c user.email=t@example.com -c user.name=t commit --allow-empty -qm fixture
+            [IO.File]::WriteAllText((Join-Path $printedRepo 'task-prompt.md'),'fixture prompt')
+            $payload=@{hook_event_name='PreToolUse';tool_name='Agent';tool_input=@{subagent_type='Explore'};cwd=$printedRepo} | ConvertTo-Json -Compress
+            $reason=(($payload | & python $guardScript) | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason
+            $printed=$reason.Substring($reason.IndexOf('run: ')+5)
+            $installed='D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch.ps1'
+            Check ($printed.Contains($installed) -and $printed.Contains(' -ReadOnly')) 'guard prints the read-only dispatch command'
+            $printedScript=Join-Path $temp "printed-$lane-$($case.Write).ps1"
+            [IO.File]::WriteAllText($printedScript,$printed.Replace($installed,$publicDispatch)+"`nexit `$LASTEXITCODE")
+            if ($case.Write) { [IO.File]::WriteAllText($fakePath,'[IO.File]::WriteAllText((Join-Path $PWD ''worker-change.txt''),''x'')'+"`n"+$fakeText) }
+            [IO.File]::WriteAllText($env:M04_FAKE_ARGS,'')
+            $env:DT_BUILD_RUN_PIN_VENDOR=$lane; $env:DT_BUILD_RUN_PIN_MODEL=$(if($lane -eq 'codex'){'gpt-6.1-sol'}else{'claude-opus-5-5'})
+            Push-Location -LiteralPath $printedRepo
+            try { & pwsh -NoProfile -File $printedScript *> (Join-Path $temp "printed-$lane-$($case.Write).log"); $code=$LASTEXITCODE }
+            finally { Pop-Location; Remove-Item Env:DT_BUILD_RUN_PIN_VENDOR,Env:DT_BUILD_RUN_PIN_MODEL -ErrorAction SilentlyContinue; [IO.File]::WriteAllText($fakePath,$fakeText) }
+            $printedRow=Read-Evidence (Join-Path $printedRepo '_dispatch/task-output.md')
+            if ($case.Write) {
+                Check ($code -ne 0 -and $printedRow.termination_reason -match 'CODEX_READONLY_VIOLATION') 'printed read-only command still rejects a worker that changes the project'
+            } else {
+                Check ($code -eq 0 -and $printedRow.execution_result -eq 'success' -and $printedRow.pass -and (Test-Path (Join-Path $printedRepo '_dispatch/task-output.md'))) "printed read-only command succeeds on the $lane lane"
+                $laneArgs=[IO.File]::ReadAllText($env:M04_FAKE_ARGS)
+                Check ($laneArgs -match "^$lane\|" -and $laneArgs -match $(if($lane -eq 'codex'){'read-only'}else{'Bash,Read,Glob,Grep'})) "printed read-only command reaches the $lane lane read-only"
+            }
+        }
+        if ($SnapshotOnly) { "SUMMARY: $checks snapshot checks; fake CLIs only"; return }
+    }
     if (-not $A5Only -and -not $A6Only) {
     # Production bench shape has neither key nor dispatch identity.
     $bench="{ `"source`": `"bench`", `"attempt`": 1, `"at`": `"2026-11-05T00:00:00Z`", `"model`": `"gpt-6.1-sol`", `"lane`": `"codex`", `"category`": `"routine-coding`", `"failure_category`": null, `"pass`": true }`r`n"

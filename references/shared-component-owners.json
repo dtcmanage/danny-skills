@@ -1,4 +1,9 @@
 {
+  "references/model-router/dispatch-guard-release.md": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test-guard-settings.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test_dispatch_guard.py": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/guard-settings.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/dispatch-guard.py": {"consumers": ["dt-build"], "summary_token": "model router"},
   "scripts/model-router/tests/dispatch-repair-a6-cases.ps1": {"consumers": ["dt-build"], "summary_token": "model router"},
   "scripts/model-router/tests/dispatch-repair-a5-cases.ps1": {"consumers": ["dt-build"], "summary_token": "model router"},
   "scripts/model-router/tests/dispatch-repair-a4-cases.ps1": {"consumers": ["dt-build"], "summary_token": "model router"},
