@@ -60,8 +60,8 @@ function ConvertFrom-ClaudeCliResult {
                 $u = $p.Value
                 [pscustomobject]@{
                     model         = [string]$p.Name
-                    input_tokens  = if ($u.PSObject.Properties['inputTokens']) { [long]$u.inputTokens } else { 0 }
-                    output_tokens = if ($u.PSObject.Properties['outputTokens']) { [long]$u.outputTokens } else { 0 }
+                    input_tokens  = if ($u.PSObject.Properties['inputTokens']) { [long]$u.inputTokens } else { $null }
+                    output_tokens = if ($u.PSObject.Properties['outputTokens']) { [long]$u.outputTokens } else { $null }
                     cost_usd      = if ($u.PSObject.Properties['costUSD']) { [double]$u.costUSD } else { $null }
                 }
             }

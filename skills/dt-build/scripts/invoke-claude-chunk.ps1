@@ -14,6 +14,7 @@ param(
     [string]$RetryAtHardFrom = "",
     [string]$Model = "",
     [string]$SelectionReason = "",
+    [string]$FrontierRequest = "",
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
     [ValidateRange(1, 2147483647)][int]$Attempt = 1,
     [string]$ApprovalOperation = "",
@@ -27,6 +28,10 @@ param(
     # with this switch each fails closed instead (failure_category single-dispatch-refused).
     [switch]$SingleDispatch,
     [string]$ClaudeCliPath = "",
+    [object]$DispatchContext,
+    [object]$RouterResolution,
+    [string]$LogicalTaskId,
+    [string]$PriorDispatchId,
     [switch]$Json
 )
 
@@ -54,6 +59,8 @@ if ($env:DT_JOB_DIR) {
 }
 Assert-WorkerAttemptApproval -RequestedAttempt $Attempt -ApprovalName $ApprovalOperation -ApprovalRunFolder $RunFolder
 
+
+
 if ($Scrutiny -and -not $ReadOnly) { throw 'SCRUTINY_REQUIRES_READ_ONLY' }
 
 function Resolve-SkillRepoRoot {
@@ -74,6 +81,12 @@ function Resolve-SkillRepoRoot {
     return (Split-Path -Parent (Split-Path -Parent $skillRoot))
 }
 
+$repoRoot = Resolve-SkillRepoRoot
+. (Join-Path $repoRoot 'scripts/model-router/dispatch-evidence.ps1')
+$routerPick = $null
+trap { $failureRecord = $_; if (Get-Command Exit-RouterFrontierFailure -ErrorAction SilentlyContinue) { Exit-RouterFrontierFailure -FailureRecord $failureRecord }; throw $failureRecord }
+$DispatchContext = New-RouterDispatchContext -Context $DispatchContext -PromptPath $PromptPath -AdHoc:$AdHoc -Preflight:$Preflight -Project $ProjectPath -Category $Category -Attempt $Attempt -LogicalTaskId $LogicalTaskId -PriorDispatchId $PriorDispatchId -RequestedModel $Model -OverrideReason $(if ($Model) { $SelectionReason })
+
 # Report shape (v3, with v2 accepted and flagged) is shared with the other wrapper.
 . (Join-Path $PSScriptRoot 'report-contract.ps1')
 . (Join-Path $PSScriptRoot 'worker-process-tree.ps1')
@@ -93,6 +106,8 @@ function Get-ClaudeCliPath {
     }
     throw "CLAUDE_INVOKE_FAIL: unable to locate claude CLI executable."
 }
+
+if ($env:DT_ROUTER_TEST_FAKE_CLI_ROOT) { Assert-RouterTestCliPath -Path (Get-ClaudeCliPath) }
 
 if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
     throw "CLAUDE_INVOKE_FAIL: project path not found: $ProjectPath"
@@ -135,7 +150,7 @@ if ($runPinActive) {
             }
             $pinPath = [IO.Path]::GetFullPath("$OutputPath.provenance.json")
             New-Item -ItemType Directory -Path (Split-Path -Parent $pinPath) -Force | Out-Null
-            [IO.File]::WriteAllText($pinPath, ($pinProvenance | ConvertTo-Json -Depth 5))
+            Write-RouterDispatchEvidence -Path $pinPath -Record ([pscustomobject]$pinProvenance) -Context $DispatchContext -Phase wait
         }
         throw $pinFailure
     }
@@ -212,7 +227,7 @@ if ($env:DT_BUILD_DISPATCH_SEAMS) {
 . (Join-Path $repoRoot "scripts\resolve-codex-model.ps1")
 . (Join-Path $repoRoot "scripts\model-router\resolve-model.ps1")
 
-$workstation = if ($projectRoot -match '[/\\]_Claude-Workspace[/\\]([^/\\]+)') { $Matches[1] } else { Split-Path -Leaf (Split-Path -Parent $projectRoot) }
+$workstation = if ($projectRoot -match '[/\\]_Claude-Workspace[/\\]([^/\\]+)') { $Matches[1] } else { $null }
 $isProtected = [bool]$Protected
 if ([string]::IsNullOrWhiteSpace($Category)) {
     $mappedCategory = ConvertTo-RouterCategoryFromTier -Tier $Tier
@@ -237,9 +252,18 @@ try {
     $resolvedDifficulty = if ((Get-RouterCategoryJob -Category $Category) -in @('coder','deep-thinker') -or ($isProtected -and $Category -eq 'mechanical')) { $Difficulty } else { $null }
     $escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
 
-    $routerPick = Resolve-RouterModel -Category $Category -Lane claude -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -SendAlerts:(-not $Scrutiny) -ChatToStderr:$Json
+    Assert-RouterNamedModel -Model $Model -Resolution $RouterResolution -RequestId $FrontierRequest
+    if (-not $RouterResolution -and $FrontierRequest) { $RouterResolution = Get-RouterReservedFrontierPick -RequestId $FrontierRequest -Category $Category -Lane 'claude' -Protected $isProtected }
+    $routerPick = if ($RouterResolution) { $RouterResolution } else {
+        Resolve-RouterModel -Category $Category -Lane claude -FrontierRequest $FrontierRequest -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -SendAlerts:(-not $Scrutiny) -ChatToStderr:$Json
+    }
 }
 catch { throw "CLAUDE_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
+if (Get-DispatchValue $routerPick 'difficulty') { $resolvedDifficulty = $routerPick.difficulty }
+Assert-RouterNamedModel -Model $Model -Resolution $routerPick -RequestId $FrontierRequest
+if (Assert-RouterDispatchPick -Resolution $routerPick -Model $Model -RequestId $FrontierRequest -CallerResolution:([bool]$RouterResolution)) { $SingleDispatch = $true }
+if ($Model) { $named = Get-RouterNamedModel $Model; if ($named) { $Model = $named.model } }
+$DispatchContext.category = $Category
 if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or (Get-RouterVendorBlocked -Vendor claude))) {
     $waitReason = "ROUTER_WAIT: $($routerPick.reason)"
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
@@ -257,7 +281,7 @@ if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or
         }
         $waitPath = [IO.Path]::GetFullPath("$OutputPath.provenance.json")
         New-Item -ItemType Directory -Path (Split-Path -Parent $waitPath) -Force | Out-Null
-        [IO.File]::WriteAllText($waitPath, ($waitProvenance | ConvertTo-Json -Depth 5))
+        Write-RouterDispatchEvidence -Path $waitPath -Record $waitProvenance -Context $DispatchContext -Phase wait
     }
     throw $waitReason
 }
@@ -279,6 +303,7 @@ $disclosureLine = if ($Preflight) { $null } else {
 Publish-DtJobModelSelection -Line $disclosureLine -Model $resolvedModel -Vendor 'claude' -Effort $Effort
 
 $claudeCli = Get-ClaudeCliPath
+Assert-RouterTestCliPath -Path $claudeCli
 # The exact model version the CLI reports; null until a run is parsed.
 $actualModel = $null
 
@@ -318,6 +343,7 @@ $permissionMode = if ($Preflight -or $Scrutiny) { 'default' } else { 'bypassPerm
 # the Agent tool, so a chunk cannot spawn nested agents outside the tier policy.
 # -ReadOnly (verifier/review chunks) also drops the file-writing tools.
 $toolList = if ($Scrutiny) { '' } elseif ($Preflight) { 'Read' } elseif ($ReadOnly) { 'Bash,Read,Glob,Grep' } else { 'Bash,Read,Edit,Write,Glob,Grep' }
+if ($AdHoc -and -not $Preflight -and -not $Scrutiny) { $toolList += ',WebSearch,WebFetch' }
 $args = @(
     '-p',
     '--model', $resolvedModel,
@@ -330,7 +356,7 @@ $args = @(
 if ($Effort) { $args = @($args[0..2]) + @('--effort', $Effort) + @($args[3..($args.Count - 1)]) }
 
 $dispatchStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
-$dispatchId = [guid]::NewGuid().ToString('N')
+$dispatchId = $DispatchContext.dispatch_id
 $diagnosis = $null
 $dispatchDiagnosis = $null
 $backupPick = $null
@@ -344,6 +370,14 @@ $outputInvocation = $null
 $streamPath = "$OutputPath.stream.log"
 $provenancePath = "$OutputPath.provenance.json"
 $provenanceWritten = $false
+$DispatchContext.category = $Category
+
+if (-not $DispatchContext.requested_model) { $DispatchContext.requested_model = $resolvedModel }
+if (-not $temporaryOutput) {
+    Write-RouterDispatchEvidence -Path $provenancePath -Record ([pscustomobject]@{resolved_model=$routerPick.model;lane='claude';effort=$Effort;difficulty=$resolvedDifficulty}) -Context $DispatchContext -Phase started
+}
+$exitCode = $null
+
 $startCommit = if (-not $Preflight -and -not $ReadOnly) {
     Get-WorkerStartCommit -Tree $projectRoot
 } else { $null }
@@ -391,7 +425,10 @@ try {
     $proc.StartInfo = $startInfo
     if ($SingleDispatch -and $dispatchCount -ge 1) { throw "CLAUDE_INVOKE_FAIL: -SingleDispatch refused a second child launch." }
     $null = Initialize-WorkerProcessJob
+    $frontierLaunch = Start-RouterFrontierDispatch -Resolution $routerPick -DispatchId $dispatchId
+    try {
     if (-not $proc.Start()) { throw "CLAUDE_INVOKE_FAIL: failed to start claude CLI." }
+    } catch { Undo-RouterFrontierReservation -Resolution $routerPick -DispatchId $dispatchId; throw }
     $dispatchCount++
 
     # Start both drains before writing stdin so neither native pipe can fill and
@@ -512,7 +549,8 @@ try {
                     lane = 'claude'; model = $resolvedModel; category = $Category; attempt = $Attempt
                     pass = $false; escalated = $false; failure_category = 'environment'; diagnosis = $diagnosis; source = 'dt-build'; tier = $Tier
                 }
-                Add-RouterOutcome -Row $row
+                $row.source = 'dispatch-event'
+                Add-RouterOutcomeBestEffort -Row $row
             }
             if ($SingleDispatch -and $diagnosis -in @('offline', 'unexplained')) {
                 # Both branches would relaunch the child; single-dispatch fails closed instead.
@@ -600,7 +638,7 @@ try {
         job                 = $routerPick.job
         vendor              = $routerPick.vendor
         requested_model     = $resolvedModel
-        resolved_model      = $actualModel
+        resolved_model      = $routerPick.model
         models_used         = @(if ($cliResult) { $cliResult.models_used })
         total_cost_usd      = if ($cliResult) { $cliResult.total_cost_usd } else { $null }
         selection_reason    = if ($Preflight) { $null } else { $SelectionReason }
@@ -633,10 +671,13 @@ try {
         report_version_warning = $reportVersionWarning
     }
 
+    if ($Preflight -and -not $result.pass) {
+        Add-RouterPreflightOutcome -DispatchId $dispatchId -Repo $outcomeRepo -Tier $Tier -Lane 'claude' -Model $resolvedModel -Category $Category -Attempt $Attempt -FailureCategory $failureCategory -Diagnosis $diagnosis
+    }
     if (-not $temporaryOutput) {
-        [System.IO.File]::WriteAllText($provenancePath, ($result | ConvertTo-Json -Depth 8))
+        Write-RouterDispatchEvidence -Path $provenancePath -Record $result -Context $DispatchContext -ExitCode $exitCode -ActualModel $actualModel -Usage $(if ($cliResult) { $cliResult.models_used } else { $null })
         $provenanceWritten = $true
-        $result | Add-Member -NotePropertyName provenance_path -NotePropertyValue (Resolve-Path -LiteralPath $provenancePath).Path
+        $result | Add-Member -NotePropertyName provenance_path -NotePropertyValue ([IO.Path]::GetFullPath($provenancePath))
     }
 
     if (-not $result.pass -and $diagnosis) {
@@ -657,7 +698,7 @@ catch {
             category = $Category; protected = $isProtected; escalated_from = $escalatedFrom
             router_reason = $routerReason; router_table_source = $routerPick.table_source; router_table_date = $routerPick.table_date
             job = $routerPick.job; vendor = $routerPick.vendor
-            requested_model = $resolvedModel; resolved_model = $actualModel
+            requested_model = $resolvedModel; resolved_model = $routerPick.model
             selection_reason = if ($Preflight) { $null } else { $SelectionReason }
             disclosure_line = $disclosureLine
             duration_ms = $durationMs; timeout_ms = $TimeoutMs
@@ -668,7 +709,7 @@ catch {
             dispatch_count = $dispatchCount; single_dispatch = [bool]$SingleDispatch; single_dispatch_refused_branch = $singleDispatchRefused
             process_custody = $script:WorkerJobState; orphans_stopped = @($workerOrphansStopped.ToArray())
         }
-        [System.IO.File]::WriteAllText($provenancePath, ($fallback | ConvertTo-Json -Depth 5))
+        Write-RouterDispatchEvidence -Path $provenancePath -Record $fallback -Context $DispatchContext -ExitCode $exitCode
     }
     throw
 }

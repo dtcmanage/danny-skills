@@ -1,3 +1,4 @@
+foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $temp = Join-Path $env:TEMP ('router-category-test-' + [guid]::NewGuid().ToString('N'))
@@ -66,7 +67,7 @@ if($args -contains '--fail'){[Console]::Error.Write($text);exit 9}
         Assert-True ($reply -ceq $unicode -and (Get-Content -Raw $receivedPath) -ceq $unicode) 'PS1 Claude research defaults Unicode prompt/answer exact'
         $actualArgs = @(Get-Content -Raw ($receivedPath+'.args.json') | ConvertFrom-Json)
         Assert-True ((ConvertTo-Json -InputObject @($actualArgs | Select-Object -First $peerArgs.Count) -Compress) -ceq (ConvertTo-Json -InputObject $peerArgs -Compress)) 'PS1 Claude research preserves empty, spaced, quoted, Unicode and literal shell argv'
-        Assert-True ($actualArgs[-2] -ceq '--settings' -and -not (Test-Path -LiteralPath $actualArgs[-1])) 'research invocation settings cleaned after success'
+        Assert-True ($actualArgs.Count -eq ($peerArgs.Count + 2) -and $actualArgs[-2] -ceq '--settings' -and -not (Test-Path -LiteralPath $actualArgs[-1])) 'research invocation settings cleaned after success'
         $peerArgs+=@('--fail')
         $errorText=''
         try {Invoke-RouterCategoryCall -Category deep-research -Lane claude -Prompt $unicode -TimeoutMs 10000;throw 'accepted failed peer'} catch {$errorText=$_.Exception.Message}

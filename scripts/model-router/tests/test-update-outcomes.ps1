@@ -1,3 +1,4 @@
+foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
@@ -194,7 +195,9 @@ try {
     $acceptanceDir = Join-Path $timestampRepo '.dt-build/timestamps'
     @{ milestone_id='accepted'; model='claude-opus-5[1m]'; status='PASS'; recorded_at_utc='2026-11-01T06:01:00Z' } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $acceptanceDir 'acceptance-rows.jsonl')
     Run-Update | Out-Null
-    $timestamps = Read-Records
+    $timestampArchives = @(Get-ChildItem -LiteralPath (Join-Path $timestampState '_archive') -Filter 'outcomes-*.jsonl')
+    Assert-True ($timestampArchives.Count -gt 0) 'aged evidence is archived without dropping timestamps'
+    $timestamps = @(Read-Records) + @($timestampArchives | ForEach-Object { Get-Content -LiteralPath $_.FullName | ForEach-Object { $_ | ConvertFrom-Json -DateKind String } })
     Assert-True ((@($timestamps | Where-Object key -eq 'timestamps:midnight:1')[0].at) -ceq '2026-07-16T21:52:00.0000000Z') 'provenance UTC timestamp remains exact near midnight'
     Assert-True ((@($timestamps | Where-Object key -eq 'timestamps:dst-before:1')[0].at) -ceq '2026-03-08T06:59:00.0000000Z' -and (@($timestamps | Where-Object key -eq 'timestamps:dst-after:1')[0].at) -ceq '2026-03-08T07:01:00.0000000Z') 'provenance UTC timestamps remain exact across DST'
     Assert-True ((@($timestamps | Where-Object key -eq 'timestamps:accepted:1')[0].at) -ceq '2026-11-01T06:01:00.0000000Z') 'acceptance UTC timestamp remains exact across DST'
@@ -251,6 +254,23 @@ try {
         $wtRows = @($wtRows | Where-Object { $_.key -ne 'wt-run:M02:root-remediation' })
         Assert-True ($wtRows.Count -eq 1 -and $wtRows[0].repo -eq 'main-repo' -and $wtRows[0].diagnosis -eq 'unexplained' -and $wtRows[0].failure_category -eq 'environment') 'linked worktree provenance is mined under the main repo name with its diagnosis'
     } finally { $env:DT_MODEL_ROUTER_STATE = $stateBeforeWorktree }
+    $stateBeforeSplit=$env:DT_MODEL_ROUTER_STATE
+    try {
+        $env:DT_MODEL_ROUTER_STATE=Join-Path $temp 'split-state'
+        $main=Join-Path $temp 'split-main';$linked=Join-Path $temp 'split-linked'
+        [void][IO.Directory]::CreateDirectory($main)
+        & git -C $main init -q
+        & git -C $main -c user.email=fixture@example.com -c user.name=fixture commit --allow-empty -qm fixture
+        & git -C $main worktree add -qb fixture-linked $linked 2>$null
+        $run=Join-Path $main '.dt-build/run-split';[void][IO.Directory]::CreateDirectory($run)
+        '{"milestone_id":"M01","attempt":1,"status":"PASS","resolved_model":"gpt-6.1-sol"}' | Set-Content (Join-Path $run 'acceptance-rows.jsonl')
+        $ctx=New-RouterDispatchContext -Project $linked -Category routine-coding -LogicalTaskId 'run-split:m01-build'
+        Write-RouterDispatchEvidence (Join-Path $linked 'output.provenance.json') ([pscustomobject]@{lane='codex'}) $ctx -ExitCode 0
+        $splitSources=Join-Path $temp 'split-sources.json';ConvertTo-Json -InputObject @($main) | Set-Content $splitSources
+        $split=Update-RouterOutcomes -SourcesPath $splitSources -Now (Get-Date)
+        $splitRows=@(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+        Assert-True ($splitRows.Count -eq 1 -and $splitRows[0].key -eq ('dispatch:'+$ctx.dispatch_id) -and $split.first_attempt.total -eq 0) 'main legacy acceptance never duplicates linked-worktree dispatch on first update'
+    } finally { $env:DT_MODEL_ROUTER_STATE=$stateBeforeSplit }
     Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $saved

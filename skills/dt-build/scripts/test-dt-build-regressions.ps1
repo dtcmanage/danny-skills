@@ -1,5 +1,6 @@
 param()
 
+foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
@@ -24,6 +25,8 @@ if ($resolvedSkillRoot) { $skillRoot = $resolvedSkillRoot.FullName }
 $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-regressions-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+$originalFakeCliRoot = $env:DT_ROUTER_TEST_FAKE_CLI_ROOT
+$env:DT_ROUTER_TEST_FAKE_CLI_ROOT = $tempRoot
 $originalCodexHome = $env:CODEX_HOME
 $originalLeanBootstrap = $env:DT_BUILD_LEAN_BOOTSTRAP
 $originalJobId = $env:DT_JOB_ID
@@ -40,6 +43,33 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    if ($IsWindows) {
+        $selectionJunction = Join-Path $tempRoot 'dt-build-junction'
+        $junction = New-Item -ItemType Junction -Path $selectionJunction -Target $skillRoot
+        try {
+            Assert-True ($junction.LinkType -eq 'Junction') 'model-selection fixture uses a real directory junction'
+            $junctionProbe = Join-Path $tempRoot 'junction-probe.ps1'
+            Write-Utf8 $junctionProbe @'
+param([string]$SkillJunction, [string]$CanonicalSkill, [string]$WorkingTree)
+foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:'+$name) -ErrorAction SilentlyContinue }
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+. (Join-Path $SkillJunction 'scripts/model-selection.ps1')
+if (-not (Get-Command Publish-DtJobModelSelection -ErrorAction SilentlyContinue)) { throw 'JUNCTION_SELECTION_NOT_LOADED' }
+$redacted = Invoke-SecretRedaction -Text 'token=sk-abcdefghijklmnopqrstuvwxyz123456'
+if ($redacted -match 'abcdefghijklmnopqrstuvwxyz') { throw 'JUNCTION_REDACTOR_NOT_LOADED' }
+# Each job entry point runs in a clean process, so the direct selection import
+# above cannot mask a broken dependency when dt-job starts through the junction.
+$canonicalHash = & pwsh -NoProfile -File (Join-Path $CanonicalSkill 'scripts/dt-job.ps1') tree-hash -WorkingTree $WorkingTree
+if ($LASTEXITCODE -ne 0) { throw 'CANONICAL_JOB_TREE_HASH_FAILED' }
+$junctionHash = & pwsh -NoProfile -File (Join-Path $SkillJunction 'scripts/dt-job.ps1') tree-hash -WorkingTree $WorkingTree
+if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $junctionHash -cne $canonicalHash) { throw 'JUNCTION_JOB_TREE_HASH_FAILED' }
+'PASS: junction selection redactor and dt-job tree-hash'
+'@
+            $junctionOutput = & pwsh -NoProfile -File $junctionProbe -SkillJunction $selectionJunction -CanonicalSkill $skillRoot -WorkingTree $repoRoot
+            Assert-True ($LASTEXITCODE -eq 0 -and $junctionOutput -contains 'PASS: junction selection redactor and dt-job tree-hash') 'model-selection and dt-job load through a real junction in fresh processes'
+        } finally { (Get-Item -LiteralPath $selectionJunction).Delete() }
+    }
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-cleanup-accepted-chunk.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'accepted-chunk cleanup regressions pass'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-review-inputs.ps1')
@@ -368,13 +398,19 @@ gantt
 
     # High-volume stdout+stderr must complete without pipe deadlock and execute
     # the named command exactly once.
+    . (Join-Path $repoRoot 'scripts/model-router/dispatch-evidence.ps1')
+    $acceptanceContext = New-RouterDispatchContext -Project $workingTree -Category routine-coding -LogicalTaskId 'acceptance-fixture'
+    $dispatchProv = Join-Path $tempRoot 'acceptance-fixture.provenance.json'
+    Write-RouterDispatchEvidence $dispatchProv ([pscustomobject]@{}) $acceptanceContext -ExitCode 0
     $verifyJson = & pwsh -NoProfile -File (Join-Path $scriptDir 'verify-milestone-acceptance.ps1') `
-        -RoadmapPath $roadmap -MilestoneId M01 -WorkingTree $workingTree -RunTests -CommandTimeoutMs 30000 -Json
+        -RoadmapPath $roadmap -MilestoneId M01 -WorkingTree $workingTree -RunTests -CommandTimeoutMs 30000 -DispatchId $acceptanceContext.dispatch_id -ProvenancePath $dispatchProv -Json
     Assert-True ($LASTEXITCODE -eq 0) "high-volume verifier failed"
     $verify = $verifyJson | ConvertFrom-Json
     Assert-True ($verify.status -eq 'PASS') "high-volume verifier did not PASS"
     Assert-True ($verify.commands_named.Count -eq 1) "verifier ran a duplicate command"
     Assert-True (-not $verify.command_results[0].timed_out) "high-volume verifier timed out"
+    $verifiedDispatch = Get-Content -Raw $dispatchProv | ConvertFrom-Json
+    Assert-True ($verify.dispatch_id -ceq $acceptanceContext.dispatch_id -and $verifiedDispatch.independent_acceptance -eq $true) 'independent verifier joins acceptance by dispatch identity'
 
     # The gate's inline extractor must preserve a JSON fixture path exactly; a
     # shared-helper-only assertion would not prevent the synchronized copy from
@@ -395,10 +431,14 @@ gantt
     $timeout = $timeoutJson | ConvertFrom-Json
     Assert-True ([bool]$timeout.command_results[0].timed_out) "timeout provenance missing"
 
+    $identityRaw = & pwsh -NoProfile -File (Join-Path $scriptDir 'verify-milestone-acceptance.ps1') -RoadmapPath $roadmap -MilestoneId M01 -WorkingTree $workingTree -BuilderReportPath ($dispatchProv -replace '\.provenance\.json$', '') -Json
+    $identity = $identityRaw | ConvertFrom-Json
+    Assert-True ($LASTEXITCODE -eq 0 -and $identity.dispatch_id -ceq $acceptanceContext.dispatch_id -and $identity.provenance_path -ceq $dispatchProv -and $null -eq $identity.independent_acceptance) 'builder report identity surfaces for acceptance row writer without self-acceptance'
+
     # Final ledger renders stored acceptance and never fabricates implementation.
     $runFolder = Join-Path $tempRoot 'run'
     New-Item -ItemType Directory -Path $runFolder -Force | Out-Null
-    $storedPass = [ordered]@{ milestone_id='M01'; status='PASS'; commit_sha=$workingSha; tests='1 fixture passed' } | ConvertTo-Json -Compress
+    $storedPass = [ordered]@{ milestone_id='M01'; status='PASS'; commit_sha=$workingSha; tests='1 fixture passed'; dispatch_id=$acceptanceContext.dispatch_id; provenance_path=$dispatchProv } | ConvertTo-Json -Compress
     Write-Utf8 -Path (Join-Path $runFolder 'acceptance-rows.jsonl') -Content $storedPass
     Write-Utf8 -Path (Join-Path $runFolder 'build-decision-log.md') -Content @'
 ## M01
@@ -412,6 +452,32 @@ rationale: Framework limitation accepted with visible evidence.
     $ledgerText = Get-Content -Raw -LiteralPath (Join-Path $ledgerOut 'build-acceptance-ledger.md')
     Assert-True ($ledgerText -match '\| M01 \| YES \| YES \| NO \| APPROVED_DOWNGRADE \|') "semantic approval on a machine PASS was not preserved"
     Assert-True ($ledgerText -match '\| M02 \| NO \| NO \| NO \| BLOCKED \|') "unstarted milestone was reported implemented"
+    Assert-True ((Get-Content -Raw $dispatchProv | ConvertFrom-Json).independent_acceptance -eq $false) 'ledger joins final independent acceptance by dispatch identity including downgrade'
+
+    $recordedHash=(Get-FileHash $dispatchProv).Hash
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'build-acceptance-ledger.ps1') -RoadmapPath $roadmap -WorkingTree $workingTree -OutDir $ledgerOut -RunFolder $runFolder -RunTests *> $null
+    Assert-True ((Get-FileHash $dispatchProv).Hash -eq $recordedHash) 'RunTests ledger revalidation preserves recorded acceptance provenance'
+    $unavailableProv=Join-Path $tempRoot 'unavailable.provenance.json'
+    foreach($unfinished in @($false,$true)) {
+        if($unfinished) { Write-RouterDispatchEvidence $unavailableProv ([pscustomobject]@{}) $acceptanceContext -Phase started }
+        $unavailablePass=[ordered]@{milestone_id='M01';status='PASS';commit_sha=$workingSha;tests='fixture';dispatch_id=$acceptanceContext.dispatch_id;provenance_path=$unavailableProv} | ConvertTo-Json -Compress
+        Write-Utf8 -Path (Join-Path $runFolder 'acceptance-rows.jsonl') -Content $unavailablePass
+        $unavailableOut=Join-Path $tempRoot ('ledger-unavailable-'+$unfinished)
+        $unavailableSummary = & pwsh -NoProfile -File (Join-Path $scriptDir 'build-acceptance-ledger.ps1') -RoadmapPath $roadmap -WorkingTree $workingTree -OutDir $unavailableOut -RunFolder $runFolder
+        Assert-True (Test-Path (Join-Path $unavailableOut 'build-acceptance-ledger.md')) "ledger renders with missing/unfinished provenance ($unfinished)"
+        Assert-True ((Get-Content (Join-Path $unavailableOut 'build-acceptance-ledger.md') -Raw) -match 'router_acceptance: unknown' -and ($unavailableSummary -join "`n") -match 'Router acceptance: unknown') "A5 ledger missing or unfinished provenance explicitly unknown ($unfinished)"
+    }
+    $noPathPass=[ordered]@{milestone_id='M01';status='PASS';commit_sha=$workingSha;tests='fixture';dispatch_id=$acceptanceContext.dispatch_id} | ConvertTo-Json -Compress
+    Write-Utf8 (Join-Path $runFolder 'acceptance-rows.jsonl') $noPathPass
+    $noPathOut=Join-Path $tempRoot 'ledger-no-path'
+    $noPathSummary = & pwsh -NoProfile -File (Join-Path $scriptDir 'build-acceptance-ledger.ps1') -RoadmapPath $roadmap -WorkingTree $workingTree -OutDir $noPathOut -RunFolder $runFolder
+    Assert-True ((Get-Content (Join-Path $noPathOut 'build-acceptance-ledger.md') -Raw) -match 'router_acceptance: unknown \(provenance_path missing\)' -and ($noPathSummary -join "`n") -match 'Router acceptance: unknown') 'A5 ledger missing provenance_path explicitly unknown'
+    $sidecarRecord=Get-Content $dispatchProv -Raw | ConvertFrom-Json -Depth 40 -DateKind String
+    Write-Utf8 ($unavailableProv+'.finished.json') ($sidecarRecord | ConvertTo-Json -Depth 40)
+    Write-Utf8 (Join-Path $runFolder 'acceptance-rows.jsonl') $unavailablePass
+    $sidecarOut=Join-Path $tempRoot 'ledger-sidecar'
+    $sidecarSummary = & pwsh -NoProfile -File (Join-Path $scriptDir 'build-acceptance-ledger.ps1') -RoadmapPath $roadmap -WorkingTree $workingTree -OutDir $sidecarOut -RunFolder $runFolder
+    Assert-True (($sidecarSummary -join "`n") -notmatch 'Router acceptance: unknown' -and (Get-Content $unavailableProv -Raw | ConvertFrom-Json).finished_utc) 'A5 ledger prefers finished sidecar over started provenance'
 
     $storedMissingTests = [ordered]@{ milestone_id='M01'; status='PASS'; commit_sha=$workingSha } | ConvertTo-Json -Compress
     Write-Utf8 -Path (Join-Path $runFolder 'acceptance-rows.jsonl') -Content $storedMissingTests
@@ -819,6 +885,14 @@ if($env:DT_FAKE_UNICODE_TEXT){
     $fakeClaude = Join-Path $tempRoot 'fake-claude.ps1'
     Write-Utf8 -Path $fakeClaude -Content @'
 if ($args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
+if ($env:DT_FAKE_SETTINGS_RECEIPT) {
+    $settingsIndex = [array]::IndexOf($args, '--settings')
+    if ($settingsIndex -lt 0 -or -not (Test-Path -LiteralPath $args[$settingsIndex+1])) { throw 'missing settings' }
+    [IO.File]::WriteAllText($env:DT_FAKE_SETTINGS_RECEIPT, $args[$settingsIndex+1])
+    if ($env:DT_FAKE_CLAUDE_MODE -eq 'exit') { exit 9 }
+    if ($env:DT_FAKE_CLAUDE_MODE -eq 'timeout') { Start-Sleep -Seconds 30; exit 8 }
+}
+
 if ($env:DT_FAKE_SELECTION_RELEASE) { while (-not (Test-Path -LiteralPath $env:DT_FAKE_SELECTION_RELEASE)) { Start-Sleep -Milliseconds 100 } }
 if ($env:DT_FAKE_CLAUDE_ARGS) { [System.IO.File]::WriteAllText($env:DT_FAKE_CLAUDE_ARGS, ($args -join '|')) }
 $receivedPrompt=[Console]::In.ReadToEnd()
@@ -870,6 +944,19 @@ if ($env:DT_FAKE_CHANGE_TREE) {
 }
 Write-Envelope $report
 '@
+
+    $env:DT_FAKE_SETTINGS_RECEIPT = Join-Path $tempRoot 'chunk-settings-receipt.txt'
+    foreach ($failureMode in @('stamped-preflight', 'exit', 'timeout')) {
+        $env:DT_FAKE_CLAUDE_MODE = $failureMode
+        $failureOutput = Join-Path $tempRoot ('settings-' + $failureMode + '.md')
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $failureOutput -ClaudeCliPath $fakeClaude -Model 'claude-sonnet-5' -Effort low -SelectionReason 'settings cleanup fixture' -SingleDispatch -TimeoutMs 3000 -Json *> $null
+        Assert-True ($LASTEXITCODE -ne 0) "Claude chunk rejects $failureMode"
+        Assert-True (Test-Path -LiteralPath $env:DT_FAKE_SETTINGS_RECEIPT) "Claude chunk $failureMode received settings"
+        $settingsFile = [IO.File]::ReadAllText($env:DT_FAKE_SETTINGS_RECEIPT)
+        Assert-True (-not (Test-Path -LiteralPath $settingsFile)) "Claude chunk $failureMode cleans settings"
+        Remove-Item -LiteralPath $env:DT_FAKE_SETTINGS_RECEIPT
+    }
+    Remove-Item Env:DT_FAKE_SETTINGS_RECEIPT
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
     # FS-112/113: exercise both wrappers with fake CLIs and the suite's fake alert transport.
@@ -958,7 +1045,7 @@ Write-Envelope $report
             $pinExit = $LASTEXITCODE
             $pinProv = Get-Content -Raw -LiteralPath "$pinOutput.provenance.json" | ConvertFrom-Json
             if ($pinCase -in @('match', 'reason')) {
-                Assert-True ($pinExit -eq 0 -and $pinProv.pass -and $pinProv.resolved_model -eq 'claude-sonnet-5' -and $pinProv.router_reason -eq 'run pin') "claude pin resolves without Model ($pinCase)"
+                Assert-True ($pinExit -eq 0 -and $pinProv.pass -and $pinProv.actual_model -eq 'claude-sonnet-5' -and $pinProv.resolved_model -eq $fixtureRoster.jobs.coder.backup -and $pinProv.router_reason -eq 'run pin') "claude pin resolves without Model ($pinCase)"
                 $wantReason = if ($pinCase -eq 'reason') { 'fixture reason; run pin claude-sonnet-5' } else { 'run pin' }
                 Assert-True ($pinProv.selection_reason -eq $wantReason) "claude pin records selection reason ($pinCase)"
             } else {
@@ -1013,7 +1100,7 @@ Write-Envelope $report
     $claudeProv.disclosure_line = $claudeProv.disclosure_line.Replace(', effort medium', '') # Preserve the existing legacy disclosure-structure assertion below.
     Assert-True ([string]$claudeProv.disclosure_line -match '^MODEL_SELECTION: fixture-chunk -> claude-sonnet-5 \(routine-coding\): ordinary fixture verification logic; router: .+$') "Claude provenance omitted canonical disclosure line"
     Assert-True ([string]$claudeProv.requested_model -eq 'claude-sonnet-5') "Claude provenance lost the router-requested model"
-    Assert-True ([string]$claudeProv.resolved_model -eq 'claude-sonnet-5') "Claude provenance did not record the exact model version that ran"
+    Assert-True ([string]$claudeProv.actual_model -eq 'claude-sonnet-5' -and $claudeProv.resolved_model -eq $fixtureRoster.jobs.coder.backup) "Claude provenance separates actual model from router pick"
     Assert-True (@($claudeProv.models_used).Count -eq 1 -and [string]@($claudeProv.models_used)[0].model -eq 'claude-sonnet-5') "Claude provenance omitted models_used"
     Assert-True ((Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json") -match '"models_used":\s*\[') "Claude provenance models_used is not a JSON array"
 
@@ -1261,8 +1348,12 @@ $script:RouterDiagnosisHttp = {
                 Start-Sleep -Milliseconds 200
                 $statusRaw = & pwsh -NoProfile -File $dtJobScript status -RunFolder $selectionRun -JobId $startJob.job_id -Json
                 $liveStatus = ($statusRaw -join "`n") | ConvertFrom-Json
-            } while ($null -eq $liveStatus.model_selection -and [DateTime]::UtcNow -lt $deadline)
-            Assert-True ($liveStatus.status -eq 'running' -and $liveStatus.model_selection.model -eq $model -and $liveStatus.model_selection.disclosure_line -match '^MODEL_SELECTION:' -and -not (Test-Path "$selectionReport.provenance.json")) "$lane running job exposes selection before completion"
+            } while (($null -eq $liveStatus.model_selection -or -not (Test-Path -LiteralPath "$selectionReport.provenance.json")) -and [DateTime]::UtcNow -lt $deadline)
+            Assert-True (Test-Path -LiteralPath "$selectionReport.provenance.json") "$lane running job has started provenance"
+            $startedProvenance = Get-Content -Raw -LiteralPath "$selectionReport.provenance.json" | ConvertFrom-Json
+            Assert-True ($liveStatus.status -eq 'running' -and $liveStatus.model_selection.model -eq $model -and $liveStatus.model_selection.disclosure_line -match '^MODEL_SELECTION:' -and $null -eq $startedProvenance.finished_utc -and $null -eq $startedProvenance.execution_result -and $null -eq $startedProvenance.independent_acceptance) "$lane running job exposes selection before completion"
+            $expectedRouterModel=if($lane -eq 'codex'){$fixtureRoster.jobs.coder.first}else{$fixtureRoster.jobs.coder.backup}
+            Assert-True ($startedProvenance.lane -eq $lane -and $startedProvenance.resolved_model -eq $expectedRouterModel -and $startedProvenance.requested_model -eq $model) "$lane started override preserves router pick, request and lane"
             $allRaw = & pwsh -NoProfile -File $dtJobScript status -RunFolder $selectionRun -Json
             $allStatus = ($allRaw -join "`n") | ConvertFrom-Json
             Assert-True ($allStatus.jobs[0].model_selection.vendor -eq $lane) "$lane run status exposes running selection"
@@ -1278,6 +1369,7 @@ $script:RouterDiagnosisHttp = {
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {
+    $env:DT_ROUTER_TEST_FAKE_CLI_ROOT = $originalFakeCliRoot
     $env:DT_BUILD_LEAN_BOOTSTRAP = $originalLeanBootstrap
     $env:DT_JOB_ID = $originalJobId
     $env:DT_JOB_DIR = $originalJobDir

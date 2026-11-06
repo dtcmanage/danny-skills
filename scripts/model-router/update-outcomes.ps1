@@ -3,6 +3,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 . (Join-Path $PSScriptRoot 'send-router-alert.ps1')
+. (Join-Path $PSScriptRoot 'dispatch-evidence.ps1')
 
 function Get-RouterOutcomeValue {
     param([object]$Row, [string[]]$Names)
@@ -65,11 +66,19 @@ function Update-RouterOutcomesLocked {
     $roots = @([IO.File]::ReadAllText($SourcesPath) | ConvertFrom-Json)
     $rosterRead = Read-RouterRoster
     $outcomePath = Join-Path $state 'outcomes.jsonl'
-    $records = [ordered]@{}
-    if (Test-Path -LiteralPath $outcomePath) {
-        foreach ($line in [IO.File]::ReadAllLines($outcomePath)) {
-            if (-not $line.Trim()) { continue }
-            try { $row = $line | ConvertFrom-Json -Depth 20; if ($row.key) { $records[[string]$row.key] = $row } } catch { }
+    $ledger = Read-RouterOutcomeLedger $outcomePath
+    $records = $ledger.records
+    $before = @{}
+    foreach ($key in $records.Keys) { $before[$key] = $records[$key] | ConvertTo-Json -Depth 40 -Compress }
+    # Archives are the retained identity index: do not resurrect aged provenance.
+    $archivedKeys = @{}
+    $archivedDispatchRows = [Collections.Generic.List[object]]::new()
+    $archiveDir = Join-Path $state '_archive'
+    if (Test-Path -LiteralPath $archiveDir) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $archiveDir -Filter 'outcomes-*.jsonl' -File)) {
+            $archived = Read-RouterOutcomeLedger $file.FullName
+            foreach ($key in $archived.records.Keys) { $archivedKeys[$key] = $true }
+            foreach ($row in $archived.records.Values) { if (Get-DispatchValue $row 'dispatch_id') { $archivedDispatchRows.Add($row) } }
         }
     }
     $newCount = 0
@@ -89,6 +98,34 @@ function Update-RouterOutcomesLocked {
             $scanRoots.Add([pscustomobject]@{ path = $worktreePath; repo = (Split-Path -Leaf $rootPath) })
         }
     }
+    # Collect all dispatch identities before considering legacy acceptance rows,
+    # including indexed output paths outside every configured source root.
+    $provenancePaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($existing in $records.Values) {
+        $indexed = Get-DispatchValue $existing 'provenance_path'
+        if ((Get-DispatchValue $existing 'dispatch_id') -and $indexed -and (Test-Path -LiteralPath $indexed)) { [void]$provenancePaths.Add($indexed) }
+    }
+    $pending = @(Get-RouterPendingOutcomes -StateDir $state)
+    $drained = @(Import-RouterPendingOutcomes -StateDir $state -Pending $pending -Rows $records -ArchivedKeys $archivedKeys)
+    foreach ($filePath in $provenancePaths) {
+                try { $item = Read-RouterDispatchEvidence -Path $filePath } catch { continue }
+                $id = Get-DispatchValue $item 'dispatch_id'
+                if (-not $id -or -not (Get-DispatchValue $item 'logical_task_id')) { continue }
+                $key = 'dispatch:' + $id
+                if (-not $records.Contains($key) -and $archivedKeys.ContainsKey($key)) { continue }
+                $row = ConvertTo-DispatchOutcome $item $filePath
+                # Imported snapshots must not regress terminal or verifier evidence.
+                if ($records.Contains($key)) {
+                    $prior = $records[$key]
+                    if ((Get-DispatchValue $prior 'finished_utc') -and -not $row.finished_utc) { continue }
+                    $row.provenance_path = $prior.provenance_path
+                    if ($prior.PSObject.Properties['retry_count']) { $row | Add-Member -NotePropertyName retry_count -NotePropertyValue $prior.retry_count }
+                    if ($null -ne (Get-DispatchValue $prior 'independent_acceptance') -and $null -eq $row.independent_acceptance) { $row.independent_acceptance = $prior.independent_acceptance; $row.pass = $prior.independent_acceptance }
+                }
+                if ($records.Contains($key) -and (($records[$key] | ConvertTo-Json -Depth 40 -Compress) -ceq ([pscustomobject]$row | ConvertTo-Json -Depth 40 -Compress))) { continue }
+                $records[$key] = [pscustomobject]$row
+                $newCount++
+    }
     foreach ($scanRoot in $scanRoots) {
         $build = Join-Path ([string]$scanRoot.path) '.dt-build'
         if (-not (Test-Path -LiteralPath $build -PathType Container)) { continue }
@@ -102,7 +139,8 @@ function Update-RouterOutcomesLocked {
             }
             foreach ($folder in $folders) {
                 foreach ($file in @(Get-ChildItem -LiteralPath $folder -File -Filter '*.provenance.json')) {
-                    try { $item = [IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json -Depth 20 } catch { continue }
+                    try { $item = [IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json -Depth 20 -DateKind String } catch { continue }
+                    if ((Get-DispatchValue $item 'dispatch_id') -and (Get-DispatchValue $item 'logical_task_id')) { continue }
                     $model = ConvertTo-RouterOutcomeModel ([string](Get-RouterOutcomeValue $item @('resolved_model','model','requested_model'))) $rosterRead.roster
                     if (-not $model) { continue }
                     $chunk = Get-RouterOutcomeValue $item @('chunk_id','milestone_id')
@@ -110,7 +148,7 @@ function Update-RouterOutcomesLocked {
                     $attempt = Get-RouterOutcomeValue $item @('attempt')
                     if (-not $attempt) { $attempt = if ($file.Name -match '(?i)(?:-|_)(?:a|attempt)(\d+)') { [int]$Matches[1] } elseif ($file.Name -match '(?i)(?:-|_)(retry|fix|resume)') { 2 } else { 1 } }
                     $key = "$($run.Name):$chunk`:$attempt"
-                    if ($records.Contains($key)) { continue }
+                    if ($records.Contains($key) -or $archivedKeys.ContainsKey($key)) { continue }
                     $at = Get-RouterOutcomeValue $item @('at','accepted_at_utc','recorded_at_utc','model_cache_fetched_at')
                     if (-not $at) { $at = $file.LastWriteTimeUtc.ToString('o') }
                     try { $at = ConvertTo-RouterOutcomeUtcTimestamp $at } catch { $at = $file.LastWriteTimeUtc.ToString('o') }
@@ -131,13 +169,41 @@ function Update-RouterOutcomesLocked {
                 $acceptance = Join-Path $folder 'acceptance-rows.jsonl'
                 if (-not (Test-Path -LiteralPath $acceptance)) { continue }
                 foreach ($line in [IO.File]::ReadAllLines($acceptance)) {
-                    try { $item = $line | ConvertFrom-Json -Depth 20 } catch { continue }
+                    try { $item = $line | ConvertFrom-Json -Depth 20 -DateKind String } catch { continue }
+                    $acceptanceId = Get-DispatchValue $item 'dispatch_id'
+                    $acceptancePath = Get-DispatchValue $item 'provenance_path'
+                    if (-not $acceptanceId -and $acceptancePath -and (Test-Path -LiteralPath $acceptancePath)) {
+                        $acceptanceEvidence = Get-Content -LiteralPath $acceptancePath -Raw | ConvertFrom-Json -Depth 40 -DateKind String
+                        $acceptanceId = Get-DispatchValue $acceptanceEvidence 'dispatch_id'
+                    }
+                    if ($acceptanceId) {
+                        $dispatchKey = 'dispatch:' + $acceptanceId
+                        if ($records.Contains($dispatchKey)) {
+                            $accepted = (Get-DispatchValue $item 'status') -eq 'PASS' -and
+                                (Get-DispatchValue $item 'accepted') -ne $false -and
+                                (Get-DispatchValue $item 'downgrade_status') -notin @('downgraded','blocked','fail') -and
+                                (Get-DispatchValue $records[$dispatchKey] 'independent_acceptance') -ne $false
+                            $records[$dispatchKey].independent_acceptance = $accepted
+                            $records[$dispatchKey].pass = $accepted
+                        }
+                        continue
+                    }
+                    # With correlated provenance present, an unkeyed legacy acceptance is
+                    # ambiguous (builder/reviewer). Keep it unknown; never invent a second attempt.
+                    $legacyAttempt = Get-DispatchValue $item 'attempt'
+                    if (-not $legacyAttempt) { $legacyAttempt = 1 }
+                    $correlated = @(@($records.Values) + @($archivedDispatchRows.ToArray()) | Where-Object {
+                        (Get-DispatchValue $_ 'dispatch_id') -and
+                        ((Get-DispatchValue $_ 'logical_task_id') -like ($run.Name + ':*') -or (Get-DispatchValue $_ 'provenance_path') -like ($run.FullName + [IO.Path]::DirectorySeparatorChar + '*')) -and
+                        ((Get-DispatchValue $_ 'attempt') -eq $legacyAttempt -or -not (Get-DispatchValue $item 'attempt'))
+                    })
+                    if ($correlated.Count) { continue }
                     $chunk = Get-RouterOutcomeValue $item @('chunk_id','milestone_id')
                     if (-not $chunk) { continue }
                     $attempt = Get-RouterOutcomeValue $item @('attempt')
                     if (-not $attempt) { $attempt = 1 }
                     $key = "$($run.Name):$chunk`:$attempt"
-                    if ($records.Contains($key)) { continue }
+                    if ($records.Contains($key) -or $archivedKeys.ContainsKey($key)) { continue }
                     $builder = Get-RouterOutcomeValue $item @('builder')
                     $model = ConvertTo-RouterOutcomeModel ([string](Get-RouterOutcomeValue $item @('resolved_model','model','requested_model'))) $rosterRead.roster
                     if (-not $model -and $builder) { $model = ConvertTo-RouterOutcomeModel ([string](Get-RouterOutcomeValue $builder @('resolved_model','model'))) $rosterRead.roster }
@@ -158,23 +224,50 @@ function Update-RouterOutcomesLocked {
             }
         }
     }
-    $values = @($records.Values)
+    $values = @($records.Values) + @($ledger.raw | Where-Object { -not $_.key -and $_.row } | ForEach-Object row)
+    $dispatchRows = @($values | Where-Object { Get-DispatchValue $_ 'logical_task_id' })
+    foreach ($row in $dispatchRows) {
+        $later = @($dispatchRows | Where-Object { $_.logical_task_id -eq $row.logical_task_id -and $_.attempt -gt $row.attempt })
+        $row | Add-Member -Force -NotePropertyName retry_count -NotePropertyValue $later.Count
+    }
     foreach ($row in $values) {
-        if ($row.attempt -ne 1) { continue }
-        $later = @($values | Where-Object { $_.run_id -eq $row.run_id -and $_.repo -eq $row.repo -and $_.key -match '^(.+):[^:]+:[^:]+$' -and ($_.key -replace ':[^:]+$','') -eq ($row.key -replace ':[^:]+$','') -and $_.attempt -gt 1 -and ($_.model -ne $row.model -or $_.tier -ne $row.tier) })
+        if (-not (Get-DispatchValue $row 'key') -or (Get-DispatchValue $row 'dispatch_id') -or (Get-DispatchValue $row 'attempt') -ne 1) { continue }
+        $later = @($values | Where-Object { (Get-DispatchValue $_ 'run_id') -eq (Get-DispatchValue $row 'run_id') -and (Get-DispatchValue $_ 'repo') -eq (Get-DispatchValue $row 'repo') -and (Get-DispatchValue $_ 'key') -match '^(.+):[^:]+:[^:]+$' -and ($_.key -replace ':[^:]+$','') -eq ($row.key -replace ':[^:]+$','') -and $_.attempt -gt 1 -and ((Get-DispatchValue $_ 'model') -ne (Get-DispatchValue $row 'model') -or (Get-DispatchValue $_ 'tier') -ne (Get-DispatchValue $row 'tier')) })
         if ($later.Count) { $row.escalated = $true }
     }
-    if ($newCount) {
-        $lines = @($values | Sort-Object key | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 10 })
-        $temp = Join-Path $state ('.outcomes.' + [guid]::NewGuid().ToString('N') + '.tmp')
-        try {
-            [IO.File]::WriteAllLines($temp,$lines,[Text.UTF8Encoding]::new($false))
-            [IO.File]::Move($temp,$outcomePath,$true)
-        } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+    # Retain the full 120-day comparison window; keep older evidence in dated
+    # archives, rather than dropping it at an arbitrary ledger byte threshold.
+    $aged = @($records.Values | Where-Object { (Get-DispatchValue $_ 'at') -and ([datetimeoffset]$_.at) -lt ([datetimeoffset]$Now).AddDays(-120) })
+    if ($aged.Count) {
+        [IO.Directory]::CreateDirectory($archiveDir) | Out-Null
+        $archivePath = Join-Path $archiveDir ('outcomes-' + $Now.ToString('yyyy-MM-dd') + '.jsonl')
+        $archive = Read-RouterOutcomeLedger $archivePath
+        foreach ($row in $aged) {
+            if (-not $archivedKeys.ContainsKey($row.key)) { $archive.records[$row.key] = $row }
+            $records.Remove($row.key)
+        }
+        if ($archive.records.Count) { Write-RouterOutcomeLedger $archivePath $archive $archive.records }
+        $values = @($values | Where-Object { (Get-DispatchValue $_ 'key') -notin @($aged.key) })
     }
+    # Count final changes, not intermediate merge operations. Repeated imports are no-ops.
+    $newCount = 0
+    foreach ($key in $records.Keys) {
+        if (-not $before.ContainsKey($key) -or $before[$key] -cne ($records[$key] | ConvertTo-Json -Depth 40 -Compress)) { $newCount++ }
+    }
+    Write-RouterOutcomeLedger $outcomePath $ledger $records
+    foreach ($pointer in $drained) { Remove-Item -LiteralPath $pointer.FullName -Force -ErrorAction SilentlyContinue }
+    $unresolvedFolder = Join-Path $state 'outcome-pending/unresolved'
+    $unresolved = if (Test-Path -LiteralPath $unresolvedFolder -PathType Container) { @(Get-ChildItem -LiteralPath $unresolvedFolder -Filter '*.txt' -File).Count } else { 0 }
     $nowUtc = $Now.ToUniversalTime()
-    $eligible = @($values | Where-Object { (Get-RouterOutcomeValue $_ 'source') -notin @('canary','bench') -and $_.attempt -eq 1 -and $_.failure_category -notin @('environment','tooling','capacity') })
-    if ($rosterRead.source -ne 'state') { return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; alerts=@(); proposal=$null } }
+    $verifiedTasks = @{}
+    foreach ($row in $dispatchRows) {
+        if ($null -ne (Get-DispatchValue $row 'independent_acceptance')) { $verifiedTasks[$row.logical_task_id] = $true }
+    }
+    # First-attempt acceptance is per logical task with an independent verifier result,
+    # including a later accepted retry; unverified work and bench evidence stay separate.
+    $eligible = @($values | Where-Object { (Get-RouterOutcomeValue $_ 'source') -notin @('canary','bench','dispatch-event') -and (Get-DispatchValue $_ 'attempt') -eq 1 -and (Get-DispatchValue $_ 'failure_category') -notin @('environment','tooling','capacity') -and (-not (Get-DispatchValue $_ 'dispatch_id') -or $verifiedTasks.ContainsKey($_.logical_task_id)) })
+    $firstAttempt = [pscustomobject]@{accepted=@($eligible | Where-Object { (Get-DispatchValue $_ 'pass') -eq $true }).Count; total=$eligible.Count; retries=(@($eligible | ForEach-Object { [int](Get-DispatchValue $_ 'retry_count') }) | Measure-Object -Sum).Sum}
+    if ($rosterRead.source -ne 'state') { return [pscustomobject]@{ unresolved_count=$unresolved; new_records=$newCount; total_records=$values.Count; first_attempt=$firstAttempt; alerts=@(); proposal=$null } }
     $roster = $rosterRead.roster
     $marksPath = Join-Path $state 'drift-marks.json'
     $priorMarks = @(Read-RouterJsonArray -Path $marksPath)
@@ -228,7 +321,7 @@ function Update-RouterOutcomesLocked {
         $entry = $roster.jobs.($_.job)
         [pscustomobject]@{job=$_.job;candidate=$entry.backup;incumbent=$entry.first;effort=$entry.first_effort}
     })
-    return [pscustomobject]@{ new_records=$newCount; total_records=$values.Count; alerts=@($alerts.ToArray()); proposal=$null; requests=$requests; identity=(ConvertTo-Json $roster.jobs -Compress -Depth 30) }
+    return [pscustomobject]@{ unresolved_count=$unresolved; new_records=$newCount; total_records=$values.Count; first_attempt=$firstAttempt; alerts=@($alerts.ToArray()); proposal=$null; requests=$requests; identity=(ConvertTo-Json $roster.jobs -Compress -Depth 30) }
 
 }
 

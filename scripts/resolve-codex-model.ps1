@@ -38,6 +38,12 @@ function Update-CodexModelCatalog {
     $workDir = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-models-{0}" -f [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $workDir -Force | Out-Null
     try {
+        if ($env:DT_ROUTER_TEST_FAKE_CLI_ROOT) {
+            if (-not (Get-Command Assert-RouterTestCliPath -ErrorAction SilentlyContinue)) {
+                . (Join-Path $PSScriptRoot 'model-router/dispatch-evidence.ps1')
+            }
+            Assert-RouterTestCliPath -Path $CodexCliPath
+        }
         $result = Invoke-CodexProcess -CodexPath $CodexCliPath -Arguments @('debug', 'models') -Prompt '' -WorkingDirectory $workDir -TimeoutMs $TimeoutMs
     }
     finally {

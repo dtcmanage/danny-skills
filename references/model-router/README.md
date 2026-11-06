@@ -1,5 +1,29 @@
 # Model router operator reference
 
+## Dispatch command
+
+`<danny-skills>/scripts/model-router/dispatch.ps1` is the public category-based entry point. It
+requires `-ProjectPath`, `-Category`, `-PromptPath`, `-OutputPath` and a one-line
+`-SelectionReason` (up to 240 characters). Actual model calls require `-Live`.
+The approved roster selects the lane and effort; a run pin selects its vendor's
+lane. `-Lane codex|claude` prevents cross-vendor fallback.
+
+Optional inputs preserve the lane adapters' behavior: `-ReadOnly`, `-AdHoc`,
+`-Protected`, `-Scrutiny`, `-SingleDispatch`, `-Difficulty standard|hard`,
+`-DifficultyReason`, `-RetryAtHardFrom`, `-EscalateFrom`, `-TimeoutMs`,
+`-AllowOutputInProject` (Codex), and `-Json`. `-Model` is a recorded override
+using the selection reason; frontier overrides also need an approved
+`-FrontierRequest` and consume at most one launch, even if that launch fails.
+Older Claude names such as `claude-3-opus-20240229` remain refused.
+
+`-Attempt` defaults to 1; later managed attempts retain `-ApprovalOperation` and
+`-RunFolder` authorization. `-LogicalTaskId` takes precedence over prompt
+`RUN_ID` / `chunk_id` headers. Otherwise the full prompt path identifies an ad
+hoc task; `-AdHoc` ignores pasted headers. `-PriorDispatchId` records explicit
+attempt linkage. Started, finished and independently accepted remain separate
+facts in `<OutputPath>.provenance.json` and the outcomes index. If indexing
+fails, a pending path is retried by the next dispatch write or outcome update.
+
 `<danny-skills>` is the resolved danny-skills repo root; quote script paths when substituting it.
 
 Route work through `<danny-skills>/scripts/model-router/resolve-model.ps1`; request `-Json` for structured output. The roster contains five jobs, a first choice and an other-vendor backup per job, and a category-to-job map. The illustrator has no backup while only one image model exists. Each slot carries an effort (fast low, coder standard medium / hard high, deep thinker standard medium / hard high, writer medium, illustrator none) that the resolver returns and the wrappers pass to the CLIs.
@@ -316,6 +340,10 @@ the line-start signature `^\[\d\d:\d\d:\d\d\] ` under the live router state's
 `research-failures/`: 10 files scanned, 10 signature matches, all from one run
 on 2026-10-07 between 1:00 and 1:17 AM ET. The signature occurs in the saved
 reply after the alert key and parse error, rather than at byte zero of the file.
+The retained count includes Codex logs and was not split by vendor. A rescan also
+matches M03 attempt 3's own builder log, which echoes fixture text and is not a
+real result.
+
 A separate scan of 2,111 retained stream logs found 0 timestamp-prefixed
 `result` strings. That count has limited historical coverage: the chunk wrapper
 saves stdout only on a parse failure, and the old parser accepted prefixed
@@ -351,8 +379,10 @@ in `ladders.json`. Consumption is locked and atomically recorded as used before
 returning the model, permitting one dispatch. Unknown, mismatched, malformed, or
 used requests fail closed. Ordinary difficulty and escalation never select frontier.
 
-Resolve with `-FrontierRequest <id>`, then pass the returned model to the lane
-wrapper through `-Model` and a `-SelectionReason` naming the request id. Approval
-is consumed when the resolver returns the model, so a failed run needs a new
-request. The scrutiny call runs without tools (Claude uses default permissions;
+Resolve with `-FrontierRequest <id>`, then pass the returned model and the same
+`-FrontierRequest <id>` to the lane wrapper through `-Model`, with a recorded
+`-SelectionReason`. The resolver reserves approval; the wrapper may launch it
+once. A refusal before CLI launch releases that reservation. A launched dispatch
+consumes approval even when execution fails. A second launch is refused.
+The scrutiny call runs without tools (Claude uses default permissions;
 Codex uses the read-only sandbox).

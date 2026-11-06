@@ -4,6 +4,9 @@ param(
     [Parameter(Mandatory)][string]$WorkingTree,
     [switch]$RunTests,
     [ValidateRange(1000, 3600000)][int]$CommandTimeoutMs = 600000,
+    [string]$DispatchId,
+    [string]$ProvenancePath,
+    [string]$BuilderReportPath,
     [switch]$Json
 )
 
@@ -445,7 +448,28 @@ $blockers = $topBlockers.ToArray()
 $accepted = $RunTests -and ($blockers.Count -eq 0) -and ($presence.missing.Count -eq 0) -and ($testStatus -eq "PASS")
 $status = if (-not $RunTests) { "INSPECT_ONLY" } elseif ($accepted) { "PASS" } else { "BLOCKED" }
 
+if ($BuilderReportPath) {
+    $builderProvenance = [IO.Path]::GetFullPath($BuilderReportPath) + '.provenance.json'
+    if ($ProvenancePath -and [IO.Path]::GetFullPath($ProvenancePath) -cne $builderProvenance) { throw 'DISPATCH_ACCEPTANCE_PATH_MISMATCH' }
+    $ProvenancePath = $builderProvenance
+}
+if ($ProvenancePath) {
+    $identity = Get-Content -LiteralPath $ProvenancePath -Raw | ConvertFrom-Json -Depth 40 -DateKind String
+    $evidenceId = if ($identity.PSObject.Properties['dispatch_id']) { [string]$identity.dispatch_id } else { $null }
+    if ($DispatchId -and $DispatchId -cne $evidenceId) { throw 'DISPATCH_ACCEPTANCE_ID_MISMATCH' }
+    $DispatchId = $evidenceId
+}
+if ($DispatchId -or $ProvenancePath) {
+    if (-not $DispatchId -or -not $ProvenancePath) { throw 'DISPATCH_ACCEPTANCE_ID_REQUIRED' }
+    if ($RunTests) {
+        . (Join-Path $repoRoot 'scripts/model-router/dispatch-evidence.ps1')
+        Set-RouterDispatchAcceptance -ProvenancePath $ProvenancePath -DispatchId $DispatchId -Accepted $accepted
+    }
+}
 $result = [pscustomobject]@{
+    dispatch_id               = $(if ($DispatchId) { $DispatchId } else { $null })
+    provenance_path           = $(if ($ProvenancePath) { $ProvenancePath } else { $null })
+    independent_acceptance    = $(if ($RunTests -and $DispatchId) { $accepted } else { $null })
     milestone_id              = $mid
     acceptance_checks_text    = $acceptanceText
     verification_check_text   = ($procedureTexts -join "`n---`n")

@@ -3552,6 +3552,450 @@
     ]
   },
   {
+    "category": "classification-escalation",
+    "lane": "",
+    "protected": false,
+    "difficulty": "standard",
+    "result": {
+      "model": "claude-opus-5-5",
+      "agent_alias": "opus",
+      "effort": "medium",
+      "category": "classification-escalation",
+      "lane": "claude",
+      "protected": false,
+      "reason": "roster job deep-thinker first choice",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "claude-opus-5-5"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "claude",
+      "roster_source": "default",
+      "difficulty": "standard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:claude"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "",
+    "protected": false,
+    "difficulty": "hard",
+    "result": {
+      "model": "claude-opus-5-5",
+      "agent_alias": "opus",
+      "effort": "high",
+      "category": "classification-escalation",
+      "lane": "claude",
+      "protected": false,
+      "reason": "roster job deep-thinker first choice",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "claude-opus-5-5"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "claude",
+      "roster_source": "default",
+      "difficulty": "hard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:claude"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "",
+    "protected": true,
+    "difficulty": "standard",
+    "result": {
+      "model": "claude-opus-5-5",
+      "agent_alias": "opus",
+      "effort": "medium",
+      "category": "classification-escalation",
+      "lane": "claude",
+      "protected": true,
+      "reason": "roster job deep-thinker first choice",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "claude-opus-5-5"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "claude",
+      "roster_source": "default",
+      "difficulty": "standard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:claude"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "",
+    "protected": true,
+    "difficulty": "hard",
+    "result": {
+      "model": "claude-opus-5-5",
+      "agent_alias": "opus",
+      "effort": "high",
+      "category": "classification-escalation",
+      "lane": "claude",
+      "protected": true,
+      "reason": "roster job deep-thinker first choice",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "claude-opus-5-5"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "claude",
+      "roster_source": "default",
+      "difficulty": "hard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:claude"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "codex",
+    "protected": false,
+    "difficulty": "standard",
+    "result": {
+      "model": "gpt-6.1-sol",
+      "agent_alias": null,
+      "effort": "medium",
+      "category": "classification-escalation",
+      "lane": "codex",
+      "protected": false,
+      "reason": "roster job deep-thinker lane codex",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "gpt-6.1-sol"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "codex",
+      "roster_source": "default",
+      "difficulty": "standard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:codex"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "codex",
+    "protected": false,
+    "difficulty": "hard",
+    "result": {
+      "model": "gpt-6.1-sol",
+      "agent_alias": null,
+      "effort": "high",
+      "category": "classification-escalation",
+      "lane": "codex",
+      "protected": false,
+      "reason": "roster job deep-thinker lane codex",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "gpt-6.1-sol"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "codex",
+      "roster_source": "default",
+      "difficulty": "hard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:codex"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "codex",
+    "protected": true,
+    "difficulty": "standard",
+    "result": {
+      "model": "gpt-6.1-sol",
+      "agent_alias": null,
+      "effort": "medium",
+      "category": "classification-escalation",
+      "lane": "codex",
+      "protected": true,
+      "reason": "roster job deep-thinker lane codex",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "gpt-6.1-sol"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "codex",
+      "roster_source": "default",
+      "difficulty": "standard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:codex"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "codex",
+    "protected": true,
+    "difficulty": "hard",
+    "result": {
+      "model": "gpt-6.1-sol",
+      "agent_alias": null,
+      "effort": "high",
+      "category": "classification-escalation",
+      "lane": "codex",
+      "protected": true,
+      "reason": "roster job deep-thinker lane codex",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "gpt-6.1-sol"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "codex",
+      "roster_source": "default",
+      "difficulty": "hard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:codex"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "claude",
+    "protected": false,
+    "difficulty": "standard",
+    "result": {
+      "model": "claude-opus-5-5",
+      "agent_alias": "opus",
+      "effort": "medium",
+      "category": "classification-escalation",
+      "lane": "claude",
+      "protected": false,
+      "reason": "roster job deep-thinker first choice",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "claude-opus-5-5"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "claude",
+      "roster_source": "default",
+      "difficulty": "standard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:claude"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "claude",
+    "protected": false,
+    "difficulty": "hard",
+    "result": {
+      "model": "claude-opus-5-5",
+      "agent_alias": "opus",
+      "effort": "high",
+      "category": "classification-escalation",
+      "lane": "claude",
+      "protected": false,
+      "reason": "roster job deep-thinker first choice",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "claude-opus-5-5"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "claude",
+      "roster_source": "default",
+      "difficulty": "hard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:claude"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "claude",
+    "protected": true,
+    "difficulty": "standard",
+    "result": {
+      "model": "claude-opus-5-5",
+      "agent_alias": "opus",
+      "effort": "medium",
+      "category": "classification-escalation",
+      "lane": "claude",
+      "protected": true,
+      "reason": "roster job deep-thinker first choice",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "claude-opus-5-5"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "claude",
+      "roster_source": "default",
+      "difficulty": "standard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:claude"
+    ]
+  },
+  {
+    "category": "classification-escalation",
+    "lane": "claude",
+    "protected": true,
+    "difficulty": "hard",
+    "result": {
+      "model": "claude-opus-5-5",
+      "agent_alias": "opus",
+      "effort": "high",
+      "category": "classification-escalation",
+      "lane": "claude",
+      "protected": true,
+      "reason": "roster job deep-thinker first choice",
+      "table_source": null,
+      "table_date": null,
+      "validation_error": null,
+      "alerts": [
+        "router-roster-missing"
+      ],
+      "ranked": [
+        "claude-opus-5-5"
+      ],
+      "resume_after_utc": null,
+      "resume_after_source": null,
+      "resume_after_et": null,
+      "status": "ok",
+      "job": "deep-thinker",
+      "vendor": "claude",
+      "roster_source": "default",
+      "difficulty": "hard",
+      "vendor_block_recorded": null
+    },
+    "calls": [
+      "catalog",
+      "blocked:claude"
+    ]
+  },
+  {
     "category": "long-form-writing",
     "lane": "",
     "protected": false,

@@ -345,7 +345,7 @@ def test_rubric_self_weight_and_effort_up(tmp_path: Path) -> None:
     assert len(result['outcomes']) == 27
 
 
-def test_binary_scores_and_strip() -> None:
+def test_binary_scores_and_reject_timestamp_prefix() -> None:
     rubric = {'lines': [{'id': 'one'}]}
     for answer in ('[12:23:34] ```json\n{}\n```', '[12:23:34] {}'):
         for structured in (True, False):

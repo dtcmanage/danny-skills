@@ -2,6 +2,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 
 $script:AssertionCount = 0
@@ -318,6 +319,26 @@ Set-Content -LiteralPath (Join-Path $PSScriptRoot 'held-output-child.pid') -Valu
     $assemblyJson = & (Join-Path $SkillRoot 'scripts\assemble-review-prompt.ps1') -ProjectPath $project -Round 1 -Tier complex
     $assembly = $assemblyJson | ConvertFrom-Json
     $prompt = Get-Content -LiteralPath $assembly.prompt_path -Raw
+    foreach ($mode in @('prefix','exit','timeout')) {
+        $roundPeer = @'
+if ($args -contains '--version') { 'fixture'; exit 0 }
+$index = [array]::IndexOf($args, '--settings')
+if ($index -lt 0 -or -not (Test-Path -LiteralPath $args[$index+1])) { throw 'missing settings' }
+[IO.File]::WriteAllText('__RECEIPT__', $args[$index+1])
+$null = [Console]::In.ReadToEnd()
+switch ('__MODE__') {
+    'exit' { exit 9 }
+    'timeout' { Start-Sleep -Seconds 30; exit 8 }
+    'prefix' { '{"result":"[04:15:28] {}","modelUsage":{"claude-opus-5-5":{"outputTokens":1}}}' }
+}
+'@
+        Write-Utf8 $failingClaude ($roundPeer.Replace('__RECEIPT__', $settingsReceipt.Replace("'", "''")).Replace('__MODE__', $mode))
+        $pattern = switch ($mode) { 'prefix' {'timestamp prefix'}; 'exit' {'exit code 9'}; 'timeout' {'exceeded'} }
+        Assert-Throws { & $claudeInvoker -ProjectPath $project -Round 1 -Tier complex -PromptPath $assembly.prompt_path -ClaudeCliPath $failingClaude -TimeoutMs 3000 } $pattern "round path accepted $mode"
+        Assert-True (Test-Path -LiteralPath $settingsReceipt) "round $mode received settings"
+        Assert-True (-not (Test-Path -LiteralPath ([IO.File]::ReadAllText($settingsReceipt)))) "round $mode cleaned settings"
+        Remove-Item -LiteralPath $settingsReceipt
+    }
     Assert-True ($prompt.Contains('Under Feasibility (performance/operability)') -and $prompt.Contains('Throughput and hardware') -and $prompt.Contains('serial decisions without a named cause, are findings')) 'both reviewer lanes receive the hardware decision check'
     . (Join-Path $RepoRoot 'scripts\wrap-prompt-envelope.ps1')
     $expectedEnvelope = New-PromptEnvelope -Label 'CURRENT DRAFT V1' -Content $malicious

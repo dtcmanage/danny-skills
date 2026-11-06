@@ -1,3 +1,4 @@
+foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../resolve-model.ps1')
@@ -20,7 +21,8 @@ function Refused([scriptblock]$Action, [string]$Pattern) {
     Check ($message -match $Pattern) "refused: $Pattern"
 }
 try {
-    # Compare every output property and observed call against fixed 5b2e633 values.
+    # Preserve all 132 fixed 5b2e633 cases; classification-escalation adds the 12
+    # analysis-equivalent alias cases, including all properties and observed calls.
     $matrix = foreach ($category in Get-RouterDispatchCategories) {
         foreach ($lane in @('', 'codex', 'claude')) {
             foreach ($protected in @($false,$true)) {
@@ -36,7 +38,7 @@ try {
         }
     }
     $baseline = Get-Content (Join-Path $PSScriptRoot 'fixtures/frontier-router-baseline.json') -Raw | ConvertFrom-Json
-    Check ((ConvertTo-Json -InputObject @($matrix) -Depth 30 -Compress) -ceq (ConvertTo-Json -InputObject @($baseline) -Depth 30 -Compress)) 'fixed 5b2e633 baseline: every property including difficulty and catalog/quota calls in 132 combinations'
+    Check ((ConvertTo-Json -InputObject @($matrix) -Depth 30 -Compress) -ceq (ConvertTo-Json -InputObject @($baseline) -Depth 30 -Compress)) 'fixed 132 cases plus 12 classification-escalation cases: every property including difficulty and catalog/quota calls'
     foreach ($row in $matrix) { Check ($row.result.model -notin @('gpt-6-astra','claude-fable-5-1')) 'difficulty paths exclude frontier' }
     foreach ($lane in @('codex','claude')) {
         foreach ($source in @('gpt-6-luna','gpt-6.1-sol','gpt-6-astra','haiku','sonnet','opus','fable')) {
@@ -278,7 +280,7 @@ $usage=@{}; $usage[[string]$args[$modelIndex+1]]=@{inputTokens=1;outputTokens=1;
             Check (@(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-dms.jsonl')).Count -eq $dmsBefore) 'failed scrutiny sends no alert'
         } finally { $env:DT_FRONTIER_FAKE_FAIL=$priorFail }
     } finally { $env:PATH=$oldPath }
-    Write-Output "PASS: $script:checks frontier checks; 132 combinations match fixed baseline."
+    Write-Output "PASS: $script:checks frontier checks; 144 combinations (132 fixed plus 12 alias cases) match the baseline."
 } finally {
     $env:DT_MODEL_ROUTER_STATE=$priorState
     $env:DT_MODEL_ROUTER_SHARED=$priorShared

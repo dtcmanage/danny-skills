@@ -234,6 +234,9 @@ foreach ($mid in $milestoneIds) {
     $approval = if ($approvals.ContainsKey($key)) { $approvals[$key] } else { $null }
     $approvalValid = Test-ApprovalValid -Approval $approval
     $stored = if ($acceptanceRows.ContainsKey($key)) { $acceptanceRows[$key] } else { $null }
+    $dispatchId = if ($stored -and $stored.PSObject.Properties['dispatch_id']) { [string]$stored.dispatch_id } else { $null }
+    $dispatchProvenance = if ($stored -and $stored.PSObject.Properties['provenance_path']) { [string]$stored.provenance_path } else { $null }
+
     $commitSha = if ($stored -and $stored.PSObject.Properties.Name -contains 'commit_sha') { [string]$stored.commit_sha } else { "" }
     $commitEvidence = Test-CommitEvidence -RepoPath $WorkingTree -CommitSha $commitSha
     $implemented = [bool]$commitEvidence.valid
@@ -317,6 +320,8 @@ foreach ($mid in $milestoneIds) {
         if ($blockers.Count -gt 0 -and $status -eq 'PASS') { $status = 'BLOCKED' }
 
         $ledgerRows += [pscustomobject]@{
+            dispatch_id         = $dispatchId
+            provenance_path     = $dispatchProvenance
             milestone_id        = $mid
             implemented         = $implemented
             tested              = $testedEvidence
@@ -344,6 +349,8 @@ foreach ($mid in $milestoneIds) {
         "-Json"
     )
 
+    # Revalidation evaluates current checks without writing original dispatch
+    # acceptance. Identity remains on the rendered row, never on this evaluator.
     $jsonText = & pwsh -NoProfile @args 2>&1
     # If the script wrote a usage error to stderr it still exits nonzero; capture
     # whatever it produced and best-effort parse JSON. Skip rows that fail to parse.
@@ -351,6 +358,8 @@ foreach ($mid in $milestoneIds) {
         $verifyResult = $jsonText | ConvertFrom-Json
     } catch {
         $ledgerRows += [pscustomobject]@{
+            dispatch_id         = $dispatchId
+            provenance_path     = $dispatchProvenance
             milestone_id        = $mid
             implemented         = $false
             tested              = $false
@@ -385,6 +394,8 @@ foreach ($mid in $milestoneIds) {
         $verificationChecks = @($verifyResult.verification_checks)
     }
     $ledgerRows += [pscustomobject]@{
+        dispatch_id         = $dispatchId
+        provenance_path     = $dispatchProvenance
         milestone_id        = $mid
         implemented         = $implemented
         tested              = $verifyResult.tested
@@ -455,6 +466,42 @@ if ($RunFolder) {
     if (Test-Path -LiteralPath $deferredPath) {
         $deferredText = [System.IO.File]::ReadAllText($deferredPath).Trim()
         if ([string]::IsNullOrWhiteSpace($deferredText)) { $deferredText = $null }
+    }
+}
+
+# Revalidation renders current checks without changing recorded acceptance.
+& {
+    . (Join-Path $repoRoot 'scripts/model-router/dispatch-evidence.ps1')
+    foreach ($ledgerRow in $ledgerRows) {
+        $id = Get-DispatchValue $ledgerRow 'dispatch_id'
+        $path = Get-DispatchValue $ledgerRow 'provenance_path'
+        if (-not $id) { continue }
+        $unknownReason = $null
+        $idMismatch = $false
+        $record = $null
+        if (-not $path) { $unknownReason = 'provenance_path missing' }
+        else {
+            try { $record = Read-RouterDispatchEvidence -Path $path }
+            catch { $unknownReason = 'provenance unavailable: ' + $_.Exception.Message }
+            if ($record -and -not (Get-DispatchValue $record 'finished_utc')) { $unknownReason = 'provenance unfinished' }
+            $idMismatch = $record -and (Get-DispatchValue $record 'dispatch_id') -cne $id
+            if ($idMismatch) { $unknownReason = 'dispatch_id mismatch' }
+        }
+        if ($unknownReason) {
+            $ledgerRow | Add-Member -Force -NotePropertyName router_acceptance -NotePropertyValue 'unknown'
+            $ledgerRow | Add-Member -Force -NotePropertyName router_acceptance_reason -NotePropertyValue $unknownReason
+            $ledgerRow.stored_notes += "router_acceptance: unknown ($unknownReason)"
+            # Final acceptance still runs its existing identity rejection below.
+            if ($RunTests -or -not $idMismatch) { continue }
+        }
+        if ($RunTests) { continue }
+        try {
+            Set-RouterDispatchAcceptance -ProvenancePath $path -DispatchId $id -Accepted ([bool]$ledgerRow.accepted)
+         } catch {
+            $ledgerRow.blockers += "Dispatch acceptance unavailable for ${id}: $($_.Exception.Message)"
+            $ledgerRow.status = 'BLOCKED'
+            $ledgerRow.accepted = $false
+        }
     }
 }
 
@@ -663,5 +710,8 @@ $summaryStr = "{0} PASS" -f $totalPass
 if ($totalApproved -gt 0) { $summaryStr += ", {0} APPROVED_DOWNGRADE" -f $totalApproved }
 $summaryStr += ", {0} BLOCKED of {1} total." -f $totalBlocked, $ledgerRows.Count
 Write-Output ("Summary: " + $summaryStr)
+foreach ($unknown in @($ledgerRows | Where-Object { $_.PSObject.Properties['router_acceptance'] -and $_.router_acceptance -eq 'unknown' })) {
+    Write-Output ("Router acceptance: unknown for {0}: {1}" -f $unknown.dispatch_id, $unknown.router_acceptance_reason)
+}
 
 if ($totalBlocked -gt 0) { exit 1 } else { exit 0 }

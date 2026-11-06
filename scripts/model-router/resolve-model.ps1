@@ -230,6 +230,7 @@ function Resolve-RouterRosterPick {
                     $localCatalog = $freshCatalog
                 }
             } catch { # Keep the cached rejection and existing fallback on failure.
+                if ($_.Exception.Message -like 'ROUTER_TEST_FAKE_CLI_REQUIRED*') { throw }
             }
         }
         if (-not (Test-RouterCodexSelectable -ParsedCatalog $localCatalog -Model $chosen.model)) {
@@ -307,6 +308,7 @@ function Resolve-RouterFrontierRequest {
                 if ($Lane -and $Lane -ne $vendor) { throw 'FRONTIER_REQUEST_LANE_MISMATCH' }
                 $request.status='used'
                 $request | Add-Member -NotePropertyName used_at -NotePropertyValue ([datetimeoffset]::UtcNow.ToString('o')) -Force
+                $request | Add-Member -NotePropertyName reserved_at -NotePropertyValue ([datetimeoffset]::UtcNow.ToString('o')) -Force
                 Write-RouterJsonAtomic (Get-RouterFrontierRequestPath $RequestId) $request
                 $status='ok'; $reason="Approved frontier request $RequestId; one dispatch only."
             }
@@ -314,7 +316,7 @@ function Resolve-RouterFrontierRequest {
             default { throw 'FRONTIER_REQUEST_INVALID' }
         }
         $vendor = if ($model -like 'claude-*') { 'claude' } elseif ($model) { 'codex' } else { $null }
-        [pscustomobject]@{status=$status;model=$model;effort=$(if ($model) {'high'} else {$null});category=$Category;job=(Get-RouterCategoryJob $Category);lane=$vendor;vendor=$vendor;agent_alias=$(if ($vendor -eq 'claude') {Get-RouterAgentAlias $model} else {$null});protected=$IsProtected;difficulty='hard';reason=$reason;frontier_request=$RequestId;alerts=@()}
+        [pscustomobject]@{status=$status;model=$model;effort=$(if ($model) {'high'} else {$null});category=$Category;job=(Get-RouterCategoryJob $Category);lane=$vendor;vendor=$vendor;agent_alias=$(if ($vendor -eq 'claude') {Get-RouterAgentAlias $model} else {$null});protected=$IsProtected;difficulty='hard';reason=$reason;frontier_request=$RequestId;table_source=$null;table_date=$null;alerts=@()}
     }
 }
 

@@ -56,6 +56,7 @@ if (-not (Get-Variable -Name RouterClaudeUsageFetcher -Scope Script -ErrorAction
 
 function Get-RouterCachedWeeklyUsage {
     param([ValidateSet('codex','claude')][string]$Vendor)
+    if ($env:DT_ROUTER_TEST_FAKE_CLI_ROOT) { return $null }
     if ($Vendor -eq 'codex') { return Get-RouterCodexUsage -Weekly }
     try {
         $reading = Read-RouterJsonObject -Path (Join-Path (Get-RouterStatePath) 'claude-usage.json')
@@ -69,6 +70,7 @@ function Get-RouterCachedWeeklyUsage {
 }
 
 function Get-RouterClaudeUsage {
+    if ($env:DT_ROUTER_TEST_FAKE_CLI_ROOT) { return $null }
     $cached = $null
     try {
         $path = Join-Path (Get-RouterStateDir) 'claude-usage.json'
@@ -165,6 +167,7 @@ function Get-RouterCodexLiveUsage {
     # turn runs, so this spends no usage. Session logs only refresh when Codex runs, so a reset (or a
     # reset credit) stays invisible to them while the guard itself keeps Codex from running.
     param([int]$TimeoutMs = 20000)
+    if ($env:DT_ROUTER_TEST_FAKE_CLI_ROOT) { return $null }
     $command = if ($env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND) { $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND }
         else { $found = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\.(cmd|exe)$' } | Select-Object -First 1; if ($found) { $found.Source } else { $null } }
     if (-not $command) { return $null }
@@ -242,6 +245,7 @@ function Read-RouterCodexSavedReading {
 
 function Get-RouterCodexUsage {
     param([string]$SessionsRoot, [switch]$Weekly)
+    if ($env:DT_ROUTER_TEST_FAKE_CLI_ROOT) { return $null }
     # The newest of the rollout reading, the live reading (fullest window, valid for both callers), and,
     # for weekly callers, the app-server weekly snapshot wins.
     $readings = @(Get-RouterCodexRolloutUsage -SessionsRoot $SessionsRoot -Weekly:$Weekly
