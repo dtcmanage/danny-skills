@@ -4,6 +4,8 @@
   "scripts/model-router/tests/probe-native-hooks.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-hook-probes.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/hook-payloads/": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/bench/smoke-transport.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test_bench_protocol_repair.py": {"consumers": [], "summary_token": "model router"},
   "scripts/eastern_time.py": {"consumers": ["dt-build"], "summary_token": "model router"},
   "scripts/test-preflight.ps1": {"consumers": [], "summary_token": "test dependencies"},
   "scripts/tests/test-test-preflight.ps1": {"consumers": [], "summary_token": "test dependencies"},

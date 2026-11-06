@@ -70,11 +70,11 @@ try {
         $incumbent=if($vendor -eq 'claude'){'gpt-6.1-sol'}else{'claude-opus-5-5'}
         $result=Invoke-RouterBench -Job fast -Candidate $candidate -Incumbent $incumbent -EffortOverride low -StateDir $state -CliInvoker $invoke -Limits {param($v) @{blocked=$false}} -Diagnosis {param($v,$e) @{verdict='synthetic'}} -NoAlerts -TimeoutMs 10000
         Assert ($script:dispatches[$vendor] -eq 1) "Repeated exhausted vendor dispatch: $vendor"
-        Assert ($script:dispatches[$incumbent.StartsWith('claude-') ? 'claude' : 'codex'] -eq 18) 'Other vendor improperly blocked'
+        Assert ($script:dispatches[$incumbent.StartsWith('claude-') ? 'claude' : 'codex'] -eq 0) 'Queued calls must stop after comparison quota deferral'
         $blocks=@(Get-Content (Join-Path $state 'vendor-blocks.json') -Raw|ConvertFrom-Json)
         Assert ($blocks.Count -eq 1 -and $blocks[0].vendor -eq $vendor) 'Wrong block scope'
         Assert ([datetimeoffset]$blocks[0].reset_at_utc -eq [datetimeoffset]$reset -and $blocks[0].resume_after_source -eq 'refusal-reset') 'Wrong persisted reset'
-        Assert ($result.raw_gate -eq 'unknown' -and $result.outcomes.Count -eq 36) 'Unknown/retry requirements changed'
+        Assert ($result.raw_gate -eq 'unknown' -and $result.halted -and $result.status -eq 'deferred' -and $result.outcomes.Count -eq 1) 'Quota deferral must retain the paid refusal and stop queued retries'
         Assert ((Get-FileHash (Join-Path $other 'vendor-blocks.json')).Hash -eq $before.Hash) 'Unrelated state changed'
         $again=Invoke-RouterBench -Job fast -Candidate $candidate -Incumbent $candidate -EffortOverride low -StateDir $state -CliInvoker {throw 'must not dispatch persisted block'} -Limits {param($v) @{blocked=$false}} -NoAlerts -TimeoutMs 10000
         Assert ($again.raw_gate -eq 'unknown') 'Persisted block not respected across runs'

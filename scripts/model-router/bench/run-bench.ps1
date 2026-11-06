@@ -219,7 +219,15 @@ function Invoke-BenchCli {
 }
 
 function Get-BenchFailureCategory {
-    param([string]$Detail)
+    param([string]$Detail, [string]$Vendor='claude')
+    if($Vendor -eq 'codex') {
+        # Delegate to the same total rule used by the transport and engine;
+        # the historical regex classifier below belongs only to Claude.
+        $payload=@{status='unknown';detail=$Detail}|ConvertTo-Json -Compress
+        $classified=$payload | & python (Join-Path $PSScriptRoot 'codex_appserver.py') --classify-failure
+        if($LASTEXITCODE -ne 0){throw 'Codex failure classifier unavailable'}
+        return ($classified|ConvertFrom-Json -AsHashtable).failure_category
+    }
     # Observed failure type is distinct from its unproven cause.
     if($Detail -match '(?i)tool call.*(?:parse|parsed)|tool or unsupported item|server request forbidden'){return 'protocol'}
     if($Detail -match '(?i)timeout|timed out|transport fail(?:ed|ure)'){return 'transport'}
@@ -234,7 +242,7 @@ function Invoke-BenchDispatchCall {
     try { $response=& $CliInvoker $Request; if($null -eq $response){throw 'Empty dispatch response'} }
     catch {
         if($_.Exception.Data.Contains('bench_response')){$response=$_.Exception.Data['bench_response']}
-        else{$response=@{status='unknown';failure_category=(Get-BenchFailureCategory $_.Exception.Message);root_cause='unverified';detail=$_.Exception.Message;usage=$null;usage_partial=$true}}
+        else{$response=@{status='unknown';failure_category=(Get-BenchFailureCategory $_.Exception.Message -Vendor $Request.vendor);root_cause='unverified';detail=$_.Exception.Message;usage=$null;usage_partial=$true}}
     }
     return $response
 }
@@ -315,6 +323,12 @@ function Invoke-RouterBench {
     if(-not $PSBoundParameters.ContainsKey('TimeoutMs') -and $config.ContainsKey('call_timeout_ms_by_job') -and $config.call_timeout_ms_by_job -and $config.call_timeout_ms_by_job.ContainsKey($Job)) {
         $TimeoutMs=[int]$config.call_timeout_ms_by_job[$Job]
     }
+    $schemaCommand=$null
+    if(-not $CliInvoker){
+        $schemaCli=Get-Command codex -CommandType Application,ExternalScript -ErrorAction Stop | Select-Object -First 1
+        $schemaSpec=Get-CodexProcessSpec -CodexPath $schemaCli.Source
+        $schemaCommand=@($schemaSpec.file)+@($schemaSpec.prefix_args)
+    }
     if(-not $CliInvoker){$CliInvoker={param($r) Invoke-BenchCli -Request $r -TimeoutMs $TimeoutMs}}
     if(-not $Limits){$Limits={
         param($v)
@@ -332,7 +346,7 @@ function Invoke-RouterBench {
     if(-not $Envelope){$Envelope={param($a) New-PromptEnvelope -Label 'BENCH ANSWER EVIDENCE' -Content $a}}
     if(-not $Outcome){$Outcome={param($r) Add-RouterOutcome -Row $r -StateDir $benchStateRoot}}
     $arguments=@{job=$Job;candidate=$Candidate;incumbent=$Incumbent;trigger=$Trigger;effort=$effort;
-        state_dir=$benchStateRoot;tasks=[IO.Path]::GetFullPath($Tasks);grader_timeout=$GraderTimeout;
+        schema_command=$schemaCommand;state_dir=$benchStateRoot;tasks=[IO.Path]::GetFullPath($Tasks);grader_timeout=$GraderTimeout;
         config=$config;roster_entry=$read.roster.jobs.$Job;effort_override=[bool]$EffortOverride;
         prices=(Get-Content (Join-Path $script:BenchRoot '../../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json -AsHashtable)}
     # One comparison per state root at a time; manual and cadence runs otherwise overlap and time each other out.
@@ -374,7 +388,7 @@ function Invoke-RouterBench {
                     if(-not $json){throw ('Parallel call returned nothing. '+(@($call.ps.Streams.Error) -join ' '))}
                     $response=$json | ConvertFrom-Json -AsHashtable
                 } catch {
-                    $response=@{status='unknown';failure_category=(Get-BenchFailureCategory $_.Exception.Message);root_cause='unverified';detail=$_.Exception.Message;usage=$null;usage_partial=$true}
+                    $response=@{status='unknown';failure_category=(Get-BenchFailureCategory $_.Exception.Message -Vendor $call.request.vendor);root_cause='unverified';detail=$_.Exception.Message;usage=$null;usage_partial=$true}
                 } finally {$call.ps.Dispose()}
                 try {$reply=@{id=$call.id;value=(Complete-BenchDispatch -Request $call.request -Response $response -Limits $Limits -Diagnosis $Diagnosis)}}
                 catch {$reply=@{id=$call.id;error=$_.Exception.Message}}
@@ -406,6 +420,13 @@ function Invoke-RouterBench {
             }
             try {
                 $value=switch($message.operation){
+                    'structural_alert' {
+                        if(-not $NoAlerts){
+                            $action=if(([string]$message.payload).StartsWith('auth:')){'re-authenticate Codex before rerunning.'}else{'repair the transport before rerunning.'}
+                            $null=Send-RouterAlert -Key ('bench-structural:'+[string]$message.payload) -Message ('Benchmark halted after structural failures ('+[string]$message.payload+'). Quality is unknown; '+$action) -ChatToStderr
+                        }
+                        $null
+                    }
                     'spend' {
                         $figures=@{}
                         foreach($spendVendor in @('claude','codex')) {

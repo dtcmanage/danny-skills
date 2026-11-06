@@ -1,4 +1,8 @@
-param()
+param(
+    [switch]$GeneratorDifferentialOnly,
+    [string]$GeneratorPath,
+    [string]$HeadMeasurementPath
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -84,15 +88,463 @@ function Test-ProcessGone {
     return ($null -eq (Get-Process -Id ([int]$ProcessId) -ErrorAction SilentlyContinue))
 }
 
+
+function Test-GeneratorDifferential {
+    $runnerPath = if ($GeneratorPath) { $GeneratorPath } else { Join-Path $scriptDir 'dt-job-runner.ps1' }
+    # Frozen HEAD control (07a786f6c42c3aa2afc01b9820ff0c3f62952a86): keep this measurement stable after merge.
+    $head = @'
+function Get-DtJobCommandScript {
+    # Exit like `pwsh -Command`: the outcome of the final statement decides. LASTEXITCODE is reset just
+    # before that statement, so an earlier handled native failure does not leak into the exit code, while
+    # a failing final native command keeps its real exit code instead of pwsh's flattened 1.
+    param([Parameter(Mandatory)][string]$Command)
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Command, [ref]$tokens, [ref]$errors)
+    $body = "`$global:LASTEXITCODE = 0`n$Command"
+    if (@($errors).Count -eq 0 -and $null -ne $ast.EndBlock -and @($ast.EndBlock.Statements).Count -gt 0) {
+        $offset = @($ast.EndBlock.Statements)[-1].Extent.StartOffset
+        $body = $Command.Substring(0, $offset) + "`$global:LASTEXITCODE = 0; " + $Command.Substring($offset)
+    }
+    return "$body`n`$dtJobOk = `$?`nif (`$global:LASTEXITCODE -ne 0) { exit `$global:LASTEXITCODE }`nif (-not `$dtJobOk) { exit 1 }`nexit 0`n"
+}
+'@
+    function Get-GeneratorText([string]$text) {
+        $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseInput($text,[ref]$tokens,[ref]$errors)
+        return $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-DtJobCommandScript'},$true).Extent.Text
+    }
+    $fnHead=Get-GeneratorText $head
+    $fnCurrent=Get-GeneratorText ([IO.File]::ReadAllText($runnerPath))
+$s=Join-Path $tempRoot 'inner native fail.ps1'; [IO.File]::WriteAllText($s,"cmd /c exit 3`n")
+$ok=Join-Path $tempRoot 'inner no native.ps1'; [IO.File]::WriteAllText($ok,"Write-Output fine`n")
+$cdfail=Join-Path $tempRoot 'inner cd fail.ps1'; [IO.File]::WriteAllText($cdfail,"Set-Location `$env:TEMP; cmd /c exit 3`n")
+$wild=Join-Path $tempRoot 'inner[1].ps1'; [IO.File]::WriteAllText($wild,"cmd /c exit 3`n")
+$log=Join-Path $tempRoot 'tee.log'
+$cases=[ordered]@{
+ '0a rc echo'='cmd /c exit 3; Write-Output "rc=$LASTEXITCODE"'
+ '0b assign'='cmd /c exit 3; $code=$LASTEXITCODE'
+ '0c if reader'='cmd /c exit 1; if ($LASTEXITCODE -eq 1) { Write-Output changes }'
+ '0d if/else tolerate'='cmd /c exit 3; if ($LASTEXITCODE -eq 3) { Write-Output tolerated } else { exit 5 }'
+ '0e || recovered'='cmd /c exit 3 || Write-Output recovered'
+ 'P3 bare'='cmd /c exit 3'
+ 'P3 if-exit'='cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+ 'P3 plain exit'='cmd /c exit 3; exit $LASTEXITCODE'
+ 'P3 & script'="& '$s'"
+ 'P3 . script'=". '$s'"
+ 'P3 function'='function f { cmd /c exit 3 }; f'
+ 'P3 & block'='& { cmd /c exit 3 }'
+ 'P5 if $? else'='cmd /c exit 3; if ($?) { Write-Output ok } else { exit 5 }'
+ 'X outnull'='cmd /c exit 3 | Out-Null'
+ 'X multiline'="Write-Output a`ncmd /c exit 3"
+ 'X multiline2'="cmd /c exit 3`nWrite-Output b"
+ 'X noparse'='if ($true) {'
+ 'X tee'="cmd /c exit 3 2>&1 | Tee-Object -FilePath '$log'"
+ # hunting for false success: HEAD non-zero, tree 0
+ 'H try-finally'='try { cmd /c exit 3 } finally { }'
+ 'H try-finally-cmdlet'='try { cmd /c exit 3 } finally { Write-Verbose done }'
+ 'H push try pop'='Push-Location $env:TEMP; try { cmd /c exit 3 } finally { Pop-Location }'
+ 'H try-catch'='try { cmd /c exit 3 } catch { Write-Output c }'
+ 'H if-compound'='if ($true) { cmd /c exit 3 }'
+ 'H if-then-echo'='if ($true) { cmd /c exit 3; Write-Output done }'
+ 'H foreach'='foreach ($i in 1..2) { cmd /c exit 3 }'
+ 'H for'='for ($i=0;$i -lt 1;$i++) { cmd /c exit 3 }'
+ 'H while'='$i=0; while ($i -lt 1) { $i++; cmd /c exit 3 }'
+ 'H switch'='switch (1) { 1 { cmd /c exit 3 } }'
+ 'H paren'='(cmd /c exit 3)'
+ 'H subexpr'='$(cmd /c exit 3)'
+ 'H array'='@(cmd /c exit 3)'
+ 'H assign'='$o = cmd /c exit 3'
+ 'H assign-echo'='$o = cmd /c exit 3; $o'
+ 'H paren pipe'='(cmd /c exit 3) | Out-Null'
+ 'H foreach-object'='1..2 | ForEach-Object { cmd /c exit 3 }'
+ 'H % alias'='1..2 | % { cmd /c exit 3 }'
+ 'H iex'='Invoke-Expression "cmd /c exit 3"'
+ 'H icm'='Invoke-Command { cmd /c exit 3 }'
+ 'H where'='1 | Where-Object { cmd /c exit 3; $true }'
+ 'H chain script'="Write-Output a && & '$s'"
+ 'H chain function'='function f { cmd /c exit 3 }; Write-Output a && f'
+ 'H chain block'='Write-Output a && & { cmd /c exit 3 }'
+ 'H chain native'='Write-Output a && cmd /c exit 3'
+ 'H script cd then fail'="& '$cdfail'"
+ 'H wildcard path'="& '$wild'"
+ 'H write-output paren'='Write-Output (cmd /c exit 3)'
+ 'H ternary'='$true ? (cmd /c exit 3) : 0'
+ 'H script then echo'="& '$s'; Write-Output done"
+ # false failure: HEAD 0, tree non-zero
+ 'F then no-native script'="cmd /c exit 3; & '$ok'"
+ 'F then function'='function g { Write-Output hi }; cmd /c exit 3; g'
+ 'F then mkdir'="cmd /c exit 3; mkdir -Force '$tempRoot\m' | Out-Null"
+ 'F then compress'="cmd /c exit 3; Compress-Archive -Force -Path '$s' -DestinationPath '$tempRoot\a.zip'"
+ 'F git-like then block'='cmd /c exit 1; & { Write-Output handled }'
+ 'F then return'='cmd /c exit 3; return'
+ # prefix placement
+ 'U using'='using namespace System.Text; cmd /c exit 0; Write-Output ok'
+ 'U param'='param($x=1) Write-Output $x'
+ 'U requires'="#requires -Version 7`nWrite-Output ok"
+ 'U comment only'='# nothing'
+ 'U trap'='trap { exit 9 }; throw "x"'
+}
+
+    $pinnedHead=@{
+        '0a rc echo' = 0
+        '0b assign' = 0
+        '0c if reader' = 0
+        '0d if/else tolerate' = 5
+        '0e || recovered' = 3
+        'P3 bare' = 3
+        'P3 if-exit' = 0
+        'P3 plain exit' = 0
+        'P3 & script' = 3
+        'P3 . script' = 3
+        'P3 function' = 3
+        'P3 & block' = 3
+        'P5 if $? else' = 0
+        'X outnull' = 3
+        'X multiline' = 3
+        'X multiline2' = 0
+        'X noparse' = 1
+        'X tee' = 3
+        'H try-finally' = 3
+        'H try-finally-cmdlet' = 3
+        'H push try pop' = 3
+        'H try-catch' = 3
+        'H if-compound' = 3
+        'H if-then-echo' = 3
+        'H foreach' = 3
+        'H for' = 3
+        'H while' = 3
+        'H switch' = 3
+        'H paren' = 3
+        'H subexpr' = 3
+        'H array' = 3
+        'H assign' = 3
+        'H assign-echo' = 0
+        'H paren pipe' = 3
+        'H foreach-object' = 3
+        'H % alias' = 3
+        'H iex' = 3
+        'H icm' = 3
+        'H where' = 3
+        'H chain script' = 3
+        'H chain function' = 3
+        'H chain block' = 3
+        'H chain native' = 3
+        'H script cd then fail' = 3
+        'H wildcard path' = 3
+        'H write-output paren' = 3
+        'H ternary' = 3
+        'H script then echo' = 0
+        'F then no-native script' = 0
+        'F then function' = 0
+        'F then mkdir' = 0
+        'F then compress' = 0
+        'F git-like then block' = 0
+        'F then return' = 0
+        'U using' = 0
+        'U param' = 0
+        'U requires' = 0
+        'U comment only' = 0
+        'U trap' = 9
+        'reader changed code'=0
+        'reader scoped'=0
+        'reader script scope'=0
+        'reader nested string'=8
+        'reader failure'=0
+        'reader if else'=5
+        'ScriptPath implicit'=0
+        'ScriptPath explicit'=3
+    }
+
+    $cases['reader changed code']='cmd /c exit 3; if ($LASTEXITCODE -eq 3) { cmd /c exit 4 }'
+    $cases['reader scoped']='cmd /c exit 3; if (${global:LASTEXITCODE} -ne 0) { exit ${global:LASTEXITCODE} }'
+    $cases['reader script scope']='cmd /c exit 3; if ($script:LASTEXITCODE -ne 0) { exit $script:LASTEXITCODE }'
+    $cases['reader nested string']='cmd /c exit 3; if ("rc=$global:LASTEXITCODE" -eq "rc=3") { Write-Output tolerated } else { exit 8 }'
+    $cases['reader failure']='cmd /c exit 3; if ($LASTEXITCODE -eq 3) { Write-Error failed -ErrorAction Continue }'
+    $cases['reader if else']='cmd /c exit 3; if ($LASTEXITCODE -eq 0) { exit 5 } else { Write-Output tolerated }'
+    $cases['ScriptPath implicit']=$s
+    $explicit=Join-Path $tempRoot 'explicit.ps1'
+    Write-Utf8 $explicit 'cmd /c exit 3; exit $LASTEXITCODE'
+    $cases['ScriptPath explicit']=$explicit
+
+    # Only exact exits and exit guards depart from the frozen HEAD generator.
+    $readerExpected=@{
+        'P3 if-exit'=3; 'P3 plain exit'=3; 'reader scoped'=3; 'reader script scope'=3
+    }
+    # name | frozen HEAD exit | candidate B with null guard exit | command
+    $pins = @'
+exit-reader-plain|0|3|cmd /c exit 3; exit $LASTEXITCODE
+exit-reader-scoped-braced|0|3|cmd /c exit 3; exit ${global:LASTEXITCODE}
+gate-exit-code|0|3|cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+gate-exit-1|0|1|cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit 1 }
+gate-not-taken-tolerated|0|0|cmd /c exit 3; if ($LASTEXITCODE -eq 1) { Write-Output t }
+echo-reader|0|0|cmd /c exit 3; Write-Output "rc=$LASTEXITCODE"
+assign-reader|0|0|cmd /c exit 3; $code=$LASTEXITCODE
+ifelse-tolerate|1|1|cmd /c exit 5; if ($LASTEXITCODE -eq 5) { Write-Output ok } else { exit 1 }
+same-code-rerun-plain|3|3|cmd /c exit 3; cmd /c exit 3
+same-code-rerun-echo|3|3|cmd /c exit 3; if ($true) { cmd /c exit 3; Write-Output "rc=$LASTEXITCODE" }
+env-is-not-exit-state|1|1|cmd /c exit 1; if ($true) { cmd /c exit 1; $env:LASTEXITCODE }
+handled-earlier-cmdlet|0|0|cmd /c exit 3; Write-Output done
+nested-try|3|3|Push-Location $env:TEMP; try { cmd /c exit 3 } finally { Pop-Location }
+final-definition|0|0|cmd /c exit 3; function z {}
+final-write-error|1|1|cmd /c exit 0; Write-Error x
+or-chain|3|3|cmd /c exit 3 || Write-Output recovered
+parse-error|1|1|if (
+using-namespace|0|0|using namespace System.Text; [StringBuilder]::new() | Out-Null
+param-first|3|3|param($x=3) cmd /c exit $x
+unset-gate-ne|0|0|Set-Location $env:TEMP; if ($LASTEXITCODE -ne 0) { exit 1 }
+unset-gate-eq|3|3|Set-Location $env:TEMP; if ($LASTEXITCODE -eq 0) { cmd /c exit 3 }
+strict-unset|0|0|Set-StrictMode -Version Latest; Write-Output x
+guard-two-statements|0|0|cmd /c exit 3; if ($LASTEXITCODE -ne 0) { Write-Output failed; exit 9 }
+guard-exit-then-statement|0|0|cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit 9; Write-Output unreachable }
+guard-with-else|5|5|cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit 9 } else { exit 5 }
+guard-env-read|0|0|$env:LASTEXITCODE='3'; cmd /c exit 3; if ($env:LASTEXITCODE -ne '3') { exit 9 }
+guard-env-numeric|1|1|$env:LASTEXITCODE=3; cmd /c exit 3; if ($env:LASTEXITCODE -ne 0) { exit 1 }
+exit-env-numeric|3|3|$env:LASTEXITCODE=3; cmd /c exit 3; exit $env:LASTEXITCODE
+guard-env-braced-numeric|1|1|${env:LASTEXITCODE}=3; cmd /c exit 3; if (${env:LASTEXITCODE} -ne 0) { exit 1 }
+exit-env-braced-numeric|3|3|${env:LASTEXITCODE}=3; cmd /c exit 3; exit ${env:LASTEXITCODE}
+guard-numeric-or|1|1|cmd /c exit 3; if ($LASTEXITCODE -or 1) { exit 1 }
+guard-numeric-and|0|0|cmd /c exit 3; if ($LASTEXITCODE -and 0) { exit 1 }
+guard-numeric-xor|1|1|cmd /c exit 3; if ($LASTEXITCODE -xor 1) { exit 1 }
+guard-numeric-band|0|0|cmd /c exit 3; if ($LASTEXITCODE -band 1) { exit 1 }
+guard-numeric-plus|1|1|cmd /c exit 3; if ($LASTEXITCODE + 1) { exit 1 }
+guard-numeric-like|0|0|cmd /c exit 3; if ($LASTEXITCODE -like 3) { exit 1 }
+guard-numeric-match|0|0|cmd /c exit 3; if ($LASTEXITCODE -match 3) { exit 1 }
+guard-string-literal|9|9|cmd /c exit 3; if ('$LASTEXITCODE' -eq '$LASTEXITCODE') { exit 9 }
+strict-unset-guard|0|0|Set-StrictMode -Version Latest; if ($LASTEXITCODE -ne 0) { exit 9 }
+guard-not-taken-exit|0|0|cmd /c exit 3; if ($LASTEXITCODE -eq 5) { exit 9 }
+guard-parse-int|1|1|cmd /c exit 0; if ($LASTEXITCODE -ne [int]::Parse("x")) { exit 1 }
+guard-strict-undefined|1|1|Set-StrictMode -Version Latest; cmd /c exit 0; if ($LASTEXITCODE -ne 0 -or $undefinedVar) { exit 1 }
+guard-null-method|1|1|cmd /c exit 0; if ($LASTEXITCODE -eq 0 -and $null.Foo()) { exit 1 }
+guard-bad-cast|1|1|cmd /c exit 0; if ([int]"x" -ne $LASTEXITCODE) { exit 1 }
+guard-divide-zero|1|1|cmd /c exit 0; if ((1 / $LASTEXITCODE) -gt 5) { exit 1 }
+guard-inline-throw|1|1|cmd /c exit 0; if (($LASTEXITCODE -ne 0) -or (throw "x")) { exit 1 }
+guard-missing-command|1|1|cmd /c exit 0; if ($LASTEXITCODE -eq 0 -and (Get-NoSuchCommandZ)) { exit 1 }
+guard-throwing-function|1|1|function check { throw "bad" }; cmd /c exit 0; if ($LASTEXITCODE -eq 0 -and (check)) { exit 1 }
+guard-native-or|7|7|if ($LASTEXITCODE -ne 0 -or (cmd /c exit 7)) { exit 1 }
+guard-native-or-after-zero|7|7|cmd /c exit 0; if ($LASTEXITCODE -ne 0 -or (cmd /c exit 7)) { exit 1 }
+guard-native-first|7|7|if ((cmd /c exit 7) -or $LASTEXITCODE -eq 9) { exit 1 }
+guard-native-scriptblock|2|2|if (& { cmd /c exit 2; $LASTEXITCODE -eq 9 }) { exit 1 }
+guard-native-script|3|3|cmd /c exit 0; if ($LASTEXITCODE -ne 0 -or (& '{NATIVE_SCRIPT}')) { exit 1 }
+guard-assignment|5|5|if (($global:LASTEXITCODE = 5) -eq 0) { exit 1 }
+guard-scriptblock-expression|0|0|if (($LASTEXITCODE -ne 0) -or ({ $false } -eq $null)) { exit 1 }
+guard-postincrement|1|1|cmd /c exit 0; if ($global:LASTEXITCODE++ -ne 0) { exit 1 }
+guard-preincrement|1|1|cmd /c exit 0; if (++$global:LASTEXITCODE -eq 0) { exit 1 }
+guard-postdecrement|-1|-1|cmd /c exit 0; if ($LASTEXITCODE-- -ne 0) { exit 1 }
+guard-predecrement|1|1|cmd /c exit 0; if (--$global:LASTEXITCODE -ne 0) { exit 1 }
+guard-increment-unset|1|1|if ($LASTEXITCODE++ -ne 0) { exit 1 }
+guard-ref-set|5|5|cmd /c exit 0; if ($LASTEXITCODE -ne 0 -or ([ref]$global:LASTEXITCODE).set_Value(5)) { exit 1 }
+guard-psvariable-set|5|5|cmd /c exit 0; if ($LASTEXITCODE -ne 0 -or $ExecutionContext.SessionState.PSVariable.Set('global:LASTEXITCODE',5)) { exit 1 }
+guard-scriptproperty-native|7|7|cmd /c exit 0; $o=[pscustomobject]@{}; $o | Add-Member ScriptProperty P { cmd /c exit 7; $null }; if ($LASTEXITCODE -ne 0 -or $o.P) { exit 1 }
+guard-scriptproperty-write|5|5|cmd /c exit 0; $o=[pscustomobject]@{}; $o | Add-Member ScriptProperty P { $global:LASTEXITCODE=5; $null }; if ($LASTEXITCODE -ne 0 -or $o.P) { exit 1 }
+guard-scriptmethod-native|7|7|cmd /c exit 0; $o=[pscustomobject]@{}; $o | Add-Member ScriptMethod M { cmd /c exit 7; $null }; if ($LASTEXITCODE -ne 0 -or $o.M()) { exit 1 }
+guard-tostring-override|7|7|$o=[pscustomobject]@{}; $o | Add-Member -Force ScriptMethod ToString { cmd /c exit 7; "z" }; cmd /c exit 0; if ("$o$LASTEXITCODE" -eq "q") { exit 1 }
+guard-compound-or|0|0|cmd /c exit 3; if ($LASTEXITCODE -ne 0 -or $false) { exit 9 }
+guard-compound-and|0|0|cmd /c exit 3; if ($LASTEXITCODE -ne 0 -and $true) { exit 9 }
+guard-reversed|0|0|cmd /c exit 3; if (0 -ne $LASTEXITCODE) { exit 9 }
+guard-parenthesized|0|0|cmd /c exit 3; if (($LASTEXITCODE -ne 0)) { exit 9 }
+guard-parenthesized-left|0|0|cmd /c exit 3; if (($LASTEXITCODE) -ne 0) { exit 9 }
+guard-parenthesized-right|0|0|cmd /c exit 3; if ($LASTEXITCODE -ne (0)) { exit 9 }
+guard-not|1|1|cmd /c exit 3; if (-not $LASTEXITCODE) { exit 1 }
+guard-not-comparison|1|1|cmd /c exit 3; if (-not ($LASTEXITCODE -ne 0)) { exit 1 }
+guard-bang|1|1|cmd /c exit 3; if (!$LASTEXITCODE) { exit 1 }
+guard-second-variable|0|0|$x=0; cmd /c exit 3; if ($LASTEXITCODE -ne $x) { exit 9 }
+guard-member-left|0|0|cmd /c exit 3; if ($LASTEXITCODE.ToString() -ne '0') { exit 9 }
+guard-string-right|0|0|cmd /c exit 3; if ($LASTEXITCODE -ne '0') { exit 9 }
+guard-shadowed-get-variable|0|0|function Get-Variable { throw 'x' }; cmd /c exit 0; if ($LASTEXITCODE -ne 0) { exit 4 }
+guard-body-parse-error|0|1|cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit [int]::Parse("x") }
+guard-body-strict-undefined|0|1|Set-StrictMode -Version Latest; cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit $undefinedVar }
+strict-unset-exact-exit|0|1|Set-StrictMode -Version Latest; Write-Output x; exit $LASTEXITCODE
+'@
+    # Limitation: strict mode with an unset code on an exact exit fails closed, matching native -Command.
+    # Attempt 9 coordinator allowlist ruling: guard-parse-int, guard-strict-undefined,
+    # guard-null-method, guard-bad-cast, guard-divide-zero and guard-inline-throw now
+    # require HEAD's exact bytes AND exit, replacing their a7/a8 reader exceptions.
+    $exceptionNames=@('exit-reader-plain','exit-reader-scoped-braced','gate-exit-code','gate-exit-1','unset-gate-ne','strict-unset-guard','guard-not-taken-exit',
+        'guard-shadowed-get-variable','guard-body-parse-error','guard-body-strict-undefined','strict-unset-exact-exit')
+    foreach ($line in ($pins -split "`n")) {
+        $parts=$line.TrimEnd("`r") -split '\|',4
+        $cases[$parts[0]]=$parts[3].Replace('{NATIVE_SCRIPT}', $s)
+        $pinnedHead[$parts[0]]=[int]$parts[1]
+        if ($parts[0] -in $exceptionNames) { $readerExpected[$parts[0]]=[int]$parts[2] }
+    }
+    foreach ($variable in @('$lastexitcode','${LASTEXITCODE}','$global:LASTEXITCODE','$script:LASTEXITCODE','${local:LASTEXITCODE}','${private:LASTEXITCODE}')) {
+        $name="exact-scope-$variable"
+        $cases[$name]='cmd /c exit 3; exit '+$variable
+        $pinnedHead[$name]=0; $readerExpected[$name]=3
+    }
+    $guardBytePins=@{}
+    foreach ($scope in @('', 'global:', 'script:', 'local:', 'private:')) {
+        foreach ($braced in @($false, $true)) {
+            $variable=if($braced){'${'+$scope+'LASTEXITCODE}'}else{'$'+$scope+'LASTEXITCODE'}
+            $name="exact-guard-scope-$variable"
+            $cases[$name]='cmd /c exit 3; if ('+$variable+' -ne 0) { exit '+$variable+' }'
+            $pinnedHead[$name]=0; $readerExpected[$name]=3; $guardBytePins[$name]=$true
+        }
+    }
+    foreach ($prefix in @('', 'i', 'c')) {
+        foreach ($op in @('eq','ne','gt','ge','lt','le')) {
+            $name="exact-guard-operator-$prefix$op"
+            $cases[$name]='cmd /c exit 3; if ($LASTEXITCODE -'+$prefix+$op+' 3) { exit 9 }'
+            $pinnedHead[$name]=if($op -in @('ne','lt','le')){9}else{0}
+            $readerExpected[$name]=if($op -in @('eq','ge','le')){9}else{0}
+            $guardBytePins[$name]=$true
+        }
+    }
+    # A newline inside braces is part of the variable name, so neither exact form applies.
+    $cases['exit-braced-trailing-newline']='cmd /c exit 3; exit ${LASTEXITCODE' + "`n}"
+    $pinnedHead['exit-braced-trailing-newline']=0
+    $cases['guard-braced-trailing-newline']='cmd /c exit 3; if (${LASTEXITCODE' + "`n} -ne 0) { exit 9 }"
+    $pinnedHead['guard-braced-trailing-newline']=9
+    $measurements=@('HEAD control commit: 07a786f6c42c3aa2afc01b9820ff0c3f62952a86')
+    foreach($name in $cases.Keys) {
+        $command=$cases[$name]
+        $isScript=$name.StartsWith('ScriptPath ')
+        $headScript=& { . ([scriptblock]::Create($fnHead)); Get-DtJobCommandScript $command }
+        try {
+            $currentScript=& { . ([scriptblock]::Create($fnCurrent)); Get-DtJobCommandScript $command }
+        }
+        catch {
+            Assert-True $false "current generator did not throw: $name"
+            continue
+        }
+        if ($name -eq 'gate-exit-code') {
+            # Pin the qualified null guard and the measured status-preserving tail.
+            $exactGuardScript = 'cmd /c exit 3; if ($null -eq (Microsoft.PowerShell.Utility\Get-Variable LASTEXITCODE -Scope Global -ValueOnly -ErrorAction Ignore)) { $global:LASTEXITCODE = 0 }; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }' + "`n`$dtJobOk = `$?`nif (-not `$dtJobOk) { exit 1 }`nexit 0`n"
+            Assert-True ($currentScript -ceq $exactGuardScript) 'exact guard bytes include qualified null guard at final statement and measured status-preserving exit 0 tail'
+        }
+        if ($guardBytePins.ContainsKey($name)) {
+            $guard='if ($null -eq (Microsoft.PowerShell.Utility\Get-Variable LASTEXITCODE -Scope Global -ValueOnly -ErrorAction Ignore)) { $global:LASTEXITCODE = 0 }; '
+            $exactGuardScript=$command.Insert($command.IndexOf('if ('), $guard)+"`n`$dtJobOk = `$?`nif (-not `$dtJobOk) { exit 1 }`nexit 0`n"
+            Assert-True ($currentScript -ceq $exactGuardScript) "allowlisted guard exact bytes: $name"
+        }
+        $path=Join-Path $tempRoot 'differential.ps1'
+        Write-Utf8 $path $headScript
+        $launch=if($isScript){$command}else{$path}
+        if ($isScript) { $null=& pwsh -NoProfile -NonInteractive -File $launch 2>&1 }
+        else { $null=& pwsh -NoProfile -NonInteractive -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($headScript))) 2>&1 }
+        $headCode=$LASTEXITCODE
+        Assert-True ($headCode -eq $pinnedHead[$name]) "HEAD pin: $name measured=$headCode pinned=$($pinnedHead[$name])"
+        Write-Utf8 $path $currentScript
+        if ($isScript) { $null=& pwsh -NoProfile -NonInteractive -File $launch 2>&1 }
+        else { $null=& pwsh -NoProfile -NonInteractive -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($currentScript))) 2>&1 }
+        $currentCode=$LASTEXITCODE
+        $expected=if($readerExpected.ContainsKey($name)){$readerExpected[$name]}else{$pinnedHead[$name]}
+        Assert-True ($currentCode -eq $expected) "differential: $name HEAD=$headCode current=$currentCode expected=$expected"
+        if(-not $isScript -and -not $readerExpected.ContainsKey($name)) {
+            Assert-True ($currentScript -ceq $headScript) "non-reader generated bytes match HEAD: $name"
+        }
+        $measurements += "$name | HEAD=$headCode | current=$currentCode | expected=$expected | allowed_reader=$($readerExpected.ContainsKey($name))"
+    }
+
+    # Exercise actual dt-job start on disposable scripts and job state, with fake native work.
+    $copyRoot=Join-Path $tempRoot 'job-copy/skills/dt-build/scripts'
+    New-Item -ItemType Directory -Path $copyRoot -Force | Out-Null
+    Copy-Item -Path (Join-Path $scriptDir '*') -Destination $copyRoot -Recurse
+    $copyRun=New-RunFolder 'exact-form-jobs'
+    foreach ($case in @(
+        @{command='cmd /c exit 3; exit $LASTEXITCODE';code=3},
+        @{command='cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }';code=3},
+        @{command='cmd /c exit 3; Write-Output handled';code=0}
+    )) {
+        $started=& pwsh -NoProfile -File (Join-Path $copyRoot 'dt-job.ps1') start -RunFolder $copyRun -Command $case.command -AllowTempRunFolder -Json | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0) "temp-copy dt-job starts: $($case.command)"
+        $record=Wait-JobTerminal $copyRun $started.job_id
+        Assert-True ($record.exit_code -eq $case.code -and $record.status -eq $(if($case.code){'failed'}else{'succeeded'})) "temp-copy dt-job exact form: $($case.command) exit=$($record.exit_code)"
+    }
+
+    $savedWrapperEnv=@{}
+    foreach($name in @('CODEX_HOME','DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CLAUDE_CREDENTIALS','DT_FAKE_REPORT_FILE','DT_BUILD_STATE_DIR')) {
+        $savedWrapperEnv[$name]=[Environment]::GetEnvironmentVariable($name)
+    }
+    try {
+    $repoRoot=(Resolve-Path (Join-Path $scriptDir '../../..')).Path
+    $env:DT_BUILD_STATE_DIR=Join-Path $tempRoot 'build-state'
+    $routerState = Join-Path $tempRoot 'router-state'
+    Write-Utf8 -Path (Join-Path $routerState 'last-check.json') -Content (@{ checked_at = (Get-Date).ToString('o') } | ConvertTo-Json)
+    $env:DT_MODEL_ROUTER_STATE = $routerState
+    $fakeTransport = Join-Path $tempRoot 'fake-alert-transport.ps1'
+    Write-Utf8 -Path $fakeTransport -Content @'
+param($request)
+if ($request['kind'] -eq 'secret') { return 'fake-secret' }
+if ([string]$request['uri'] -like '*/oauth2/applications/@me') { return [pscustomobject]@{ owner = [pscustomobject]@{ id = '1' } } }
+return [pscustomobject]@{ id = 'fake' }
+'@
+    $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeTransport
+    $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $tempRoot 'missing-claude-credentials.json'
+    $codexHome = Join-Path $tempRoot 'codex-home'
+    Write-Utf8 -Path (Join-Path $codexHome 'models_cache.json') -Content '{"fetched_at":"fixture","models":[{"slug":"gpt-6.1-sol","visibility":"list","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"}]}]}'
+    Write-Utf8 -Path (Join-Path $codexHome 'auth.json') -Content '{"auth_mode":"fixture"}'
+    $env:CODEX_HOME = $codexHome
+    $fakeCodex = Join-Path $tempRoot 'fake-codex.ps1'
+    Write-Utf8 -Path $fakeCodex -Content @'
+if ($args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
+if ($args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path $env:CODEX_HOME 'models_cache.json'); exit 0 }
+$outIndex = [Array]::IndexOf([object[]]$args, '--output-last-message')
+$outPath = [string]$args[$outIndex + 1]
+[void][Console]::In.ReadToEnd()
+[System.IO.File]::WriteAllText($outPath, [System.IO.File]::ReadAllText($env:DT_FAKE_REPORT_FILE))
+'@
+    $fakeClaude = Join-Path $tempRoot 'fake-claude.ps1'
+    Write-Utf8 -Path $fakeClaude -Content @'
+if ($args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
+[void][Console]::In.ReadToEnd()
+$usage = [ordered]@{}; $usage['claude-sonnet-5'] = @{ inputTokens = 10; outputTokens = 20; costUSD = 0.01 }
+Write-Output (@{ type = 'result'; is_error = $false; result = [System.IO.File]::ReadAllText($env:DT_FAKE_REPORT_FILE); total_cost_usd = 0.01; modelUsage = $usage } | ConvertTo-Json -Depth 5 -Compress)
+'@
+    $project = Join-Path $tempRoot 'project'
+    Write-Utf8 -Path (Join-Path $project 'README.md') -Content 'fixture'
+    & git -C $project init -q
+    $prompt = Join-Path $tempRoot 'prompt.md'
+    Write-Utf8 -Path $prompt -Content "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nfixture"
+    $reportFile = Join-Path $tempRoot 'fake-report.md'
+    $env:DT_FAKE_REPORT_FILE = $reportFile
+
+    $report=@('DT_BUILD_REPORT_VERSION: 3','RUN_ID: fixture-run','chunk_id: fixture-chunk','attempt: 1','VERDICT:','PASS','CHANGED_FILES:','NONE','COMMANDS_AND_RESULTS:','NONE','EVIDENCE_PATHS:','NONE','UNRESOLVED_BLOCKERS:','NONE','DISCOVERED_ENHANCEMENTS:','NONE','CONTINUATION_STATE:','NONE') -join "`n"
+    foreach($lane in @('codex','claude')) {
+        foreach($valid in @($true,$false)) {
+            Write-Utf8 $reportFile $(if($valid){$report}else{'invalid fixture report'})
+            foreach($generation in @('HEAD','current')) {
+                $out=Join-Path $tempRoot "wrapper-$lane-$valid-$generation.md"
+                $wrapper=Join-Path $scriptDir "invoke-$lane-chunk.ps1"
+                $cli=if($lane -eq 'codex'){$fakeCodex}else{$fakeClaude}
+                $model=if($lane -eq 'claude'){"-Model 'claude-sonnet-5'"}else{''}
+                $command="& '$wrapper' -ProjectPath '$project' -PromptPath '$prompt' -OutputPath '$out' -$($lane.Substring(0,1).ToUpper()+$lane.Substring(1))CliPath '$cli' $model -Tier standard -Effort medium -SelectionReason 'runner differential fixture' -Attempt 1 -Json"
+                $fn=if($generation -eq 'HEAD'){$fnHead}else{$fnCurrent}
+                $generated=& { . ([scriptblock]::Create($fn)); Get-DtJobCommandScript $command }
+                $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($generated))
+                $wrapperLog=Join-Path $tempRoot "wrapper-$lane-$valid-$generation.log"
+                & pwsh -NoProfile -NonInteractive -EncodedCommand $encoded *> $wrapperLog
+                $code=$LASTEXITCODE
+                $expected=if($valid){0}else{1}
+                $prov=Get-Content -Raw "$out.provenance.json" | ConvertFrom-Json
+                Assert-True ($code -eq $expected -and $prov.pass -eq $valid) "real wrapper job: $lane $generation valid=$valid exit=$code expected=$expected log=$(Get-Content $wrapperLog -Tail 3)"
+                $measurements += "wrapper $lane valid=$valid $generation | exit=$code | expected=$expected"
+            }
+        }
+    }
+    } finally {
+        foreach($name in $savedWrapperEnv.Keys){[Environment]::SetEnvironmentVariable($name,$savedWrapperEnv[$name])}
+    }
+
+    $measurements | Write-Output
+    if($HeadMeasurementPath){Write-Utf8 $HeadMeasurementPath ($measurements -join "`n")}
+}
+
 $exitCode = 0
 $junctionLink = $null
-$pinEnvNames = @('DT_BUILD_STATE_DIR', 'DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID', 'DT_BUILD_RUN_PIN_VENDOR', 'DT_BUILD_RUN_PIN_MODEL')
+$pinEnvNames = @('DT_BUILD_STATE_DIR', 'DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID', 'DT_JOB_DIR', 'DT_BUILD_RUN_PIN_VENDOR', 'DT_BUILD_RUN_PIN_MODEL')
 $pinSavedEnv = @{}
 foreach ($name in $pinEnvNames) { $pinSavedEnv[$name] = [Environment]::GetEnvironmentVariable($name) }
 $savedRouterState = $env:DT_MODEL_ROUTER_STATE
 $savedAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $savedDmLog = $env:DT_TEST_DM_LOG
 try {
+    Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID, Env:DT_JOB_DIR -ErrorAction SilentlyContinue
+    Test-GeneratorDifferential
+    if($GeneratorDifferentialOnly){
+        Write-Output "SUMMARY: $script:passed passed, $script:failed failed"
+        if($script:failed){exit 1}; exit 0
+    }
     # FS-115: every alert this suite raises goes to a fake transport, never Danny's real Discord.
     $env:DT_TEST_DM_LOG = Join-Path $tempRoot 'dms.jsonl'
     $fakeAlertTransport = Join-Path $tempRoot 'fake-alert-transport.ps1'
@@ -634,13 +1086,48 @@ exit 0
     $errText = @($envelope.stderr_excerpt) -join "`n"
     Assert-True ($errText.Contains('| DIRECT_FILE_CAPTURE_FAILED & settled') -and -not $errText.Contains('CLIXML') -and -not $errText.Contains('_x001B_') -and -not $errText.Contains('~~~') -and -not $errText.Contains([char]27)) "a CLIXML stderr reaches the envelope as plain readable lines ($errText)"
 
-    # Exit semantics: the final statement decides, as with pwsh -Command.
+    # Exit semantics: handled codes succeed; final callers propagate native codes.
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "cmd /c exit 3; 'done'")
     $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
     Assert-True ($record.status -eq 'succeeded' -and $record.exit_code -eq 0) "earlier native failure with a succeeding final statement exits 0 ($($record.status), $($record.exit_code))"
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "'first'; cmd /c exit 4")
     $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
     Assert-True ($record.status -eq 'failed' -and $record.exit_code -eq 4) "failing final native command keeps its exit code ($($record.status), $($record.exit_code))"
+
+    foreach ($failureCode in @(0, 7)) {
+        $command = 'cmd /c exit ' + $failureCode + '; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+        $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', $command)
+        $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
+        $expectedStatus = if ($failureCode -eq 0) { 'succeeded' } else { 'failed' }
+        Assert-True ($record.status -eq $expectedStatus -and $record.exit_code -eq $failureCode) "final conditional exit preserves native code $failureCode ($($record.status), $($record.exit_code))"
+    }
+
+    foreach ($case in @(
+        @{ command = 'cmd /c exit 3; Write-Output "rc=$LASTEXITCODE"'; code = 0 },
+        @{ command = 'cmd /c exit 3; $code=$LASTEXITCODE'; code = 0 },
+        @{ command = 'cmd /c exit 1; if ($LASTEXITCODE -eq 1) { Write-Output changes }'; code = 0 },
+        @{ command = 'cmd /c exit 3; if ($LASTEXITCODE -eq 3) { Write-Output tolerated } else { exit 5 }'; code = 5 },
+        @{ command = 'cmd /c exit 3; if ($LASTEXITCODE -eq 0) { exit 5 } else { Write-Output tolerated }'; code = 5 },
+        @{ command = 'cmd /c exit 3; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'; code = 3 },
+        @{ command = 'cmd /c exit 3; exit $LASTEXITCODE'; code = 3 },
+        @{ command = 'cmd /c exit 3; if ($?) { Write-Output ok } else { exit 5 }'; code = 0 }
+    )) {
+        $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', $case.command)
+        $record = Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
+        $expectedStatus = if ($case.code -eq 0) { 'succeeded' } else { 'failed' }
+        Assert-True ($record.status -eq $expectedStatus -and $record.exit_code -eq $case.code) "final statement: $($case.command) => $($record.status), $($record.exit_code)"
+    }
+
+    $nativeScript=Join-Path $tempRoot 'native failure with spaces.ps1'
+    Write-Utf8 $nativeScript 'cmd /c exit 3'
+    # -ScriptPath bypasses generation; pwsh -File still returns 0 without exit.
+    $job=Invoke-DtJob @('start','-RunFolder',$rf,'-ScriptPath',$nativeScript)
+    $record=Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
+    Assert-True ($record.status -eq 'succeeded' -and $record.exit_code -eq 0) '-ScriptPath keeps HEAD pwsh -File semantics for an implicit native code'
+    Write-Utf8 $nativeScript "cmd /c exit 3`nexit `$LASTEXITCODE"
+    $job=Invoke-DtJob @('start','-RunFolder',$rf,'-ScriptPath',$nativeScript)
+    $record=Wait-JobTerminal -RunFolder $rf -JobId $job.job_id
+    Assert-True ($record.status -eq 'failed' -and $record.exit_code -eq 3) '-ScriptPath preserves an explicit native exit'
 
     # -TimeoutSec is an expected duration, never a kill.
     $rf = New-RunFolder 'timeout'

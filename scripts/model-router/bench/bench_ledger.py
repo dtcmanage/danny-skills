@@ -18,6 +18,36 @@ from typing import Any
 from bench_outcomes import score_counts
 
 
+def scored_ranked_rounds(quality: Any) -> int | None:
+    """Count only rounds with both judges scored; absent evidence stays absent."""
+    if not isinstance(quality, dict) or not isinstance(quality.get('tasks'), list):
+        return None
+    return sum(len(rep.get('judges', [])) == 2 and all(
+        judge.get('reply') in ('a', 'b', 'no_difference') for judge in rep['judges'])
+        for task in quality['tasks'] for rep in task.get('reps', []))
+
+
+def historical_ranked_rounds(bench_state: Path, row: dict[str, Any]) -> int | None:
+    """Older ledger rows keep ranked evidence in their existing tier report."""
+    count = row.get('scored_ranked_rounds')
+    if type(count) is int:
+        return count
+    count = scored_ranked_rounds(row.get('quality_verdict'))
+    if count is not None:
+        return count
+    run_id = row.get('run_id')
+    if not isinstance(run_id, str) or not run_id or any(c not in '0123456789abcdef' for c in run_id):
+        return None
+    try:
+        report = json.loads((bench_state / 'runs' / run_id / 'report.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    for tier in report.get('tiers') or [report]:
+        if tier.get('tier', 'standard') == row.get('tier', 'standard'):
+            return scored_ranked_rounds(tier.get('quality_verdict'))
+    return None
+
+
 def _percent(reading: Any) -> float | None:
     if not isinstance(reading, dict):
         return None
@@ -73,6 +103,7 @@ def ledger_row(result: dict[str, Any]) -> dict[str, Any]:
         'effort_down_qualified': result.get('effort_down_qualified'),
         'effort_up_qualified': result.get('effort_up_qualified'),
         'quality_verdict': quality.get('verdict') if isinstance(quality, dict) else None,
+        'scored_ranked_rounds': scored_ranked_rounds(quality),
         'tasks': {name: {**score_counts(t for t in table.get('tasks', []) if not t.get('uninformative')),
                          'unknown': table.get('unknown'), 'count': len(table.get('tasks', []))}
                   for name, table in tables.items() if isinstance(table, dict)},
@@ -103,7 +134,16 @@ def read_ledger(bench_state: Path) -> list[dict[str, Any]]:
     path = bench_state / 'ledger.jsonl'
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    for row in rows:
+        tables = row.get('tasks') or {}
+        ranked_rounds = historical_ranked_rounds(bench_state, row)
+        if (ranked_rounds is not None and ranked_rounds < 3) or any(
+                not isinstance(tables.get(side), dict) or
+                sum(tables[side].get(key, 0) or 0 for key in ('passed', 'failed')) == 0
+                for side in ('candidate', 'incumbent')):
+            row.update(quality_verdict='unknown', tied=False, better=None)
+    return rows
 
 
 def summary_lines(rows: list[dict[str, Any]]) -> list[str]:
@@ -111,7 +151,8 @@ def summary_lines(rows: list[dict[str, Any]]) -> list[str]:
              '| --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     for row in rows:
         c, x = row.get('claude', {}), row.get('codex', {})
-        verdict = 'tied' if row.get('tied') else (row.get('better') or ('halted' if row.get('halted') else '-'))
+        verdict = ('unknown' if row.get('quality_verdict') == 'unknown' else
+                   'tied' if row.get('tied') else (row.get('better') or ('halted' if row.get('halted') else '-')))
         cfg = lambda k: f"{(row.get(k) or {}).get('model')}/{(row.get(k) or {}).get('effort')}"
         wall = row.get('wall_seconds')
         lines.append(f"| {str(row.get('at_utc', ''))[:16]} | {row.get('job')}/{row.get('tier')} | {cfg('candidate')} vs {cfg('incumbent')} | "

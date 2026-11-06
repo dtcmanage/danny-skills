@@ -60,3 +60,59 @@ with zero failures from each, and adds those measured counts to its own checks.
 Child output is prefixed so only the parent's final `SUMMARY` is authoritative.
 A nonzero child exit, missing/empty summary, duplicate summary or invalid count
 fails the parent. No count is inferred from scenario labels or assertion source lines.
+
+Transport recovery: `turn/moderationMetadata` is accepted only with typed thread/turn
+IDs bound to the active turn. Its raw metadata is discarded before event buffering.
+Unknown methods and uncaptured warnings fail closed. Diagnostics retain at most eight
+shape records with fixed field names, types and bounded lengths/hashes, never raw text
+or metadata. The previously captured disabled-host warning remains the only warning
+accepted; this repair adds no warning shape.
+
+The disabled code-mode host still declares custom `functions.exec` and function
+`functions.wait`. No tools means none usable; these two declarations are accepted
+only after verified controls and the captured disabled-host warning for the same
+turn. Tool invocation attempts remain forbidden. The final raw message may carry
+`status: completed` and empty `annotations` and `logprobs`; other values fail closed.
+Raw-evidence failures retain only a fixed reason (`raw_item_invalid:<fixed type or
+OTHER>`, `response_count`, or `answer_mismatch`), never raw item data.
+
+Every real comparison generates the installed app-server JSON schema before any model
+call, writes `bench/protocol-schema.json`, and includes new methods in its report.
+New methods are evidence, not authorization to accept them. Six structural failures
+across signatures with no successful Codex completion halt all queued calls through
+the shared spend guard; in-flight calls may finish. Structural failures have no retry;
+timeouts retain the old retry rule. Completed tiers are retained but cannot qualify
+proposals after a comparison halt. Halt alerts use the existing signature dedupe;
+read-only ledger reporting never sends alerts.
+
+Ranked quality is unknown without at least three jointly scored rounds. Missing answers
+and unavailable judges cannot establish a tie. The ledger reader displays historical
+unscored sides as unknown without rewriting saved rows or validating old tie approvals.
+
+A coordinator may run one tiny transport probe with
+`pwsh -NoProfile -File scripts/model-router/bench/smoke-transport.ps1 -Vendor codex -Model <non-frontier-model> -Live -OutDir <temporary-folder>`
+(or `-Vendor claude` with a Claude model). Omitting `-Model` uses the configured fast
+slot for that vendor and its effort. It uses the benchmark Codex transport or
+the existing Claude `--safe-mode` launch. Without `-Live` it refuses before any call.
+Each event is marked `seen` or `not-exercised`; success proves only exercised paths.
+The sanitized report contains no raw model output, metadata or warning text. A warning
+shape can be approved only in a follow-up after coordinator evidence; no smoke result
+changes an allowlist automatically.
+Any status other than `ok` exits nonzero. Reports preserve the failure category,
+fixed detail and bounded reason. Job commands ending in `exit $LASTEXITCODE` preserve
+the child exit code; an unknown smoke report is a failure.
+
+## Codex structural failures
+
+All Codex comparison failures use `codex_appserver.classify_failure` before
+counting or retrying, including wrapper crashes, invalid output and engine
+dispatch exceptions. Six structural failures across signatures with zero Codex
+completions halt the comparison; structural reps are never retried. Transport
+timeouts retain the old retry rule. Real identity changes and quota refusals
+retain their named invalidation/deferral rules; missing identity fields are
+structural. Auth failures use `auth:account` or `auth:unauthorized` and tell the
+operator to re-authenticate. API-key auth remains rejected.
+
+Final `codex error: serverOverloaded` and stream-drop errors are structural.
+An outage halts cheaply at six and can be rerun; one such event after a success
+leaves that rep unknown without retry. Claude retry behavior is unchanged.

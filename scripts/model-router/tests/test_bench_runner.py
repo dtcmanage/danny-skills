@@ -116,10 +116,16 @@ def test_failed_unknown_identity_usage_unpriced(identity):
     assert result['unpriced_calls'] == 1 and result['priced_subtotal_usd'] == 0
 
 
-@pytest.mark.parametrize('message', ['TIMEOUT', 'timed out', 'transport failed', 'transport failure'])
+@pytest.mark.parametrize('message', ['TIMEOUT', 'timed out', 'Codex timeout', 'stdin timeout'])
 def test_timeout_classification(message):
     import codex_appserver as transport
     assert transport.failure_category(message) == 'transport'
+
+
+@pytest.mark.parametrize('message', ['transport failed', 'transport failure', 'server closed before protocol response'])
+def test_non_timeout_transport_rejections_are_structural(message):
+    import codex_appserver as transport
+    assert transport.failure_category(message) == 'protocol'
 
 
 # Captured TokenUsageBreakdown schema: only cacheWriteInputTokens is optional,
@@ -302,10 +308,10 @@ def test_identity_failure_earns_a_third_attempt(tmp_path: Path) -> None:
         seen[key] = seen.get(key, 0) + 1
         if request['model'] == 'candidate':
             if seen[key] <= 2:
-                return {'status': 'unknown', 'failure_category': 'identity', 'detail': 'Claude model changed during comparison.'}
+                return {'status': 'unknown', 'failure_category': 'identity', 'detail': 'actual model or effort mismatch'}
             return {'status': 'ok', 'answer': '{}'}
         if request['model'] == 'incumbent':
-            return {'status': 'unknown', 'failure_category': 'environment', 'detail': 'timeout'}
+            return {'status': 'unknown', 'failure_category': 'transport', 'detail': 'Codex timeout'}
         return {'status': 'ok', 'answer': '{}'}
     result = run(tmp_path, dispatch=dispatch, config=serial_config())
     candidate = [row for row in result['outcomes'] if row['side'] == 'candidate']
@@ -313,7 +319,7 @@ def test_identity_failure_earns_a_third_attempt(tmp_path: Path) -> None:
     assert max(row['attempt'] for row in candidate) == 3 and all(not row['unknown'] for row in candidate if row['attempt'] == 3)
     assert result['candidate']['unknown'] == 0
     assert max(row['attempt'] for row in incumbent) == 2 and all(row['unknown'] for row in incumbent)
-    always = run(tmp_path / 'always', dispatch=lambda request: {'status': 'unknown', 'failure_category': 'identity', 'detail': 'changed'})
+    always = run(tmp_path / 'always', dispatch=lambda request: {'status': 'unknown', 'failure_category': 'identity', 'detail': 'actual model or effort mismatch'})
     assert max(row['attempt'] for row in always['outcomes']) == 3 and always['raw_gate'] == 'unknown'
 
 
@@ -331,7 +337,8 @@ def test_rubric_self_weight_and_effort_up(tmp_path: Path) -> None:
         value = 0 if request['model'] == config['judges']['claude'] else 1
         return {'status': 'ok', 'answer': json.dumps({'scores': {line['id']: value for line in prompt_rubric(request)['lines']}})}
     result = run(tmp_path, job='writer', effort='medium', candidate=config['judges']['claude'], dispatch=dispatch)
-    first = result['outcomes'][0]
+    # Parallel lanes may finish in any order; only the candidate is a self-judge.
+    first = next(row for row in result['outcomes'] if row['side'] == 'candidate')
     assert first['judge_average'] == pytest.approx(2 / 3)
     assert first['disagreement'] and first['status'] == 'fail'
     assert result['effort_down'] is None and result['effort_up']['effort'] == 'high'
@@ -864,8 +871,8 @@ def test_codex_error_codex_retries_is_not_fatal(tmp_path):
 
 
 @pytest.mark.parametrize('scenario, detail, category', [
-    ('error-final:overloaded', 'codex error: serverOverloaded', 'transport'),
-    ('error-final:stream', 'codex error: responseStreamDisconnected http 502', 'transport'),
+    ('error-final:overloaded', 'codex error: serverOverloaded', 'protocol'),
+    ('error-final:stream', 'codex error: responseStreamDisconnected http 502', 'protocol'),
     ('error-final:usage', 'ERROR: Usage limit reached', 'quota'),
     ('error-final:hostile', 'unsupported event: error', 'protocol'),
 ])
@@ -1004,7 +1011,7 @@ def test_recovered_dispatch_unknown_is_not_quality_failure(tmp_path):
         key = request['model'], request['prompt']
         if request['model'] == 'candidate' and key not in seen:
             seen.add(key)
-            return {'status': 'unknown', 'failure_category': 'transport'}
+            return {'status': 'unknown', 'failure_category': 'transport', 'detail': 'Codex timeout'}
         return {'status': 'ok', 'answer': '{}'}
     result = run(tmp_path, config=serial_config(), dispatch=dispatch)
     assert result['tied'] and result['better'] is None

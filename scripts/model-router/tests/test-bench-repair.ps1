@@ -13,6 +13,10 @@ $priorTransport=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $root=Join-Path $fixture.root 'repair'
 $script:checks=0
 function Check($ok,$name) { if(-not $ok){throw "FAIL $name"}; $script:checks++ }
+function New-ScoredQuality([int]$Rounds = 3) {
+    $reps=@(for($i=0;$i -lt $Rounds;$i++) { @{judges=@(@{reply='a'},@{reply='no_difference'})} })
+    return @{verdict='no_difference';tasks=@(@{reps=$reps})}
+}
 $script:sent=@{}
 function Send-RouterAlerts { param($Alerts)
     foreach($alert in $Alerts){
@@ -95,6 +99,57 @@ try {
     $config.judge_effort='high'; Write-RouterJsonAtomic (Join-Path $a 'bench/judge-config.json') $config
     $null=Invoke-RouterTriggeredComparison $request research $passing
     Check ($script:passRuns -eq 3) 'G1 new effort or judge setup runs again'
+    # A judge outage is retried after recovery, then completed evidence dedupes.
+    $recoveryRequest=[pscustomobject]@{job='coder';candidate='recovery-candidate';incumbent=$roster.jobs.coder.first;effort='medium'}
+    $script:recoveryRuns=0
+    $recovering={param($r)
+        $script:recoveryRuns++
+        if($script:recoveryRuns -eq 1){ return [pscustomobject]@{gate='unknown';raw_gate='unknown';quality_verdict=@{verdict='unknown'}} }
+        return [pscustomobject]@{gate='pass';raw_gate='pass';quality_verdict=(New-ScoredQuality)}
+    }
+    $outage=Invoke-RouterTriggeredComparison $recoveryRequest research $recovering -SendAlerts $false
+    $corrected=Invoke-RouterTriggeredComparison $recoveryRequest research $recovering -SendAlerts $false
+    Check ($outage.gate -eq 'unknown' -and $corrected.gate -eq 'pass' -and $script:recoveryRuns -eq 2 -and -not $corrected.PSObject.Properties['duplicate_of']) 'G1 corrected run executes after judge outage'
+    $repeat=Invoke-RouterTriggeredComparison $recoveryRequest research $recovering -SendAlerts $false
+    Check ($repeat.PSObject.Properties['duplicate_of'] -and $script:recoveryRuns -eq 2) 'G1 corrected evidence dedupes'
+    # Simulate an old gate=pass cache whose judges never returned scored results.
+    $cache=@(Get-ChildItem (Join-Path $a 'bench/triggered') -Filter '*.json' | Where-Object {
+        (Read-RouterJsonObject $_.FullName).PSObject.Properties['quality_verdict']
+    })
+    Check ($cache.Count -eq 1) 'G1 isolated recovery cache'
+    Write-RouterJsonAtomic $cache[0].FullName ([pscustomobject]@{gate='pass';raw_gate='pass';quality_verdict=@{verdict='unknown'}})
+    $afterOldOutage=Invoke-RouterTriggeredComparison $recoveryRequest research $recovering -SendAlerts $false
+    Check ($script:recoveryRuns -eq 3 -and $afterOldOutage.gate -eq 'pass' -and -not $afterOldOutage.PSObject.Properties['duplicate_of']) 'G1 old pass with unknown quality cannot suppress recovery'
+    # Reproduce the real pre-repair no_difference outage cache, per tier. Seed the
+    # saved result directly because the repaired writer must refuse to save it.
+    foreach ($nested in @($false,$true)) {
+        foreach ($rounds in @(0,2,3)) {
+            $quality=New-ScoredQuality $rounds
+            $tier=[pscustomobject]@{gate='pass';quality_verdict=$quality}
+            $saved=if($nested){[pscustomobject]@{gate='pass';tiers=@($tier)}}else{$tier}
+            Write-RouterJsonAtomic $cache[0].FullName $saved
+            $runsBefore=$script:recoveryRuns
+            $replayed=Invoke-RouterTriggeredComparison $recoveryRequest research $recovering -SendAlerts $false
+            if($rounds -lt 3) {
+                Check ($script:recoveryRuns -eq $runsBefore+1 -and -not $replayed.PSObject.Properties['duplicate_of']) "G1 no_difference nested=$nested scored=$rounds cannot dedupe"
+            } else {
+                Check ($script:recoveryRuns -eq $runsBefore -and $replayed.PSObject.Properties['duplicate_of']) "G1 scored evidence nested=$nested dedupes at minimum 3"
+            }
+        }
+        foreach ($badJudges in @(
+            @(@{reply='a'}),
+            @(@{reply='a'},@{reply='error'}),
+            @(@{reply='a'},@{reply='b'},@{reply='no_difference'})
+        )) {
+            $quality=@{verdict='no_difference';tasks=@(@{reps=@(@{judges=$badJudges},@{judges=$badJudges},@{judges=$badJudges})})}
+            $tier=[pscustomobject]@{gate='pass';quality_verdict=$quality}
+            $saved=if($nested){[pscustomobject]@{gate='pass';tiers=@($tier)}}else{$tier}
+            Write-RouterJsonAtomic $cache[0].FullName $saved
+            $runsBefore=$script:recoveryRuns
+            $replayed=Invoke-RouterTriggeredComparison $recoveryRequest research $recovering -SendAlerts $false
+            Check ($script:recoveryRuns -eq $runsBefore+1 -and -not $replayed.PSObject.Properties['duplicate_of']) "G1 only two scored replies count nested=$nested"
+        }
+    }
     # Independent fixture roots exercise publication and the real delivered-log path.
     $priorTransport=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT
     $transport=Join-Path $root 'transport.ps1'
@@ -243,6 +298,94 @@ throw 'Unexpected fake transport request'
         $null=Update-RouterOutcomes -BenchInvoker $adapter -SendAlerts
         $null=Update-RouterOutcomes -BenchInvoker $adapter -SendAlerts
         Check (@(Delivered 'bench-unknown:*').Count -eq 1) 'R2 enabled UNKNOWN delivers once outside lock'
+    }
+    # Exercise the host's structural_alert callback with a real engine and a fake CLI.
+    # The host imports Send-RouterAlert locally; observe the disposable transport it really calls.
+    & {
+        $protocolFailure={param($r) @{status='unknown';failure_category='protocol';detail='malformed delta'}}
+        foreach($quiet in @($false,$true)) {
+            Fresh-State "structural-alert-$quiet"
+            $halt=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $env:DT_MODEL_ROUTER_STATE -CliInvoker $protocolFailure -Limits {param($v) @{blocked=$false}} -NoAlerts:$quiet
+            Check ($halt.halted -and $halt.gate -eq 'unknown' -and $halt.status -eq 'infrastructure_failure') "structural host halt quiet=$quiet"
+            Check (@($halt.outcomes | Where-Object attempt -ne 1).Count -eq 0) "structural host does not retry quiet=$quiet"
+            $signals=@(Delivered 'bench-structural:*')
+            $sink=Join-Path $env:DT_MODEL_ROUTER_STATE 'transport.jsonl'
+            if($quiet) { Check ($signals.Count -eq 0 -and -not(Test-Path $sink)) 'structural host NoAlerts suppresses delivery' }
+            else {
+                Check ($signals.Count -eq 1 -and @(Get-Content $sink).Count -eq 1) 'structural host delivers once for the signature'
+                Check ($signals[0].key -eq 'bench-structural:protocol:boundary' -and $signals[0].message -match 'Quality is unknown' -and (Get-Content $sink -Raw) -match 'Quality is unknown') 'structural host alert key and message'
+            }
+        }
+    }
+    # Same details through the Python authority and the host's Codex delegate.
+    foreach($detail in @('Codex transport failed','Codex stdin timeout','Codex transport timeout','not JSON','Empty dispatch response','Codex CLI missing','Codex stdin message limit','Parallel call returned nothing.','actual model or effort mismatch','ERROR: Usage limit reached','account authentication changed or malformed','codex error: unauthorized http 401')) {
+        $expected=(@{status='unknown';detail=$detail}|ConvertTo-Json -Compress) | & python (Join-Path $script:BenchRoot 'codex_appserver.py') --classify-failure | ConvertFrom-Json
+        Check ((Get-BenchFailureCategory $detail -Vendor codex) -eq $expected.failure_category) "host/Python failure agreement: $detail"
+    }
+    Check ((Get-BenchFailureCategory 'Codex transport failed' -Vendor claude) -eq 'transport') 'Claude retains historical failure classifier'
+
+    # Real Invoke-RouterBench -> Invoke-BenchDispatchCall -> Invoke-BenchCli.
+    # Fake transport CLI outputs exercise failures outside the app-server parser.
+    $realBenchRoot=$script:BenchRoot
+    $benchRootVariable=Get-Variable BenchRoot -Scope Script
+    $fakeHost=Join-Path $fixture.root 'fake transport CLI'; [void][IO.Directory]::CreateDirectory($fakeHost)
+    foreach($case in @('exit3','crash','non-json','empty','missing','prompt-limit','dispatch-raises','invalid-payload','parallel-empty','turn-detail')) {
+        Fresh-State "wrapper-$case"
+        $counter=@{calls=0}
+        $stub=switch($case) {
+            'exit3' { 'import sys; sys.stdin.readline(); sys.exit(3)' }
+            'crash' { 'import ctypes,sys; sys.stdin.readline(); ctypes.windll.kernel32.ExitProcess(0xC0000142)' }
+            'non-json' { 'import sys; sys.stdin.readline(); print("not JSON")' }
+            'turn-detail' { 'import sys,json; sys.stdin.readline(); print(json.dumps({"status":"unknown","failure_category":"protocol","detail":"single-inference raw evidence missing or ambiguous"}))' }
+            default { 'import sys; sys.stdin.readline()' }
+        }
+        [IO.File]::WriteAllText((Join-Path $fakeHost 'codex_appserver.py'),$stub)
+        $fakeCli={param($r)
+            $counter.calls++
+            if($case -eq 'dispatch-raises'){throw 'raising dispatch PRIVATE'}
+            if($case -eq 'invalid-payload'){return @{status='ok';answer=3}}
+            if($case -eq 'parallel-empty'){throw 'Parallel call returned nothing.'}
+            $copy=@{}; foreach($key in $r.Keys){$copy[$key]=$r[$key]}
+            if($case -eq 'prompt-limit'){$copy.prompt='x'*1048577}
+            try {
+                $benchRootVariable.Value=$fakeHost
+                $resolver=if($case -eq 'missing'){{ (Get-Command 'rdr-nonexistent-cli-88' -ErrorAction Stop).Source }}else{{ @('fake-codex-cli') }}
+                Invoke-BenchCli -Request $copy -CodexCommandResolver $resolver
+            } finally { $benchRootVariable.Value=$realBenchRoot }
+        }.GetNewClosure()
+        $halt=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $env:DT_MODEL_ROUTER_STATE -CliInvoker $fakeCli -Limits {param($v) @{blocked=$false}} -NoAlerts
+        Check ($halt.halted -and $halt.gate -eq 'unknown' -and $counter.calls -eq 6) "real host $case halts at six calls (actual $($counter.calls))"
+        Check (@($halt.outcomes | Where-Object attempt -ne 1).Count -eq 0) "real host $case never retries"
+        Check (@($halt.calls | Where-Object vendor -eq codex).Count -eq 6) "real host $case ledger agrees"
+        if($case -eq 'turn-detail') { Check ($halt.spend.structural_failures.'protocol:turn/completed' -eq 6) 'real host trims newline before matching turn/completed' }
+    }
+    foreach($authDetail in @('account authentication changed or malformed','codex error: unauthorized http 401')) {
+        Fresh-State ('auth-'+[guid]::NewGuid().ToString('N'))
+        $authCli={param($r) @{status='unknown';detail=$authDetail}}.GetNewClosure()
+        $halt=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $env:DT_MODEL_ROUTER_STATE -CliInvoker $authCli -Limits {param($v) @{blocked=$false}}
+        Check ($halt.halted -and @($halt.calls).Count -eq 6) 'real host auth halts at six'
+        Check (@($halt.calls | Where-Object { $_.failure_category -ne 'auth' -or $_.detail -notmatch 're-authenticate' }).Count -eq 0) 'real host auth detail is actionable'
+        $signals=@(Delivered 'bench-structural:auth:*')
+        Check ($signals.Count -eq 1 -and $signals[0].message -match 're-authenticate' -and $signals[0].message -notmatch 'repair the transport') 'real host auth alert names re-authentication'
+    }
+    # Also enter the real pooled-call catch, rather than only supplying its text.
+    & {
+        Fresh-State 'real-parallel-empty'
+        $schemaFake=Join-Path $fixture.root 'schema-only.py'
+        [IO.File]::WriteAllText($schemaFake,'import sys,json; from pathlib import Path; assert sys.argv[1:3]==["app-server","generate-json-schema"]; (Path(sys.argv[4])/"ServerNotification.json").write_text(json.dumps({"properties":{"method":{"enum":["warning"]}}}))')
+        function Get-CodexProcessSpec { param($CodexPath) @{file=(Get-Command python).Source;prefix_args=@($schemaFake)} }
+        $savedParallel=$script:BenchParallelCall
+        $script:BenchParallelCall={param($BenchScript,$RequestJson,$TimeoutMs) return}
+        try {
+            $config=Get-Content (Join-Path $realBenchRoot 'bench-config.json') -Raw | ConvertFrom-Json -AsHashtable
+            $config.max_parallel_calls=2
+            $configPath=Join-Path $fixture.root 'parallel-config.json'; Write-RouterJsonAtomic $configPath $config
+            $halt=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $env:DT_MODEL_ROUTER_STATE -ConfigPath $configPath -Limits {param($v) @{blocked=$false}} -NoAlerts
+            Check ($halt.halted -and $halt.gate -eq 'unknown') 'real pooled wrapper failure halts'
+            Check (@($halt.calls).Count -ge 6 -and @($halt.calls).Count -le 7) 'real pooled failure has only bounded in-flight overshoot'
+            Check (@($halt.calls | Where-Object { $_.failure_category -ne 'protocol' -or $_.detail -notmatch '^Parallel call returned nothing' }).Count -eq 0) 'real pooled catch delegates Codex classification'
+            Check (@($halt.outcomes | Where-Object attempt -ne 1).Count -eq 0) 'real pooled failure is never retried'
+        } finally { $script:BenchParallelCall=$savedParallel }
     }
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT=$priorTransport
     "SUMMARY: $script:checks passed; 0 failed"

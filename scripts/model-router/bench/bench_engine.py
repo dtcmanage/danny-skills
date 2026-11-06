@@ -27,6 +27,7 @@ from uuid import uuid4
 
 from review import Review, bank_hash, private_bank_path, task_folders
 from bench_ledger import append_ledger
+from codex_appserver import structural_signature, schema_comparison, classify_failure
 
 BENCH = Path(__file__).resolve().parent
 JOBS = {'fast', 'coder', 'deep-thinker', 'writer', 'illustrator'}
@@ -188,7 +189,7 @@ def has_informative_evidence(tables: list[dict[str, Any]], excluded: set[str],
 
 def quality_decided(verdict: dict[str, Any] | None) -> bool:
     """Outages, invalid replies and split judge votes alone establish no evidence."""
-    return bool(verdict and any(t['candidate_wins'] or t['incumbent_wins'] or
+    return bool(verdict and verdict.get('verdict') != 'unknown' and any(t['candidate_wins'] or t['incumbent_wins'] or
         any(len(rep.get('judges', [])) == 2 and all(j.get('reply') == 'no_difference'
             for j in rep['judges']) for rep in t.get('reps', []))
         for t in verdict.get('tasks', [])))
@@ -366,13 +367,18 @@ def rank_tasks(tasks: list[Path], *, run: Path, job: str, tier: str,
     else:
         verdict = ('candidate_better' if won > lost and p_candidate <= float(alpha) else
                    'incumbent_better' if lost > won and p_incumbent <= float(alpha) else 'no_difference')
+    scored = sum(len(rep.get('judges', [])) == 2 and all(
+        j.get('reply') in ('a', 'b', 'no_difference') for j in rep['judges'])
+        for task in results for rep in task['reps'])
+    if scored < 3:
+        verdict = 'unknown'
     return {'job': job, 'tier': tier, 'configurations': configurations, 'tasks': results,
             'candidate_task_wins': candidate_wins, 'incumbent_task_wins': incumbent_wins,
             'candidate_round_wins': won, 'incumbent_round_wins': lost,
             'rounds': reps * len(results), 'p_value': min(p_candidate, p_incumbent),
             # A lower effort or a swap must not look worse even short of significance.
-            'candidate_not_worse': (verdict != 'incumbent_better' if harm_alpha is None else
-                                    verdict != 'incumbent_better' and not (lost > won and p_incumbent <= float(harm_alpha))),
+            'candidate_not_worse': (verdict in ('candidate_better', 'no_difference') if harm_alpha is None else
+                                    verdict in ('candidate_better', 'no_difference') and not (lost > won and p_incumbent <= float(harm_alpha))),
             'verdict': verdict}
 
 
@@ -493,8 +499,9 @@ class SpendHalted(Exception):
 
 class ComparisonSpend:
     """One job comparison, including all tiers, shares its budget and call count."""
-    def __init__(self, callback: Callable[[], dict[str, Any]], config: dict[str, Any]) -> None:
-        self.callback = callback
+    def __init__(self, callback: Callable[[], dict[str, Any]] | None, config: dict[str, Any]) -> None:
+        self.spend_guards_enabled = callback is not None
+        self.callback = callback or (lambda: {})
         self.point_limit = config.get('spend_stop_points', 5)
         self.call_limit = config.get('spend_stop_model_calls', 700)
         self.stale_hours = config.get('spend_reading_stale_hours', 6)
@@ -506,6 +513,8 @@ class ComparisonSpend:
         # Parallel lanes share one comparison budget: serialize readings and stop everyone on the first halt.
         self.lock = threading.RLock()
         self.halted: SpendHalted | None = None
+        self.structural_failures: dict[str, int] = {}
+        self.codex_completions = 0
         self.check_interval = config.get('spend_check_interval_seconds', 0) if config.get('max_parallel_calls', 1) > 1 else 0
         self.last_check = 0.0
         self.completed_reports: list[dict[str, Any]] = []
@@ -516,7 +525,20 @@ class ComparisonSpend:
         self.rules: list[dict[str, Any]] = []
         # Call count at which some vendor last became uncovered by a weekly baseline.
         self.uncovered_since: int | None = None
-        self.acquire_baselines()
+        if self.spend_guards_enabled:
+            self.acquire_baselines()
+
+    def observe_dispatch(self, vendor: str, result: dict[str, Any]) -> None:
+        if vendor != 'codex':
+            return
+        with self.lock:
+            if result.get('status') == 'ok':
+                self.codex_completions += 1
+            signature = structural_signature(result)
+            if signature:
+                self.structural_failures[signature] = self.structural_failures.get(signature, 0) + 1
+                if sum(self.structural_failures.values()) >= 6 and self.codex_completions == 0 and not self.halted:
+                    self.halted = SpendHalted('Structural protocol failures: six failures with zero Codex completions.')
 
     def covered(self, vendor: str) -> bool:
         """A vendor is under the weekly-points rule only with a baseline and a readable latest value."""
@@ -593,7 +615,7 @@ class ComparisonSpend:
         with self.lock:
             if self.halted:
                 raise self.halted
-            if self.fallback and self.calls - (self.uncovered_since or 0) >= self.call_limit:
+            if self.spend_guards_enabled and self.fallback and self.calls - (self.uncovered_since or 0) >= self.call_limit:
                 uncovered = self.calls - (self.uncovered_since or 0)
                 self.halted = SpendHalted(f'Model-call cap reached ({uncovered}/{self.call_limit}); weekly readings unavailable or stale.')
                 raise self.halted
@@ -614,6 +636,9 @@ class ComparisonSpend:
                 self.last_check = time.monotonic()
 
     def _check(self, final: bool) -> None:
+        if not self.spend_guards_enabled:
+            self.before_call()
+            return
         self.latest = self.read()
         for vendor in ('claude', 'codex'):
             baseline, latest = self.baselines[vendor], self.percent(self.latest[vendor])
@@ -637,8 +662,9 @@ class ComparisonSpend:
 
     def figures(self) -> dict[str, Any]:
         return {'start': self.start, 'latest': self.latest, 'model_calls': self.calls,
+                'structural_failures': dict(self.structural_failures), 'codex_completions': self.codex_completions,
                 'baselines': self.baselines, 'rules_in_force': self.rules,
-                'fallback_call_cap': self.fallback, 'point_limit': self.point_limit,
+                'fallback_call_cap': self.spend_guards_enabled and self.fallback, 'point_limit': self.point_limit,
                 'call_limit': self.call_limit, 'reading_stale_hours': self.stale_hours,
                 'baseline_max_age_minutes': self.baseline_max_age / 60}
 
@@ -672,10 +698,13 @@ class DispatchGuard:
 
 
 def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
+              structural_alert: Callable[[str], None] | None = None,
+              protocol_schema: dict[str, Any] | None = None,
               **arguments: Any) -> dict[str, Any]:
     """Host-injected weekly readings and a comparison-wide stop; no live calls here."""
-    spend = ComparisonSpend(spend_check, arguments['config']) if spend_check else None
+    spend = ComparisonSpend(spend_check, arguments['config'])
     guard = DispatchGuard()
+    result = None
     try:
         result = _run_bench(**arguments, spend=spend, guard=guard)
         if spend:
@@ -687,6 +716,8 @@ def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
                 with Path(completed['report_paths']['markdown']).open('a', encoding='utf-8') as report:
                     report.write('\nComparison spend: ' + json.dumps(result['spend']) + '\n')
             Path(result['report_paths']['json']).write_text(json.dumps(result, indent=2), encoding='utf-8')
+        result['protocol_schema'] = protocol_schema
+        Path(result['report_paths']['json']).write_text(json.dumps(result, indent=2), encoding='utf-8')
         append_ledger(arguments['state_dir'] / 'bench', result)
     except QuotaDeferred as error:
         quota = error.quota
@@ -695,7 +726,7 @@ def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
         if not resume:
             resume = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         result = dict(guard.current)
-        result.update(status='deferred', halted=True, halt_reason=str(error),
+        result.update(status='deferred', halted=True, halt_reason=str(error), protocol_schema=protocol_schema,
                       blocked_vendor=error.vendor, quota=quota, resume_after_utc=resume,
                       resume_after_source=source, gate='unknown', raw_gate='unknown', shadow=True,
                       effort_down_qualified=False, effort_up_qualified=False,
@@ -718,23 +749,50 @@ def run_bench(*, spend_check: Callable[[], dict[str, Any]] | None = None,
         append_ledger(arguments['state_dir'] / 'bench', result)
         return result
     except SpendHalted as error:
+        structural_halt = str(error).startswith('Structural protocol failures:')
         # A completed tier is still part of the halted job comparison, never history evidence.
         for completed in spend.completed_reports:
-            completed.update(halted=True, halt_reason=str(error), spend=spend.figures())
+            completed.update(halted=True, halt_reason=str(error), spend=spend.figures(),
+                             swap_qualified=False, tie_qualified=False,
+                             effort_down_qualified=False, effort_up_qualified=False)
+            if structural_halt:
+                completed.update(gate='unknown', raw_gate='unknown', tied=False, better=None,
+                                 status='infrastructure_failure', quality_verdict={'verdict': 'unknown'})
             Path(completed['report_paths']['json']).write_text(json.dumps(completed, indent=2), encoding='utf-8')
             with Path(completed['report_paths']['markdown']).open('a', encoding='utf-8') as report:
                 report.write(f'\nComparison halted: {error}\n\n' + json.dumps(completed['spend']) + '\n')
-        run = arguments['state_dir'] / 'bench/runs' / uuid4().hex
-        run.mkdir(parents=True)
-        result = {'job': arguments['job'], 'halted': True, 'halt_reason': str(error),
+        # A final spend check can halt after all tiers completed. Reuse that
+        # result: copying guard.current into another ledger row charges its calls
+        # twice. Mid-tier stops retain only the active tier in the partial row.
+        final_check = result is not None
+        if not final_check:
+            run = arguments['state_dir'] / 'bench/runs' / uuid4().hex
+            run.mkdir(parents=True)
+            result = {'job': arguments['job'], 'tier': guard.current.get('tier', 'standard'),
+                  'configurations': guard.current.get('configurations', {}),
                   'gate': 'unknown', 'raw_gate': 'unknown', 'shadow': True,
-                  'effort_down_qualified': False, 'effort_up_qualified': False,
-                  'tied': False, 'better': None, 'spend': spend.figures(),
+                  'tied': False, 'better': None, 'quality_verdict': None,
+                  'completed_tiers': spend.completed_reports,
+                  'outcomes': guard.current.get('outcomes', []), 'calls': guard.current.get('calls', []),
                   'report_paths': {'json': str(run / 'report.json'), 'markdown': str(run / 'report.md')}}
-        (run / 'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
-        (run / 'report.md').write_text(f"Comparison halted: {error}\n\n" + json.dumps(result['spend'], indent=2), encoding='utf-8')
-        for completed in spend.completed_reports:
-            append_ledger(arguments['state_dir'] / 'bench', completed)
+        result.update(halted=True, halt_reason=str(error), protocol_schema=protocol_schema,
+                      spend=spend.figures(), status='infrastructure_failure' if structural_halt else 'budget_halted',
+                      effort_down_qualified=False, effort_up_qualified=False,
+                      swap_qualified=False, tie_qualified=False)
+        if structural_halt:
+            result.update(gate='unknown', raw_gate='unknown', tied=False, better=None,
+                          quality_verdict={'verdict': 'unknown'})
+        result['telemetry'] = summarize_calls(result['calls'], arguments.get('prices') or {})
+        Path(result['report_paths']['json']).write_text(json.dumps(result, indent=2), encoding='utf-8')
+        with Path(result['report_paths']['markdown']).open('a', encoding='utf-8') as report:
+            report.write(f"\nComparison halted: {error}\n\n" + json.dumps(result['spend'], indent=2))
+        if not final_check:
+            for completed in spend.completed_reports:
+                append_ledger(arguments['state_dir'] / 'bench', completed)
+        append_ledger(arguments['state_dir'] / 'bench', result)
+        if structural_alert and str(error).startswith('Structural protocol failures:'):
+            for signature in sorted(spend.structural_failures):
+                structural_alert(signature)
         return result
     # Delay proposal publication until all tiers and the final spend check finish.
     for tier in result.get('tiers', [result]):
@@ -895,9 +953,13 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
             except Exception as error:
                 result = {'status': 'unknown', 'failure_category': 'unclassified',
                           'root_cause': 'unverified', 'detail': str(error)}
+            if vendor == 'codex':
+                result = classify_failure(result)
             duration = round((time.perf_counter() - clock) * 1000)
             # Wall-clock per call feeds the bench ledger (performance over time, not just cost).
             result = {**result, 'quota': quota, 'started_at_utc': started, 'duration_ms': duration}
+            if spend:
+                spend.observe_dispatch(vendor, result)
         calls.append({'model': model, 'vendor': vendor, 'purpose': purpose, **result, 'effort': level})
         return result
 
@@ -999,7 +1061,12 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
                 rows.append(row)
                 outcome(row)
                 identity_failure = status == 'unknown' and unknown_category == 'identity'
-                if status != 'unknown' or attempt == 3 or (attempt == 2 and not identity_failure):
+                # This structural stop belongs to the Codex transport. Claude parse
+                # failures retain their existing conservative retry/usage contract.
+                structural_failure = (not model.startswith('claude-') and structural_signature(response)) or any(
+                    not score['model'].startswith('claude-') and structural_signature(score['response'])
+                    for score in row.get('judge_scores', []))
+                if status != 'unknown' or structural_failure or attempt == 3 or (attempt == 2 and not identity_failure):
                     break
             return status
 
@@ -1112,7 +1179,10 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         # Ranked tasks exist to catch a quality loss at lower effort: judges that never
         # answered (outage, blocked vendor, protocol failure) are not evidence of no loss.
         (down_quality is None or (quality_decided(down_quality) and not_worse(down_quality))))
-    raw_gate = 'unknown' if pass_insufficient else compare(candidate_table, incumbent_table)
+    # Normal-task passes cannot turn a ranked-judge outage into a completed gate;
+    # unknown must remain eligible for a later corrected triggered comparison.
+    raw_gate = ('unknown' if pass_insufficient or (quality_verdict is not None and not quality_decided(quality_verdict))
+                else compare(candidate_table, incumbent_table))
     if job == 'illustrator' and raw_gate != 'unknown':
         raw_gate = 'advisory'
     result = {'gate': 'advisory' if tier == 'beyond' and insufficient else 'unknown' if raw_gate == 'unknown' else ('advisory' if shadow or tier == 'beyond' or job in {'writer', 'illustrator'} else raw_gate),
@@ -1172,7 +1242,8 @@ def _run_bench(*, job: str, candidate: str, incumbent: str, trigger: str,
         # Dispatch/grader unknowns remain telemetry, never answer-quality tie breakers.
         failures = first_attempts.get('answer_quality_failures', 0)
         quality[side] = (score_table['passed'], -fabrications, -failures)
-    known = not pass_insufficient and not candidate_table['unknown'] and not incumbent_table['unknown']
+    known = (not pass_insufficient and not candidate_table['unknown'] and not incumbent_table['unknown']
+             and (quality_verdict is None or quality_decided(quality_verdict)))
     result['tied'] = tier != 'beyond' and known and quality['candidate'] == quality['incumbent']
     result['better'] = (candidate if quality['candidate'] > quality['incumbent'] else incumbent) if known and not result['tied'] else None
     result['swap_qualified'] = raw_gate == 'pass' and (quality_verdict is None or
@@ -1347,7 +1418,14 @@ def main() -> None:
     arguments['state_dir'] = Path(arguments['state_dir'])
     arguments['tasks'] = Path(arguments['tasks'])
     timeout = arguments.pop('grader_timeout', 30)
-    result = run_bench(**arguments, dispatch=lambda p: callback('dispatch', p),
+    schema_command = arguments.pop('schema_command', None)
+    protocol_schema = schema_comparison(schema_command) if schema_command else {'status': 'not_exercised'}
+    evidence = arguments['state_dir'] / 'bench' / 'protocol-schema.json'
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text(json.dumps(protocol_schema, indent=2), encoding='utf-8')
+    result = run_bench(**arguments, protocol_schema=protocol_schema,
+                       structural_alert=lambda signature: callback('structural_alert', signature),
+                       dispatch=lambda p: callback('dispatch', p),
                        spend_check=lambda: callback('spend', None),
                        limits=lambda v: callback('limits', v), envelope=lambda a: callback('envelope', a),
                        outcome=lambda r: callback('outcome', r),

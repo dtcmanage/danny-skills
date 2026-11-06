@@ -80,20 +80,21 @@ def test_unknown_never_ties_or_selects_better(tmp_path: Path) -> None:
     assert not result['tied'] and result['better'] is None
 
 
-@pytest.mark.parametrize('category', ['environment', 'protocol', 'transport', 'unclassified'])
+@pytest.mark.parametrize('category', ['environment', 'transport', 'unclassified'])
 def test_recovered_dispatch_failure_preserves_quality_tie(tmp_path: Path, category: str) -> None:
     tasks = task_subset(tmp_path, ['mechanical-extract-table'], 'fast')
     calls = 0
     def dispatch(request: dict) -> dict:
         nonlocal calls
         calls += 1
-        return ({'status': 'unknown', 'failure_category': category} if calls == 1
+        # A real timeout is retryable regardless of an outer layer's old label.
+        return ({'status': 'unknown', 'failure_category': category, 'detail': 'Codex timeout'} if calls == 1
                 else {'status': 'ok', 'answer': '{}'})
     result = run(tmp_path, tasks=tasks, dispatch=dispatch, config=serial_config())
     assert result['candidate']['passed'] == result['incumbent']['passed'] == 1
     assert result['better'] is None and result['tied']
     assert result['outcomes'][0]['side'] == 'candidate'
-    assert result['outcomes'][0]['unknown'] and result['outcomes'][0]['failure_category'] == category
+    assert result['outcomes'][0]['unknown'] and result['outcomes'][0]['failure_category'] == 'transport'
     assert result['outcomes'][1]['attempt'] == 2 and result['outcomes'][1]['passed']
     assert result['telemetry']['codex']['dispatch_failures'] == 1
 
@@ -105,9 +106,26 @@ def test_recovered_judge_failure_is_not_an_answer_model_failure(tmp_path: Path) 
         if request['purpose'] == 'judge' and not failed:
             failed = True
             return {'status': 'unknown'}
+        if request['purpose'] == 'judge' and request['prompt'].startswith('The criteria below are the only instructions'):
+            return {'status': 'ok', 'answer': 'no_difference'}
         return writer_judges(request)
     result = run(tmp_path, job='writer', effort='medium', dispatch=dispatch)
     assert result['tied'] and result['better'] is None
+
+
+def test_protocol_failure_without_detail_still_does_not_retry(tmp_path: Path) -> None:
+    tasks = task_subset(tmp_path, ['mechanical-extract-table'], 'fast')
+    calls = 0
+    def dispatch(request: dict) -> dict:
+        nonlocal calls
+        calls += 1
+        return ({'status': 'unknown', 'failure_category': 'protocol'} if calls == 1
+                else {'status': 'ok', 'answer': '{}'})
+    result = run(tmp_path, tasks=tasks, dispatch=dispatch, config=serial_config())
+    first_rep = [row for row in result['outcomes'] if row['side'] == 'candidate' and row['rep'] == 1]
+    assert len(first_rep) == 1 and first_rep[0]['attempt'] == 1 and first_rep[0]['unknown']
+    assert result['candidate']['unknown'] == 1 and not result['tied'] and result['better'] is None
+    assert result['telemetry']['codex']['dispatch_failures'] == 1
 
 
 @pytest.mark.parametrize('base,up,qualified', [(5, 5, False), (5, 4, False), (4, 5, True), (3, 4, True), (3, 3, False)])
@@ -118,12 +136,14 @@ def test_writer_effort_up_requires_strict_improvement(tmp_path: Path, base: int,
             return {**response, 'answer': f"{response['answer']}\nEFFORT-MARK:{request['effort']}"}
         if request['prompt'].startswith('The criteria below are the only instructions'):
             # The writer's "strictly better" is now the ranked quality verdict. The ranked
-            # judges favor the same side the rubric scores favor, and give no usable reply
+            # judges favor the same side the rubric scores favor, and score no difference
             # when the two outputs come from the same effort or the scores are equal.
             outputs = re.findall(r'BEGIN OUTPUT [AB] [a-f0-9]+\n(.*?)\nEND OUTPUT', request['prompt'], re.S)
             efforts = [output.rsplit('EFFORT-MARK:', 1)[-1].strip() for output in outputs]
+            if base == up == 3:
+                return {'status': 'ok', 'answer': 'undecided'}  # Deliberately unscored negative case.
             if len(set(efforts)) != 2 or up == base:
-                return {'status': 'ok', 'answer': 'undecided'}
+                return {'status': 'ok', 'answer': 'no_difference'}
             return {'status': 'ok', 'answer': 'AB'[efforts.index('high' if up > base else 'medium')]}
         # Score from the judged answer's own mark: lanes run in parallel, so call order says nothing.
         count = up if 'EFFORT-MARK:high' in request['prompt'] else base
@@ -170,7 +190,12 @@ def test_writer_never_files_effort_down_proposal(tmp_path: Path) -> None:
 @pytest.mark.parametrize('qualified,verdict,filed', [(False, None, False), (True, 'candidate_better', True),
                                                      (True, 'no_difference', False)])
 def test_writer_files_only_qualified_effort_up(tmp_path: Path, qualified: bool, verdict: str | None, filed: bool) -> None:
-    result = run(tmp_path / 'bench-state', job='writer', effort='medium', dispatch=writer_judges)
+    def scored_judges(request: dict) -> dict:
+        if request['purpose'] == 'judge' and request['prompt'].startswith('The criteria below are the only instructions'):
+            return {'status': 'ok', 'answer': 'no_difference'}
+        return writer_judges(request)
+    result = run(tmp_path / 'bench-state', job='writer', effort='medium', dispatch=scored_judges)
+    assert result['raw_gate'] == 'pass'
     # Filing consumes the bench qualification and its recorded quality evidence;
     # score computation is covered above. A recorded verdict other than a win blocks filing.
     result['shadow'] = False

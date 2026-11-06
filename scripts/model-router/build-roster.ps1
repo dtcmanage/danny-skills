@@ -332,13 +332,51 @@ function Invoke-RouterTriggeredComparison {
     # 2026-10-03 to 10-05.
     $requestKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes("$($Request.job)/$($Request.candidate)/$($Request.incumbent)/$($Request.effort)/$requested"))).ToLowerInvariant()
     $cachePath = Join-Path $state "bench/triggered/$requestKey.json"
+    $reusable = { param($value)
+        if (-not $value -or $value.gate -in @('unknown','duplicate')) { return $false }
+        $tiers = @($value)
+        if ($value.PSObject.Properties['tiers']) { $tiers += @($value.tiers) }
+        foreach ($tierResult in $tiers) {
+            if ($tierResult.PSObject.Properties['halted'] -and $tierResult.halted) { return $false }
+            if ($tierResult.PSObject.Properties['quality_verdict'] -and $null -ne $tierResult.quality_verdict) {
+                $quality = $tierResult.quality_verdict
+                $hasVerdict = if ($quality -is [Collections.IDictionary]) { $quality.Contains('verdict') } else { [bool]$quality.PSObject.Properties['verdict'] }
+                if ($quality -eq 'unknown' -or ($hasVerdict -and $quality.verdict -eq 'unknown')) { return $false }
+                # Match bench_ledger.scored_ranked_rounds and bench_engine's minimum:
+                # a round counts only when both judges returned scored replies.
+                $quality = [pscustomobject]$quality
+                $scored = 0
+                if ($quality.PSObject.Properties['tasks']) {
+                    foreach ($task in $quality.tasks) {
+                        $task = [pscustomobject]$task
+                        if (-not $task.PSObject.Properties['reps']) { continue }
+                        foreach ($rep in $task.reps) {
+                            $rep = [pscustomobject]$rep
+                            if (-not $rep.PSObject.Properties['judges']) { continue }
+                            $judgesInRound = @($rep.judges)
+                            if ($judgesInRound.Count -ne 2) { continue }
+                            $scoredReplies = @($judgesInRound | Where-Object {
+                                $judge = [pscustomobject]$_
+                                $judge.PSObject.Properties['reply'] -and $judge.reply -cin @('a','b','no_difference')
+                            })
+                            if ($scoredReplies.Count -eq 2) { $scored++ }
+                        }
+                    }
+                }
+                if ($scored -lt 3) { return $false }
+            }
+        }
+        return $true
+    }
     $previous = @(if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 10 } | Where-Object {
         $_.PSObject.Properties['requested_identity'] -and $_.requested_identity -ceq $requested -and $_.gate -notin @('unknown','duplicate') -and
         $_.job -ceq $Request.job -and $_.candidate -ceq $Request.candidate -and $_.incumbent -ceq $Request.incumbent -and [string]$_.effort -ceq [string]$Request.effort } })
-    $duplicate = $previous.Count -gt 0
+    # Recheck saved evidence too: older runs could log gate=pass during a judge
+    # outage. Such a cache must never suppress a later corrected comparison.
+    $cached = Read-RouterJsonObject -Path $cachePath
+    $duplicate = $previous.Count -gt 0 -and (& $reusable $cached)
     if ($duplicate) {
-        $bench = Read-RouterJsonObject -Path $cachePath
-        if (-not $bench) { $bench = [pscustomobject]@{raw_gate='unknown';gate='duplicate';effort_down_qualified=$false} }
+        $bench = $cached
         $bench | Add-Member -NotePropertyName duplicate_of -NotePropertyValue $previous[-1].at -Force
     } else {
         try { $bench = & $BenchInvoker $Request }
@@ -350,7 +388,7 @@ function Invoke-RouterTriggeredComparison {
     }
     Use-RouterOutcomeMutex -StateDir $state -Action {
         [void][IO.Directory]::CreateDirectory((Split-Path -Parent $logPath))
-        if (-not $duplicate -and $bench.gate -ne 'unknown') { Write-RouterJsonAtomic -Path $cachePath -Value $bench }
+        if (-not $duplicate -and (& $reusable $bench)) { Write-RouterJsonAtomic -Path $cachePath -Value $bench }
         $row = [pscustomobject]@{trigger=$Trigger;job=$Request.job;candidate=$Request.candidate;incumbent=$Request.incumbent;effort=$Request.effort;judge_effort=$judgeEffort;gate=$(if ($duplicate) { 'duplicate' } else { $bench.gate });identity=$identity;requested_identity=$requested;at=(Get-Date).ToUniversalTime().ToString('o')}
         [IO.File]::AppendAllText($logPath, (($row | ConvertTo-Json -Compress)+"`n"), [Text.UTF8Encoding]::new($false))
     } | Out-Null

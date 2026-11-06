@@ -152,6 +152,12 @@ def test_better_is_separate_and_conflicting_winners_do_not_propose_swap(tmp_path
     def dispatch(request):
         is_hard = 'minimum_slots' in request['prompt']
         passing = entry['backup'] if is_hard else entry['first']
+        if request['purpose'] == 'judge' and request['prompt'].startswith('The criteria below are the only instructions'):
+            # Preserve valid ranked evidence alongside the pass/fail comparison.
+            import re
+            outputs = re.findall(r'BEGIN OUTPUT [AB] [a-f0-9]+\n([^\n]+)', request['prompt'])
+            assert len(outputs) == 2
+            return {'status': 'ok', 'answer': 'no_difference' if outputs[0] == outputs[1] else 'AB'[outputs.index('pass')]}
         return {'status': 'ok', 'answer': 'pass' if request['model'] == passing else 'fail'}
     result = run(tmp_path, dispatch=dispatch, grade=lambda task, answer: {'status': answer})
     assert [tier['better'] for tier in result['tiers']] == [entry['first'], entry['backup']]

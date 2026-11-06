@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import os
@@ -27,7 +28,7 @@ BENIGN = {'thread/started', 'thread/status/changed', 'turn/started',
           'thread/settings/updated', 'item/started', 'item/completed', 'item/agentMessage/delta',
           'item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded',
           'item/reasoning/textDelta', 'thread/tokenUsage/updated', 'turn/completed'}
-BENIGN |= {'rawResponseItem/completed', 'rawResponse/completed', 'account/rateLimits/updated'}
+BENIGN |= {'turn/moderationMetadata', 'rawResponseItem/completed', 'rawResponse/completed', 'account/rateLimits/updated'}
 BENIGN_ITEMS = {'userMessage', 'agentMessage', 'reasoning'}
 BENCH_INSTRUCTIONS = Path(__file__).with_name('direct-answer-system-prompt.txt').read_text(encoding='utf-8').strip()
 
@@ -39,23 +40,116 @@ class BoundaryError(Exception):
     def __init__(self, message: str, identity: Any = None):
         super().__init__(message)
         self.identity = identity
+        self.protocol_diagnostics = None
         self.usage = None
         self.usage_partial = True
         self.resolved_model = None
 
 
 def failure_category(message: str) -> str:
-    if re.search(r'timeout|timed out|transport fail(?:ed|ure)|server closed before protocol response|codex error: (?:responseStream|httpConnectionFailed|serverOverloaded|internalServerError|responseTooManyFailedAttempts|flexUnavailable)', message, re.I):
+    message = message.strip()
+    # Only transport deadlines keep the ordinary timeout retry rule. A closed
+    # server, failed write or unexpected Python error is not proof of a timeout.
+    if message in {'Codex timeout', 'stdin timeout', 'TIMEOUT', 'timed out',
+                   'Codex stdin timeout', 'Codex transport timeout'}:
         return 'transport'
-    if any(text in message for text in ('model or effort mismatch', 'model rerouted', 'actual settings changed')):
+    # Named exclusions: identity changes keep their existing invalidation and
+    # identity retry rule; an observed quota refusal uses quota deferral instead
+    # of a structural halt. Neither establishes a model-quality result.
+    if message in {'actual model or effort mismatch', 'model rerouted; comparison invalid',
+                   'actual settings changed; comparison invalid'}:
         return 'identity'
-    if any(text in message for text in ('tool or', 'server request forbidden', 'unsupported event: error', 'codex error: ', 'single-inference raw evidence')):
-        return 'protocol'
     if message.startswith('ERROR: Usage limit'):
         return 'quota'
-    if any(text in message for text in ('effective ', ' config', 'MCP server ID', 'config inventory', 'process cleanup', 'feature controls')):
-        return 'environment'  # Explicit observed local control/config/cleanup violations.
-    return 'unclassified'
+    if message.startswith(('account authentication changed or malformed', 'codex error: unauthorized', 'native auth ')):
+        return 'auth'
+    # Total default across the transport, PowerShell wrapper and engine. Only
+    # the named timeout, identity and quota exclusions above may be retried.
+    return 'protocol'
+
+
+def classify_failure(result: dict[str, Any]) -> dict[str, Any]:
+    """One Codex decision before counting and retrying, regardless of raise layer."""
+    if result.get('status') == 'ok':
+        return result
+    detail = result.get('detail')
+    detail = detail.strip() if isinstance(detail, str) else ''
+    category = failure_category(detail)
+    if category == 'auth' and '; re-authenticate Codex before rerunning' not in detail:
+        detail += '; re-authenticate Codex before rerunning'
+    return {**result, 'detail': detail, 'failure_category': category}
+
+
+def structural_signature(result: dict[str, Any]) -> str | None:
+    """Fixed category plus method, never free text; transport timeouts retain retries."""
+    if result.get('status') == 'ok':
+        return None
+    if result.get('failure_category') == 'auth':
+        return 'auth:unauthorized' if str(result.get('detail', '')).strip().startswith('codex error: unauthorized') else 'auth:account'
+    if result.get('failure_category') != 'protocol':
+        return None
+    detail = result.get('detail', '')
+    if not isinstance(detail, str):
+        detail = ''
+    detail = detail.strip()
+    match = re.match(r'^unsupported event: ([A-Za-z0-9/_-]{1,100})$', detail)
+    if match:
+        method = match[1]
+        known = json.loads(Path(__file__).with_name('appserver-methods.json').read_text())
+        if method == 'UNKNOWN_SCHEMA_METHOD':
+            diagnostic = result.get('protocol_diagnostics') or {}
+            for shape in reversed(diagnostic.get('rejected', [])):
+                digest = shape.get('method_sha256')
+                if shape.get('method') == method and isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest):
+                    return 'protocol:UNKNOWN_SCHEMA_METHOD/' + digest
+        return 'protocol:' + (method if method in known else 'UNKNOWN_SCHEMA_METHOD')
+    if result.get('failure_category') == 'protocol' and detail == 'single-inference raw evidence missing or ambiguous':
+        return 'protocol:turn/completed'
+    # Every protocol rejection is structural, including new failure messages. A fixed
+    # boundary token makes the fallback total without copying arbitrary diagnostics.
+    return 'protocol:boundary'
+
+
+def schema_comparison(command: list[str]) -> dict[str, Any]:
+    """Generate installed protocol without starting a turn; keep new methods as data."""
+    with tempfile.TemporaryDirectory(prefix='router-schema-') as folder:
+        subprocess.run(command + ['app-server', 'generate-json-schema', '--out', folder],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=30, check=True)
+        schema = json.loads((Path(folder) / 'ServerNotification.json').read_text(encoding='utf-8'))
+    def methods(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == 'method' and isinstance(child, dict):
+                    yield from child.get('enum', [])
+                yield from methods(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from methods(child)
+    installed = set(methods(schema))
+    if not installed or any(not isinstance(m, str) or not re.fullmatch(r'[A-Za-z0-9/_-]{1,100}', m) for m in installed):
+        raise BoundaryError('malformed protocol schema')
+    known = set(json.loads(Path(__file__).with_name('appserver-methods.json').read_text()))
+    return {'installed_count': len(installed), 'new_methods': sorted(installed - known)}
+
+
+def safe_event_shape(message: dict[str, Any]) -> dict[str, Any]:
+    """Bounded shape only: no values, raw metadata, unknown field names or warning text."""
+    known = json.loads(Path(__file__).with_name('appserver-methods.json').read_text())
+    method = message.get('method')
+    params = message.get('params')
+    fields = {}
+    if isinstance(params, dict):
+        for key in ('threadId', 'turnId', 'message', 'metadata', 'warning', 'details'):
+            if key in params:
+                value = params[key]
+                fields[key] = {'type': type(value).__name__}
+                if isinstance(value, str):
+                    fields[key].update(length=min(len(value), 1048576), sha256=hashlib.sha256(value.encode()).hexdigest())
+    return {'method': method if isinstance(method, str) and method in known else 'UNKNOWN_SCHEMA_METHOD',
+            'method_sha256': hashlib.sha256(method.encode()).hexdigest() if isinstance(method, str) else None,
+            'params_type': type(params).__name__, 'field_count': min(len(params), 1024) if isinstance(params, dict) else None,
+            'fields': fields}
 
 
 def cleanup_native_home(directory: Path, attempts: int = 6, delay: float = .2) -> None:
@@ -261,6 +355,7 @@ class Server:
         self.controls_verified = False
         self.image_paths: frozenset[str] = frozenset()
         self.events: list[dict[str, Any]] = []
+        self.protocol_diagnostics = {"seen": [], "rejected": []}
         self.stopping = threading.Event()
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
@@ -301,10 +396,19 @@ class Server:
         self.writers.append(writer)
         writer.start()
         writer.join(max(0, self.deadline-time.monotonic()))
-        if writer.is_alive() or errors:
-            raise BoundaryError('stdin timeout or failure')
+        if writer.is_alive():
+            raise BoundaryError('stdin timeout')
+        if errors:
+            raise BoundaryError('stdin write failure')
 
     def receive(self) -> dict[str, Any]:
+        try:
+            return self._receive()
+        except BoundaryError as error:
+            error.protocol_diagnostics = getattr(self, 'protocol_diagnostics', None)
+            raise
+
+    def _receive(self) -> dict[str, Any]:
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise BoundaryError('Codex timeout')
@@ -320,12 +424,31 @@ class Server:
         if not isinstance(message, dict):
             raise BoundaryError('malformed protocol message')
         if 'method' in message:
-            if not isinstance(message.get('params'), dict):
-                raise BoundaryError('malformed event parameters')
             if 'id' in message:
                 # No fulfillment, approval or tool result is sent back.
                 raise BoundaryError('server request forbidden')
             method = message['method']
+            if not isinstance(method, str):
+                raise BoundaryError('malformed protocol method')
+            known = json.loads(Path(__file__).with_name('appserver-methods.json').read_text())
+            label = method if isinstance(method, str) and method in known else 'UNKNOWN_SCHEMA_METHOD'
+            if label not in self.protocol_diagnostics['seen'] and len(self.protocol_diagnostics['seen']) < 128:
+                self.protocol_diagnostics['seen'].append(label)
+            if not isinstance(message.get('params'), dict):
+                if len(self.protocol_diagnostics['rejected']) < 8:
+                    self.protocol_diagnostics['rejected'].append(safe_event_shape(message))
+                raise BoundaryError('malformed event parameters')
+            if method == 'turn/moderationMetadata':
+                params = message['params']
+                if set(params) != {'threadId', 'turnId', 'metadata'}:
+                    raise BoundaryError('malformed moderation metadata')
+                required_id(params.get('threadId'))
+                required_id(params.get('turnId'))
+                # Only the turn binding crosses into the event buffer.
+                message['params'] = {'threadId': params['threadId'], 'turnId': params['turnId']}
+            if method not in BENIGN | {'remoteControl/status/changed', 'account/updated', 'model/rerouted', 'error'} and not (method == 'warning' and self.controls_verified and message['params'] == {'threadId': message['params'].get('threadId'), 'message': DISABLED_HOST_WARNING}):
+                if len(self.protocol_diagnostics['rejected']) < 8:
+                    self.protocol_diagnostics['rejected'].append(safe_event_shape(message))
             if method == 'account/updated':
                 params = message['params']
                 if (set(params) - {'authMode', 'planType'} or params.get('authMode') != 'chatgpt'
@@ -381,7 +504,10 @@ class Server:
                 self.events.append(message)
                 continue
             if message.get('id') != request_id or 'error' in message or not isinstance(message.get('result'), dict):
-                raise BoundaryError(quota_diagnostic(message.get('error')) or 'protocol response ID or error')
+                error = message.get('error')
+                diagnostic = codex_error_diagnostic(error)
+                raise BoundaryError(quota_diagnostic(error) or
+                    (diagnostic if diagnostic.startswith('codex error: unauthorized') else 'protocol response ID or error'))
             return message['result']
 
     def initialize(self) -> None:
@@ -475,9 +601,14 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
             'allowProviderModelFallback': False, 'ephemeral': True, 'experimentalRawEvents': True, 'environments': [],
             'dynamicTools': [], 'selectedCapabilityRoots': [],
             'config': {'model_reasoning_effort': effort}, 'approvalPolicy': 'never'})
+        if (not model_identity(thread.get('model')) or thread.get('reasoningEffort') not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
+                or not isinstance(thread.get('modelProvider'), str) or not thread['modelProvider'].strip()):
+            raise BoundaryError('malformed thread identity')
         if thread.get('model') != model or thread.get('reasoningEffort') != effort or thread.get('modelProvider') != 'openai':
             raise BoundaryError('actual model or effort mismatch', {'actual_model':model_identity(thread.get('model')), 'comparison_valid':False})
         verified_model = model
+        if not isinstance(thread.get('thread'), dict):
+            raise BoundaryError('malformed thread payload')
         thread_id = required_id(thread.get('thread', {}).get('id'))
         if thread.get('thread', {}).get('turns') not in (None, []): raise BoundaryError('unexpected thread history')
         inputs = [{'type': 'text', 'text': request['prompt']}]
@@ -485,12 +616,16 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
             inputs.append({'type': 'localImage', 'path': str(Path(image).resolve())})
         started = server.request('turn/start', {'threadId': thread_id, 'environments': [],
             'model': model, 'effort': effort, 'input': inputs})
+        if not isinstance(started.get('turn'), dict):
+            raise BoundaryError('malformed turn payload')
         turn_id = required_id(started.get('turn', {}).get('id'))
         validate_turn(started['turn'], server.image_paths)
         final = None
         measured = None
         responses = {}
         raw_invalid = False
+        raw_invalid_reason = None
+        host_declaration_seen = False
         usage_invalid = False
         raw_answer = None
         cumulative_seen = False
@@ -501,6 +636,12 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
             if 'method' not in event:
                 raise BoundaryError('unexpected response')
             method, params = event['method'], event.get('params', {})
+            # Validate nested objects before ID lookup (dict.get defaults are
+            # evaluated even when turnId is present). No raw Python exception
+            # should disguise a malformed event as a transport timeout.
+            for field in ('turn', 'thread', 'tokenUsage', 'threadSettings'):
+                if field in params and not isinstance(params[field], dict):
+                    raise BoundaryError('malformed event payload')
             if method == 'account/rateLimits/updated':
                 # Ephemeral turns write no rollout file, so this snapshot is the only fresh weekly
                 # reading a bench call produces; the runner persists it for the spend stop and resolver.
@@ -519,6 +660,8 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
             if params.get('threadId') != thread_id or (method not in ('thread/status/changed', 'thread/settings/updated') and params.get('turnId', params.get('turn', {}).get('id')) != turn_id):
                 raise BoundaryError('stale thread or turn event')
             if method == 'model/rerouted':
+                if not any(model_identity(params.get(key)) for key in ('fromModel', 'toModel')):
+                    raise BoundaryError('malformed model reroute')
                 raise BoundaryError('model rerouted; comparison invalid', {'from_model': model_identity(params.get('fromModel')), 'to_model': model_identity(params.get('toModel')), 'comparison_valid': False})
             if method.startswith('item/') and method not in ('item/started', 'item/completed'):
                 required_id(params.get('itemId'))
@@ -538,16 +681,34 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
             if method == 'turn/started': validate_turn(params.get('turn'), server.image_paths)
             if method == 'thread/settings/updated':
                 settings = params.get('threadSettings', {})
+                if (not model_identity(settings.get('model')) or settings.get('effort') not in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
+                        or not isinstance(settings.get('modelProvider'), str) or not settings['modelProvider'].strip()):
+                    raise BoundaryError('malformed settings identity')
                 if settings.get('model') != model or settings.get('effort') != effort or settings.get('modelProvider') != 'openai':
                     raise BoundaryError('actual settings changed; comparison invalid', {'actual_model':model_identity(settings.get('model')), 'comparison_valid':False})
             if method == 'rawResponseItem/completed':
-                if set(params) != {'threadId','turnId','item'}: raw_invalid = True
                 item = params.get('item')
-                if not valid_raw_item(item, images_sent=bool(server.image_paths)):
+                kind = item.get('type') if isinstance(item, dict) else None
+                if kind in ('function_call', 'custom_tool_call', 'web_search_call', 'computer_call', 'local_shell_call'):
+                    raise BoundaryError('tool or unsupported item forbidden')
+                # Validate the declaration now, but defer the warning requirement until
+                # completion: thread/start notifications may be buffered before the turn.
+                valid = valid_raw_item(item, images_sent=bool(server.image_paths),
+                    controls_verified=server.controls_verified, disabled_host_warning=True)
+                if (set(params) != {'threadId','turnId','item'} or not valid
+                        or (kind == 'additional_tools' and host_declaration_seen)):
                     raw_invalid = True
+                    if raw_invalid_reason is None:
+                        label = kind if kind in ('message', 'reasoning', 'additional_tools',
+                                                  'function_call', 'custom_tool_call') else 'OTHER'
+                        raw_invalid_reason = 'raw_item_invalid:' + label
+                elif kind == 'additional_tools':
+                    host_declaration_seen = True
                 elif item.get('type') == 'message' and item.get('role') == 'assistant' and item.get('phase') == 'final_answer':
                     text = ''.join(x['text'] for x in item['content'])
-                    if raw_answer is not None: raw_invalid = True
+                    if raw_answer is not None:
+                        raw_invalid = True
+                        raw_invalid_reason = raw_invalid_reason or 'answer_mismatch'
                     raw_answer = text
             if method == 'rawResponse/completed':
                 if set(params) - {'threadId','turnId','responseId','usage','usageMetadata'}: raw_invalid = True
@@ -582,8 +743,16 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
                 turn = params.get('turn', {})
                 validate_turn(turn, server.image_paths)
                 if turn.get('id') != turn_id or turn.get('status') != 'completed' or turn.get('error') is not None or final is None:
-                    raise BoundaryError(quota_diagnostic(turn.get('error')) or 'turn failed or final answer missing')
+                    error = turn.get('error')
+                    diagnostic = codex_error_diagnostic(error)
+                    raise BoundaryError(quota_diagnostic(error) or
+                        (diagnostic if diagnostic.startswith('codex error: unauthorized') else 'turn failed or final answer missing'))
+                if host_declaration_seen and not host_warning_seen:
+                    raw_invalid = True
+                    raw_invalid_reason = raw_invalid_reason or 'raw_item_invalid:additional_tools'
                 if raw_invalid or len(responses) != 1 or raw_answer != final:
+                    server.protocol_diagnostics['reason'] = (raw_invalid_reason or
+                        ('response_count' if raw_invalid or len(responses) != 1 else 'answer_mismatch'))
                     raise BoundaryError('single-inference raw evidence missing or ambiguous')
                 raw_measured = next(iter(responses.values()))
                 if usage_invalid and retained_usage() is not None:
@@ -593,14 +762,17 @@ def _run(command: list[str], request: dict[str, Any], cwd: Path,
                 return {'status': 'ok', 'answer': final, 'usage': measured,
                         'usage_partial': False, 'resolved_model': model, 'resolved_effort': effort,
                         'tools': 'host disabled; unsupported attempts rejected',
-                        'rate_limits_weekly': weekly_limits}
+                        'rate_limits_weekly': weekly_limits,
+                        'protocol_diagnostics': server.protocol_diagnostics}
     except BoundaryError as error:
         pending_error = error
+        error.protocol_diagnostics = server.protocol_diagnostics
         error.usage = retained_usage()
         error.resolved_model = verified_model if not (isinstance(error.identity, dict) and error.identity.get('comparison_valid') is False) else None
         raise
     except Exception:
-        pending_error = BoundaryError('transport failure')
+        pending_error = BoundaryError('app-server boundary failure')
+        pending_error.protocol_diagnostics = server.protocol_diagnostics
         pending_error.usage = retained_usage()
         pending_error.resolved_model = verified_model
         raise pending_error from None
@@ -652,7 +824,9 @@ def weekly_rate_limit(snapshot: Any) -> dict[str, Any] | None:
 def valid_raw_content(part: Any, role: Any, images_sent: bool) -> bool:
     if not isinstance(part, dict): return False
     if part.get('type') in ('input_text', 'output_text'):
-        return isinstance(part.get('text'), str)
+        return (isinstance(part.get('text'), str)
+            and not (set(part) - {'type', 'text', 'annotations', 'logprobs'})
+            and all(key not in part or part[key] == [] for key in ('annotations', 'logprobs')))
     # A localImage input arrives in the raw user message as an input_image data URL
     # (codex-rs models.rs ContentItem::InputImage). Only a turn that sent images may carry one.
     if part.get('type') == 'input_image':
@@ -663,11 +837,36 @@ def valid_raw_content(part: Any, role: Any, images_sent: bool) -> bool:
     return False
 
 
-def valid_raw_item(item: Any, images_sent: bool = False) -> bool:
+def valid_raw_item(item: Any, images_sent: bool = False, *,
+                   controls_verified: bool = False, disabled_host_warning: bool = False) -> bool:
     if not isinstance(item, dict): return False
+    if item.get('type') == 'additional_tools':
+        if (not controls_verified or not disabled_host_warning
+                or set(item) != {'type', 'id', 'role', 'tools'}
+                or item.get('role') != 'developer'
+                or not isinstance(item.get('id'), str) or not item['id']
+                or not isinstance(item.get('tools'), list) or len(item['tools']) != 1):
+            return False
+        namespace = item['tools'][0]
+        if (not isinstance(namespace, dict)
+                or set(namespace) != {'type', 'name', 'description', 'tools'}
+                or namespace.get('type') != 'namespace' or namespace.get('name') != 'functions'
+                or namespace.get('description') != ''
+                or not isinstance(namespace.get('tools'), list) or len(namespace['tools']) != 2):
+            return False
+        nested = namespace['tools']
+        expected_keys = {('custom', 'exec'): {'description', 'format', 'name', 'type'},
+                         ('function', 'wait'): {'description', 'name', 'parameters', 'strict', 'type'}}
+        if not all(isinstance(tool, dict) and isinstance(tool.get('type'), str)
+                   and isinstance(tool.get('name'), str) for tool in nested):
+            return False
+        identities = {(tool['type'], tool['name']) for tool in nested}
+        return (identities == set(expected_keys)
+                and all(set(tool) == expected_keys[(tool['type'], tool['name'])] for tool in nested))
     if item.get('type') == 'message':
         return (isinstance(item.get('id'), str) and bool(item['id'])
-            and not (set(item) - {'type','id','role','content','phase','end_turn','internal_chat_message_metadata_passthrough'})
+            and not (set(item) - {'type','id','role','content','phase','end_turn','internal_chat_message_metadata_passthrough','status'})
+            and ('status' not in item or (item.get('role') == 'assistant' and item['status'] == 'completed'))
             and item.get('role') in ('system', 'developer', 'user', 'assistant')
             and item.get('phase') in (None, 'commentary', 'final_answer')
             and isinstance(item.get('content'), list)
@@ -713,6 +912,9 @@ def validate_turn(turn: Any, image_paths: frozenset[str] = frozenset()) -> None:
 
 if __name__ == '__main__':
     import sys
+    if sys.argv[1:] == ['--classify-failure']:
+        print(json.dumps(classify_failure(json.loads(sys.stdin.readline()))))
+        sys.exit(0)
     try:
         line = sys.stdin.readline(1024 * 1024 + 1)
         if len(line.encode('utf-8')) > 1024 * 1024:
@@ -720,7 +922,7 @@ if __name__ == '__main__':
         payload = json.loads(line)
         result = run(payload['command'], payload['request'], Path(payload['cwd']), payload['timeout_ms'])
     except BoundaryError as error:
-        result = {'status':'unknown', 'failure_category':failure_category(str(error)), 'root_cause':'unverified' if failure_category(str(error)) in ('protocol','transport','unclassified') else 'observed boundary failure', 'detail':str(error), 'identity':error.identity, 'resolved_model':error.resolved_model, 'usage':error.usage, 'usage_partial':error.usage_partial}
+        result = {'status':'unknown', 'failure_category':failure_category(str(error)), 'root_cause':'unverified' if failure_category(str(error)) in ('protocol','transport','unclassified') else 'observed boundary failure', 'detail':str(error), 'identity':error.identity, 'protocol_diagnostics':error.protocol_diagnostics, 'resolved_model':error.resolved_model, 'usage':error.usage, 'usage_partial':error.usage_partial}
     except Exception:
-        result = {'status':'unknown', 'failure_category':'unclassified', 'root_cause':'unverified', 'detail':'transport or cleanup failure'}
-    print(json.dumps(result, ensure_ascii=False))
+        result = {'status':'unknown', 'failure_category':'protocol', 'root_cause':'unverified', 'detail':'app-server boundary failure'}
+    print(json.dumps(classify_failure(result), ensure_ascii=False))

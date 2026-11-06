@@ -105,6 +105,19 @@ def test_swap_quality_gate(tmp_path: Path, preference: str, allowed: bool) -> No
     assert evidence['configurations'] == result['configurations']
 
 
+def test_judge_outage_never_records_a_tie(tmp_path: Path) -> None:
+    from bench_ledger import read_ledger, summary_lines
+    result = run(tmp_path, preference='judge_outage')['tiers'][0]
+    assert result['candidate']['passed'] == result['incumbent']['passed'] > 0
+    assert result['quality_verdict']['verdict'] == 'unknown'
+    assert result['gate'] == result['raw_gate'] == 'unknown'
+    assert not result['tied'] and result['better'] is None
+    assert not result['tie_qualified'] and not result['swap_qualified']
+    assert 'Verdict: unknown' in Path(result['report_paths']['markdown']).read_text()
+    assert not (tmp_path / 'state/tie-proposals').exists()
+    assert all('| unknown |' in line for line in summary_lines(read_ledger(tmp_path / 'state/bench'))[2:])
+
+
 @pytest.mark.parametrize('job', ['coder', 'deep-thinker', 'writer'])
 def test_higher_effort_wins_equal_passes(tmp_path: Path, job: str) -> None:
     result = run(tmp_path, job=job, tiers=('standard', 'hard') if job != 'writer' else ('standard',))
@@ -143,7 +156,8 @@ def test_quality_effort_up_requires_known_no_fewer_passes(tmp_path: Path, status
 @pytest.mark.parametrize('preference,qualifies', [('candidate', False), ('incumbent', False),
     ('no_difference', True), ('invalid', False), ('outage', False)])
 def test_tie_requires_decided_no_difference(tmp_path: Path, preference: str, qualifies: bool) -> None:
-    standard = run(tmp_path, preference=preference)['tiers'][0]
+    result = run(tmp_path, preference=preference)
+    standard = result.get('tiers', [result])[0]
     assert standard['tie_qualified'] is qualifies
     proposal = tmp_path / 'state/tie-proposals/coder.json'
     assert proposal.exists() is qualifies
@@ -151,8 +165,10 @@ def test_tie_requires_decided_no_difference(tmp_path: Path, preference: str, qua
         recorded = json.loads(proposal.read_text())['quality_evidence']
         assert recorded['verdict'] == 'no_difference' and recorded['tier'] == 'standard'
     if preference == 'outage':
-        assert standard['quality_verdict']['verdict'] == 'no_difference'
-        assert all(d['reason'] == 'answer_unavailable' for d in standard['quality_verdict']['tasks'][0]['disagreements'])
+        assert standard['halted'] and standard['gate'] == 'unknown'
+        assert standard['quality_verdict']['verdict'] == 'unknown'
+        assert not standard['tied'] and not standard['swap_qualified']
+        assert all(row['attempt'] == 1 for row in standard['outcomes'])
 
 
 @pytest.mark.parametrize('normal', ['pass', 'fail'])
@@ -439,7 +455,7 @@ def test_judge_outage_never_qualifies_effort_down(tmp_path: Path) -> None:
     """Live run 2026-10-06: every judge call on the ranked tasks failed (vendor incident plus a
     protocol error), yet the undecided verdict read as no_difference and qualified an effort-down."""
     standard = run(tmp_path, preference='judge_outage')['tiers'][0]
-    assert standard['raw_gate'] == 'pass'
+    assert standard['gate'] == standard['raw_gate'] == 'unknown'
     assert not engine.quality_decided(standard['effort_down_quality_verdict'])
     assert not standard['effort_down_qualified'] and not standard['effort_up_qualified']
     assert not standard['swap_qualified'] and not standard['tie_qualified']

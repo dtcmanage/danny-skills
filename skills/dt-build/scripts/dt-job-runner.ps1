@@ -41,15 +41,42 @@ function Complete-DtJobRun {
 }
 
 function Get-DtJobCommandScript {
-    # Exit like `pwsh -Command`: the outcome of the final statement decides. LASTEXITCODE is reset just
-    # before that statement, so an earlier handled native failure does not leak into the exit code, while
-    # a failing final native command keeps its real exit code instead of pwsh's flattened 1.
     param([Parameter(Mandatory)][string]$Command)
+    # HEAD behavior except exact exit/one-statement exit guards (31/1,009 recorded commands).
+    # Other readers retain HEAD: echoes/assignments see 0, $? readers, if/else tolerance,
+    # multi-statement guards and every condition outside one pure LASTEXITCODE comparison
+    # (variable on the left, numeric constant on the right, eq/ne/gt/ge/lt/le only).
+    # Parentheses, compound/unary conditions and indirect readers retain HEAD's bytes.
+    # Unescaped nested -Command expands outside.
     $tokens = $null; $errors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Command, [ref]$tokens, [ref]$errors)
     $body = "`$global:LASTEXITCODE = 0`n$Command"
     if (@($errors).Count -eq 0 -and $null -ne $ast.EndBlock -and @($ast.EndBlock.Statements).Count -gt 0) {
-        $offset = @($ast.EndBlock.Statements)[-1].Extent.StartOffset
+        $last = @($ast.EndBlock.Statements)[-1]
+        $offset = $last.Extent.StartOffset
+        if ($last -is [System.Management.Automation.Language.ExitStatementAst] -and $null -ne $last.Pipeline) {
+            $expression = $last.Pipeline.GetPureExpression()
+            if ($expression -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $expression.VariablePath.UserPath -match '(?i)^((global|script|local|private):)?LASTEXITCODE\z') {
+                return "$Command`n"
+            }
+        }
+        $condition = if ($last -is [System.Management.Automation.Language.IfStatementAst] -and $last.Clauses.Count -eq 1) { $last.Clauses[0].Item1 } else { $null }
+        $comparison = if ($condition -is [System.Management.Automation.Language.PipelineAst] -and $condition.PipelineElements.Count -eq 1) { $condition.GetPureExpression() } else { $null }
+        if ($last -is [System.Management.Automation.Language.IfStatementAst] -and
+            $last.Clauses.Count -eq 1 -and $null -eq $last.ElseClause -and
+            $comparison -is [System.Management.Automation.Language.BinaryExpressionAst] -and
+            $comparison.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $comparison.Left.VariablePath.UserPath -match '(?i)^((global|script|local|private):)?LASTEXITCODE\z' -and
+            $comparison.Right -is [System.Management.Automation.Language.ConstantExpressionAst] -and
+            $comparison.Right.StaticType -in @([sbyte], [byte], [int16], [uint16], [int32], [uint32], [int64], [uint64], [single], [double], [decimal], [bigint]) -and
+            $comparison.Operator.ToString() -in @('Ieq', 'Ine', 'Igt', 'Ige', 'Ilt', 'Ile', 'Ceq', 'Cne', 'Cgt', 'Cge', 'Clt', 'Cle') -and
+            @($last.Clauses[0].Item2.Statements).Count -eq 1 -and
+            @($last.Clauses[0].Item2.Statements)[0] -is [System.Management.Automation.Language.ExitStatementAst]) {
+            $guard = 'if ($null -eq (Microsoft.PowerShell.Utility\Get-Variable LASTEXITCODE -Scope Global -ValueOnly -ErrorAction Ignore)) { $global:LASTEXITCODE = 0 }; '
+            $body = $Command.Substring(0, $offset) + $guard + $Command.Substring($offset)
+            return "$body`n`$dtJobOk = `$?`nif (-not `$dtJobOk) { exit 1 }`nexit 0`n"
+        }
         $body = $Command.Substring(0, $offset) + "`$global:LASTEXITCODE = 0; " + $Command.Substring($offset)
     }
     return "$body`n`$dtJobOk = `$?`nif (`$global:LASTEXITCODE -ne 0) { exit `$global:LASTEXITCODE }`nif (-not `$dtJobOk) { exit 1 }`nexit 0`n"
