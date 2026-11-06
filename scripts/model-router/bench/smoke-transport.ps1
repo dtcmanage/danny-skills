@@ -32,6 +32,13 @@ if($Vendor -eq 'codex'){
     $schema=& python -B -c 'import json,sys;sys.path.insert(0,sys.argv[1]);from codex_appserver import schema_comparison;print(json.dumps(schema_comparison(json.loads(sys.argv[2]))))' $PSScriptRoot $schemaJson
     if($LASTEXITCODE -ne 0){throw 'Schema preflight failed before model call.'}
     [IO.File]::WriteAllText((Join-Path $OutDir 'protocol-schema.json'),[string]$schema)
+    $schemaResult=$schema | ConvertFrom-Json -AsHashtable
+    if($schemaResult.ContainsKey('status') -and $schemaResult.status -eq 'unavailable'){
+        $report=@{vendor=$Vendor;model=$Model;effort=$Effort;status='unavailable';reason=$schemaResult.reason;detail='Schema preflight unavailable before model call'}
+        [IO.File]::WriteAllText((Join-Path $OutDir 'smoke-transport.json'),($report | ConvertTo-Json -Depth 12))
+        $report | ConvertTo-Json -Depth 12
+        exit 1
+    }
 }
 $request=@{vendor=$Vendor;model=$Model;effort=$Effort;purpose='answer';prompt='Reply with exactly OK. Use no tools.'}
 try{$response=Invoke-BenchCli -Request $request -TimeoutMs 120000}

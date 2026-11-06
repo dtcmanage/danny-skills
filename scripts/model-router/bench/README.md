@@ -78,6 +78,7 @@ OTHER>`, `response_count`, or `answer_mismatch`), never raw item data.
 
 Every real comparison generates the installed app-server JSON schema before any model
 call, writes `bench/protocol-schema.json`, and includes new methods in its report.
+If schema discovery fails, the comparison records `unavailable` with a fixed reason and continues; the protocol smoke saves that reason and exits nonzero before any model call.
 New methods are evidence, not authorization to accept them. Six structural failures
 across signatures with no successful Codex completion halt all queued calls through
 the shared spend guard; in-flight calls may finish. Structural failures have no retry;

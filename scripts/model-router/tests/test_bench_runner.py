@@ -19,6 +19,122 @@ from bench_test_renderer import fake_renderer
 from codex_appserver import usage
 
 
+@pytest.mark.parametrize(('failure', 'reason'), [
+    ('nonzero', 'schema_command_nonzero'),
+    ('timeout', 'schema_command_timeout'),
+    ('launch', 'schema_command_launch_failed'),
+    ('missing', 'schema_file_missing'),
+    ('unreadable', 'schema_file_unreadable'),
+    ('json', 'schema_file_invalid'),
+    ('utf8', 'schema_file_invalid'),
+    ('empty', 'schema_file_invalid'),
+    ('enum_object', 'schema_file_invalid'),
+    ('enum_scalar', 'schema_file_invalid'),
+])
+def test_schema_comparison_failure_is_fixed_data(tmp_path, monkeypatch, failure, reason):
+    import codex_appserver as transport
+
+    def generate(command, **kwargs):
+        assert command[:3] == ['fake-codex', 'app-server', 'generate-json-schema']
+        assert kwargs['timeout'] == 30 and kwargs['check'] is True
+        if failure == 'nonzero':
+            raise subprocess.CalledProcessError(17, command, stderr='SECRET_SENTINEL')
+        if failure == 'timeout':
+            raise subprocess.TimeoutExpired(command, 30, stderr='SECRET_SENTINEL')
+        if failure == 'launch':
+            raise OSError('SECRET_SENTINEL')
+        target = Path(command[-1]) / 'ServerNotification.json'
+        if failure == 'unreadable':
+            target.mkdir()
+        elif failure == 'utf8':
+            target.write_bytes(b'\xff')
+        elif failure != 'missing':
+            target.write_text({
+                'json': 'SECRET_SENTINEL', 'empty': '{}',
+                'enum_object': '{"method":{"enum":[{}]}}',
+                'enum_scalar': '{"method":{"enum":null}}',
+            }[failure], encoding='utf-8')
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(transport.subprocess, 'run', generate)
+    result = transport.schema_comparison(['fake-codex'])
+    assert result == {'status': 'unavailable', 'reason': reason}
+    assert 'new_methods' not in result and 'installed_count' not in result
+
+
+def test_schema_comparison_success_shape_unchanged(tmp_path):
+    import codex_appserver as transport
+    fake = tmp_path / 'schema.py'
+    fake.write_text(
+        'import pathlib,sys\n'
+        'assert sys.argv[1:4] == ["app-server", "generate-json-schema", "--out"]\n'
+        'pathlib.Path(sys.argv[4], "ServerNotification.json").write_text('
+        '\'{"method":{"enum":["synthetic/newEvent"]}}\')\n', encoding='utf-8')
+    assert transport.schema_comparison([sys.executable, str(fake)]) == {
+        'installed_count': 1, 'new_methods': ['synthetic/newEvent']}
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows open handles deny deletion')
+@pytest.mark.parametrize('failure', ['nonzero', 'timeout'])
+def test_schema_comparison_held_file_cleanup(monkeypatch, failure):
+    import codex_appserver as transport
+    held = []
+    folders = []
+
+    def generate(command, **kwargs):
+        folder = Path(command[-1])
+        folders.append(folder)
+        held.append((folder / 'held.txt').open('w'))
+        if failure == 'timeout':
+            raise subprocess.TimeoutExpired(command, 30)
+        raise subprocess.CalledProcessError(17, command)
+
+    monkeypatch.setattr(transport.subprocess, 'run', generate)
+    try:
+        assert transport.schema_comparison(['fake-codex']) == {
+            'status': 'unavailable', 'reason': 'schema_command_' + failure}
+    finally:
+        for handle in held:
+            handle.close()
+        for folder in folders:
+            shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_schema_comparison_deep_json(monkeypatch):
+    import codex_appserver as transport
+
+    def generate(command, **kwargs):
+        (Path(command[-1]) / 'ServerNotification.json').write_text(
+            '[' * 100000 + '0' + ']' * 100000, encoding='utf-8')
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(transport.subprocess, 'run', generate)
+    assert transport.schema_comparison(['fake-codex']) == {
+        'status': 'unavailable', 'reason': 'schema_file_invalid'}
+
+
+def test_smoke_unavailable_schema_stops_before_model(tmp_path, monkeypatch):
+    from test_bench_protocol_repair import fake_smoke
+    entry = fake_smoke(tmp_path, monkeypatch, invalid=False)
+    cli = tmp_path / 'cli.py'
+    marker = tmp_path / 'model-turn-started.txt'
+    # The schema command fails; every other fake CLI invocation leaves evidence.
+    cli.write_text(
+        'import sys\nfrom pathlib import Path\n'
+        'if sys.argv[1:3] == ["app-server", "generate-json-schema"]: sys.exit(17)\n'
+        f'Path({str(marker)!r}).write_text("called")\n'
+        'sys.exit(18)\n', encoding='utf-8')
+    result = subprocess.run(['pwsh', '-NoProfile', '-NonInteractive', '-File', str(entry),
+        '-Vendor', 'codex', '-OutDir', str(tmp_path / 'out'), '-Model', 'gpt-6.1-sol'],
+        capture_output=True, text=True, timeout=60)
+    assert not marker.exists(), 'Model CLI invoked after schema preflight was unavailable'
+    assert result.returncode != 0
+    report = json.loads((tmp_path / 'out/smoke-transport.json').read_text())
+    assert report['status'] == 'unavailable'
+    assert report['reason'] == 'schema_command_nonzero'
+    assert report['detail'] == 'Schema preflight unavailable before model call'
+
+
 @pytest.fixture(autouse=True)
 def synthetic_native_auth(tmp_path, monkeypatch):
     source = tmp_path / 'native-auth-source'

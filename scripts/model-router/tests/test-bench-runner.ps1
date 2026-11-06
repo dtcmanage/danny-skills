@@ -23,6 +23,34 @@ try {
     $roster=Get-Content (Join-Path $script:BenchRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json
     $roster.approved=$true;$roster.approved_at='2026-10-02T12:00:00Z';$roster.jobs.fast.first_effort='medium';$roster.jobs.fast.first='gpt-6.1-sol'
     $roster | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $root 'roster.json')
+    # Schema discovery must stay offline and must not discard other bench results.
+    $schemaCliRoot=Join-Path $root 'schema-cli'
+    [void][IO.Directory]::CreateDirectory($schemaCliRoot)
+    $schemaShim=Join-Path $schemaCliRoot 'codex.ps1'
+    $schemaPath=$env:PATH
+    $env:PATH=$schemaCliRoot+[IO.Path]::PathSeparator+$env:PATH
+    try {
+        [IO.File]::WriteAllText($schemaShim,"exit 17")
+        $schemaState=Join-Path $root 'schema-failed'
+        $schemaFailed=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $schemaState -Limits {param($v) @{blocked=$true}} -NoAlerts
+        Assert ($schemaFailed.protocol_schema.status -ceq 'unavailable' -and $schemaFailed.protocol_schema.reason -ceq 'schema_command_nonzero') 'Failing schema command yields unavailable'
+        Assert ($schemaFailed.raw_gate -eq 'unknown' -and $schemaFailed.configurations.candidate.model -eq 'gpt-6-luna' -and (Test-Path $schemaFailed.report_paths.markdown)) 'Schema failure preserves other results and completes reporting'
+        $schemaSaved=Get-Content (Join-Path $schemaState 'bench/protocol-schema.json') -Raw | ConvertFrom-Json
+        Assert ($schemaSaved.status -ceq 'unavailable' -and $schemaSaved.reason -ceq 'schema_command_nonzero') 'Unavailable schema visible in saved evidence'
+        $schemaReport=Get-Content $schemaFailed.report_paths.json -Raw | ConvertFrom-Json
+        Assert ($schemaReport.protocol_schema.status -ceq 'unavailable' -and $schemaReport.protocol_schema.reason -ceq 'schema_command_nonzero' -and $schemaReport.raw_gate -eq 'unknown') 'Unavailable schema visible in saved result without a protocol match'
+        Write-Output 'PASS: failing schema command yields unavailable; run finishes with other results intact'
+        @'
+if ($args.Count -ne 4 -or $args[0] -cne 'app-server' -or $args[1] -cne 'generate-json-schema' -or $args[2] -cne '--out') { exit 18 }
+[IO.File]::WriteAllText((Join-Path $args[3] 'ServerNotification.json'),'{"properties":{"method":{"enum":["synthetic/newEvent"]}}}')
+'@ | Set-Content $schemaShim
+        $schemaState=Join-Path $root 'schema-valid'
+        $schemaValid=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $schemaState -Limits {param($v) @{blocked=$true}} -NoAlerts
+        Assert ($schemaValid.protocol_schema.installed_count -eq 1 -and $schemaValid.protocol_schema.new_methods.Count -eq 1 -and $schemaValid.protocol_schema.new_methods[0] -ceq 'synthetic/newEvent' -and -not $schemaValid.protocol_schema.ContainsKey('status')) 'Valid fake schema retains current comparison result'
+        $schemaSaved=Get-Content (Join-Path $schemaState 'bench/protocol-schema.json') -Raw | ConvertFrom-Json
+        Assert ($schemaSaved.installed_count -eq 1 -and $schemaSaved.new_methods[0] -ceq 'synthetic/newEvent') 'Valid schema comparison saved'
+        Write-Output 'PASS: valid fake ServerNotification schema retains current comparison result'
+    } finally {$env:PATH=$schemaPath}
     $result=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $root -CliInvoker $invoke -Limits $limits -NoAlerts
     Assert ($result.raw_gate -eq 'pass' -and $result.shadow -and $result.gate -eq 'advisory') 'Shadow/gate failure'
     Assert ($result.candidate.effort -eq 'medium') 'Approved effort different from default was ignored'

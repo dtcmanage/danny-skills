@@ -112,23 +112,44 @@ def structural_signature(result: dict[str, Any]) -> str | None:
 
 def schema_comparison(command: list[str]) -> dict[str, Any]:
     """Generate installed protocol without starting a turn; keep new methods as data."""
-    with tempfile.TemporaryDirectory(prefix='router-schema-') as folder:
-        subprocess.run(command + ['app-server', 'generate-json-schema', '--out', folder],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=30, check=True)
-        schema = json.loads((Path(folder) / 'ServerNotification.json').read_text(encoding='utf-8'))
+    with tempfile.TemporaryDirectory(prefix='router-schema-', ignore_cleanup_errors=True) as folder:
+        try:
+            subprocess.run(command + ['app-server', 'generate-json-schema', '--out', folder],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=30, check=True)
+        except subprocess.CalledProcessError:
+            return {'status': 'unavailable', 'reason': 'schema_command_nonzero'}
+        except subprocess.TimeoutExpired:
+            return {'status': 'unavailable', 'reason': 'schema_command_timeout'}
+        except OSError:
+            return {'status': 'unavailable', 'reason': 'schema_command_launch_failed'}
+        try:
+            schema = json.loads((Path(folder) / 'ServerNotification.json').read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            return {'status': 'unavailable', 'reason': 'schema_file_missing'}
+        except OSError:
+            return {'status': 'unavailable', 'reason': 'schema_file_unreadable'}
+        except (ValueError, UnicodeError, RecursionError):
+            return {'status': 'unavailable', 'reason': 'schema_file_invalid'}
     def methods(value):
         if isinstance(value, dict):
             for key, child in value.items():
                 if key == 'method' and isinstance(child, dict):
-                    yield from child.get('enum', [])
+                    values = child.get('enum', [])
+                    if not isinstance(values, list):
+                        raise ValueError('malformed method enum')
+                    yield from values
                 yield from methods(child)
         elif isinstance(value, list):
             for child in value:
                 yield from methods(child)
-    installed = set(methods(schema))
-    if not installed or any(not isinstance(m, str) or not re.fullmatch(r'[A-Za-z0-9/_-]{1,100}', m) for m in installed):
-        raise BoundaryError('malformed protocol schema')
+    try:
+        installed_methods = list(methods(schema))
+    except (ValueError, RecursionError):
+        return {'status': 'unavailable', 'reason': 'schema_file_invalid'}
+    if not installed_methods or any(not isinstance(m, str) or not re.fullmatch(r'[A-Za-z0-9/_-]{1,100}', m) for m in installed_methods):
+        return {'status': 'unavailable', 'reason': 'schema_file_invalid'}
+    installed = set(installed_methods)
     known = set(json.loads(Path(__file__).with_name('appserver-methods.json').read_text()))
     return {'installed_count': len(installed), 'new_methods': sorted(installed - known)}
 
