@@ -369,6 +369,7 @@ The first matching row disposes each hit. Path is relative to `<danny-skills>`; 
 | `<danny-skills>/skills/dt-build/references/adapter-codex.md` | * | Host description and a ban on direct launches and Codex subagents. |
 | `<danny-skills>/skills/dt-build/scripts/assemble-codex-prompt.ps1` | * | Standing rule forbidding nested agents. |
 | `<danny-skills>/skills/dt-build/scripts/collect-usage.py` | * | The collector measures native and direct delegation. |
+| `<danny-skills>/scripts/model-router/cost_report.py` | * | The report prints the collector's measured counts. No guidance. |
 | `<danny-skills>/skills/dt-build/scripts/context-guard.ps1` | * | Excludes subagent transcripts when measuring coordinator context. |
 | `<danny-skills>/skills/dt-build/scripts/invoke-claude-chunk.ps1` | * | The wrapper's own launch, error text and tool restriction. |
 | `<danny-skills>/skills/dt-build/scripts/invoke-codex-chunk.ps1` | * | The wrapper's own launch and error text. |
