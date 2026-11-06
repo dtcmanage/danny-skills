@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.37 (2026-11-06): Model router repair: send routed writing work through dispatch.ps1; inherits the shared router fixes.
+
 - 0.2.36 (2026-11-04): Model router: add the classification-escalation category (deep thinker) so File Sorter's second-tier classification pass resolves a model; roster validator, roster builder, default roster, docs and tests updated.
 
 - 0.2.35 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).

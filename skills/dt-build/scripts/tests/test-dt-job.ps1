@@ -440,6 +440,9 @@ strict-unset-exact-exit|0|1|Set-StrictMode -Version Latest; Write-Output x; exit
     $copyRoot=Join-Path $tempRoot 'job-copy/skills/dt-build/scripts'
     New-Item -ItemType Directory -Path $copyRoot -Force | Out-Null
     Copy-Item -Path (Join-Path $scriptDir '*') -Destination $copyRoot -Recurse
+    $copySecurityRoot=Join-Path $tempRoot 'job-copy/scripts/security'
+    New-Item -ItemType Directory -Path $copySecurityRoot -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $scriptDir '../../../scripts/security/redact-secrets.ps1') -Destination $copySecurityRoot
     $copyRun=New-RunFolder 'exact-form-jobs'
     foreach ($case in @(
         @{command='cmd /c exit 3; exit $LASTEXITCODE';code=3},

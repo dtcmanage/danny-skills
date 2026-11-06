@@ -236,8 +236,16 @@ def test_dispatch_rows_never_lift_the_transcript_routed_share_in_rendered_text()
         assert "All 10" not in text and "only 2 of 10" in text
         assert "Dispatch evidence: 10 routed" in text
         assert "2 routed of 10 delegations" in text and "native attempts denied 8" in text
-    none_routed = report_for([transcript_row(delegations=10, unrouted=10, native_denied=10)], rows)
-    assert "No routed delegations were observed in transcripts" in cr.routing_headline_lines(none_routed)[0]
+
+
+def test_zero_transcript_routed_count_is_a_lower_bound_with_dispatch_evidence() -> None:
+    report = report_for([transcript_row()], [dispatch("task", "dispatch")])
+    for text in (cr.render_markdown(report), cr.render_html(report)):
+        assert "Transcript routed delegation count: 0 (a lower bound)" in text
+        assert "see the Dispatch evidence line below" in text
+        assert "Dispatch evidence: 1 routed" in text
+        assert "No routed" not in text
+        assert "launches holding the command in shell variables" in text
 
 
 def test_executed_native_call_is_named_and_never_routed() -> None:

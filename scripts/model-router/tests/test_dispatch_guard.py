@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import os
 import subprocess
 import sys
@@ -162,7 +163,15 @@ def test_read_only_agent_suggestion(tool: str, agent_type: str) -> None:
     assert_deny(payload)
     reason = decision(payload)["hookSpecificOutput"]["permissionDecisionReason"]
     assert " -ReadOnly" in reason
-    assert '-OutputPath "_dispatch/task-output.md"' in reason
+    assert re.search(r'-PromptPath "task-[0-9a-f]{8}-prompt\.md" -OutputPath "_dispatch/task-[0-9a-f]{8}-output\.md"', reason)
+
+
+def test_each_denial_prints_its_own_task_files() -> None:
+    payload = {"hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_input": {}}
+    reasons = [decision(payload)["hookSpecificOutput"]["permissionDecisionReason"] for _ in range(2)]
+    names = [re.search(r'-PromptPath "([^"]+)"', reason).group(1) for reason in reasons]
+    assert names[0] != names[1]
+    assert all(f"save the task in {name}," in reason for name, reason in zip(names, reasons))
 
 
 def test_isolated_interpreter_imports_shared_lexer() -> None:

@@ -2,8 +2,10 @@
 
 Status: staged, inactive. Framework state: provisional. No global settings or
 Codex configuration were changed by this build. Fixture tests establish guard
-decisions; they do not establish production hook coverage. Coordinator live
-`-Mode guard` evidence is required before activation claims.
+decisions. The live `-Mode guard` probe denied all three forms (`opus`, `fork`,
+`worker-shell`) and each retry through `dispatch.ps1` succeeded, but its hook is
+a pwsh wrapper around bare `python`, not the installed form. The installed form
+is unproved until the live check in step 4.
 
 ## Activation order
 
@@ -15,7 +17,12 @@ Danny applies or approves these release actions, in order:
    Review M06's collateral inventory before enabling the hook.
 3. Danny pastes the separate PreToolUse entry into `D:/Claude/settings.json`.
    Session edits of that live settings file are outside this build's authority.
-4. Re-trust a Codex hook only if a future probe proves a Codex guard. This build
+4. Live check of the installed hook: start a fresh Claude session and make one
+   native Agent call and one `claude -p --version` shell attempt. Expect each to
+   receive a deny starting `ROUTER_GUARD_DENY`. The guard is
+   fail-open, so if the call runs instead the hook is not working: remove the
+   entry and investigate, do not count it as enforced.
+5. Re-trust a Codex hook only if a future probe proves a Codex guard. This build
    measures Codex only and supplies no Codex deny or configuration change.
 
 Only after these release actions does the word **enforced** apply, and then only
@@ -67,8 +74,8 @@ the appropriate category if the suggested starting point does not match the task
 
 | Surface | Rule after activation | Measured label at build time |
 | --- | --- | --- |
-| Claude Agent/Task, all types and model values, parent, subagent, headless | Deny each form that reaches the hook, including agent_id, fork, Explore, custom and omitted fields | Real M02 fixtures captured for general-purpose, untyped, fork, Explore, Sonnet and frontier alias; guard fixture decisions verified. Production guard deny awaits coordinator probe. Context inheritance beyond measured cases remains unverified. |
-| Claude Bash/PowerShell literal `claude -p` or `codex exec` in command position | Deny best effort using the collector's shared lexer; mentions, arguments and file-writing bodies pass | Offline literal, call-operator, `.cmd`, heredoc and here-string coverage. Real guard worker-shell deny awaits coordinator probe. Deliberate evasion is out of scope. |
+| Claude Agent/Task, all types and model values, parent, subagent, headless | Deny each form that reaches the hook, including agent_id, fork, Explore, custom and omitted fields | Real M02 fixtures captured for general-purpose, untyped, fork, Explore, Sonnet and frontier alias; guard fixture decisions verified. Live guard probe denied the `opus` and `fork` forms; installed form checked in activation step 4. Context inheritance beyond measured cases remains unverified. |
+| Claude Bash/PowerShell literal `claude -p` or `codex exec` in command position | Deny best effort using the collector's shared lexer; mentions, arguments and file-writing bodies pass | Offline literal, call-operator, `.cmd`, heredoc and here-string coverage. Live guard probe denied a real worker's `claude -p` shell launch; installed form checked in activation step 4. Deliberate evasion is out of scope. |
 | Claude Workflow | Allow entry; deny an inner Agent/Task only if it reaches the hook | Unsupported: M02 entry fired, but no inner Agent/Task reached the hook. Collector counts Workflow later. |
 | Codex shell and spawn_agent | No deny without a captured payload proving coverage | Measured only, not prevented; no Codex configuration or hook trust changes. Collector counts from existing rollouts. |
 | Delegation outside tool calls, hosted tools, sessions without hook | No prevention | Unsupported and unmeasured. |
@@ -140,3 +147,44 @@ Setting the variable inside a running session does not help.
 
 Staged out-of-repo text, the repo item checklist and every grep disposition are in
 `dispatch-guard-staged-edits.md`.
+
+## Live smoke and retained limitations
+
+The coordinator runs the smoke once, serially, as an authorized live job. Workers
+and tests never pass `-Live`.
+
+```powershell
+cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"
+pwsh -NoProfile -File "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/tests/live-smoke.ps1" -Live -OutDir "D:/Claude/_Claude-Workspace/Skill Creation/model-router/dispatch-repair/.dt-build/router-dispatch-repair-20261105/live-smoke"
+```
+
+Each vendor gets one tiny no-tools prompt through the bench transport and one
+through `dispatch.ps1`, four non-frontier calls in all, because the two paths cannot
+share a call. The dispatch prompt asks for a date-shaped string, and the saved answer
+must match it byte for byte. `live-smoke-result.json` records the saved status per
+vendor and path, with each event as `seen` or `not-exercised`. A non-ok saved result
+exits nonzero, whatever the child process exit was. Normal quota guards apply, and a
+blocked vendor makes no call. The run works on a copy of router state inside the
+audit folder, regenerates one dry report there, refuses every alert request and writes
+no live roster. It starts no full benchmark and makes no frontier call.
+
+`tie-follow-up.md` appears only when both vendors and the report pass. It approves
+nothing, and old tie approvals stay invalid until fresh evidence exists and Danny
+approves it. A pass shows execution only, not independent acceptance.
+
+Limitations this release keeps:
+
+- The collector does not interpret shells: the 107 launches holding commands in
+  shell variables and 17 other unrecognized forms remain outside its coverage.
+- Each denied delegation leaves its individual task files in the project root.
+- The guard probe hook differs from the installed form until the post-activation
+  check in step 4 proves the installed form.
+- The Codex host declares `exec` and `wait` as disabled tools on every turn, so "no
+  tools" on that lane means none usable, not none declared.
+- Workflow inner agents are unsupported. The Workflow entry fires the hook, but no
+  inner Agent or Task call was seen reaching it.
+- The Codex guard is measured only. Nothing denies a Codex shell or `spawn_agent` call.
+- The schema methods `thread/prediction/updated` and `thread/readState/changed` stay
+  rejected until a captured payload justifies accepting them.
+- The ten retained prefix failures all come from one run on 2026-10-07. They remain
+  on record and are not evidence of a current failure.

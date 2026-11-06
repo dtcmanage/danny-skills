@@ -171,10 +171,12 @@ if ($args -contains 'exec') {
             $printedRepo=Join-Path $temp "_Claude-Workspace/Fixture/printed-$lane-$($case.Write)"; [void][IO.Directory]::CreateDirectory($printedRepo)
             & git -C $printedRepo init -q
             & git -C $printedRepo -c user.email=t@example.com -c user.name=t commit --allow-empty -qm fixture
-            [IO.File]::WriteAllText((Join-Path $printedRepo 'task-prompt.md'),'fixture prompt')
             $payload=@{hook_event_name='PreToolUse';tool_name='Agent';tool_input=@{subagent_type='Explore'};cwd=$printedRepo} | ConvertTo-Json -Compress
             $reason=(($payload | & python $guardScript) | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason
             $printed=$reason.Substring($reason.IndexOf('run: ')+5)
+            $printedPrompt=[regex]::Match($printed,'-PromptPath "([^"]+)"').Groups[1].Value
+            $printedOutput=[regex]::Match($printed,'-OutputPath "([^"]+)"').Groups[1].Value
+            [IO.File]::WriteAllText((Join-Path $printedRepo $printedPrompt),'fixture prompt')
             $installed='D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch.ps1'
             Check ($printed.Contains($installed) -and $printed.Contains(' -ReadOnly')) 'guard prints the read-only dispatch command'
             $printedScript=Join-Path $temp "printed-$lane-$($case.Write).ps1"
@@ -185,11 +187,11 @@ if ($args -contains 'exec') {
             Push-Location -LiteralPath $printedRepo
             try { & pwsh -NoProfile -File $printedScript *> (Join-Path $temp "printed-$lane-$($case.Write).log"); $code=$LASTEXITCODE }
             finally { Pop-Location; Remove-Item Env:DT_BUILD_RUN_PIN_VENDOR,Env:DT_BUILD_RUN_PIN_MODEL -ErrorAction SilentlyContinue; [IO.File]::WriteAllText($fakePath,$fakeText) }
-            $printedRow=Read-Evidence (Join-Path $printedRepo '_dispatch/task-output.md')
+            $printedRow=Read-Evidence (Join-Path $printedRepo $printedOutput)
             if ($case.Write) {
                 Check ($code -ne 0 -and $printedRow.termination_reason -match 'CODEX_READONLY_VIOLATION') 'printed read-only command still rejects a worker that changes the project'
             } else {
-                Check ($code -eq 0 -and $printedRow.execution_result -eq 'success' -and $printedRow.pass -and (Test-Path (Join-Path $printedRepo '_dispatch/task-output.md'))) "printed read-only command succeeds on the $lane lane"
+                Check ($code -eq 0 -and $printedRow.execution_result -eq 'success' -and $printedRow.pass -and $printedOutput.StartsWith('_dispatch/') -and (Test-Path (Join-Path $printedRepo $printedOutput))) "printed read-only command succeeds on the $lane lane"
                 $laneArgs=[IO.File]::ReadAllText($env:M04_FAKE_ARGS)
                 Check ($laneArgs -match "^$lane\|" -and $laneArgs -match $(if($lane -eq 'codex'){'read-only'}else{'(?<!Bash,)Read,Glob,Grep'})) "printed read-only command reaches the $lane lane read-only"
             }

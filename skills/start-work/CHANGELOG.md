@@ -1,5 +1,7 @@
 # start-work changelog
 
+- 0.1.4 (2026-11-06): Model router repair: refer to Codex and Claude workers instead of sub-agents.
+
 - 0.1.3 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 0.1.2 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.

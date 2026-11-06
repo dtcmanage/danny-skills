@@ -129,6 +129,12 @@ def executed_dispatch_details(command: str, depth: int = 0) -> list[dict]:
                 if not args:
                     continue
                 executable = re.split(r"[\\/]", args[0])[-1].lower()
+                if executable == "dt-job.ps1":  # dt-job runs its -Command as the job; it delegates nothing itself.
+                    lowered = [arg.lower() for arg in args]
+                    if "-command" in lowered and depth < 2 and lowered.index("-command") + 1 < len(args):
+                        inner_command = args[lowered.index("-command") + 1].replace('\\"', '"').replace('`"', '"')
+                        calls.extend(executed_dispatch_details(inner_command, depth + 1))
+                    continue
             elif "-command" in lowered and depth < 2:
                 calls.extend(executed_dispatch_details(" ".join(args[lowered.index("-command") + 1:]), depth + 1))
                 continue

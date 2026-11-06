@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.18.0 (2026-11-06): Model router repair: run review rounds through the repaired wrappers and dispatch.ps1, remove native-subagent guidance, and return byte-exact Claude round output.
+
 - 1.17.3 (2026-11-04): Model router: add the classification-escalation category (deep thinker) so File Sorter's second-tier classification pass resolves a model; roster validator, roster builder, default roster, docs and tests updated.
 
 - 1.17.2 (2026-10-19): Require durable API sample citations at intake and retain samples outside review scratch (FS-126).

@@ -1,5 +1,7 @@
 # dt-handoff changelog
 
+- 0.2.4 (2026-11-06): Model router repair: describe delegated work as dt-job workers started through dt-build wrappers or dispatch.ps1.
+
 - 0.2.3 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 0.2.2 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.

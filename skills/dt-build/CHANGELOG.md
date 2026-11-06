@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.50.0
+
+- Model router repair: route Claude and Codex delegation through dispatch.ps1 with per-output evidence, remove the native Agent branch, keep date-shaped Claude results as literal strings, preserve job exit codes in dt-job-runner, and count routed, denied and native delegation in the usage collector.
+
 ## 2.49.13
 
 - Model router: add the classification-escalation category (deep thinker) so File Sorter's second-tier classification pass resolves a model; roster validator, roster builder, default roster, docs and tests updated.

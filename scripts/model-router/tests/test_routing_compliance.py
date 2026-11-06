@@ -285,6 +285,26 @@ def test_executed_dispatch_public_contract(command: str, expected: bool | None) 
     assert cu.executed_dispatch(command) is expected
 
 
+def test_dispatch_launched_as_a_dt_job_counts_as_routed() -> None:
+    call, = cu.executed_dispatch_details(
+        'pwsh -NoProfile -File "C:/x/dt-job.ps1" -Verb start -RunFolder r -Kind worker -Category planning '
+        """-Command "pwsh -NoProfile -File 'C:/x/dispatch.ps1' -ProjectPath 'p' -Category planning -PromptPath 'q.md'" -Json""")
+    assert (call['wrapper'], call['dispatch'], call['category']) == (True, True, 'planning')
+    assert cu.executed_dispatch_details('pwsh -File dt-job.ps1 -Verb status -RunFolder r -Json') == []
+
+
+def test_dt_job_command_with_backslash_escaped_inner_quotes_counts_as_routed() -> None:
+    call, = cu.executed_dispatch_details(
+        r'pwsh -File dt-job.ps1 -Command "pwsh -File \"C:/skill pack/dispatch.ps1\" -Category planning" -Json')
+    assert (call['wrapper'], call['dispatch'], call['category']) == (True, True, 'planning')
+
+
+def test_dt_job_command_with_backtick_escaped_inner_quotes_counts_as_routed() -> None:
+    call, = cu.executed_dispatch_details(
+        'pwsh -File dt-job.ps1 -Command "pwsh -File `"C:/skill pack/dispatch.ps1`" -Category planning" -Json')
+    assert (call['wrapper'], call['dispatch'], call['category']) == (True, True, 'planning')
+
+
 def test_nested_multiple_wrappers_and_preflight_details() -> None:
     calls = cu.executed_dispatch_details('pwsh -Command "& ./invoke-codex-chunk.ps1 -Preflight; & ./invoke-codex-chunk.ps1 -Tier complex; & ./invoke-claude-chunk.ps1 -Category analysis -Effort high"')
     assert len(calls) == 2

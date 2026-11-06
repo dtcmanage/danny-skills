@@ -384,6 +384,7 @@ The first matching row disposes each hit. Path is relative to `<danny-skills>`; 
 | `<danny-skills>/skills/dt-review/scripts/invoke-claude-round.ps1` | * | Fixed lane reads the family alias. |
 | `<danny-skills>/skills/dt-session-context/SKILL.md` | * | Describes which sessions the digest covers. |
 | `<danny-skills>/skills/start-work/SKILL.md` | Agent-neutral | Means vendor-neutral. |
+| `<danny-skills>/references/shared-component-owners.json` | Explore.json | Owner entry naming a captured hook payload fixture; records ownership and gives no delegation instruction. |
 <!-- dispositions:end -->
 
 ## Grep dispositions: scaffolding

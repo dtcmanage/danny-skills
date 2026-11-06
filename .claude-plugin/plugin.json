@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.26.12",
+  "version": "0.27.0",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.27.0 model router: dispatch and measurement repair. New dispatch.ps1 command with per-output evidence, staged dispatch guard (inactive until Danny installs it), repaired benchmark protocol handling and structural halts, fresh quota readings, routing-by-task reports, Claude output integrity, and a -Live gated live smoke. version policy: shared owners now list new router files and each hook payload fixture. Bumps dt-build 2.50.0, dt-handoff 0.2.4, dt-image-gen 0.3.37, dt-pipeline 0.2.0, dt-review 1.18.0, dt-writing-draft 0.2.37, dt-writing-edit 0.3.37, start-work 0.1.4.",
       "0.26.12 model router: add classification-escalation category (deep thinker) for File Sorter escalation; bumps dt-build 2.49.13, dt-image-gen 0.3.36, dt-review 1.17.3, dt-writing-draft 0.2.36, dt-writing-edit 0.3.36.",
       "0.26.11 model router: schedule registration enables catch-up runs (StartWhenAvailable) so jobs missed while SNOWWHITE is off fire on return.",
       "0.26.10 dt-ship 0.3.5: commit probe runs with file-backed std handles, fixing ssh DuplicatedHandle when shipping from the PowerShell tool.",

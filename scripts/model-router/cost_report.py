@@ -832,9 +832,9 @@ def routing_verdict(summary: dict) -> str:
     routed = sum(item["routed"] for item in totals)
     violations = sum(item["native_executed"] + item["direct_executed"] for item in totals)
     if not routed:
-        none_seen = "No routed delegations were observed in transcripts" if summary["routed"] else "No routed dispatches were observed"
-        return (f"{none_seen}, so a count of zero violations is not evidence of success."
-                if not violations else f"{none_seen}, and {violations} native or direct call(s) ran outside dispatch.ps1.")
+        lower_bound = f"Transcript routed delegation count: {routed} (a lower bound); see the Dispatch evidence line below"
+        return (f"{lower_bound}; a count of zero violations is not evidence of success."
+                if not violations else f"{lower_bound}; {violations} native or direct call(s) ran outside dispatch.ps1.")
     if violations:
         return f"{violations} native or direct call(s) ran outside dispatch.ps1; the guard was off or absent for them."
     if routed < delegations:
@@ -873,7 +873,7 @@ def routing_headline_lines(report: dict) -> list[str]:
     lines.append(current_reading_text(report, render_codex_usage(report.get("codex_usage"))))
     gaps = [f"{vw.label} missing {', '.join(vw.gap_dates)}" for vw in report["vendors"].values() if vw.gap_dates]
     lines.append("Transcript counts are partial observed coverage: only this Windows machine's logs are swept, so Mac "
-                 "sessions and delegation outside tool calls are missing" + (f"; host gaps: {'; '.join(gaps)}." if gaps else "."))
+                 "sessions, delegation outside tool calls, and launches holding the command in shell variables are missing" + (f"; host gaps: {'; '.join(gaps)}." if gaps else "."))
     return lines
 
 

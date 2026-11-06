@@ -11,7 +11,7 @@ if (-not (Get-Command Invoke-SecretRedaction -ErrorAction SilentlyContinue)) {
                 $skillRoot = if ($suffix -eq '.') { $resolved.FullName } else { Join-Path $resolved.FullName $suffix }
                 break
             }
-            $cursor = $cursor.Parent
+            $cursor = if ($cursor.PSObject.Properties['Parent']) { $cursor.Parent } else { $null }
         }
         Split-Path -Parent (Split-Path -Parent $skillRoot)
     }

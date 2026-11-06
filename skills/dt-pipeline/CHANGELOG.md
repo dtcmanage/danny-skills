@@ -1,5 +1,7 @@
 # dt-pipeline changelog
 
+- 0.2.0 (2026-11-06): Model router repair: start pipeline coordinators through dt-job workers and dispatch.ps1 instead of native subagents.
+
 - 0.1.5 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 0.1.4 (2026-10-10): Version the inherited orchestration build-state template changes: run status and event cursor.

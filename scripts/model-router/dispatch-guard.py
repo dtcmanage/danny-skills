@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 
@@ -36,16 +37,18 @@ def guard_decision(payload: object) -> dict | None:
     quoted_project = "'" + project.replace("'", "''") + "'"
     read_only = tool in ("Agent", "Task") and inputs.get("subagent_type") in ("Explore", "Plan")
     # The read-only check skips only the output's own folder, so a read-only report needs a subfolder.
-    output = "_dispatch/task-output.md" if read_only else "task-output.md"
+    # Ad hoc task identity comes from the prompt path, so each denial gets its own names; a retry reuses them.
+    task = "task-" + uuid.uuid4().hex[:8]
+    output = f"_dispatch/{task}-output.md" if read_only else f"{task}-output.md"
     command = (
         'pwsh -NoProfile -File "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/'
         'scripts/model-router/dispatch.ps1" -ProjectPath ' + quoted_project +
-        ' -Category routine-coding -PromptPath "task-prompt.md" -OutputPath "' + output + '"'
+        ' -Category routine-coding -PromptPath "' + task + '-prompt.md" -OutputPath "' + output + '"'
         ' -SelectionReason "Route native delegation through the category resolver" -AdHoc -AllowOutputInProject -Live'
     )
     if read_only:
         command += " -ReadOnly"
-    reason = "ROUTER_GUARD_DENY: category routine-coding; save the task in task-prompt.md, then run: " + command
+    reason = f"ROUTER_GUARD_DENY: category routine-coding; save the task in {task}-prompt.md, then run: " + command
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": reason}}
 
