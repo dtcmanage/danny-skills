@@ -15,7 +15,7 @@ Execution resilience controls in Phase 7B:
 - Codex execution runs only through `<skill>/scripts/invoke-codex-chunk.ps1`, with cache-verified model resolution,
   explicit effort, a mandatory one-line selection reason, stdin prompt delivery, redacted logs, and retained
   provenance containing the canonical user-visible disclosure line.
-- Verify/fix automation is capped at two implementation failures per milestone. Environment, tooling, and
+- Verify/fix automation is capped at two build attempts plus one narrow fresh review of the last change per milestone. Environment, tooling, and
   approved contract-revision failures are recorded but do not consume implementation attempts.
 - Integration-branch updates run through compare-and-swap (`<skill>/scripts/branch-cas-update.ps1`) after rehearsal.
 - Single dispatch: when a step must launch exactly one child (a one-shot review), pass `-SingleDispatch` to

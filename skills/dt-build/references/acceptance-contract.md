@@ -155,6 +155,20 @@ Do not count environment outages, tool/sandbox failures, or an approved contract
 human/root remediation, a fresh independent PASS may resume dependent milestones without pretending the
 automatic agent earned a third attempt; record the remediation and category in the decision log.
 
+### Default implementation loop limit
+
+- Build only what the milestone's acceptance checks require. Put everything else in `deferred-findings.md`.
+- Fix a review finding only if it has a realistic path in ordinary system use or breaks an acceptance check.
+  Record contrived edge cases requiring debugger hooks, deliberately damaged environments, or inputs nobody
+  sends as one-line named limitations. Keep the reviewer's verdict on record unchanged.
+- Allow at most two build attempts per milestone plus one narrow fresh review of the last change. If real-use
+  defects remain, stop and return to the parent or Danny with the exact findings and a recommendation.
+  Never open attempt 3 automatically.
+- Require a parent ruling to authorize one more narrow change inside the same attempt. Record the exact
+  change and its return condition; never reset the cap for other milestones.
+- Name tests for behavior, never for an attempt number.
+- Waive no gate, independent review, or live check under these rules.
+
 ## What this gate does not prevent
 
 - A roadmap whose verification checks are themselves too lax (the gate enforces what the roadmap says, not what a thorough roadmap would say). The dt-roadmap skill owns acceptance-check quality.

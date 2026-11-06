@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.50.0
+  version: 2.50.1
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -208,9 +208,9 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   On `ROUTER_UNEXPLAINED` do not re-dispatch, escalate, or demote; stop the piece (the wrapper already retried once and paged).
   On `ROUTER_OFFLINE` the piece fails as `environment`; the orchestrator's own resume handles it.
   Within the two-attempt budget, an implementation retry after standard adds `-RetryAtHardFrom <failed model> -DifficultyReason <reason>`; after hard it adds `-EscalateFrom <failed model> -Difficulty hard -DifficultyReason <reason>`. A category without tiers (unprotected `mechanical`, which routes to the fast job) retries with `-EscalateFrom <failed model>` as before. Do not hand-roll `codex exec` or `claude -p`.
-  Automatic implementation failures consume at most two attempts;
-  environment/tooling failures and an approved contract revision do not. Explicit human/root remediation that
-  restores a fresh PASS may continue the run; it does not silently grant another automatic retry.
+  Allow two build attempts plus one narrow fresh review; exclude environment/tooling failures and approved contract revisions.
+  Parent rulings authorize exact narrow changes within that attempt with return conditions; preserve other milestones' caps.
+  Follow `references/acceptance-contract.md` for findings and stopping.
 - c1. **Handle a checkpoint return.** If the report's `CONTINUATION_STATE` names a path, follow "Subagents write to files and checkpoint" above before any verification; verify only when a report returns `NONE`.
 - c2. **Hold the milestone scope lock.** Every build/fix prompt carries the scope-lock block from
   `references/subagent-prompts.md`: the chunk builds exactly what the milestone specifies — no speculative

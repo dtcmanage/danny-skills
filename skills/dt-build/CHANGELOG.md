@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.50.1
+
+- Make the two-attempt implementation loop limit the default, constrain review fixes to ordinary use and acceptance checks, and require explicit stop rulings.
+
 ## 2.50.0
 
 - Model router repair: route Claude and Codex delegation through dispatch.ps1 with per-output evidence, remove the native Agent branch, keep date-shaped Claude results as literal strings, preserve job exit codes in dt-job-runner, and count routed, denied and native delegation in the usage collector.
