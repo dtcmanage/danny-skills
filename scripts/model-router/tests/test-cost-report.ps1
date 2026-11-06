@@ -40,6 +40,12 @@ $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeTransport
 
 $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-credentials.json'
+# The quota refresh talks only to fake limits; with no percent set, the fake refuses, which is a failed refresh.
+foreach ($name in 'DT_JOB_ID', 'DT_JOB_DIR', 'DT_BUILD_COORDINATOR_ID') { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue }
+$priorLiveCommand = $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND
+$priorFakePercent = $env:FAKE_CODEX_LIMITS_PERCENT
+$env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND = Join-Path $PSScriptRoot 'fixtures/fake-codex-limits.py'
+Remove-Item Env:FAKE_CODEX_LIMITS_PERCENT -ErrorAction SilentlyContinue
 
 try {
     # A minimal usage row for the most recent complete ET week (Monday of that week) so
@@ -101,9 +107,38 @@ try {
     Assert-True ($zeroSummary.message -match 'Most used: Opus 5.5 n/a') 'zero-cost DM renders undefined share gracefully'
     Assert-True ($zeroOutput -match 'weekly summary already sent' -and (Get-Content -LiteralPath $requestLog).Count -eq $sentRequests) 'zero-cost rerender preserves logical-week dedup'
 
+    # A failed refresh keeps the older reading, labeled stale, and the report completes.
+    $readings = Join-Path $temp 'readings'
+    New-Item -ItemType Directory -Force -Path $readings | Out-Null
+    $oldReading = @{ used_percent = 41.0; observed_at_utc = [datetimeoffset]::UtcNow.AddHours(-30).ToString('o'); resets_at_utc = [datetimeoffset]::UtcNow.AddDays(3).ToString('o'); source = 'codex-app-server' }
+    $oldReading | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $readings 'codex-appserver.json')
+    $failedOutput = @(& pwsh -NoProfile -File $script -StateDir $temp) -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and $failedOutput -match 'codex quota refresh failed') 'failed refresh is reported and the run exits 0'
+    $latest = Get-Content -LiteralPath (Join-Path $temp 'cost-reports/latest.md') -Raw
+    Assert-True ($latest -match 'STALE \(30\.0 hours old, refresh failed\): Codex weekly usage: 41% used') 'older reading is labeled stale with its age'
+    Assert-True ($latest -match 'Claude usage: unavailable \(no Claude usage reading yet; refresh failed\)') 'missing vendor reading is unavailable with its reason'
+
+    # A dry report refreshes and writes the report, and sends nothing and writes no roster.
+    $env:FAKE_CODEX_LIMITS_PERCENT = '12'
+    Remove-Item -LiteralPath (Join-Path $temp 'cost-reports/latest.md')
+    $alertsBefore = (Get-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl') -Raw)
+    $requestsBefore = (Get-Content -LiteralPath $requestLog).Count
+    $summaryKey = Join-Path $temp 'cost-reports/discord-summary.json'
+    (Get-Content -LiteralPath $summaryKey -Raw | ConvertFrom-Json | ForEach-Object { $_.key = 'weekly-report:dry-fixture'; $_ }) | ConvertTo-Json | Set-Content -LiteralPath $summaryKey
+    $dryOutput = @(& pwsh -NoProfile -File $script -StateDir $temp -Dry) -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and $dryOutput -match 'dry report; nothing sent' -and $dryOutput -notmatch 'weekly summary') 'dry report sends nothing'
+    Assert-True ((Get-Content -LiteralPath $requestLog).Count -eq $requestsBefore -and (Get-Content -LiteralPath (Join-Path $temp 'alert-log.jsonl') -Raw) -ceq $alertsBefore) 'dry report touches neither transport nor alert log'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $temp 'roster.json')) -and -not (Test-Path -LiteralPath (Join-Path $temp 'roster-proposals'))) 'dry report writes no roster'
+    $dryLatest = Get-Content -LiteralPath (Join-Path $temp 'cost-reports/latest.md') -Raw
+    Assert-True ($dryOutput -notmatch 'codex quota refresh failed' -and (Test-Path -LiteralPath (Join-Path $readings 'codex-live.json'))) 'successful refresh writes the live reading'
+    Assert-True ($dryLatest -notmatch 'STALE[^\r\n]*Codex') 'a just-refreshed reading is not labeled stale'
+    Assert-True ($dryLatest -match '## Routing by task' -and $dryLatest -match 'not evidence of success') 'report leads with routing and does not read zero violations as success'
+
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
+    $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND = $priorLiveCommand
+    $env:FAKE_CODEX_LIMITS_PERCENT = $priorFakePercent
     $env:DT_MODEL_ROUTER_STATE = $priorState
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport
     $env:DT_MODEL_ROUTER_USAGE_SWEEP = $priorSweep

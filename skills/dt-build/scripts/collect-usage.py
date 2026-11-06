@@ -37,9 +37,17 @@ CTX_FLAG = 300_000          # peak context above this is flagged
 RESUME_FLAG = 5             # follow-up messages to live agents above this is flagged
 IDLE_MINUTES = 5            # cache TTL; a big re-write after this gap is an idle loss
 BIG_REWRITE = 50_000
-ALL_SESSIONS_CACHE_VERSION = 4
+ALL_SESSIONS_CACHE_VERSION = 5
 SELECTION_RE = re.compile(r"MODEL_SELECTION:[^\r\n]*?\(([^,()]+)(?:,[^()]*)?,\s*effort\s+([^(),\s]+)\)")
-WRAPPER_RE = re.compile(r"invoke-(?:codex|claude)-chunk\.ps1", re.IGNORECASE)
+WRAPPER_RE = re.compile(r"invoke-(?:codex|claude)-chunk\.ps1|dispatch\.ps1", re.IGNORECASE)
+GUARD_DENY = "ROUTER_GUARD_DENY:"
+# A Codex exec tool call holds JavaScript. Only a literal cmd can be read; anything else stays unmeasured.
+JS_EXEC_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
+JS_LITERAL_CMD_RE = re.compile(
+    r"""\s*\{\s*cmd\s*:\s*(?:("(?:[^"\\]|\\.)*")|'((?:[^'\\]|\\.)*)'|`((?:[^`\\$]|\\.)*)`)\s*[,}]""")
+JS_SPAWN_AGENT_RE = re.compile(r"\btools\.spawn_agent\s*\(")
+ROUTING_COUNTS = ("delegations", "routed", "unrouted", "native_denied", "native_executed", "native_unknown",
+                  "direct_denied", "direct_executed", "direct_unknown", "workflow_calls")
 COMMAND_TOKEN_RE = re.compile(
     r'''(?:'[^']*'|"(?:`"|\\.|[^"\\])*"|[^\s;|&(){}'"#])+|&&|\|\||[;|&(){}\n]|\#[^\n]*''')
 
@@ -137,7 +145,8 @@ def executed_dispatch_details(command: str, depth: int = 0) -> list[dict]:
                     "complex": "complex-coding", "standard": "routine-coding", "light": "mechanical",
                 }.get(options.get("-tier", "standard").lower(), "routine-coding")
                 calls.append({"wrapper": True, "explicit": "-model" in options,
-                              "category": category, "effort": options.get("-effort")})
+                              "category": category, "effort": options.get("-effort"),
+                              "dispatch": executable == "dispatch.ps1"})
         elif ((executable in ("codex", "codex.exe", "codex.cmd") and args[1:2] == ["exec"])
               or (executable in ("claude", "claude.exe", "claude.cmd")
                   and any(arg in ("-p", "--print") for arg in args[1:]))):
@@ -168,9 +177,20 @@ def workstation_for_project(project: str) -> str:
     return tail.split("-", 1)[0] if tail else "other"
 
 
+def new_routing_bucket() -> dict:
+    return {**{key: 0 for key in ROUTING_COUNTS}, "by_category": Counter(), "by_job": Counter()}
+
+
 def tally_routing_message(row: dict, pending: list[tuple[str, str] | None],
-                          buckets: dict[str, dict], category_jobs: dict[str, str]) -> None:
-    """Claim selection lines once, in content-block order, in the main session."""
+                          buckets: dict[str, dict], category_jobs: dict[str, str],
+                          open_calls: dict[str, tuple[str, str]] | None = None) -> None:
+    """Count delegation tool calls in the main session, in content-block order.
+
+    Only dispatch.ps1 and the router wrappers count as routed. A native Agent/Task call or a
+    literal `claude -p` / `codex exec` is never routed: it starts as unknown, and its tool
+    result (see resolve_tool_results) then marks it denied or executed. M05's guard lexer
+    now sees `claude -p`, so those launches count here too; before M05 they counted as nothing.
+    """
     message = row.get("message") or {}
     if message.get("role", row.get("type")) != "assistant":
         return
@@ -190,45 +210,57 @@ def tally_routing_message(row: dict, pending: list[tuple[str, str] | None],
             continue
         inp = block.get("input") or {}
         name = block.get("name")
-        explicit = bool(inp.get("model"))
+        date = to_et_date(row.get("timestamp"))
+        if name == "Workflow":
+            if date:
+                buckets.setdefault(date, new_routing_bucket())["workflow_calls"] += 1
+            continue
         calls = []
-        if name != "Agent":
-            if name != "Bash":
+        if name not in ("Agent", "Task"):
+            if name not in ("Bash", "PowerShell"):
                 continue
-            command = str(inp.get("command") or "")
-            calls = executed_dispatch_details(command)
+            calls = executed_dispatch_details(str(inp.get("command") or ""))
             if not calls:
                 continue
+        routed = bool(calls) and all(call["wrapper"] for call in calls)
         selection = None
-        if any(call["wrapper"] for call in calls):
-            routed = True
-            for call in calls:
-                has_selection = bool(pending)
-                if has_selection:
-                    pending.pop()
-                routed = routed and ((call["wrapper"] and not call["explicit"])
-                                     or (call["explicit"] and has_selection))
-                if call["wrapper"] and selection is None:
-                    selection = (call["category"], call["effort"])
-        else:
+        for call in calls or [{}]:
             has_selection = bool(pending)
-            selection = pending.pop() if has_selection else None
-            explicit = any(call["explicit"] for call in calls) if calls else explicit
-            routed = bool(explicit and has_selection)
-        date = to_et_date(row.get("timestamp"))
+            if has_selection:
+                pending.pop()
+            if call.get("wrapper"):
+                routed = routed and (call["dispatch"] or not call["explicit"] or has_selection)
+                selection = selection or call["category"]
         if not date:
             continue
-        bucket = buckets.setdefault(date, {"delegations": 0, "routed": 0,
-                                          "unrouted": 0, "by_category": Counter(),
-                                          "by_job": Counter()})
+        bucket = buckets.setdefault(date, new_routing_bucket())
         bucket["delegations"] += 1
         bucket["routed" if routed else "unrouted"] += 1
+        if not all(call["wrapper"] for call in calls) or not calls:
+            kind = "direct" if calls else "native"
+            bucket[f"{kind}_unknown"] += 1
+            if open_calls is not None and block.get("id"):
+                open_calls[block["id"]] = (date, kind)
         if routed and selection:
-            category, _effort = selection
-            bucket["by_category"][category] += 1
-            job = category_jobs.get(category)
+            bucket["by_category"][selection] += 1
+            job = category_jobs.get(selection)
             if job:
                 bucket["by_job"][job] += 1
+
+
+def resolve_tool_results(row: dict, open_calls: dict[str, tuple[str, str]], buckets: dict[str, dict]) -> None:
+    """Move a tracked call from unknown to denied or executed once its tool result appears."""
+    content = (row.get("message") or {}).get("content")
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        tracked = open_calls.pop(block.get("tool_use_id"), None)
+        if tracked:
+            date, kind = tracked
+            result = block.get("content")
+            text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+            buckets[date][f"{kind}_unknown"] -= 1
+            buckets[date][f"{kind}_{'denied' if GUARD_DENY in text[:300] else 'executed'}"] += 1
 
 
 def weighted(inp: int, cache_write: int, cache_read: int, out: int) -> int:
@@ -557,12 +589,15 @@ def tally_claude_by_day(path: Path, routing: dict[str, dict] | None = None,
     pending: list[tuple[str, str] | None] = []
     seen_tools: set[str] = set()
     seen_text: set[tuple[str, str]] = set()
+    open_calls: dict[str, tuple[str, str]] = {}
     with path.open(encoding="utf-8", errors="replace") as handle:
         for line in handle:
             try:
                 row = json.loads(line)
             except ValueError:
                 continue
+            if row.get("type") == "user" and routing is not None:
+                resolve_tool_results(row, open_calls, routing)
             if row.get("type") != "assistant":
                 continue
             msg = row.get("message") or {}
@@ -586,7 +621,7 @@ def tally_claude_by_day(path: Path, routing: dict[str, dict] | None = None,
                             seen_text.add(text_key)
                         fresh.append(block)
                     tally_routing_message({**row, "message": {**msg, "content": fresh}},
-                                          pending, routing, category_jobs or {})
+                                          pending, routing, category_jobs or {}, open_calls)
             mid = msg.get("id")
             if not mid or mid in seen:
                 continue
@@ -708,6 +743,118 @@ def all_sessions_codex_rows(path: Path) -> tuple[list[dict], list[dict]]:
     return usage_rows, rate_rows
 
 
+def codex_tool_commands(payload: dict) -> tuple[list[str], int, int]:
+    """Commands readable from one Codex tool call: (commands, unreadable calls, spawn_agent calls).
+
+    Handles the current `custom_tool_call` exec shape, where JavaScript calls tools.exec_command,
+    and the older function_call and local_shell_call shapes.
+    """
+    kind = payload.get("type")
+    commands: list[str] = []
+    unreadable = spawned = 0
+    if kind == "custom_tool_call" and payload.get("name") == "exec":
+        script = str(payload.get("input") or "")
+        spawned = len(JS_SPAWN_AGENT_RE.findall(script))
+        for call in JS_EXEC_CALL_RE.finditer(script):
+            literal = JS_LITERAL_CMD_RE.match(script, call.end())
+            if not literal:
+                unreadable += 1
+            elif literal.group(1) is not None:
+                try:
+                    commands.append(json.loads(literal.group(1)))
+                except ValueError:
+                    unreadable += 1
+            else:
+                commands.append(literal.group(2) if literal.group(2) is not None else literal.group(3))
+    elif kind == "function_call":
+        if payload.get("name") == "spawn_agent":
+            spawned = 1
+        elif payload.get("name") in ("exec_command", "shell", "shell_command"):
+            try:
+                arguments = json.loads(payload.get("arguments") or "{}")
+                command = arguments.get("cmd") or arguments.get("command")
+            except (ValueError, AttributeError):
+                command = None
+            if isinstance(command, list):
+                command = " ".join(str(part) for part in command)
+            if isinstance(command, str) and command:
+                commands.append(command)
+            else:
+                unreadable = 1
+    elif kind == "local_shell_call":
+        command = (payload.get("action") or {}).get("command")
+        if isinstance(command, list) and command:
+            commands.append(" ".join(str(part) for part in command))
+        else:
+            unreadable = 1
+    return commands, unreadable, spawned
+
+
+def codex_routing_rows(path: Path, category_jobs: dict[str, str]) -> list[dict]:
+    """Per ET date routing counts for one Codex rollout, with tool calls no parser could read kept visible."""
+    buckets: dict[str, dict] = {}
+    open_calls: dict[str, tuple[str, str]] = {}
+    session_id = None
+    project = ""
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if row.get("type") == "session_meta":
+                session_id = payload.get("id") or session_id
+                project = str(payload.get("cwd") or project)
+                continue
+            if payload.get("type") in ("custom_tool_call_output", "function_call_output"):
+                tracked = open_calls.pop(payload.get("call_id"), None)
+                if tracked:
+                    date, kind = tracked
+                    output = json.dumps(payload.get("output"), ensure_ascii=False)
+                    buckets[date][f"{kind}_unknown"] -= 1
+                    buckets[date][f"{kind}_{'denied' if GUARD_DENY in output[:300] else 'executed'}"] += 1
+                continue
+            commands, unreadable, spawned = codex_tool_commands(payload)
+            if not (commands or unreadable or spawned):
+                continue
+            date = to_et_date(row.get("timestamp"))
+            if not date:
+                continue
+            bucket = buckets.setdefault(date, {**new_routing_bucket(), "spawn_agent": 0, "shell_calls_read": 0,
+                                               "shell_calls_unmeasured": 0})
+            bucket["shell_calls_read"] += len(commands)
+            bucket["shell_calls_unmeasured"] += unreadable
+            bucket["spawn_agent"] += spawned
+            bucket["delegations"] += spawned
+            bucket["unrouted"] += spawned
+            bucket["native_executed"] += spawned
+            for command in commands:
+                calls = executed_dispatch_details(command)
+                if not calls:
+                    continue
+                bucket["delegations"] += 1
+                if all(call["wrapper"] for call in calls):
+                    routed = all(call["dispatch"] or not call["explicit"] for call in calls)
+                    bucket["routed" if routed else "unrouted"] += 1
+                    if routed:
+                        bucket["by_category"][calls[0]["category"]] += 1
+                        job = category_jobs.get(calls[0]["category"])
+                        if job:
+                            bucket["by_job"][job] += 1
+                else:
+                    bucket["unrouted"] += 1
+                    bucket["direct_unknown"] += 1
+                    if payload.get("call_id"):
+                        open_calls[payload["call_id"]] = (date, "direct")
+    station = re.search(r"_Claude-Workspace[\\/]([^\\/]+)", project)
+    return [{"kind": "routing", "host": "codex", "session_id": session_id or path.stem, "project": project,
+             "workstation": station.group(1) if station else "other",
+             "date_et": date, **counts} for date, counts in buckets.items()]
+
+
 def sweep_all_sessions(claude_root: Path, codex_root: Path, cache: dict) -> tuple[list[dict], dict]:
     """Incremental sweep of every session on this machine (not just dt-build runs).
     Read-only against the session logs; unchanged files are not re-parsed."""
@@ -753,7 +900,9 @@ def sweep_all_sessions(claude_root: Path, codex_root: Path, cache: dict) -> tupl
                 continue
             try:
                 usage_rows, rate_rows = all_sessions_codex_rows(path)
-                file_rows = usage_rows + rate_rows
+                roster_path = Path(__file__).resolve().parents[3] / "references" / "model-router" / "default-roster.json"
+                category_jobs = json.loads(roster_path.read_text(encoding="utf-8"))["category_jobs"]
+                file_rows = usage_rows + rate_rows + codex_routing_rows(path, category_jobs)
             except (OSError, ValueError, KeyError) as err:
                 file_rows = []
                 print(f"collect-usage --all-sessions: skipped {path.name}: {err}")

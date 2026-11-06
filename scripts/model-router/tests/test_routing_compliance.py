@@ -32,8 +32,10 @@ def test_ten_calls_claim_one_selection_and_exact_row_shape(tmp_path: Path) -> No
     assert routing(path) == [{
         "kind": "routing", "host": "claude", "session_id": "session",
         "project": path.parent.name, "workstation": "Skill Creation",
-        "date_et": "2026-09-27", "delegations": 10, "routed": 1, "unrouted": 9,
-        "by_category": {"routine-coding": 1}, "by_job": {"coder": 1},
+        "date_et": "2026-09-27", "delegations": 10, "routed": 0, "unrouted": 10,
+        "native_denied": 0, "native_executed": 0, "native_unknown": 10,
+        "direct_denied": 0, "direct_executed": 0, "direct_unknown": 0, "workflow_calls": 0,
+        "by_category": {}, "by_job": {},
     }]
 
 
@@ -41,16 +43,14 @@ def test_week_boundary_uses_tool_timestamp_and_keeps_pending_selection(tmp_path:
     rows = routing(transcript(tmp_path, "routing-week-boundary.jsonl"))
     assert [r["date_et"] for r in rows] == ["2026-09-27", "2026-09-28"]
     assert [date.fromisoformat(r["date_et"]).isocalendar().week for r in rows] == [39, 40]
-    assert [r["by_category"] for r in rows] == [{"planning": 1}, {"mechanical": 1}]
-    assert [r["by_job"] for r in rows] == [{"deep-thinker": 1}, {"fast": 1}]
-    assert all(r["delegations"] == r["routed"] == 1 for r in rows)
+    assert all((r["delegations"], r["routed"], r["unrouted"]) == (1, 0, 1) for r in rows)
 
 
 def test_dispatch_types_nearest_pairing_and_preflight_exclusion(tmp_path: Path) -> None:
     row, = routing(transcript(tmp_path, "routing-dispatch-kinds.jsonl"))
-    assert (row["delegations"], row["routed"], row["unrouted"]) == (6, 3, 3)
-    assert row["by_category"] == {"analysis": 1, "routine-coding": 2}
-    assert row["by_job"] == {"deep-thinker": 1, "coder": 2}
+    assert (row["delegations"], row["routed"], row["unrouted"]) == (6, 2, 4)
+    assert row["by_category"] == {"routine-coding": 2}
+    assert row["by_job"] == {"coder": 2}
 
 
 def test_missing_model_consumes_selection_before_explicit_model(tmp_path: Path) -> None:
@@ -101,7 +101,7 @@ def test_workstation_parent_and_buckets(tmp_path: Path, project: str, expected: 
     assert row["project"] == project
 
 
-@pytest.mark.parametrize("version", [None, 0, 1, 2, 3])
+@pytest.mark.parametrize("version", [None, 0, 1, 2, 3, 4])
 def test_old_cache_rebuilt_once_for_unchanged_claude_and_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: int | None) -> None:
     claude = tmp_path / "projects"
     codex = tmp_path / "sessions"
@@ -116,7 +116,7 @@ def test_old_cache_rebuilt_once_for_unchanged_claude_and_codex(tmp_path: Path, m
     else:
         cache["cache_version"] = version
     rows, rebuilt = cu.sweep_all_sessions(claude, codex, cache)
-    assert rebuilt["cache_version"] == cu.ALL_SESSIONS_CACHE_VERSION == 4
+    assert rebuilt["cache_version"] == cu.ALL_SESSIONS_CACHE_VERSION == 5
     assert not any(r["kind"] == "stale" for r in rows)
     assert any(r["kind"] == "routing" for r in rows)
     assert any(r["host"] == "codex" for r in rows)
@@ -142,7 +142,7 @@ def test_subagents_do_not_add_delegations_and_repeated_tool_is_counted_once(tmp_
     subs.mkdir(parents=True)
     shutil.copyfile(FIXTURES / "routing-pairing.jsonl", subs / "agent.jsonl")
     row, = routing(path)
-    assert (row["delegations"], row["routed"]) == (10, 1)
+    assert (row["delegations"], row["routed"]) == (10, 0)
 
 
 def test_unparseable_selection_still_credits_explicit_model(tmp_path: Path) -> None:
@@ -150,7 +150,7 @@ def test_unparseable_selection_still_credits_explicit_model(tmp_path: Path) -> N
     path.write_text(path.read_text(encoding="utf-8").replace(
         "(routine-coding, protected, effort high)", "legacy reason without category"), encoding="utf-8")
     row, = routing(path)
-    assert (row["delegations"], row["routed"], row["unrouted"]) == (10, 1, 9)
+    assert (row["delegations"], row["routed"], row["unrouted"]) == (10, 0, 10)
     assert row["by_category"] == row["by_job"] == {}
 
 
@@ -160,7 +160,8 @@ def test_streamed_blocks_sharing_message_id_keep_selections_and_tools(tmp_path: 
     for row in rows:
         row["message"]["id"] = "streamed-message"
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
-    assert sum(row["routed"] for row in routing(path)) == 2
+    assert sum(row["routed"] for row in routing(path)) == 0
+    assert sum(row["delegations"] for row in routing(path)) == 2
 
 
 @pytest.mark.parametrize("command", [
@@ -214,7 +215,10 @@ def test_real_commands_count_once_with_their_model_status(command: str, explicit
                                             "input": {"command": command}}]}}
     cu.tally_routing_message(row, pending, buckets, {"routine-coding": "coder"})
     bucket = buckets["2026-10-01"]
-    assert (bucket["delegations"], bucket["routed"], bucket["unrouted"]) == (1, int(explicit), int(not explicit))
+    # A literal launch is never routed, with or without a model and a selection line.
+    wrapper = "invoke-" in command and "codex exec -m gpt-6.1-sol prompt" not in command
+    assert (bucket["delegations"], bucket["routed"], bucket["unrouted"]) == (1, int(wrapper), int(not wrapper))
+    assert cu.executed_dispatch(command) is explicit
     assert pending == []
 
 @pytest.mark.parametrize(('command', 'lines', 'routed', 'category'), [
@@ -247,7 +251,7 @@ def test_wrapper_routing_contract(command: str, lines: int, routed: bool, catego
 
 def test_wrapper_consumes_pending_and_effort_only_from_args() -> None:
     assert cu.executed_dispatch_details('./invoke-codex-chunk.ps1 -Tier complex') == [
-        {'wrapper': True, 'explicit': False, 'category': 'complex-coding', 'effort': None}]
+        {'wrapper': True, 'explicit': False, 'category': 'complex-coding', 'effort': None, 'dispatch': False}]
     assert cu.executed_dispatch_details('./invoke-codex-chunk.ps1 -Category analysis -Tier light -Effort medium')[0]['effort'] == 'medium'
     assert cu.executed_dispatch_details('./invoke-codex-chunk.ps1 -Category analysis -Tier light')[0]['category'] == 'analysis'
     pending = [('planning', 'high')]

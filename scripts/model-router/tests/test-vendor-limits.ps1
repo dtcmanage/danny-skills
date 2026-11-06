@@ -19,6 +19,10 @@ Set-Content -LiteralPath $transport -Value 'param($request) return [pscustomobje
 $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transport
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 $fixtureCodexHome = Enter-RouterTestCodexHome
+# Quota readers return nothing under the fake-CLI root, and they are what this file tests. Sessions,
+# credentials and the fetcher are all fixtures here, so no real account is reachable without it.
+Remove-Item Env:DT_ROUTER_TEST_FAKE_CLI_ROOT -ErrorAction SilentlyContinue
+foreach ($name in 'DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID') { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
 $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 try {
     foreach ($vendor in @('codex','claude')) {

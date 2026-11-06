@@ -35,6 +35,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PRICES_PATH = REPO_ROOT / "references" / "model-router" / "api-prices.json"
 FRONTIER_MODELS_PATH = REPO_ROOT / "references" / "model-router" / "frontier-models.json"
 ROUTER_EPOCHS_PATH = REPO_ROOT / "references" / "model-router" / "router-epochs.json"
+BENCH_CONFIG_PATH = REPO_ROOT / "scripts" / "model-router" / "bench" / "bench-config.json"
+WEEKLY_MINUTES = 10080
+FIVE_HOUR_MINUTES = 300
+CLOCK_SKEW = timedelta(minutes=5)
+INFRASTRUCTURE_FAILURES = ("environment", "tooling", "capacity")
+TRANSCRIPT_COUNTS = ("delegations", "routed", "unrouted", "native_denied", "native_executed", "native_unknown",
+                     "direct_denied", "direct_executed", "direct_unknown", "workflow_calls", "spawn_agent",
+                     "shell_calls_read", "shell_calls_unmeasured")
 
 
 def load_router_epochs(path: Path) -> dict | None:
@@ -185,7 +193,7 @@ def summarize_routing(rows: list[dict]) -> dict:
                                                        "routed": 0, "unrouted": 0})
         item["sessions"].add(row["session_id"])
         for key in ("delegations", "routed", "unrouted"):
-            item[key] += row[key]
+            item[key] += row.get(key, 0)
         for field, axis in (("by_category", "Category"), ("by_job", "Job")):
             for name, count in row[field].items():
                 distribution[axis, name] = distribution.get((axis, name), 0) + count
@@ -402,7 +410,8 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
                           frontier_path: Path = FRONTIER_MODELS_PATH,
                           routing_rows: list[dict] | None = None,
                           dispatch_rows: list[dict] | None = None,
-                          epochs_path: Path = ROUTER_EPOCHS_PATH) -> list[dict]:
+                          epochs_path: Path = ROUTER_EPOCHS_PATH,
+                          outcome_rows: list[dict] | None = None) -> list[dict]:
     """One report dict per ISO week seen in either the usage rows or the codex rate-limit
     readings, each holding a VendorWeek per vendor that had any signal that week."""
     today_et = today_et or datetime.now(tz=ET_ZONE).date()
@@ -411,6 +420,12 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
     week_keys: set[tuple[int, int]] = set()
     rows_by_week_host: dict[tuple[int, int, str], list[dict]] = {}
     routing_by_week: dict[tuple[int, int], list[dict]] = {}
+    transcript_rows = [row for row in routing_rows or [] if row.get("kind") == "routing"]
+    week_keys.update(iso_week_of(row["date_et"]) for row in transcript_rows)
+    for row in outcome_rows or []:
+        date_et = outcome_date_et(row)
+        if date_et:
+            week_keys.add(iso_week_of(date_et))
     for row in dispatch_rows or []:
         week_keys.add(iso_week_of(row['date_et']))
     for row in routing_rows or []:
@@ -445,7 +460,10 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
             if not rows and not rate_rows_for_week:
                 continue
             vendors[host] = build_vendor_week(host, iso_year, iso_week, rows, rate_rows_for_week, prices, today_et)
-        if not vendors and not routing_by_week.get((iso_year, iso_week)) and not any(iso_week_of(row['date_et']) == (iso_year, iso_week) for row in dispatch_rows or []):
+        task_summary = routing_by_task(outcome_rows or [], transcript_rows, iso_year, iso_week)
+        if (not vendors and not routing_by_week.get((iso_year, iso_week)) and not task_summary["transcripts"]
+                and not any(outcome_date_et(row) and iso_week_of(outcome_date_et(row)) == (iso_year, iso_week) for row in outcome_rows or [])
+                and not any(iso_week_of(row['date_et']) == (iso_year, iso_week) for row in dispatch_rows or [])):
             continue
         work: dict[str, dict] = {}
         frontier_sessions: set[tuple[str, str]] = set()
@@ -481,6 +499,8 @@ def build_weekly_reports(usage_rows: list[dict], rate_rows: list[dict], prices: 
                                               -(item["api_equivalent_usd"] or 0), item["model"]))
         reports.append({"iso_year": iso_year, "iso_week": iso_week, "label": week_label(iso_year, iso_week),
                         "vendors": vendors, "work_by_model": work_by_model,
+                        "historical": (iso_year, iso_week) != tuple(today_et.isocalendar())[:2],
+                        "routing_by_task": task_summary,
                         "routing": summarize_routing(routing_by_week.get((iso_year, iso_week), [])),
                         "router_version": router_version_for_week(epochs, iso_year, iso_week,
                             routing_by_week.get((iso_year, iso_week), [])),
@@ -503,17 +523,63 @@ def fmt_tok(n: float) -> str:
     return str(n)
 
 
-def load_claude_usage(state_dir: Path) -> dict | None:
-    reading = _load_json_object(state_dir / "claude-usage.json")
+def spend_reading_stale_hours(state_dir: Path) -> float:
+    """The bench's spend_reading_stale_hours: state catalog first, then the shipped config."""
+    for path in (state_dir / "bench" / "judge-config.json", BENCH_CONFIG_PATH):
+        config = _load_json_object(path)
+        value = config.get("spend_reading_stale_hours") if isinstance(config, dict) else None
+        if type(value) in (int, float) and value > 0:
+            return float(value)
+    return 6.0
+
+
+def weekly_reading_problem(reading: object, now: datetime) -> str | None:
+    """Why a saved reading cannot stand for the current weekly window, or None when it can."""
     if not isinstance(reading, dict):
-        return None
-    try:
-        float(reading["used_percent"])
-        if not parse_ts(reading["observed_at_utc"]) or not parse_ts(reading["resets_at_utc"]):
-            return None
-    except (KeyError, TypeError, ValueError):
-        return None
-    return reading
+        return "malformed"
+    used = reading.get("used_percent")
+    if type(used) not in (int, float) or not math.isfinite(used) or used < 0:
+        return "malformed percent"
+    observed = parse_ts(reading.get("observed_at_utc"))
+    resets = parse_ts(reading.get("resets_at_utc"))
+    if observed is None or resets is None:
+        return "unknown or malformed timestamp"
+    window = reading.get("window_minutes")
+    if window is not None and window != WEEKLY_MINUTES:
+        return f"wrong window ({window} minutes)"
+    if observed > now + CLOCK_SKEW:
+        return "observed time is in the future"
+    if resets <= now:
+        return "its window has already reset"
+    if resets - observed > timedelta(minutes=WEEKLY_MINUTES) + CLOCK_SKEW:
+        return "wrong window (resets more than a week after it was read)"
+    return None
+
+
+def usage_result(reading: dict | None, problems: list[str], now: datetime, stale_hours: float,
+                 refresh_failed: bool, missing: str) -> dict:
+    if reading is None:
+        reason = "; ".join(problems) or missing
+        if refresh_failed:
+            reason += "; refresh failed"
+        return {"status": "unavailable", "reason": reason}
+    age = (now - parse_ts(reading["observed_at_utc"])).total_seconds() / 3600
+    stale = refresh_failed or age > stale_hours
+    return {**reading, "status": "stale" if stale else "current", "age_hours": max(age, 0.0),
+            "refresh_failed": refresh_failed}
+
+
+def load_claude_usage(state_dir: Path, now: datetime | None = None, stale_hours: float | None = None,
+                      refresh_failed: bool = False) -> dict:
+    now = now or datetime.now(tz=UTC)
+    stale_hours = stale_hours if stale_hours is not None else spend_reading_stale_hours(state_dir)
+    path = state_dir / "claude-usage.json"
+    if not path.is_file():
+        return usage_result(None, [], now, stale_hours, refresh_failed, "no Claude usage reading yet")
+    reading = _load_json_object(path)
+    problem = weekly_reading_problem(reading, now)
+    return usage_result(None if problem else reading, [f"claude-usage.json: {problem}"] if problem else [],
+                        now, stale_hours, refresh_failed, "no Claude usage reading yet")
 
 
 def format_usage_time_et(value: str) -> str:
@@ -527,42 +593,77 @@ def used_left(percent: float) -> str:
     return f"{used:g}% used / {max(0.0, 100.0 - used):g}% left"
 
 
+def reading_label(reading: dict) -> str:
+    """A stale value leads with its label so it can never read as current."""
+    if reading.get("status") != "stale":
+        return ""
+    return f"STALE ({reading['age_hours']:.1f} hours old{', refresh failed' if reading.get('refresh_failed') else ''}): "
+
+
+def reading_provenance(reading: dict) -> str:
+    age = f", {reading['age_hours']:.1f} hours old" if "age_hours" in reading else ""
+    return f"; source {reading.get('source') or 'unknown'}{age}"
+
+
 def render_claude_usage(reading: dict | None) -> str:
     if not reading:
         return "Claude usage: no Claude usage reading yet"
-    line = (f"Claude weekly usage: {used_left(reading['used_percent'])} at "
+    if reading.get("status") == "unavailable":
+        return f"Claude usage: unavailable ({reading['reason']})"
+    line = (f"{reading_label(reading)}Claude weekly usage: {used_left(reading['used_percent'])} at "
             f"{format_usage_time_et(reading['observed_at_utc'])}, resets "
             f"{format_usage_time_et(reading['resets_at_utc'])}")
     if reading.get("session_percent") is not None:
         line += f"; 5-hour window {used_left(reading['session_percent'])}"
-    return line
+    return line + reading_provenance(reading)
 
 
-def load_codex_usage(state_dir: Path) -> dict | None:
-    """Newest saved Codex weekly reading: the router's live check or a bench app-server snapshot."""
+def load_codex_usage(state_dir: Path, now: datetime | None = None, stale_hours: float | None = None,
+                     refresh_failed: bool = False) -> dict:
+    """Newest valid Codex weekly reading: the router's live check or a bench app-server snapshot.
+
+    codex-live.json holds the fullest window, which can be the five-hour one, and does not say
+    which. It counts as weekly only when its reset is too far off for five hours, or matches
+    the weekly snapshot saved beside it.
+    """
+    now = now or datetime.now(tz=UTC)
+    stale_hours = stale_hours if stale_hours is not None else spend_reading_stale_hours(state_dir)
+    weekly = _load_json_object(state_dir / "readings" / "codex-appserver.json")
+    weekly_reset = parse_ts(weekly.get("resets_at_utc")) if isinstance(weekly, dict) else None
     best = None
+    problems: list[str] = []
     for name in ("codex-live.json", "codex-appserver.json"):
-        reading = _load_json_object(state_dir / "readings" / name)
-        if not isinstance(reading, dict):
+        path = state_dir / "readings" / name
+        if not path.is_file():
             continue
-        try:
-            float(reading["used_percent"])
-            observed = parse_ts(reading["observed_at_utc"])
-            if not observed or not parse_ts(reading["resets_at_utc"]):
-                continue
-        except (KeyError, TypeError, ValueError):
-            continue
-        if best is None or observed > parse_ts(best["observed_at_utc"]):
+        reading = _load_json_object(path)
+        problem = weekly_reading_problem(reading, now)
+        if not problem and name == "codex-live.json" and "window_minutes" not in reading:
+            resets = parse_ts(reading["resets_at_utc"])
+            matches_weekly = weekly_reset is not None and abs(resets - weekly_reset) <= timedelta(minutes=1)
+            near = resets - parse_ts(reading["observed_at_utc"]) <= timedelta(minutes=FIVE_HOUR_MINUTES)
+            if near and not matches_weekly:
+                problem = "window not stated and may be the five-hour limit"
+        if problem:
+            problems.append(f"{name}: {problem}")
+        elif best is None or parse_ts(reading["observed_at_utc"]) > parse_ts(best["observed_at_utc"]):
             best = reading
-    return best
+    return usage_result(best, problems, now, stale_hours, refresh_failed, "no Codex usage reading yet")
 
 
 def render_codex_usage(reading: dict | None) -> str:
     if not reading:
         return "Codex usage: no Codex usage reading yet"
-    return (f"Codex weekly usage: {used_left(reading['used_percent'])} at "
+    if reading.get("status") == "unavailable":
+        return f"Codex usage: unavailable ({reading['reason']})"
+    return (f"{reading_label(reading)}Codex weekly usage: {used_left(reading['used_percent'])} at "
             f"{format_usage_time_et(reading['observed_at_utc'])}, resets "
-            f"{format_usage_time_et(reading['resets_at_utc'])}")
+            f"{format_usage_time_et(reading['resets_at_utc'])}{reading_provenance(reading)}")
+
+
+def current_reading_text(report: dict, text: str) -> str:
+    """A past week's report shows today's quota, so it says so."""
+    return f"Current reading, not from this past week: {text}" if report.get("historical") else text
 
 
 CLAUDE_BLOCKED_NOTE = "Claude blocked-minutes are not computed (only the latest reading is kept, not a history)."
@@ -601,6 +702,182 @@ def difficulty_split(rows: list[dict], iso_year: int, iso_week: int) -> list[dic
         counts = stations.setdefault(station, {'workstation': station, 'standard': 0, 'hard': 0})
         counts[row['difficulty']] += 1
     return [stations[key] for key in sorted(stations)]
+
+
+def normalize_usage(usage: object) -> dict | None:
+    """Tokens from one dispatch's usage: a snake_case Codex object, a camelCase Claude modelUsage
+    object, or a list when several models report. Anything missing stays unknown, never zero."""
+    if isinstance(usage, list):
+        parts = [normalize_usage(item) for item in usage]
+        if not parts or any(part is None for part in parts):
+            return None
+        return {key: sum(part[key] for part in parts) for key in parts[0]}
+    if not isinstance(usage, dict):
+        return None
+    tokens = {"input": usage.get("input_tokens", usage.get("inputTokens")),
+              "output": usage.get("output_tokens", usage.get("outputTokens"))}
+    if any(type(value) is not int or value < 0 for value in tokens.values()):
+        return None
+    return tokens
+
+
+def model_vendor(model: str | None) -> str:
+    name = (model or "").lower()
+    if name.startswith("gpt-"):
+        return "codex"
+    if "claude" in name or name.split("-")[0] in ("opus", "sonnet", "haiku", "fable"):
+        return "claude"
+    return "unknown"
+
+
+def models_match(actual: str, resolved: str) -> bool:
+    clean = lambda name: re.sub(r"-\d{8}$", "", re.sub(r"\[[^\]]*\]$", "", name.strip().lower()))
+    actual, resolved = clean(actual), clean(resolved)
+    return actual == resolved or resolved in actual.split("-")
+
+
+def outcome_date_et(row: dict) -> str | None:
+    at = parse_ts(row.get("started_utc") or row.get("at"))
+    return at.astimezone(ET_ZONE).date().isoformat() if at else None
+
+
+def routing_by_task(outcome_rows: list[dict], transcript_rows: list[dict], iso_year: int, iso_week: int) -> dict:
+    """The week's routing headline. Dispatch evidence and transcripts stay separate sources:
+    parent sessions, benchmarks and delegated work are never added together, and bench,
+    canary, event and legacy rows never enter a dispatch or task count."""
+    rows = [row for row in outcome_rows
+            if (date_et := outcome_date_et(row)) and iso_week_of(date_et) == (iso_year, iso_week)]
+    dispatches = [row for row in rows if row.get("source") == "dispatch" and row.get("dispatch_id")]
+    dispatch_ids = {row["dispatch_id"] for row in dispatches}
+    # A failed preflight writes a canary and a dispatch-event row for one logical dispatch.
+    preflights = {str(row.get("key")).split(":")[0] for row in rows if row.get("source") in ("canary", "dispatch-event")}
+    bench = [row for row in rows if row.get("source") == "bench"]
+    legacy = [row for row in rows if not row.get("dispatch_id") and row.get("source") not in ("canary", "dispatch-event", "bench")]
+    counts = dict.fromkeys(("routed", "mismatched", "unexplained_overrides", "inherited", "refused", "fallbacks", "actual_unknown",
+                            "execution_success", "execution_failures", "quality_failures",
+                            "infrastructure_failures", "unknown_results"), 0)
+    tasks: dict[str, list[dict]] = {}
+    for row in dispatches:
+        tasks.setdefault(row.get("logical_task_id") or row["dispatch_id"], []).append(row)
+        requested, resolved, actual = row.get("requested_model"), row.get("resolved_model"), row.get("actual_model")
+        # dispatch.ps1 writes the roster pick as requested_model on every dispatch, a fallback moves
+        # resolved_model to the backup pick, and a wait or pin refusal leaves it null; none is an override.
+        no_model_ran = not resolved and not actual and row.get("execution_result") != "success"
+        if requested and resolved and requested != resolved and not row.get("override_reason") and not row.get("fallback_reason"):
+            counts["unexplained_overrides"] += 1
+        elif no_model_ran:
+            counts["refused"] += 1
+        elif not requested and not resolved:
+            counts["inherited"] += 1
+        else:
+            counts["routed"] += 1
+        if row.get("fallback_reason"):
+            counts["fallbacks"] += 1
+        if not actual:
+            counts["actual_unknown"] += not no_model_ran
+        elif resolved and not row.get("fallback_reason") and not models_match(actual, resolved):
+            counts["mismatched"] += 1
+        if row.get("independent_acceptance") is False:
+            counts["quality_failures"] += 1
+        if row.get("failure_category") in INFRASTRUCTURE_FAILURES:
+            counts["infrastructure_failures"] += 1
+        elif row.get("execution_result") == "failure":
+            counts["execution_failures"] += 1
+        elif row.get("execution_result") == "success":
+            counts["execution_success"] += 1
+        else:
+            counts["unknown_results"] += 1
+    task_rows = []
+    verified = accepted = later_attempts = 0
+    for task, attempts in sorted(tasks.items()):
+        attempts.sort(key=lambda row: (not isinstance(row.get("attempt"), int), row.get("attempt") or 0))
+        first, last = attempts[0], attempts[-1]
+        later_attempts += len(attempts) - 1
+        has_verifier = any(row.get("independent_acceptance") is not None for row in attempts)
+        first_accepted = first.get("attempt") == 1 and first.get("independent_acceptance") is True
+        verified += has_verifier
+        accepted += first_accepted
+        durations = [row["duration_ms"] for row in attempts if type(row.get("duration_ms")) is int]
+        selected = first.get("requested_model") or first.get("resolved_model")
+        actual = last.get("actual_model")
+        task_rows.append([task[:60], first.get("category") or "unknown",
+                          f"{selected or 'unknown'} ({model_vendor(selected)})",
+                          f"{actual or 'unknown'} ({model_vendor(actual)})", str(len(attempts)),
+                          ("accepted" if first_accepted else "not accepted") if has_verifier else "no verifier",
+                          last.get("execution_result") or "unknown",
+                          f"{sum(durations) / 1000:.0f}s" if durations else "unknown"])
+    delegated_usage = [normalize_usage(row.get("usage")) for row in dispatches]
+    bench_usage = [normalize_usage(row.get("usage")) for row in bench]
+    transcripts: dict[str, dict] = {}
+    for row in transcript_rows:
+        if iso_week_of(row["date_et"]) == (iso_year, iso_week):
+            total = transcripts.setdefault(row.get("host") or "unknown", {key: 0 for key in TRANSCRIPT_COUNTS})
+            for key in TRANSCRIPT_COUNTS:
+                total[key] += row.get(key) or 0
+    return {**counts, "tasks": task_rows, "verified_tasks": verified, "first_attempt_accepted": accepted,
+            "unverified_tasks": len(tasks) - verified, "later_attempts": later_attempts,
+            "failed_preflights": len(preflights - dispatch_ids), "legacy_rows": len(legacy),
+            "bench_rows": len(bench), "transcripts": transcripts,
+            "delegated_tokens": sum(sum(usage.values()) for usage in delegated_usage if usage),
+            "delegated_usage_unknown": delegated_usage.count(None),
+            "bench_tokens": sum(sum(usage.values()) for usage in bench_usage if usage),
+            "bench_usage_unknown": bench_usage.count(None)}
+
+
+def routing_verdict(summary: dict) -> str:
+    """Plain reading of the transcript counts. There is no routed-share target; zero violations alone is never
+    success. Dispatch evidence is a separate source, stated on its own line and never merged into this comparison."""
+    totals = summary["transcripts"].values()
+    delegations = sum(item["delegations"] for item in totals)
+    routed = sum(item["routed"] for item in totals)
+    violations = sum(item["native_executed"] + item["direct_executed"] for item in totals)
+    if not routed:
+        none_seen = "No routed delegations were observed in transcripts" if summary["routed"] else "No routed dispatches were observed"
+        return (f"{none_seen}, so a count of zero violations is not evidence of success."
+                if not violations else f"{none_seen}, and {violations} native or direct call(s) ran outside dispatch.ps1.")
+    if violations:
+        return f"{violations} native or direct call(s) ran outside dispatch.ps1; the guard was off or absent for them."
+    if routed < delegations:
+        return f"No executed violations were observed, but only {routed} of {delegations} observed delegations were routed; that is not success on its own."
+    return f"All {delegations} observed delegations were routed, within the partial coverage noted below."
+
+
+def routing_headline_lines(report: dict) -> list[str]:
+    summary = report["routing_by_task"]
+    totals = summary["transcripts"]
+    def total(key: str) -> int:
+        return sum(item.get(key, 0) for item in totals.values())
+    lines = [routing_verdict(summary),
+             f"Dispatch evidence: {summary['routed']} routed, {summary['mismatched']} mismatched, "
+             f"{summary['unexplained_overrides']} unexplained overrides, {summary['inherited']} inherited, {summary['refused']} refused with no model run, "
+             f"{summary['fallbacks']} fallbacks, {summary['actual_unknown']} with actual model unknown; "
+             f"{summary['failed_preflights']} failed preflights; {summary['legacy_rows']} legacy rows without a dispatch id, never counted as routed.",
+             f"Transcripts: {total('routed')} routed of {total('delegations')} delegations; native attempts denied "
+             f"{total('native_denied')}, native calls executed {total('native_executed')} (guard off or absent; never routed), "
+             f"native result unknown {total('native_unknown')}; direct launches denied {total('direct_denied')}, "
+             f"executed {total('direct_executed')}, unknown {total('direct_unknown')}; Workflow calls {total('workflow_calls')} "
+             f"(inner agents not measured); Codex spawn_agent {total('spawn_agent')}; Codex shell calls read "
+             f"{total('shell_calls_read')}, unmeasured {total('shell_calls_unmeasured')} (a launch inside one would not be counted).",
+             f"First attempt independently accepted: {summary['first_attempt_accepted']} of {summary['verified_tasks']} "
+             f"tasks with a verifier result; {summary['unverified_tasks']} tasks unverified; "
+             f"{summary['later_attempts']} later attempts.",
+             f"Failures: {summary['execution_failures']} execution, {summary['quality_failures']} quality, "
+             f"{summary['infrastructure_failures']} infrastructure; {summary['unknown_results']} with no result yet "
+             f"(unknown); {summary['execution_success']} executed successfully, which is not acceptance.",
+             f"Delegated productive work: {len(summary['tasks'])} tasks, {fmt_tok(summary['delegated_tokens'])} known tokens, "
+             f"{summary['delegated_usage_unknown']} dispatches with unknown usage. Benchmark overhead: {summary['bench_rows']} rows, "
+             f"{fmt_tok(summary['bench_tokens'])} known tokens, {summary['bench_usage_unknown']} with unknown usage.",
+             "Parent and interactive usage is the per-vendor observed usage below. Transcripts cannot yet tell a parent session "
+             "from a worker a wrapper launched, so those totals include workers and are not parent-only."]
+    lines.append(current_reading_text(report, render_claude_usage(report.get("claude_usage"))))
+    lines.append(current_reading_text(report, render_codex_usage(report.get("codex_usage"))))
+    gaps = [f"{vw.label} missing {', '.join(vw.gap_dates)}" for vw in report["vendors"].values() if vw.gap_dates]
+    lines.append("Transcript counts are partial observed coverage: only this Windows machine's logs are swept, so Mac "
+                 "sessions and delegation outside tool calls are missing" + (f"; host gaps: {'; '.join(gaps)}." if gaps else "."))
+    return lines
+
+
+TASK_TABLE_HEADERS = ["Task", "Category", "Selected (vendor)", "Actual (vendor)", "Attempts", "First attempt", "Execution", "Duration"]
 
 
 def routing_tables(report: dict) -> list[tuple[str, list[str], list[list[str]]]]:
@@ -643,6 +920,14 @@ def render_routing_line(report: dict) -> str:
 
 def render_markdown(report: dict) -> str:
     lines = [f"# Model-router weekly cost report - {report['label']}", ""]
+    if report.get("routing_by_task"):
+        lines.extend(["## Routing by task", ""])
+        lines.extend(f"- {line}" for line in routing_headline_lines(report))
+        lines.append("")
+        if report["routing_by_task"]["tasks"]:
+            lines.extend(["| " + " | ".join(TASK_TABLE_HEADERS) + " |", "| " + " | ".join("---" for _ in TASK_TABLE_HEADERS) + " |"])
+            lines.extend("| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |" for row in report["routing_by_task"]["tasks"])
+            lines.append("")
     lines.extend(["## Router version", ""])
     lines.extend(report.get("router_version", {"lines": ["Router epochs unavailable."]})["lines"])
     lines.append("")
@@ -677,9 +962,9 @@ def render_markdown(report: dict) -> str:
                 lines.append("- Blocked time (quota at 100%): no limit data available")
             else:
                 lines.append(f"- Blocked time (quota at 100%): {vw.blocked_minutes:.1f} minutes; no dollar figure is invented for blocked work")
-            lines.append("- " + render_codex_usage(report.get("codex_usage")))
+            lines.append("- " + current_reading_text(report, render_codex_usage(report.get("codex_usage"))))
         else:
-            lines.append("- " + render_claude_usage(report.get("claude_usage")))
+            lines.append("- " + current_reading_text(report, render_claude_usage(report.get("claude_usage"))))
             lines.append("- " + CLAUDE_BLOCKED_NOTE)
         lines.append("")
     lines.extend(["## Work by model", ""])
@@ -727,9 +1012,9 @@ def render_html(report: dict) -> str:
         if host == "codex":
             blocked_html = (f"<p>Blocked time (quota at 100%): {vw.blocked_minutes:.1f} min; no dollar figure invented</p>"
                              if vw.blocked_minutes is not None else "<p>Blocked time: no limit data available</p>")
-            blocked_html += f"<p>{html.escape(render_codex_usage(report.get('codex_usage')))}</p>"
+            blocked_html += f"<p>{html.escape(current_reading_text(report, render_codex_usage(report.get('codex_usage'))))}</p>"
         else:
-            blocked_html = (f"<p>{html.escape(render_claude_usage(report.get('claude_usage')))}</p>"
+            blocked_html = (f"<p>{html.escape(current_reading_text(report, render_claude_usage(report.get('claude_usage'))))}</p>"
                             f"<p>{CLAUDE_BLOCKED_NOTE}</p>")
         cards.append(f"""<div class="card"><h2>{html.escape(vw.label)}</h2>
 {bar(vw.subscription_usd, 'sub')}<div class='label'>Subscription (this week)</div>
@@ -754,6 +1039,18 @@ def render_html(report: dict) -> str:
     else:
         frontier_line = "Frontier models: none this week"
 
+    routing_html = ""
+    if report.get("routing_by_task"):
+        task_table = ""
+        if report["routing_by_task"]["tasks"]:
+            heading = "".join(f"<th>{html.escape(cell)}</th>" for cell in TASK_TABLE_HEADERS)
+            body = "".join("<tr>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in row) + "</tr>"
+                           for row in report["routing_by_task"]["tasks"])
+            task_table = f"<table><thead><tr>{heading}</tr></thead><tbody>{body}</tbody></table>"
+        routing_html = ("<section><h2>Routing by task</h2>"
+                        + "".join(f"<p>{html.escape(line)}</p>" for line in routing_headline_lines(report))
+                        + task_table + "</section>")
+
     tables = []
     for title, headers, rows in routing_tables(report):
         heading = "".join(f"<th>{html.escape(cell)}</th>" for cell in headers)
@@ -776,6 +1073,7 @@ h1{{font-size:20px;margin:0 0 12px}} h2{{font-size:16px;margin:0 0 10px}}
 p{{margin:6px 0}} ul{{margin:4px 0 8px 18px;padding:0}}
 </style></head><body>
 <h1>Model-router weekly cost report - {html.escape(report['label'])}</h1>
+{routing_html}
 <section><h2>Router version</h2>{''.join('<p>' + html.escape(line) + '</p>' for line in report.get('router_version', {'lines': ['Router epochs unavailable.']})['lines'])}</section>
 <p class='label'>Subscription vs API-equivalent cost, priced at published vendor list rates. Reflects only sessions found in the swept logs -- never a certified full-account total.</p>
 {''.join(cards)}
@@ -1200,7 +1498,10 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
         return label, "\n".join([message, *required])
 
     frontier_models = json.loads(frontier_path.read_text(encoding="utf-8"))
-    lines = [header, render_headline(report)]
+    lines = [header]
+    if report.get("routing_by_task"):
+        lines.extend(routing_headline_lines(report)[:2])
+    lines.append(render_headline(report))
     lines.extend(render_vendor_lines(report["vendors"]))
     top = top_models(report["work_by_model"])
     if top:
@@ -1215,9 +1516,9 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
     if codex_line:
         lines.append(codex_line)
     if "codex" in report["vendors"]:
-        lines.append(render_codex_usage(report.get("codex_usage")))
+        lines.append(current_reading_text(report, render_codex_usage(report.get("codex_usage"))))
     if "claude" in report["vendors"]:
-        lines.append(render_claude_usage(report.get("claude_usage")))
+        lines.append(current_reading_text(report, render_claude_usage(report.get("claude_usage"))))
         lines.append(CLAUDE_BLOCKED_NOTE)
     if "claude" in report["vendors"] or report.get("routing", {}).get("workstations"):
         lines.append(render_routing_line(report))
@@ -1236,6 +1537,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--prices", type=Path, default=DEFAULT_PRICES_PATH)
+    parser.add_argument("--refresh-failed", action="append", choices=("codex", "claude"), default=[],
+                        help="vendor whose quota refresh just failed; its older reading is labeled stale")
     args = parser.parse_args()
 
     state_dir = ensure_state_gitignore(Path(args.state_dir) if args.state_dir else get_router_state_dir())
@@ -1247,9 +1550,10 @@ def main() -> None:
     usage_rows, rate_rows = load_usage_all_sessions(usage_path)
     routing_rows = [row for row in load_jsonl(usage_path) if row.get("kind") == "routing"]
     dispatches = difficulty_dispatches(state_dir)
-    reports = build_weekly_reports(usage_rows, rate_rows, prices, routing_rows=routing_rows, dispatch_rows=dispatches)
-    claude_usage = load_claude_usage(state_dir)
-    codex_usage = load_codex_usage(state_dir)
+    reports = build_weekly_reports(usage_rows, rate_rows, prices, routing_rows=routing_rows, dispatch_rows=dispatches,
+                                   outcome_rows=load_jsonl(state_dir / "outcomes.jsonl"))
+    claude_usage = load_claude_usage(state_dir, refresh_failed="claude" in args.refresh_failed)
+    codex_usage = load_codex_usage(state_dir, refresh_failed="codex" in args.refresh_failed)
     for report in reports:
         report["claude_usage"] = claude_usage
         report["codex_usage"] = codex_usage

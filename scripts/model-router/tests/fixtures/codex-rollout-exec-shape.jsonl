@@ -1,0 +1,14 @@
+{"timestamp":"2026-11-05T15:00:00Z","type":"session_meta","payload":{"id":"fixture-exec-shape","cwd":"D:\\Claude\\_Claude-Workspace\\Skill Creation\\fixture-project"}}
+{"timestamp":"2026-11-05T15:00:01Z","type":"turn_context","payload":{"model":"gpt-fixture"}}
+{"timestamp":"2026-11-05T15:00:02Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"c1","name":"exec","input":"const r = await tools.exec_command({cmd: \"pwsh -NoProfile -File scripts/model-router/dispatch.ps1 -Category analysis -Live\", yield_time_ms: 1000}); text(r);"}}
+{"timestamp":"2026-11-05T15:00:03Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"fixture output"}}
+{"timestamp":"2026-11-05T15:00:04Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"c2","name":"exec","input":"await tools.exec_command({cmd: \"codex exec -m gpt-fixture task\"});"}}
+{"timestamp":"2026-11-05T15:00:05Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c2","output":"fixture output"}}
+{"timestamp":"2026-11-05T15:00:06Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"c3","name":"exec","input":"const line = build(); await tools.exec_command({cmd: line});"}}
+{"timestamp":"2026-11-05T15:00:07Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c3","output":"fixture output"}}
+{"timestamp":"2026-11-05T15:00:08Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"c4","name":"exec","input":"await tools.exec_command({cmd: \"git status --short\"}); await tools.spawn_agent({message: \"fixture\"});"}}
+{"timestamp":"2026-11-05T15:00:09Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c4","output":"fixture output"}}
+{"timestamp":"2026-11-05T15:00:10Z","type":"response_item","payload":{"type":"function_call","call_id":"c5","name":"spawn_agent","arguments":"{\"message\":\"fixture\"}"}}
+{"timestamp":"2026-11-05T15:00:11Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c5","output":"fixture output"}}
+{"timestamp":"2026-11-05T15:00:12Z","type":"response_item","payload":{"type":"custom_tool_call","call_id":"c6","name":"exec","input":"await tools.exec_command({cmd: \"claude -p hello\"});"}}
+{"timestamp":"2026-11-05T15:00:13Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c6","output":"ROUTER_GUARD_DENY: category routine-coding; dispatch.ps1"}}

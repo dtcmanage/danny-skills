@@ -506,6 +506,7 @@ def test_cost_report_refreshes_all_sessions_with_fake_sweep(tmp_path, exit_code)
     env = os.environ.copy()
     env["DT_MODEL_ROUTER_STATE"] = str(tmp_path / "state")
     env["DT_MODEL_ROUTER_USAGE_SWEEP"] = str(sweep)
+    env["DT_ROUTER_TEST_FAKE_CLI_ROOT"] = str(tmp_path)  # Quota refresh reaches no real account.
     # The Discord-delivery step this milestone adds must never reach a real transport.
     fake_transport = tmp_path / "fake-transport.ps1"
     fake_transport.write_text(
@@ -628,8 +629,10 @@ def test_claude_latest_usage_rendered_in_markdown_html_and_discord(tmp_path, pre
     }
     if present:
         (tmp_path / "claude-usage.json").write_text(json.dumps(reading), encoding="utf-8")
-    loaded = cr.load_claude_usage(tmp_path)
-    assert loaded == (reading if present else None)
+    now = datetime(2026, 9, 30, 22, 0, tzinfo=UTC)
+    loaded = cr.load_claude_usage(tmp_path, now=now, stale_hours=6)
+    assert loaded == ({**reading, "status": "current", "age_hours": 1.0, "refresh_failed": False} if present
+                      else {"status": "unavailable", "reason": "no Claude usage reading yet"})
     report = _synth_report()
     report["claude_usage"] = loaded
     expected = ("Claude weekly usage: 67% used / 33% left at Sep 30, 5:00 PM ET, "
@@ -647,7 +650,7 @@ def test_claude_usage_cache_corrupt_or_invalid_is_unknown(tmp_path):
     cache = tmp_path / "claude-usage.json"
     for text in ("{broken", "[]", '{}', '{"used_percent": "invalid"}'):
         cache.write_text(text, encoding="utf-8")
-        assert cr.load_claude_usage(tmp_path) is None
+        assert cr.load_claude_usage(tmp_path)["status"] == "unavailable"
 
 
 def test_headline_math_subscription_ahead_and_api_cheaper():
@@ -851,9 +854,10 @@ def test_render_discord_summary_preserves_all_roster_actions(tmp_path):
 def test_cost_report_main_writes_discord_summary_json(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
+    resets = datetime.now(tz=UTC) + timedelta(days=3)
     (state / "claude-usage.json").write_text(json.dumps({
         "used_percent": 67, "session_percent": 8,
-        "observed_at_utc": "2026-09-30T21:00:00Z", "resets_at_utc": "2026-10-03T18:00:00Z",
+        "observed_at_utc": (datetime.now(tz=UTC) - timedelta(hours=1)).isoformat(), "resets_at_utc": resets.isoformat(),
     }), encoding="utf-8")
     usage_path = state / "usage-all-sessions.jsonl"
     # The summary covers the last complete ET week relative to the day the script runs,
@@ -876,7 +880,7 @@ def test_cost_report_main_writes_discord_summary_json(tmp_path):
     assert summary["key"].startswith("weekly-report:")
     assert isinstance(summary["message"], str) and summary["message"]
     assert "Claude weekly usage: 67%" in summary["message"]
-    assert "resets Oct 3, 2:00 PM ET" in (state / "cost-reports/latest.md").read_text(encoding="utf-8")
+    assert f"resets {cr.format_usage_time_et(resets.isoformat())}" in (state / "cost-reports/latest.md").read_text(encoding="utf-8")
 
 # M11: routing rows are counts, never priced usage.
 def _routing(day="2026-09-30", station="Skill Creation", session="routing-test", routed=2, unrouted=1):
@@ -1173,10 +1177,10 @@ def test_codex_usage_shows_used_and_left(tmp_path):
              "observed_at_utc": "2026-10-10T20:42:50+00:00", "source": "codex-live"}
     (readings / "codex-appserver.json").write_text(json.dumps(older), encoding="utf-8")
     (readings / "codex-live.json").write_text(json.dumps(newer), encoding="utf-8")
-    loaded = cr.load_codex_usage(tmp_path)
-    assert loaded == newer
+    loaded = cr.load_codex_usage(tmp_path, now=datetime(2026, 10, 10, 21, 42, 50, tzinfo=UTC), stale_hours=6)
+    assert loaded == {**newer, "status": "current", "age_hours": 1.0, "refresh_failed": False}
     assert cr.render_codex_usage(loaded) == ("Codex weekly usage: 2% used / 98% left at Oct 10, 4:42 PM ET, "
-                                             "resets Oct 17, 1:54 PM ET")
+                                             "resets Oct 17, 1:54 PM ET; source codex-live, 1.0 hours old")
     assert cr.render_codex_usage(None) == "Codex usage: no Codex usage reading yet"
     assert cr.used_left(104) == "104% used / 0% left"
 
