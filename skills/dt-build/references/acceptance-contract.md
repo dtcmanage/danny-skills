@@ -155,6 +155,8 @@ Do not count environment outages, tool/sandbox failures, or an approved contract
 human/root remediation, a fresh independent PASS may resume dependent milestones without pretending the
 automatic agent earned a third attempt; record the remediation and category in the decision log.
 
+Final integration must pass the integration branch's `.ship.json` `gateCommand`, when present, on the final SHA before COMPLETE; record evidence per SKILL.md step 6.5.
+
 ### Default implementation loop limit
 
 - Build only what the milestone's acceptance checks require. Put everything else in `deferred-findings.md`.

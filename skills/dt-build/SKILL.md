@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.50.1
+  version: 2.50.2
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -246,25 +246,26 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   `build-decision-log` entry.
 
 6.5 Emit acceptance ledger; review artifact on request only:
-- Run one final integrated baseline/E2E rehearsal against the exact integration-branch SHA, including every
-  design-required live environment check. Have a fresh non-builder verifier (via VERIFY_DISPATCH)
-  review the combined diff. Persist
-  `final-integration.json` with branch SHA, commands, environment, verifier provenance (on codex-host,
-  include the wrapper's provenance JSON path), and PASS/BLOCKED.
-  Do not mark COMPLETE if this gate is missing or BLOCKED.
+- Run a final integrated baseline/E2E rehearsal on the final integration-branch SHA, including design-required
+  live checks. If that branch's `.ship.json` has a `gateCommand`, run that exact command as a tracked job
+  on a clean checkout of that SHA; read saved gate output and job status. Record command, result, exit code,
+  and SHA in `final-integration.json`. A failing or unrun gate means BLOCKED, never COMPLETE; any subsequent
+  code change requires rerunning it on the new SHA. Without such a `gateCommand`, record its absence and
+  continue as before. Have a fresh non-builder verifier (via VERIFY_DISPATCH) review the combined diff.
+  Include branch SHA, commands, environment, verifier provenance (codex-host: wrapper provenance JSON path), and PASS/BLOCKED
+  in `final-integration.json`. Missing or BLOCKED final integration prevents COMPLETE.
 - Run `<skill>/scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder>`.
-  - Omit `-RunTests` for the normal final ledger. It renders persisted `acceptance-rows.jsonl` evidence and
-    does not rerun lifecycle-sensitive milestone tests. Use `-RunTests` only for an explicitly requested
-    revalidation; it emits `build-acceptance-revalidation.{md,html}` and never overwrites original acceptance.
-  - Emits `build-acceptance-ledger.md` and `build-acceptance-ledger.html`.
-  - The ledger is the final answer for the build run — not a freeform summary.
-  - When `<run-folder>/deferred-findings.md` exists, the ledger appends its content as a
-    "Deferred / Next Version" section in both outputs — the record of what the orchestrator chose not to
-    build and why. It is informational, never a blocker, and requires no review by Danny.
-- Run the usage sweep again (`<danny-skills>/scripts/collect-usage.ps1 -Quiet`) and include the dashboard path in the final output.
-- Feed the router's outcome history: `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/update-outcomes.ps1" -Json` (reads
-  the run's provenance and acceptance rows; relay any `ROUTER_ALERT:` line once).
-- Mark the run complete in the pipeline checkpoint: rewrite `_build-state.md` (same template and location as step 6.i) with `status: COMPLETE`, the final commit SHA, and no in-flight work.
+  - Omit `-RunTests`: normal finalization renders persisted `acceptance-rows.jsonl` without rerunning lifecycle-sensitive
+    milestone tests. Explicitly requested revalidation uses `-RunTests`, emitting `build-acceptance-revalidation.{md,html}`
+    without overwriting original acceptance.
+  - Emits `build-acceptance-ledger.{md,html}`, the build's final answer.
+  - Appends existing `<run-folder>/deferred-findings.md` to both outputs as informational "Deferred / Next Version":
+    what the orchestrator deferred and why. No blocker or Danny review.
+- Repeat usage sweep (`<danny-skills>/scripts/collect-usage.ps1 -Quiet`); include dashboard path in final output.
+- Update router outcome history: `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/update-outcomes.ps1" -Json`
+  (reads run provenance and acceptance rows; relay any `ROUTER_ALERT:` line once).
+- Rewrite pipeline checkpoint `_build-state.md` (same template and location as step 6.i): `status: COMPLETE`,
+  final commit SHA, no in-flight work.
 - `build-run-review.html`: Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks for it, generate `build-run-review.html` in the run artifact folder with:
   - the acceptance ledger as the headline panel (above the milestone status cards),
   - milestone status cards,

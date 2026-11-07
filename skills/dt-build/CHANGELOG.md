@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.50.2
+
+- Require the full repo ship gate on the final integration SHA before reporting COMPLETE.
+
 ## 2.50.1
 
 - Make the two-attempt implementation loop limit the default, constrain review fixes to ordinary use and acceptance checks, and require explicit stop rulings.
