@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.50.3
+
+- collect-usage.py: count the renamed Design Studio workstation (and old 3D Design sessions) under its current name; recognise Command Center, Tech HQ and E-Sign.
+
 ## 2.50.2
 
 - Require the full repo ship gate on the final integration SHA before reporting COMPLETE.

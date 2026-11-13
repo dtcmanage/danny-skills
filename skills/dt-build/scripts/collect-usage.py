@@ -175,11 +175,14 @@ def workstation_for_project(project: str) -> str:
     names = ("Email HQ", "Finance HQ", "OneDrive Migration", "TCM Database",
              "Trading Terminal", "Consultant Databases", "TCM Website",
              "Skill Creation", "Design System", "Map Anything", "Amazon Store",
-             "For-Mac", "3D Design", "Primary Suite Renovation", "PC Build", "Home Server")
+             "For-Mac", "Design Studio", "3D Design", "Primary Suite Renovation", "PC Build",
+             "Home Server", "Command Center", "Tech HQ", "E-Sign")
+    # Renamed workstations: older session slugs count under the current name.
+    renamed = {"3D Design": "Design Studio"}
     for name in names:
         slug = name.replace(" ", "-")
         if tail == slug or tail.startswith(slug + "-"):
-            return name
+            return renamed.get(name, name)
     return tail.split("-", 1)[0] if tail else "other"
 
 
