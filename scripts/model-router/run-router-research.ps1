@@ -284,7 +284,12 @@ function Invoke-RouterCategoryResearch {
         $sources = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/benchmark-sources.json') -Raw | ConvertFrom-Json -Depth 20
         $fixed = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/research-category-prompt.md') -Raw) + "`n`n" + (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/readings-schema.md') -Raw)
         foreach ($category in $Categories) {
-            if (-not $sources.PSObject.Properties[$category] -or $category -cnotmatch '^[a-z-]+$') { throw "Unknown research category: $category" }
+            if ($category -cnotmatch '^[a-z-]+$') { throw "Unknown research category: $category" }
+            if (-not $sources.PSObject.Properties[$category]) {
+                # A routing category with no public benchmark (classification-escalation) inherits its job's pick; skip it, don't stop the pass.
+                if ($category -cin @(Get-RouterDispatchCategories)) { $notes.Add("skipped ${category}: no benchmark sources"); continue }
+                throw "Unknown research category: $category"
+            }
             $pending = @(@{ models = @($Models); benchmarks = @() })
             $combined = [Collections.Generic.List[object]]::new()
             $checked = [Collections.Generic.List[object]]::new()

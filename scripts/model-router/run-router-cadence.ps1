@@ -151,10 +151,12 @@ function Invoke-RouterCadence {
                 $passPath = Join-Path $state 'readings/passes.jsonl'
                 $beforeIds = @(if (Test-Path -LiteralPath $passPath) { Get-Content -LiteralPath $passPath | Where-Object { $_.Trim() } | ForEach-Object { ($_ | ConvertFrom-Json -Depth 20).pass_id } })
                 $record = $null
+                $stopError = ''
                 try {
                     $record = Invoke-RouterCategoryResearch -Categories @($item.categories) -Models $models -NewModel $(if ($item.trigger -eq 'release') { [string]$item.model } else { $null }) -Trigger $item.trigger -Lane $lane -Now $Now
                 } catch {
-                    Write-Warning "Research queue item $($item.id) ($($item.model)) stopped: $($_.Exception.Message)"
+                    $stopError = [string]$_.Exception.Message
+                    Write-Warning "Research queue item $($item.id) ($($item.model)) stopped: $stopError"
                     # M07 writes the interrupted record in finally before rethrowing.
                 }
                 $newRecords = @(if (Test-Path -LiteralPath $passPath) {
@@ -184,9 +186,15 @@ function Invoke-RouterCadence {
                         Write-RouterResearchFailure -StateDir $state -FileName "$($item.categories[0])@$stamp-$($record.pass_id).txt" -Detail 'unexplained stop'
                         $files = @(Get-ChildItem -LiteralPath (Join-Path $state 'research-failures') -File -Filter "*-$($record.pass_id)*.txt")
                     }
+                    $errorLine = if ($stopError) { "`nerror: $stopError" } else { '' }
                     foreach ($file in $files) {
-                        [IO.File]::AppendAllText($file.FullName, "`n$line`nstopped_item: " + ($item | ConvertTo-Json -Compress -Depth 10) + "`n", [Text.UTF8Encoding]::new($false))
+                        [IO.File]::AppendAllText($file.FullName, "$errorLine`n$line`nstopped_item: " + ($item | ConvertTo-Json -Compress -Depth 10) + "`n", [Text.UTF8Encoding]::new($false))
                     }
+                    # A stopped item blocks this model's later research until it is re-enqueued, so say so out loud.
+                    $alertText = "Model router research for $($item.model) stopped and is blocked until re-run. " +
+                        $(if ($stopError) { "Error: $stopError. " } else { '' }) + "Details: $($files[0].FullName)"
+                    try { $null = Send-RouterAlert -Key "research-stopped:$($record.pass_id)" -Message $alertText }
+                    catch { Write-Warning "Research-stop alert failed: $($_.Exception.Message)" }
                 }
                 if (-not $interrupted) {
                     if ($item.trigger -eq 'release') {

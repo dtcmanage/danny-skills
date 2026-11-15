@@ -142,6 +142,13 @@ if($args -contains '--fail'){[Console]::Error.Write($text);exit 9}
     $script:RouterResearchInvoker = { param($category,$lane,$prompt) return (Fixture $category 'gpt-6.1-sol' | ConvertTo-Json -Depth 20) }
     $null = Invoke-RouterCategoryResearch -Categories @('complex-coding') -Models @('gpt-6.1-sol')
     Assert-True (-not (Test-Path $orphan)) 'interrupted stage discarded on next start'
+    $script:sourcelessCalls = [Collections.Generic.List[string]]::new()
+    $script:RouterResearchInvoker = { param($category,$lane,$prompt) $script:sourcelessCalls.Add($category); return (Fixture $category 'gpt-6.1-sol' | ConvertTo-Json -Depth 20) }
+    $sourceless = Invoke-RouterCategoryResearch -Categories @('complex-coding','classification-escalation') -Models @('gpt-6.1-sol')
+    Assert-True ((-not ($sourceless.PSObject.Properties['interrupted'] -and $sourceless.interrupted)) -and $script:sourcelessCalls -notcontains 'classification-escalation' -and $script:sourcelessCalls -contains 'complex-coding' -and (@($sourceless.notes) -join ' ') -match 'skipped classification-escalation') 'routing category without benchmark sources is skipped, not a stopped pass'
+    $unknownThrown = $false
+    try { $null = Invoke-RouterCategoryResearch -Categories @('not-a-category') -Models @('gpt-6.1-sol') } catch { $unknownThrown = $_.Exception.Message -match 'Unknown research category' }
+    Assert-True $unknownThrown 'unknown research category still stops the pass'
     $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../run-router-research.ps1') -Raw
     Assert-True ($source -notmatch 'Invoke-RouterWithRetry|RouterResearchRetryDelaysSeconds') 'no timer retry remains'
     $priorPassCount = @(Get-Content (Join-Path $temp 'readings/passes.jsonl')).Count

@@ -191,6 +191,8 @@ try {
         if ($record.interrupted) { throw "synthetic $mode" }
         return $record
     }
+    $script:stopAlerts = [Collections.Generic.List[object]]::new()
+    function Send-RouterAlert { param($Key,$Message,$Severity) $script:stopAlerts.Add([pscustomobject]@{key=$Key;message=$Message}) }
     $modes = @('no-record','deferred-quota','deferred-vendor_incident','interrupted-quota','interrupted-offline','interrupted-unexplained','success')
     foreach ($mode in $modes) {
         [void](Add-RouterResearchQueueItem -Model $mode -Trigger refresh -Categories @('mechanical') -DueAt $now -Reason "operator's rerun; literal text")
@@ -208,6 +210,8 @@ try {
     Assert-True ($remainingModels -notcontains 'interrupted-unexplained' -and $remainingModels -notcontains 'success' -and $drain.ran.Count -eq 2) 'unexplained stop and successful written record consume their items'
     Assert-True ($script:proposalCalls -eq $proposalBefore + 1) 'stopped and deferred research never builds proposals'
     Assert-True ($drain.needs_you.Count -eq 1 -and $drain.needs_you[0] -match 'Add-RouterResearchQueueItem') 'unexplained stop adds Needs-you re-enqueue command'
+    $stopAlert = @($script:stopAlerts | Where-Object { $_.key -like 'research-stopped:*' })
+    Assert-True ($stopAlert.Count -eq 1 -and $stopAlert[0].message -match 'interrupted-unexplained' -and $stopAlert[0].message -match 'synthetic interrupted-unexplained') 'unexplained stop alerts Danny with the error text'
     $failure = @(Get-ChildItem -LiteralPath $failureDir -File)[0]
     Assert-True ((Get-Content -LiteralPath $failure.FullName -Raw).Contains($drain.needs_you[0])) 'Needs-you command persists with the research failure'
     [void](Add-RouterResearchQueueItem -Model 'interrupted-unexplained' -Trigger refresh -Categories @('mechanical') -DueAt $now.AddDays(1) -Reason 'stale-reading' -Automatic)

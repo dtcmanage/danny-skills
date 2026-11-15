@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.38 (2026-11-15): Shared model-router research: routing categories without public benchmarks are skipped instead of stopping new-model research, and a stopped research run alerts Danny with its error.
+
 - 0.2.37 (2026-11-06): Model router repair: send routed writing work through dispatch.ps1; inherits the shared router fixes.
 
 - 0.2.36 (2026-11-04): Model router: add the classification-escalation category (deep thinker) so File Sorter's second-tier classification pass resolves a model; roster validator, roster builder, default roster, docs and tests updated.

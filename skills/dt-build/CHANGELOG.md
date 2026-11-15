@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.50.4
+
+- Shared model-router research: routing categories without public benchmarks are skipped instead of stopping new-model research, and a stopped research run alerts Danny with its error.
+
 ## 2.50.3
 
 - collect-usage.py: count the renamed Design Studio workstation (and old 3D Design sessions) under its current name; recognise Command Center, Tech HQ and E-Sign.
