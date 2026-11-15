@@ -23,7 +23,7 @@ function New-TestRoster {
     return $r
 }
 $prior = @{}
-foreach ($key in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_SHARED','DT_MODEL_ROUTER_CODEX_SESSIONS','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CLAUDE_CREDENTIALS')) { $prior[$key] = [Environment]::GetEnvironmentVariable($key) }
+foreach ($key in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_SHARED','DT_MODEL_ROUTER_CODEX_SESSIONS','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CLAUDE_CREDENTIALS','DT_ROUTER_TEST_FAKE_CLI_ROOT')) { $prior[$key] = [Environment]::GetEnvironmentVariable($key) }
 $priorFetcher = $script:RouterClaudeUsageFetcher
 $script:RouterClaudeUsageFetcher = { param($Token) throw 'Unexpected live quota fetch in fixture' }
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('mac-integration-' + [guid]::NewGuid().ToString('N'))
@@ -31,6 +31,9 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ('mac-integration-' + [guid]::NewGu
 $platformFixture = [pscustomobject]@{ Value = 'Windows' }
 Set-Item Function:Get-RouterPlatform -Value ({ return $platformFixture.Value }.GetNewClosure())
 try {
+    # Exercise the real quota readers against isolated caches and the rejecting fetcher.
+    # The outer fake-CLI fixture otherwise short-circuits these readers to null.
+    Remove-Item Env:DT_ROUTER_TEST_FAKE_CLI_ROOT -ErrorAction SilentlyContinue
     $win = Join-Path $temp 'windows'; $mac = Join-Path $temp 'mac'; $shared = Join-Path $temp 'synced'
     $env:DT_MODEL_ROUTER_STATE = $win; $env:DT_MODEL_ROUTER_SHARED = $shared
     $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'sessions'

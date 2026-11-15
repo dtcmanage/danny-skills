@@ -57,7 +57,16 @@ try {
 
     $worktrees = @(Get-ChunkWorktrees)
     if ($WorktreePath) {
-        $requested = [IO.Path]::GetFullPath($WorktreePath).TrimEnd('/', '\')
+        # Git records physical paths, including when a Windows caller uses a
+        # subst drive. Ask Git for the same identity, retaining the root-only
+        # restriction so a subdirectory cannot stand in for the worktree.
+        $requestedPath = [IO.Path]::GetFullPath($WorktreePath)
+        $root = Invoke-Git @('-C', $requestedPath, 'rev-parse', '--show-toplevel') -AllowFailure
+        $prefix = Invoke-Git @('-C', $requestedPath, 'rev-parse', '--show-prefix') -AllowFailure
+        if ($root.code -ne 0 -or $prefix.code -ne 0 -or $prefix.text.Length -ne 0) {
+            throw 'CLEANUP_WORKTREE_MISMATCH: supplied path is not the chunk worktree root.'
+        }
+        $requested = [IO.Path]::GetFullPath($root.text).TrimEnd('/', '\')
         $worktrees = @($worktrees | Where-Object {
             [IO.Path]::GetFullPath($_).TrimEnd('/', '\') -eq $requested
         })

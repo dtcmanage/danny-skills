@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.50.5
+
+- Chunk cleanup resolves -WorktreePath through git rev-parse so a relative or alias path still matches its worktree; a subdirectory is still refused.
+
 ## 2.50.4
 
 - Shared model-router research: routing categories without public benchmarks are skipped instead of stopping new-model research, and a stopped research run alerts Danny with its error.

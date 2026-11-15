@@ -34,9 +34,14 @@ def reject_reserved_folder(tasks: Path) -> None:
 
 def bank_files(tasks: Path) -> list[Path]:
     """Versioned bank bytes, excluding generated dependency/cache directories."""
-    return sorted((p for p in tasks.rglob("*") if p.is_file()
-                   and not any(part in IGNORED for part in p.relative_to(tasks).parts)),
-                  key=lambda p: p.relative_to(tasks).as_posix())
+    # Prune ignored folders during the walk: a provisioned harness node_modules holds
+    # thousands of files, and walking then filtering them made every hash ~10x slower.
+    files = []
+    for directory, folders, names in os.walk(tasks):
+        folders[:] = [name for name in folders if name not in IGNORED]
+        files.extend(Path(directory) / name for name in names
+                     if name not in IGNORED and (Path(directory) / name).is_file())
+    return sorted(files, key=lambda p: p.relative_to(tasks).as_posix())
 
 
 def private_files(private: Path) -> list[Path]:

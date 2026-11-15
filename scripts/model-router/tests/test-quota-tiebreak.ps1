@@ -35,6 +35,10 @@ function Save-Usage([double]$Codex, [double]$Claude, [double]$Age = 0) {
 }
 function Save-Roster { Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $script:roster }
 try {
+    # The shared fake-CLI fixture bypasses quota readers for dispatch tests.
+    # Exercise the real readers here against our isolated usage files and I/O seams.
+    # Exit-RouterTestCodexHome restores the caller's original flag in finally.
+    $env:DT_ROUTER_TEST_FAKE_CLI_ROOT = $null
     $catalog = Get-CodexModelCatalog
     $script:roster = Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 20
     $roster.approved = $true; $roster.approved_at = [datetimeoffset]::UtcNow.ToString('o')

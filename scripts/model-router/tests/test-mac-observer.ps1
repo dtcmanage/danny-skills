@@ -21,6 +21,7 @@ $keys = @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_SHARED','DT_MODEL_ROUTER_CLAU
     'DT_MODEL_ROUTER_CLAUDE_KEYCHAIN_SERVICE','CLAUDE_CONFIG_DIR','DT_MODEL_ROUTER_CODEX_SESSIONS','CODEX_HOME','TEMP')
 $prior = @{}
 $priorSecretFixture = $env:ROUTER_TEST_SECRET_TOKEN
+$priorFakeCliRoot = $env:DT_ROUTER_TEST_FAKE_CLI_ROOT
 foreach ($key in $keys) { $prior[$key]=[Environment]::GetEnvironmentVariable($key); [Environment]::SetEnvironmentVariable($key,$null) }
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('mac-observer-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($tempRoot) | Out-Null
@@ -43,6 +44,9 @@ $fakeSecurity = {
     }
 }
 try {
+    # Credentials, sessions and quota fetches below are synthetic. Keep the real
+    # readers enabled even when the regression wrapper supplies a fake CLI home.
+    Remove-Item Env:DT_ROUTER_TEST_FAKE_CLI_ROOT -ErrorAction SilentlyContinue
     $env:DT_MODEL_ROUTER_STATE = Join-Path $tempRoot 'runtime'
     $env:DT_MODEL_ROUTER_SHARED = Join-Path $tempRoot 'shared'
     $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $tempRoot 'sessions'
@@ -260,6 +264,7 @@ try {
 } finally {
     foreach ($key in $keys) { [Environment]::SetEnvironmentVariable($key,$prior[$key]) }
     $env:ROUTER_TEST_SECRET_TOKEN = $priorSecretFixture
+    $env:DT_ROUTER_TEST_FAKE_CLI_ROOT = $priorFakeCliRoot
     $resolved = [IO.Path]::GetFullPath($tempRoot)
     if (-not $resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()),[StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture cleanup escaped temp root' }
     Remove-Item -LiteralPath $resolved -Recurse -Force

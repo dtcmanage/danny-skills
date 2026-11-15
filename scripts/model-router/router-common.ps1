@@ -171,7 +171,7 @@ function Test-RouterRoster {
             if ($effort.Value -cin @('low','medium','high') -and $tiers -and $tiers.Value -is [pscustomobject] -and $tiers.Value.PSObject.Properties['standard'] -and $effort.Value -cne $tiers.Value.standard) { $errors.Add("ROSTER_EFFORT_MISMATCH: $job/$slot") }
             if ($job -eq 'illustrator') {
                 if ($null -ne $effort.Value) { $errors.Add('ROSTER_EFFORT_ILLUSTRATOR: must be null') }
-            } elseif ($effort.Value -cnotin @('low','medium','high')) { $errors.Add("ROSTER_EFFORT: $job/$slot") }
+            } elseif ($effort.Value -cnotin $(if ($job -eq 'writer') { @('low','medium','high','xhigh') } else { @('low','medium','high') })) { $errors.Add("ROSTER_EFFORT: $job/$slot") }
         }
         foreach ($field in @('first','first_vendor','backup','backup_vendor')) { if (-not $entry.PSObject.Properties[$field]) { $errors.Add("ROSTER_JOB_FIELD: $job/$field") } }
         if (@(@('first','first_vendor','backup','backup_vendor') | Where-Object { -not $entry.PSObject.Properties[$_] }).Count) { continue }

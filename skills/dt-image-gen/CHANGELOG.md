@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.39 (2026-11-15): Shared model router update: writer roster accepts the approved xhigh effort; bench bank scan skips installed harness dependencies.
+
 - 0.3.38 (2026-11-15): Shared model-router research: routing categories without public benchmarks are skipped instead of stopping new-model research, and a stopped research run alerts Danny with its error.
 
 - 0.3.37 (2026-11-06): Model router repair: inherits the shared router, quota and benchmark transport fixes; image generation stays on its fixed path.

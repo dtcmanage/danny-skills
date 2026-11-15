@@ -42,6 +42,12 @@ try {
             Assert-True ((Get-RosterErrors $bad) -ceq "ROSTER_EFFORT: $job/$slot") "missing effort $job/$slot"
             foreach ($value in @('max','xhigh','ultra','LOW',1,$null)) {
                 if ($job -eq 'illustrator' -and $null -eq $value) { continue }
+                if ($job -eq 'writer' -and $value -ceq 'xhigh') {
+                    # Writer's effort-up step ends at xhigh, so an approved writer raise must stay a valid roster.
+                    $ok = Copy-Roster; $ok.jobs.$job."${slot}_effort" = $value
+                    Assert-True (@(Get-RosterErrors $ok).Count -eq 0) "writer xhigh effort valid $slot"
+                    continue
+                }
                 $bad = Copy-Roster; $bad.jobs.$job."${slot}_effort" = $value
                 $errorText = if ($job -eq 'illustrator') { 'ROSTER_EFFORT_ILLUSTRATOR: must be null' } else { "ROSTER_EFFORT: $job/$slot" }
                 Assert-True ((Get-RosterErrors $bad) -ceq $errorText) "invalid effort $job/$slot/$value"

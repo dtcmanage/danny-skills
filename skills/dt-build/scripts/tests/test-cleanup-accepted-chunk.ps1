@@ -17,7 +17,7 @@ function Check([bool]$Condition, [string]$Message) {
 
 Push-Location $tempRoot
 try {
-    foreach ($case in @('merged', 'no-worktree', 'unmerged', 'untracked', 'modified', 'staged', 'main', 'master', 'qualified-main', 'wrong-path', 'same-branch', 'leftover')) {
+    foreach ($case in @('merged', 'relative-path', 'no-worktree', 'unmerged', 'untracked', 'modified', 'staged', 'main', 'master', 'qualified-main', 'wrong-path', 'nested-path', 'same-branch', 'leftover')) {
         try {
             $repo = Join-Path $tempRoot "$case-repo"
             $worktree = Join-Path $tempRoot "$case chunk space"
@@ -60,8 +60,14 @@ try {
                 'master' { Invoke-FixtureGit @('branch', 'master'); $chunk = 'master'; $expected = 'CLEANUP_PROTECTED_BRANCH' }
                 'qualified-main' { $chunk = 'refs/heads/main'; $expected = 'CLEANUP_PROTECTED_BRANCH' }
                 'wrong-path' { $extra = @('-WorktreePath', $repo); $expected = 'CLEANUP_WORKTREE_MISMATCH' }
+                'nested-path' {
+                    $nested = Join-Path $worktree 'nested'
+                    New-Item -ItemType Directory -Path $nested | Out-Null
+                    $extra = @('-WorktreePath', $nested); $expected = 'CLEANUP_WORKTREE_MISMATCH'
+                }
                 'same-branch' { $integration = $chunk; $expected = 'CLEANUP_INVALID_BRANCH' }
                 'merged' { $extra = @('-WorktreePath', $worktree) }
+                'relative-path' { $extra = @('-WorktreePath', (Split-Path -Leaf $worktree)) }
             }
             $entrypoint = $cleanup
             if ($case -eq 'leftover') {

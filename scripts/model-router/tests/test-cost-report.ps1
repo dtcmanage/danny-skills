@@ -44,10 +44,14 @@ $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-creden
 foreach ($name in 'DT_JOB_ID', 'DT_JOB_DIR', 'DT_BUILD_COORDINATOR_ID') { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue }
 $priorLiveCommand = $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND
 $priorFakePercent = $env:FAKE_CODEX_LIMITS_PERCENT
+$priorFakeCliRoot = $env:DT_ROUTER_TEST_FAKE_CLI_ROOT
 $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND = Join-Path $PSScriptRoot 'fixtures/fake-codex-limits.py'
 Remove-Item Env:FAKE_CODEX_LIMITS_PERCENT -ErrorAction SilentlyContinue
 
 try {
+    # The explicit fake limits command must reach the real refresh/cache path;
+    # the outer fake-CLI fixture disables that path before invoking the command.
+    Remove-Item Env:DT_ROUTER_TEST_FAKE_CLI_ROOT -ErrorAction SilentlyContinue
     # A minimal usage row for the most recent complete ET week (Monday of that week) so
     # cost_report.py's own week selection lands on a real, non-empty report.
     $today = Get-Date
@@ -139,6 +143,7 @@ try {
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials
     $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND = $priorLiveCommand
     $env:FAKE_CODEX_LIMITS_PERCENT = $priorFakePercent
+    $env:DT_ROUTER_TEST_FAKE_CLI_ROOT = $priorFakeCliRoot
     $env:DT_MODEL_ROUTER_STATE = $priorState
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorTransport
     $env:DT_MODEL_ROUTER_USAGE_SWEEP = $priorSweep

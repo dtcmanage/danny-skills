@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.39 (2026-11-15): Shared model router update: writer roster accepts the approved xhigh effort; bench bank scan skips installed harness dependencies.
+
 - 0.2.38 (2026-11-15): Shared model-router research: routing categories without public benchmarks are skipped instead of stopping new-model research, and a stopped research run alerts Danny with its error.
 
 - 0.2.37 (2026-11-06): Model router repair: send routed writing work through dispatch.ps1; inherits the shared router fixes.

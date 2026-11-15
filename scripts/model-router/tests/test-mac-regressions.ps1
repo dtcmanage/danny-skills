@@ -1,5 +1,7 @@
 param(
-    [ValidateRange(30, 1800)][int]$SuiteTimeoutSeconds = 300,
+    # Complete Windows wrapper/build suites now take more than five minutes.
+    [ValidateRange(30, 1800)][int]$SuiteTimeoutSeconds = 900,
+    [ValidateRange(1, 32)][int]$PythonWorkers = 1,
     [string]$EvidencePath = (Join-Path ([IO.Path]::GetTempPath()) ('mac-regressions-' + [guid]::NewGuid().ToString('N')))
 )
 Set-StrictMode -Version Latest
@@ -104,7 +106,10 @@ try {
             $info.Environment['PYTEST_DISABLE_PLUGIN_AUTOLOAD'] = '1'
             # Never alter HOME or LOCALAPPDATA (Windows Python manager shim).
             $arguments = if ($python) {
-                @('-B','-m','pytest',$suite,'-q','-p','no:cacheprovider','--basetemp',(Join-Path $sandbox 'pytest'))
+                # Pass parallelism on argv, not PYTEST_ADDOPTS: nested grader
+                # subprocesses must not inherit another worker pool.
+                $workerArguments = if ($PythonWorkers -gt 1) { @('-p','xdist.plugin','-n',[string]$PythonWorkers) } else { @() }
+                @('-B','-m','pytest',$suite,'-q','-p','no:cacheprovider','--basetemp',(Join-Path $sandbox 'pytest')) + $workerArguments
             } else {
                 @('-NoProfile','-NonInteractive','-File',$wrapper,'-Fixture',(Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1'),'-Suite',(Join-Path $repo $suite))
             }

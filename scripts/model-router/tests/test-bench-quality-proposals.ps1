@@ -148,9 +148,17 @@ try {
     function Get-RouterClaudeUsage { [pscustomobject]@{used_percent=10;observed_at_utc=[datetimeoffset]::UtcNow.ToString('o');source='synthetic'} }
     Write-WeeklySession 20 90
     $script:weeklyCalls=0
-    $weekly=Invoke-RouterBench -Job fast -Candidate $roster.jobs.fast.first -Incumbent $roster.jobs.fast.first -StateDir (Join-Path $root 'weekly') -NoAlerts -CliInvoker {param($r) $script:weeklyCalls++;if($script:weeklyCalls -ge 3){Write-WeeklySession 25.1 1};@{status='ok';answer='ok'}} -Outcome {param($r)}
-    Assert ($weekly.halted -and $weekly.spend.model_calls -eq 3 -and $weekly.halt_reason -match 'codex weekly use moved') 'Weekly Codex movement must halt despite a falling 300-minute window'
-    Assert ($weekly.spend.start.codex.usage.used_percent -eq 20 -and $weekly.spend.latest.codex.usage.used_percent -eq 25.1) 'Spend compares the 10080-minute values, not the 300-minute values'
+    # The fake-CLI fixture suppresses quota readers. Enable them only for this
+    # reader test: Codex sessions are fixtures and Claude usage is stubbed above.
+    $fakeCliRoot=$env:DT_ROUTER_TEST_FAKE_CLI_ROOT
+    try {
+        Remove-Item Env:DT_ROUTER_TEST_FAKE_CLI_ROOT -ErrorAction SilentlyContinue
+        $weekly=Invoke-RouterBench -Job fast -Candidate $roster.jobs.fast.first -Incumbent $roster.jobs.fast.first -StateDir (Join-Path $root 'weekly') -NoAlerts -CliInvoker {param($r) $script:weeklyCalls++;if($script:weeklyCalls -ge 3){Write-WeeklySession 25.1 1};@{status='ok';answer='ok'}} -Outcome {param($r)}
+        Assert ($weekly.halted -and $weekly.spend.model_calls -eq 3 -and $weekly.halt_reason -match 'codex weekly use moved') 'Weekly Codex movement must halt despite a falling 300-minute window'
+        Assert ($weekly.spend.start.codex.usage.used_percent -eq 20 -and $weekly.spend.latest.codex.usage.used_percent -eq 25.1) 'Spend compares the 10080-minute values, not the 300-minute values'
+    } finally {
+        $env:DT_ROUTER_TEST_FAKE_CLI_ROOT=$fakeCliRoot
+    }
     # A persisted judge catalog without spend keys takes them from the shipped config; its own keys win.
     $shippedConfig=Join-Path $root 'shipped-config.json'
     @{spend_stop_points=7;spend_stop_model_calls=4;spend_reading_stale_hours=2} | ConvertTo-Json | Set-Content -LiteralPath $shippedConfig -Encoding utf8
