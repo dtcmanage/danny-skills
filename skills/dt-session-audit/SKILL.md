@@ -387,7 +387,7 @@ When applying:
    For each workstation touched, run `pwsh -NoProfile -File "D:\Claude\_Claude-Workspace\Command Center\cc.ps1" list --workstation "<folder>"`; add missing items, update changed ones, and close finished ones with `done <id> --done-note "..."`.
    Read and follow `D:\Claude\_Claude-Workspace\Command Center\CLAUDE.md` § The session write rule: titles without amounts/account numbers, starter prompts usable in a fresh session, workstation = folder path including substation. Never move open items into `MEMORY.md`; move any open-for-Danny item found there to Command Center.
    Report Command Center writes in one line in the audit output.
-   Run `<skill>/scripts/check-ai-item-exits.ps1 -TranscriptPath <session.jsonl>` and route each hit as a Command Center finding, resolving it with one of the three allowed exits printed by the check.
+   Run `<skill>/scripts/check-ai-item-exits.ps1`; the transcript path is discovered automatically as the newest main `*.jsonl` in the current cwd's Claude Code project folder under `$env:CLAUDE_CONFIG_DIR/projects` (non-alphanumeric cwd characters become `-`; nested subagent folders are excluded). Use `-TranscriptPath <session.jsonl>` to override discovery. Route each hit as a Command Center finding, resolving it with one of the three allowed exits printed by the check.
 
 After apply, run:
 

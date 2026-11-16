@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory)][string]$TranscriptPath,
+    [string]$TranscriptPath,
     [string]$SessionStartUtc,
     [string]$BaseUrl = 'http://192.168.68.17:8080',
     [switch]$Json
@@ -7,6 +7,21 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if (-not $TranscriptPath) {
+    $configDir = $env:CLAUDE_CONFIG_DIR
+    if (-not $configDir) { $configDir = Join-Path $HOME '.claude' }
+    $projectName = (Get-Location).Path -replace '[^a-zA-Z0-9]', '-'
+    $projectDir = Join-Path (Join-Path $configDir 'projects') $projectName
+    # Main transcripts are direct children; never select nested subagent files.
+    $newest = Get-ChildItem -LiteralPath $projectDir -Filter '*.jsonl' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if ($null -eq $newest) {
+        'Command Center: could not find transcript for the current project.'
+        exit 0
+    }
+    $TranscriptPath = $newest.FullName
+}
 
 function Get-Field($Object, [string]$Name) {
     if ($null -ne $Object -and $null -ne $Object.PSObject.Properties[$Name]) {
@@ -48,6 +63,9 @@ foreach ($line in [IO.File]::ReadLines((Resolve-Path -LiteralPath $TranscriptPat
         if ($stamp) { $firstTimestamp = Convert-Timestamp $stamp }
     }
     $text = @(Get-Strings $record) -join "`n"
+    foreach ($match in [regex]::Matches($text, '(?m)^Command Center item #(\d+)\b')) {
+        [void]$touched.Add([int]$match.Groups[1].Value)
+    }
     # Explicit numbered commands, including quoted absolute cc.ps1 paths.
     foreach ($match in [regex]::Matches($text, '(?i)\bcc\.ps1["''`]?\s+(?:update|done|attempt|keep)\s+(\d+)\b')) {
         [void]$touched.Add([int]$match.Groups[1].Value)

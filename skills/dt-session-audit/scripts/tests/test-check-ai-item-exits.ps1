@@ -6,6 +6,7 @@ $fixture = Join-Path ([IO.Path]::GetTempPath()) ('ai-item-exits-' + [guid]::NewG
 $transcript = Join-Path $fixture 'session.jsonl'
 $passed = 0
 $failed = 0
+$originalConfigDir = $env:CLAUDE_CONFIG_DIR
 
 function Assert-Check([bool]$Condition, [string]$Name) {
     if ($Condition) { $script:passed++; "PASS: $Name" }
@@ -88,6 +89,37 @@ try {
     Assert-Check ($empty.findings.Count -eq 0 -and $empty.touched_items.Count -eq 0) 'no touched items is clean'
     Assert-Check (@(Get-Content $requests).Count -eq $requestCount) 'no touched items skips HTTP'
 
+    # Discover from an isolated config root and a cwd containing punctuation.
+    $env:CLAUDE_CONFIG_DIR = Join-Path $fixture 'config'
+    $projectCwd = Join-Path $fixture 'project with.dots'
+    [void][IO.Directory]::CreateDirectory($projectCwd)
+    Push-Location $projectCwd
+    try {
+        $projectName = (Get-Location).Path -replace '[^a-zA-Z0-9]', '-'
+        $projectDir = Join-Path "$env:CLAUDE_CONFIG_DIR/projects" $projectName
+        [void][IO.Directory]::CreateDirectory((Join-Path $projectDir 'subagents'))
+        $old = Join-Path $projectDir 'old.jsonl'
+        $current = Join-Path $projectDir 'current.jsonl'
+        Set-Transcript @(@{timestamp='2026-11-16T10:00:00Z'; role='user'; content='No tracked work.'})
+        Copy-Item $transcript $old
+        Set-Transcript @(@{timestamp='2026-11-16T10:00:00Z'; role='user'; content="Command Center item #12 (permanent id 123), workstation Tech HQ.`nContinue."})
+        Copy-Item $transcript $current
+        (Get-Item $old).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-10)
+        (Get-Item $current).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-5)
+        Set-Transcript @(@{timestamp='2026-11-16T10:00:00Z'; role='user'; content='Work on #16.'})
+        Copy-Item $transcript (Join-Path $projectDir 'subagents/newest.jsonl')
+        $discovered = & $scriptPath -BaseUrl $baseUrl -Json | ConvertFrom-Json
+        Assert-Check (($discovered.touched_items -join ',') -eq '12' -and $discovered.findings.Count -eq 1) 'discovers newest main transcript, Run header and encoded cwd; excludes newer subagent'
+        $explicit = Invoke-Check
+        Assert-Check (($explicit.touched_items -join ',') -eq '16') 'explicit path overrides automatic discovery'
+        Remove-Item -LiteralPath $old, $current
+        $missing = @(& pwsh -NoProfile -File $scriptPath -BaseUrl $baseUrl)
+        Assert-Check ($LASTEXITCODE -eq 0 -and $missing.Count -eq 1 -and $missing[0] -match 'could not find transcript') 'subagent-only folder prints clear missing transcript line and exits zero'
+        $env:CLAUDE_CONFIG_DIR = Join-Path $fixture 'missing-config'
+        $missing = @(& pwsh -NoProfile -File $scriptPath -BaseUrl $baseUrl)
+        Assert-Check ($LASTEXITCODE -eq 0 -and $missing.Count -eq 1 -and $missing[0] -match 'could not find transcript') 'missing project folder exits zero'
+    } finally { Pop-Location }
+
     $listener.Stop()
     $server.EndInvoke($serverRun)
     Set-Transcript @(@{timestamp='2026-11-16T10:00:00Z'; role='user'; content='Finish #12 Starter item.'})
@@ -96,6 +128,7 @@ try {
     $output = @(& pwsh -NoProfile -File $scriptPath -TranscriptPath $transcript -BaseUrl $baseUrl)
     Assert-Check ($LASTEXITCODE -eq 0 -and $output.Count -eq 1 -and $output[0] -match 'could not check') 'unreachable prints one line and exits zero'
 } finally {
+    $env:CLAUDE_CONFIG_DIR = $originalConfigDir
     $listener.Close()
     if ($null -ne $server) { $server.Dispose() }
     $resolved = [IO.Path]::GetFullPath($fixture)
