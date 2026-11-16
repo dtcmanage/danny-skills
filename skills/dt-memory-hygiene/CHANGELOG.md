@@ -1,5 +1,7 @@
 # dt-memory-hygiene changelog
 
+- 0.4.0 (2026-11-16): The size check holds workstation, substation and repo CLAUDE.md/MEMORY.md to 1,500 words (MEMORY.md also 150 lines); root files and the workspace directory keep root limits; evidence copies, underscore meta folders and the auto-memory inbox are skipped.
+
 - 0.3.2 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 0.3.1 (2026-09-03): Adopt the shared CommonMark-safe local file-link contract: forward-slash destinations, angle brackets for spaces, and backticked literals.

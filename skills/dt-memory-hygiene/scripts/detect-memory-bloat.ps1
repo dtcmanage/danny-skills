@@ -30,25 +30,44 @@ function Get-BloatThresholds {
     # long-line flagging is disabled (the mandated entry format is paragraph
     # prose). Duplication remains the live signal for them - duplicate entries
     # breed drift regardless of loading model. (Danny, 2026-06-12.)
-    # word_max applies only to CLAUDE.md files: root CLAUDE.md states its own
-    # ~4,000-word ceiling, and dt-session-audit's root write gate uses this
-    # script's word_count as the single deterministic measurement of it.
-    # word_max = 0 disables the check for a kind.
+    # These are root limits; each file gets its own copy before tier overrides.
+    # Zero disables a size check. MEMORY.md must stay under 150 lines.
     return @{
-        claude = @{ token_max = 7000; word_max = 4000; long_lines_max = 24; duplicate_ratio_max = 0.12; avg_bullet_words_max = 42; min_bullets_for_density = 8 }
-        memory = @{ token_max = 5000; word_max = 0; long_lines_max = 18; duplicate_ratio_max = 0.10; avg_bullet_words_max = 36; min_bullets_for_density = 8 }
-        context = @{ token_max = 20000; word_max = 0; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
-        glossary = @{ token_max = 20000; word_max = 0; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
+        claude = @{ token_max = 7000; word_max = 4000; line_max = 0; long_lines_max = 24; duplicate_ratio_max = 0.12; avg_bullet_words_max = 42; min_bullets_for_density = 8 }
+        memory = @{ token_max = 5000; word_max = 0; line_max = 149; long_lines_max = 18; duplicate_ratio_max = 0.10; avg_bullet_words_max = 36; min_bullets_for_density = 8 }
+        context = @{ token_max = 20000; word_max = 0; line_max = 0; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
+        glossary = @{ token_max = 20000; word_max = 0; line_max = 0; long_lines_max = 999; duplicate_ratio_max = 0.08; avg_bullet_words_max = 32; min_bullets_for_density = 6 }
     }
 }
 
 function Is-IgnoredPath {
     param([string]$Path)
     $p = $Path.ToLowerInvariant()
-    return ($p -like '*\.git\*' -or $p -like '*\node_modules\*' -or $p -like '*\.dt-build\*' -or $p -like '*\dist\*' -or $p -like '*\build\*')
+    if ($p -like '*\.git\*' -or $p -like '*\node_modules\*' -or $p -like '*\.dt-build\*' -or $p -like '*\dist\*' -or $p -like '*\build\*') { return $true }
+    # Copies, not live scaffolding: build evidence, underscore meta folders (_audit, _archive,
+    # _handoffs) below the workspace, and the harness auto-memory inbox (root projects\), which
+    # dt-session-audit drains under its own rules.
+    $segments = @([IO.Path]::GetRelativePath($root, $Path) -split '[\\/]' | Select-Object -SkipLast 1)
+    if ($segments.Count -and $segments[0] -eq 'projects') { return $true }
+    foreach ($s in $segments) {
+        if ($s -eq 'evidence' -or ($s.StartsWith('_') -and $s -ne '_Claude-Workspace')) { return $true }
+    }
+    return $false
 }
 
-$root = Resolve-Path -LiteralPath $RootPath
+function Get-FileTier {
+    # Root tier: files directly in the workspace root, plus the _Claude-Workspace directory
+    # file (a cross-workstation map, not a workstation). Everything else has the
+    # 1,500-word workstation/substation/repo budget.
+    param([IO.FileInfo]$File)
+    $dir = $File.DirectoryName.TrimEnd('\', '/')
+    if ($dir -eq $root.TrimEnd('\', '/')) { return 'root' }
+    if ($dir -eq (Join-Path $root '_Claude-Workspace').TrimEnd('\', '/')) { return 'root' }
+    return 'non-root'
+}
+
+# RootPath is the workspace root holding root CLAUDE.md, not a workstation.
+$root = (Get-Item -LiteralPath (Resolve-Path -LiteralPath $RootPath).Path).FullName
 $thresholds = Get-BloatThresholds
 
 $targets = Get-ChildItem -LiteralPath $root -Recurse -File |
@@ -63,7 +82,11 @@ foreach ($f in $targets) {
     $kind = Get-FileKind -Name $f.Name
     if ($kind -eq "other") { continue }
 
-    $t = $thresholds[$kind]
+    $tier = Get-FileTier -File $f
+    $t = $thresholds[$kind].Clone()
+    if ($tier -eq "non-root" -and $kind -in @("claude", "memory")) {
+        $t.word_max = 1500
+    }
     $raw = Get-Content -LiteralPath $f.FullName -Raw
     if ($null -eq $raw) { $raw = "" }
     $lines = @(Get-Content -LiteralPath $f.FullName)
@@ -93,6 +116,7 @@ foreach ($f in $targets) {
 
     $hitToken = $tokenEst -gt $t.token_max
     $hitWords = ($t.word_max -gt 0) -and ($wordCount -gt $t.word_max)
+    $hitLines = ($t.line_max -gt 0) -and (@($lines).Count -gt $t.line_max)
     $hitLong = $longLines -gt $t.long_lines_max
     $hitDup = $dupRatio -gt $t.duplicate_ratio_max
     $hitDensity = (@($bulletLines).Count -ge $t.min_bullets_for_density) -and ($avgBulletWords -gt $t.avg_bullet_words_max)
@@ -100,15 +124,17 @@ foreach ($f in $targets) {
     $score = 0
     if ($hitToken) { $score += 2 }
     if ($hitWords) { $score += 2 }
+    if ($hitLines) { $score += 2 }
     if ($hitLong) { $score += 1 }
     if ($hitDup) { $score += 1 }
     if ($hitDensity) { $score += 1 }
 
-    $shouldRun = $hitToken -or $hitWords -or $hitLong -or $hitDup -or $hitDensity -or ($score -ge 3)
+    $shouldRun = $hitToken -or $hitWords -or $hitLines -or $hitLong -or $hitDup -or $hitDensity -or ($score -ge 3)
 
     $results += [pscustomobject]@{
         file = $f.FullName
         kind = $kind
+        tier = $tier
         line_count = @($lines).Count
         token_est = $tokenEst
         word_count = $wordCount
@@ -121,6 +147,7 @@ foreach ($f in $targets) {
         trigger_flags = [pscustomobject]@{
             token = $hitToken
             words = $hitWords
+            lines = $hitLines
             long_lines = $hitLong
             duplicate_ratio = $hitDup
             bullet_density = $hitDensity

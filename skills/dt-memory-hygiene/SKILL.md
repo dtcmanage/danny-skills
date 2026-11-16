@@ -2,7 +2,7 @@
 name: dt-memory-hygiene
 description: "Periodic maintenance pass for CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Runs when deterministic bloat thresholds are exceeded. Compacts verbose entries, removes duplicate drift, normalizes shape, and preserves current-state clarity without changing underlying decisions."
 metadata:
-  version: 0.3.2
+  version: 0.4.0
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -53,13 +53,15 @@ pwsh -File "<skill>/scripts/detect-memory-bloat.ps1"
 Trigger hygiene automatically when any file hits:
 
 - `token_est` over file-type threshold, OR
-- `word_count` over `word_max` (CLAUDE.md files only — the detector's `word_count` is the single deterministic measurement of a CLAUDE.md word ceiling; never eyeball-count), OR
+- `word_count` over `thresholds.word_max` (root CLAUDE.md: 4,000; every non-root CLAUDE.md and MEMORY.md: 1,500), or MEMORY.md at 150 or more lines, OR
 - `long_lines` over threshold, OR
 - `duplicate_ratio` over threshold, OR
 - `avg_bullet_words` over threshold with enough bullets, OR
 - `bloat_score >= 3`.
 
 If none hit, exit with a compact "no hygiene needed" summary.
+
+Pass the workspace root holding root CLAUDE.md as `-RootPath`; only files directly in that folder are root tier, and use the detector's counts rather than eyeball-counting.
 
 ## Scope
 

@@ -19,6 +19,7 @@ $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('mac-regressions-fixtures-'
 $results = [Collections.Generic.List[object]]::new()
 $suites = @(
     'skills/dt-session-audit/scripts/tests/test-check-directory-drift.ps1',
+    'skills/dt-memory-hygiene/scripts/tests/test-detect-memory-bloat.ps1',
     'scripts/model-router/tests/test-mac-integration.ps1',
     'scripts/model-router/tests/test-mac-observer.ps1',
     'scripts/model-router/tests/test-resolve-roster.ps1',
