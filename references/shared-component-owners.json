@@ -443,6 +443,8 @@
   "scripts/model-router/cost_report.py": {"consumers": [], "summary_token": "model router"},
   "references/model-router/router-epochs.json": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/approve-roster.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/sync-proposal-items.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
+  "scripts/model-router/tests/test-proposal-items.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/cost-report.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/register-router-schedules.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/resolve-model.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},

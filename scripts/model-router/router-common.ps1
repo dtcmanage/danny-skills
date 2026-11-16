@@ -261,6 +261,14 @@ function Get-RouterStateDir {
     return $state
 }
 
+function Sync-RouterProposalItems {
+    param([string]$StateDir = (Get-RouterStatePath))
+    $previousExitCode = Get-Variable LASTEXITCODE -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+    try { & (Join-Path $PSScriptRoot 'sync-proposal-items.ps1') -StateDir $StateDir | Out-Null }
+    catch { [Console]::Error.WriteLine("Warning: proposal items: $($_.Exception.Message)") }
+    finally { $global:LASTEXITCODE = $previousExitCode }
+}
+
 function Read-RouterJsonArray {
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return @() }

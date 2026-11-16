@@ -459,7 +459,10 @@ function Invoke-RouterBench {
         foreach($call in $inflight){try{$call.ps.Stop()}catch{};$call.ps.Dispose()}
         if($pool){$pool.Close();$pool.Dispose()}
     }
-    } finally { Exit-RouterBenchLock $benchLock }
+    } finally {
+        Exit-RouterBenchLock $benchLock
+        Sync-RouterProposalItems -StateDir $StateDir
+    }
 }
 
 if($MyInvocation.InvocationName -ne '.') {

@@ -22,6 +22,7 @@ $suites = @(
     'scripts/model-router/tests/test-mac-observer.ps1',
     'scripts/model-router/tests/test-resolve-roster.ps1',
     'scripts/model-router/tests/test-roster-approval.ps1',
+    'scripts/model-router/tests/test-proposal-items.ps1',
     'scripts/model-router/tests/test-router-cadence.ps1',
     'scripts/model-router/tests/test-vendor-limits.ps1',
     'scripts/model-router/tests/test-dispatch-diagnosis.ps1',

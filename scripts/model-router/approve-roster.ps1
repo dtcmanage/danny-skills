@@ -131,6 +131,7 @@ if ($ApproveFrontier -or $DeclineFrontier) {
         Write-RouterJsonAtomic (Get-RouterFrontierRequestPath $RequestId) $request
         "Frontier request $RequestId $($request.status)."
     }
+    Sync-RouterProposalItems
     return
 }
 if ($RequestId -or $Model) { throw '-RequestId and -Model require a frontier decision.' }
@@ -377,4 +378,5 @@ if ($Show) { & $approvalAction } else {
     Use-RouterOutcomeMutex -StateDir $state -Action {
         Use-RouterRosterMutex -StateDir $state -Body $approvalAction
     }
+    Sync-RouterProposalItems -StateDir $state
 }

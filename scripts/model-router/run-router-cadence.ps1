@@ -225,6 +225,7 @@ function Invoke-RouterCadence {
         }
     }
     Remove-RouterResolvedResearchFailures -Now $Now
+    Sync-RouterProposalItems -StateDir $state
     return [pscustomobject]@{ needs_you=@($needsYou.ToArray()); checked=$([bool]$CheckOnly); added=$added; ran=@($ran.ToArray()); pending=@(Read-RouterJsonArray -Path $queuePath).Count; eastern_time=$eastern.ToString('o') }
 }
 

@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.18.3 (2026-11-15): Model router files pending proposals to Command Center and closes them on decision (shared router change).
+
 - 1.18.2 (2026-11-15): Shared model router update: writer roster accepts the approved xhigh effort; bench bank scan skips installed harness dependencies.
 
 - 1.18.1 (2026-11-15): Shared model-router research: routing categories without public benchmarks are skipped instead of stopping new-model research, and a stopped research run alerts Danny with its error.

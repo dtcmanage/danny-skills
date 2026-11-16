@@ -55,10 +55,11 @@ cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"
 pwsh -NoProfile -File "<danny-skills>/scripts/model-router/tests/test-mac-regressions.ps1"
 ```
 
-This actual-OS Windows-only gate declares 23 suites: the 14 retained suites plus
+This actual-OS Windows-only gate declares 24 suites: the 14 retained suites plus
 `test_bench_tasks.py`, `test_bench_review.py`, `test_bench_runner.py`,
 `test-bench-runner.ps1`, `test_bench_integration.py`, `test-bench-integration.ps1`,
-`test-bench-cache-duration.ps1`, `test-bench-judge-effort.ps1`, and `test-proposal-validity.ps1`.
+`test-bench-cache-duration.ps1`, `test-bench-judge-effort.ps1`, `test-proposal-validity.ps1`,
+and `test-proposal-items.ps1` (isolated fake Command Center reconciliation).
 The obsolete `test-canary.ps1` entry is removed. Use the generated per-suite evidence and final summary for the actual result; the declared list alone is not a passing gate.
 
 M01 contains Windows authority, named-mutex and `Start-Process -WindowStyle Hidden`

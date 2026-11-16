@@ -38,6 +38,23 @@ The catalog check runs twice daily with a 30-second deadline. A failed check pre
 
 Outcome writers share `Use-RouterOutcomeMutex` in `router-common.ps1`. Imports hold it before reading outcomes, the roster, drift marks and declines, through replacement and proposal updates; bench, research and build wrappers append through `Add-RouterOutcome`. Roster approval and proposal creation use the same lock so a concurrent import cannot overwrite an approval or decline. Alerts are delivered after releasing the lock. The persistent `outcomes.mutex` file is intentionally retained; its exclusive handle is released in `finally` or by the OS on process exit. Do not delete it while writers may be running. Contention waits up to 30 seconds, then raises `ROUTER_OUTCOME_MUTEX_TIMEOUT`; it never writes without the lock. This coordinates processes sharing one local state directory, not separate machines or non-cooperating manual writers.
 
+## Proposal decisions on Command Center
+
+Pending tie, effort, roster and frontier proposals are filed to Command Center
+automatically after bench runs, roster decisions and both cadence modes. Each
+item includes the evidence report, decision commands and a review starter prompt.
+Reruns reuse the same proposal instance; approved, declined, revoked, superseded
+or removed proposals close their open items. Command Center failures are best
+effort and recorded in `state/proposal-items.log`.
+
+`sync-proposal-items.ps1 -DryRun -Json` previews pending items without calling
+Command Center. Non-live state directories require an explicit `-CcCommand` or
+`DT_ROUTER_CC_COMMAND`; test fixtures never call the default CLI. Roster
+`latest.json` can be a pointer or a roster object. Approved objects, invalid
+proposals and changes already applied by a later approval are not pending;
+partial approvals retain outstanding changes. The CLI has no general roster
+decline verb: `-DeclineDrift -Job` keeps current choices after drift alerts.
+
 ## Difficulty tiers
 
 Coder and deep-thinker default to `standard`; request `-Difficulty hard -DifficultyReason "<single-line reason, at most 240 characters>"` for hard work. Difficulty is lowercase in results and wrapper provenance; fast, writer and illustrator return null. A job without tier objects uses its scalar at both difficulties and treats tie evidence as standard.

@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.40 (2026-11-15): Model router files pending proposals to Command Center and closes them on decision (shared router change).
+
 - 0.2.39 (2026-11-15): Shared model router update: writer roster accepts the approved xhigh effort; bench bank scan skips installed harness dependencies.
 
 - 0.2.38 (2026-11-15): Shared model-router research: routing categories without public benchmarks are skipped instead of stopping new-model research, and a stopped research run alerts Danny with its error.

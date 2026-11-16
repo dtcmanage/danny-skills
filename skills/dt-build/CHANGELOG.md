@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.50.6
+
+- Model router files pending proposals to Command Center and closes them on decision (shared router change).
+
 ## 2.50.5
 
 - Chunk cleanup resolves -WorktreePath through git rev-parse so a relative or alias path still matches its worktree; a subdirectory is still refused.
