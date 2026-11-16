@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.7.1 (2026-11-16): Anchor the directory-drift script path as <skill>/scripts/.
+
 - 0.7.0 (2026-11-16): Session audits run check-directory-drift.ps1 and route mismatches between the workspace folder list and the real folders as findings; linked worktrees are ignored.
 
 - 0.6.1 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).

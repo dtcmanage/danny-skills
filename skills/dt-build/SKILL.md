@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.50.7
+  version: 2.51.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -22,7 +22,7 @@ Stricter skill rules override the shared baseline.
 
 ## Host adapter
 
-A managed resume enters through `references/managed-resume.md`, not intake steps 1–5: authorization reads, mark bootstrap, then only what the step needs.
+A managed resume enters through `references/managed-resume.md`, not intake steps 1–5: plan boundary/approval reads with `<skill>/scripts/boundary-ledger.ps1`, read changed/new sources in full, mark bootstrap, then only what the step needs. The ledger grants no authority.
 
 Only headless Codex coordinators use `DT_BUILD_LEAN_BOOTSTRAP=1` and `<skill>/scripts/read-coordinator-rulebook.ps1` (one host adapter plus the resume sections): canonical policy waits for its triggering action; run records, approvals and boundaries stay mandatory. Jobs and wrappers strip the opt-out.
 

@@ -1,5 +1,7 @@
 #Requires -Version 7.0
 # Archive the old checkpoint and atomically replace it, retaining dt-job's current owned fields.
+# Keep governing boundary/approval paths in the candidate; successors plan them with
+# boundary-ledger.ps1. Do not copy ledger rows or require unchanged sources to be reread.
 param(
     [Parameter(Mandatory)][Alias('RunFolder')][string]$ResumeRunFolder,
     [Parameter(Mandatory)][Alias('BuildStatePath')][string]$ResumeBuildStatePath,

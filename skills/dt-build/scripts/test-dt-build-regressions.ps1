@@ -43,6 +43,8 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-boundary-ledger.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'boundary ledger bootstrap regressions pass'
     if ($IsWindows) {
         $selectionJunction = Join-Path $tempRoot 'dt-build-junction'
         $junction = New-Item -ItemType Junction -Path $selectionJunction -Target $skillRoot
@@ -945,11 +947,20 @@ if ($env:DT_FAKE_CHANGE_TREE) {
 Write-Envelope $report
 '@
 
+    # These fake runs fail on purpose, and failure diagnosis then reads the live status page.
+    # An empty vendor-status.json in the state folder stops diagnosis before any fetch, so a
+    # real vendor incident cannot block the fake Claude lane (it did during Anthropic's
+    # 2026-11-16 incident). Removed after the loop; the diagnosis tests stub it themselves.
+    $statusStub = Join-Path $routerState 'vendor-status.json'
+    Write-Utf8 -Path $statusStub -Content '{}'
     $env:DT_FAKE_SETTINGS_RECEIPT = Join-Path $tempRoot 'chunk-settings-receipt.txt'
     foreach ($failureMode in @('stamped-preflight', 'exit', 'timeout')) {
         $env:DT_FAKE_CLAUDE_MODE = $failureMode
         $failureOutput = Join-Path $tempRoot ('settings-' + $failureMode + '.md')
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $failureOutput -ClaudeCliPath $fakeClaude -Model 'claude-sonnet-5' -Effort low -SelectionReason 'settings cleanup fixture' -SingleDispatch -TimeoutMs 3000 -Json *> $null
+        # The fake reaches its settings receipt about 4 s after the wrapper starts on SNOWWHITE
+        # (measured 2026-11-16), so 3 s timed out first. The timeout fixture sleeps 30 s, so 10 s
+        # still exercises the timeout path.
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $failureOutput -ClaudeCliPath $fakeClaude -Model 'claude-sonnet-5' -Effort low -SelectionReason 'settings cleanup fixture' -SingleDispatch -TimeoutMs 10000 -Json *> $null
         Assert-True ($LASTEXITCODE -ne 0) "Claude chunk rejects $failureMode"
         Assert-True (Test-Path -LiteralPath $env:DT_FAKE_SETTINGS_RECEIPT) "Claude chunk $failureMode received settings"
         $settingsFile = [IO.File]::ReadAllText($env:DT_FAKE_SETTINGS_RECEIPT)
@@ -957,6 +968,7 @@ Write-Envelope $report
         Remove-Item -LiteralPath $env:DT_FAKE_SETTINGS_RECEIPT
     }
     Remove-Item Env:DT_FAKE_SETTINGS_RECEIPT
+    Remove-Item -LiteralPath $statusStub -Force
     $claudeOutput = Join-Path $tempRoot 'claude-wrapper-output.md'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
     # FS-112/113: exercise both wrappers with fake CLIs and the suite's fake alert transport.

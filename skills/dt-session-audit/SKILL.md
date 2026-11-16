@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.7.0
+  version: 0.7.1
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -179,7 +179,7 @@ Before routing any finding, enumerate which destination files actually exist for
 
 ## Scan Targets
 
-Run `scripts/check-directory-drift.ps1 -WorkspaceRoot <workspace> -Json` each audit, with
+Run `<skill>/scripts/check-directory-drift.ps1 -WorkspaceRoot <workspace> -Json` each audit, with
 `<workspace>` resolved to `_Claude-Workspace`. The read-only scan covers content folders
 and repos/substations through depth 2 below each workstation; it skips links, meta folders,
 and repo interiors. Treat every finding as a normal `fact` audit finding, with an explicit

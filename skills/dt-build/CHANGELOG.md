@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.51.0
+
+- Managed resume plans boundary/approval reads with boundary-ledger.ps1 and rereads only sources that are new or changed (FS-49 part 2); regression suite no longer reads the live vendor status page and its settings timeout fixture allows 10 s.
+
 ## 2.50.7
 
 - Context guard finds the caller's own transcript by session id (CLAUDE_CODE_SESSION_ID / CODEX_THREAD_ID) before falling back to working-directory discovery, so a coordinator run from a repo no longer measures its parent session.

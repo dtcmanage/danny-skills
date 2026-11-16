@@ -1082,6 +1082,12 @@ try {
         Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = "pwsh -NoProfile -File '$scriptDir/read-evidence.ps1' -RunFolder '$($repeatRun.folder)' -Path '$repeatFile' -Grep x" }))) 'read-evidence calls pass regardless of prior direct reads'
     }
     Assert-True (@(Get-Content -LiteralPath $repeatLedger).Count -eq $beforeEvidence) 'read-evidence calls do not enter the direct-read ledger'
+    foreach ($ledgerVerb in @('plan', 'record')) {
+        $ledgerArgs = if ($ledgerVerb -eq 'plan') { "-Paths '$repeatFile'" } else { "-Path '$repeatFile' -Lines 'Verdict: source only.' -CoordinatorId repeat-1" }
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = "pwsh -NoProfile -File '$scriptDir/boundary-ledger.ps1' $ledgerVerb -RunFolder '$($repeatRun.folder)' $ledgerArgs" }))) "boundary-ledger $ledgerVerb passes after the direct-read allowance"
+    }
+    Assert-True (@(Get-Content -LiteralPath $repeatLedger).Count -eq $beforeEvidence) 'boundary ledger commands do not enter or reset the direct-read ledger'
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'PowerShell' @{ command = $fullRead }))) 'boundary ledger commands preserve the third full-read deny'
     Write-Lease -RunFolder $repeatRun.folder -CoordinatorId 'repeat-2' -LeaseHost 'claude' -SessionId 'sess-repeat'
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'Read' @{ file_path = $repeatFile }))) 'a new coordinator starts clean with a Read tool call'
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-repeat' '' 'Bash' @{ command = $fullRead }))) 'the second coordinator shell read shares the Read count'
