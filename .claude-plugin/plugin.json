@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.27.11",
+  "version": "0.27.12",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.27.12 dt-session-audit 0.8.0: check touched ready AI items at session exit and route unresolved exits as Command Center findings.",
       "0.27.11 dt-memory-hygiene 0.4.1: table rows no longer count as long lines.",
       "0.27.10 dt-build 2.51.0: managed resume rereads only changed boundary/approval records; dt-session-audit 0.7.1: anchored drift-check script path.",
       "0.27.9 dt-memory-hygiene 0.4.0: the size check enforces the 1,500-word workstation budgets; its test suite joins the model router regression list.",

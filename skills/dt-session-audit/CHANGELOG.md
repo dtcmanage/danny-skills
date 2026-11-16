@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.8.0 (2026-11-16): Add the read-only AI-item exit backstop with transcript discovery, readiness checks, three exit choices and isolated HTTP regression tests.
+
 - 0.7.1 (2026-11-16): Anchor the directory-drift script path as <skill>/scripts/.
 
 - 0.7.0 (2026-11-16): Session audits run check-directory-drift.ps1 and route mismatches between the workspace folder list and the real folders as findings; linked worktrees are ignored.
