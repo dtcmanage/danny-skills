@@ -4,6 +4,8 @@ Claude Code coordinators; shared rules: `SKILL.md`. `dt-job`: `pwsh -NoProfile -
 
 ## Dispatch
 
+Without `-TranscriptPath`, the context guard resolves `CLAUDE_CODE_SESSION_ID` under `CLAUDE_CONFIG_DIR/projects`, preferring the cwd project folder and excluding subagents; missing ids/files use existing cwd discovery (`transcript_discovery: cwd-fallback`). The watcher retains coordinator launch-prompt matching.
+
 - Follow `SKILL.md` routing; dispatch pinned runs without `-Model`; omit pins from handoffs.
 - Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `<skill>/scripts/invoke-claude-chunk.ps1` or `<skill>/scripts/invoke-codex-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
 - Run tests/builds/browser checks as `-Kind test|command` jobs.

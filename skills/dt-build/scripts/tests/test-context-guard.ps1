@@ -38,6 +38,10 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-ctx-tests-{0}" -f (
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 $savedEnv = @{}
+foreach ($name in @('CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID')) {
+    $savedEnv[$name] = [System.Environment]::GetEnvironmentVariable($name)
+    Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+}
 foreach ($name in @('DT_BUILD_STATE_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'DT_BUILD_COORDINATOR_ID', 'DT_BUILD_CTX_SOFT_MARGIN', 'DT_BUILD_CTX_HARD_MARGIN', 'DT_BUILD_CTX_CEILING', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALERT_TRANSPORT', 'DT_BUILD_COORDINATOR_LAUNCHER', 'DT_BUILD_VENDOR_LIMITS_SCRIPT', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID', 'DT_TEST_DM_LOG', 'DT_TEST_LAUNCH_LOG')) {
     $savedEnv[$name] = [System.Environment]::GetEnvironmentVariable($name)
 }
@@ -328,7 +332,7 @@ try {
     (Get-Item -LiteralPath $subagentClaude).LastWriteTimeUtc = $stamp.AddSeconds(30)
     (Get-Item -LiteralPath $sidechainClaude).LastWriteTimeUtc = $stamp.AddSeconds(40)
     (Get-Item -LiteralPath $otherClaude).LastWriteTimeUtc = $stamp.AddSeconds(50)
-    $mineCodex = Join-Path $env:CODEX_HOME 'sessions/2026/10/10/rollout-2026-10-10T01-00-00-mine.jsonl'
+    $mineCodex = Join-Path $env:CODEX_HOME 'sessions/2026/10/10/rollout-2026-10-10T01-00-00-codex-sess-1.jsonl'
     New-CodexRollout -Path $mineCodex -Inputs @(42000) -Cwd $work -SessionId 'codex-sess-1'
     $otherCodex = Join-Path $env:CODEX_HOME 'sessions/2026/10/10/rollout-2026-10-10T02-00-00-other.jsonl'
     New-CodexRollout -Path $otherCodex -Inputs @(1000) -Cwd 'C:\elsewhere'
@@ -369,6 +373,57 @@ try {
     try { $none = Invoke-DtJobRaw @('mark-bootstrap', '-RunFolder', $run.folder, '-CoordinatorId', 'disc-none', '-Host', 'codex') }
     finally { Pop-Location }
     Assert-True ($none.exit -ne 0 -and $none.text -match 'CONTEXT_GUARD_NO_TRANSCRIPT') 'discovery fails clearly when no transcript matches'
+
+    # ---- caller ids beat a newer parent in the same cwd; missing ids/files preserve fallback.
+    . $guard
+    $idWork = Join-Path $tempRoot 'session-id-work'
+    $idSlug = $idWork -replace '[^A-Za-z0-9]', '-'
+    $ownId = [guid]::NewGuid().ToString()
+    $own = Join-Path $env:CLAUDE_CONFIG_DIR "projects/$idSlug/$ownId.jsonl"
+    $parent = Join-Path $env:CLAUDE_CONFIG_DIR "projects/$idSlug/parent.jsonl"
+    New-ClaudeTranscript $own @(284497) $idWork
+    New-ClaudeTranscript $parent @(309254) $idWork
+    (Get-Item $own).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(-1)
+    (Get-Item $parent).LastWriteTimeUtc = [DateTime]::UtcNow
+    $method = $null
+    $env:CLAUDE_CODE_SESSION_ID = $ownId
+    $found = Find-DtCtxTranscript -TranscriptHost claude -Cwd $idWork -DiscoveryMethod ([ref]$method)
+    Assert-True ($found -eq $own -and (Get-DtCtxTokens claude $found) -eq 284497 -and $method -eq 'session-id') 'Claude measures the older caller rather than the newer parent'
+    $found = Find-DtCtxTranscript -TranscriptHost claude -Cwd $lost -DiscoveryMethod ([ref]$method)
+    Assert-True ($found -eq $own -and $method -eq 'session-id') 'Claude finds its id in another project folder after cwd changes'
+    Push-Location (Split-Path $idWork)
+    try { $marked = Invoke-DtJob @('mark-bootstrap', '-RunFolder', $run.folder, '-CoordinatorId', 'id-claude', '-Host', 'claude') }
+    finally { Pop-Location }
+    Assert-True ($marked.baseline_tokens -eq 284497 -and $marked.transcript_discovery -eq 'session-id') 'mark-bootstrap reports session-id telemetry and the caller measurement'
+    Remove-Item Env:CLAUDE_CODE_SESSION_ID
+    $found = Find-DtCtxTranscript -TranscriptHost claude -Cwd $idWork -DiscoveryMethod ([ref]$method)
+    Assert-True ($found -eq $parent -and $method -eq 'cwd-fallback') 'unset Claude id preserves newest cwd discovery'
+    $env:CLAUDE_CODE_SESSION_ID = 'missing-session'
+    $found = Find-DtCtxTranscript -TranscriptHost claude -Cwd $idWork -DiscoveryMethod ([ref]$method)
+    Assert-True ($found -eq $parent -and $method -eq 'cwd-fallback') 'missing Claude id file explicitly falls back'
+    $nested = Join-Path $env:CLAUDE_CONFIG_DIR "projects/$idSlug/parent/subagents/missing-session.jsonl"
+    New-ClaudeTranscript $nested @(999999) $idWork
+    $found = Find-DtCtxTranscript -TranscriptHost claude -Cwd $idWork
+    Assert-True ($found -eq $parent) 'session id lookup excludes subagents'
+    Add-Line $parent ([ordered]@{ type = 'user'; message = "Resume as coordinator watcher-id on claude" })
+    $env:CLAUDE_CODE_SESSION_ID = $ownId
+    $found = Find-DtCtxTranscript -TranscriptHost claude -Cwd $idWork -CoordinatorId watcher-id -DiscoveryMethod ([ref]$method)
+    Assert-True ($found -eq $parent -and $method -eq 'coordinator-launch') 'watcher launch matching ignores inherited caller id'
+    Remove-Item Env:CLAUDE_CODE_SESSION_ID
+
+    $codexParent = Join-Path $env:CODEX_HOME 'sessions/rollout-parent.jsonl'
+    New-CodexRollout $codexParent @(309254) $work 'codex-parent'
+    (Get-Item $codexParent).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(10)
+    $env:CODEX_THREAD_ID = 'codex-sess-1'
+    $found = Find-DtCtxTranscript -TranscriptHost codex -Cwd $lost -DiscoveryMethod ([ref]$method)
+    Assert-True ($found -eq $mineCodex -and (Get-DtCtxTokens codex $found) -eq 42000 -and $method -eq 'session-id') 'Codex matches session_meta id independently of cwd and recency'
+    Remove-Item Env:CODEX_THREAD_ID
+    $found = Find-DtCtxTranscript -TranscriptHost codex -Cwd $work -DiscoveryMethod ([ref]$method)
+    Assert-True ($found -eq $codexParent -and $method -eq 'cwd-fallback') 'unset Codex thread id preserves cwd discovery'
+    $env:CODEX_THREAD_ID = 'missing-thread'
+    $found = Find-DtCtxTranscript -TranscriptHost codex -Cwd $work -DiscoveryMethod ([ref]$method)
+    Assert-True ($found -eq $codexParent -and $method -eq 'cwd-fallback') 'missing Codex thread file explicitly falls back'
+    Remove-Item Env:CODEX_THREAD_ID
 
     # ---- every verb reports the context line for a coordinator; start is refused past hard; state verbs are not.
     $run = New-Run -Name 'verbs'

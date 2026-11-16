@@ -2206,12 +2206,15 @@ function Get-DtJobContextReport {
         if ($null -ne $entry) {
             $tokens = Get-DtCtxTokens -TranscriptHost ([string]$entry.host) -TranscriptPath ([string]$entry.transcript_path)
             $report = Get-DtCtxState -Tokens $tokens -Baseline ([long]$entry.baseline_tokens) -TranscriptHost ([string]$entry.host)
+            if ($entry.PSObject.Properties['transcript_discovery']) { $report | Add-Member -NotePropertyName transcript_discovery -NotePropertyValue $entry.transcript_discovery }
         }
         else {
             $ctxHost = Resolve-DtJobContextHost -RunFolder $RunFolder -CoordinatorId $CoordinatorId -RequestedHost $RequestedHost
             if (-not $ctxHost) { throw 'host unknown before mark-bootstrap' }
-            $transcript = Find-DtCtxTranscript -TranscriptHost $ctxHost
+            $discovery = $null
+            $transcript = Find-DtCtxTranscript -TranscriptHost $ctxHost -DiscoveryMethod ([ref]$discovery)
             $report = Get-DtCtxState -Tokens (Get-DtCtxTokens -TranscriptHost $ctxHost -TranscriptPath $transcript) -Baseline $null -TranscriptHost $ctxHost
+            $report | Add-Member -NotePropertyName transcript_discovery -NotePropertyValue $discovery
         }
     }
     catch {
@@ -2256,7 +2259,8 @@ function Invoke-DtJobMarkBootstrap {
         # A discovered transcript is a guess: its session is not recorded, so the hooks never treat that
         # session as this coordinator. The Claude PostToolUse hook later records the caller's own session.
         $source = if ($TranscriptPath) { 'explicit' } else { 'discovered' }
-        $transcript = if ($TranscriptPath) { [System.IO.Path]::GetFullPath($TranscriptPath) } else { Find-DtCtxTranscript -TranscriptHost $ctxHost }
+        $discovery = 'explicit'
+        $transcript = if ($TranscriptPath) { [System.IO.Path]::GetFullPath($TranscriptPath) } else { Find-DtCtxTranscript -TranscriptHost $ctxHost -DiscoveryMethod ([ref]$discovery) }
         $tokens = Get-DtCtxTokens -TranscriptHost $ctxHost -TranscriptPath $transcript
         if ($null -eq $tokens) { throw "DT_JOB_CONTEXT_UNREADABLE: no $ctxHost token usage in $transcript yet; nothing marked" }
         $new = [pscustomobject][ordered]@{
@@ -2265,6 +2269,7 @@ function Invoke-DtJobMarkBootstrap {
             transcript_path = $transcript
             session_id      = $(if ($source -eq 'explicit') { Get-DtCtxSessionId -TranscriptHost $ctxHost -TranscriptPath $transcript } else { $null })
             transcript_source = $source
+            transcript_discovery = $discovery
             baseline_tokens = [long]$tokens
             marked_utc      = [DateTime]::UtcNow.ToString('o')
         }
@@ -2282,6 +2287,7 @@ function Invoke-DtJobMarkBootstrap {
         baseline_tokens = $result.entry.baseline_tokens
         marked_utc      = $result.entry.marked_utc
         newly_marked    = $result.marked
+        transcript_discovery = $(if ($result.entry.PSObject.Properties['transcript_discovery']) { $result.entry.transcript_discovery } else { $null })
     }
     $overhead = if ($result.entry.PSObject.Properties['host_overhead_tokens']) { $result.entry.host_overhead_tokens } else { $null }
     $measurement = Get-DtCtxBootstrapMeasurement -Baseline $out.baseline_tokens -HostOverhead $overhead

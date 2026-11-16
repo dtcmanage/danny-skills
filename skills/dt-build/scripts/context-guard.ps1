@@ -255,12 +255,14 @@ function Test-DtCtxCandidate {
 }
 
 function Find-DtCtxTranscript {
-    # The transcript of the coordinator session started in $Cwd, used only when the caller names none.
+    # Resolve the caller's session id first; cwd discovery is a fallback when it is unavailable.
     # Claude: *.jsonl under $CLAUDE_CONFIG_DIR\projects (default ~\.claude\projects). Codex: a rollout under
     # $CODEX_HOME\sessions (default ~\.codex\sessions). Among the candidates Test-DtCtxCandidate accepts,
     # the newest one whose latest lines carry a mark-bootstrap call wins, else the newest. A discovered
     # transcript is a guess: its session is never recorded as a coordinator session for the hooks.
-    param([Parameter(Mandatory)][string]$TranscriptHost, [string]$Cwd = (Get-Location).ProviderPath, [string]$CoordinatorId, [Nullable[DateTime]]$SinceUtc)
+    param([Parameter(Mandatory)][string]$TranscriptHost, [string]$Cwd = (Get-Location).ProviderPath, [string]$CoordinatorId, [Nullable[DateTime]]$SinceUtc, [ref]$DiscoveryMethod)
+    # Preserve the string return contract; callers can opt into discovery telemetry.
+    if ($DiscoveryMethod) { $DiscoveryMethod.Value = 'cwd-fallback' }
     if ($TranscriptHost -eq 'claude') {
         $base = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
         $root = Join-Path $base 'projects'
@@ -272,6 +274,31 @@ function Find-DtCtxTranscript {
         $base = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
         $searchRoot = Join-Path $base 'sessions'
     }
+    # A watcher identifies another session by launch prompt, never its inherited environment.
+    $callerId = if ($TranscriptHost -eq 'claude') { $env:CLAUDE_CODE_SESSION_ID } else { $env:CODEX_THREAD_ID }
+    if (-not $CoordinatorId -and $callerId -and $callerId -notmatch '[\\/]' -and $callerId -notin @('.', '..')) {
+        if ($TranscriptHost -eq 'claude') {
+            # Search only direct project children: nested subagent transcripts cannot match.
+            $projects = @($slugDir) + @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'subagents' } | Select-Object -ExpandProperty FullName)
+            foreach ($project in ($projects | Select-Object -Unique)) {
+                $file = Join-Path $project ($callerId + '.jsonl')
+                if (Test-Path -LiteralPath $file -PathType Leaf) {
+                    if ($DiscoveryMethod) { $DiscoveryMethod.Value = 'session-id' }
+                    return [System.IO.Path]::GetFullPath($file)
+                }
+            }
+        } else {
+            # Codex names each rollout rollout-<timestamp>-<thread id>.jsonl; confirm the id in session_meta.
+            # Do not limit by recency or cwd: the caller may be old or have changed folders.
+            foreach ($file in (Get-ChildItem -LiteralPath $searchRoot -Recurse -File -Filter ('rollout-*' + $callerId + '.jsonl') -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)) {
+                if ((Get-DtCtxSessionId -TranscriptHost codex -TranscriptPath $file.FullName) -eq $callerId) {
+                    if ($DiscoveryMethod) { $DiscoveryMethod.Value = 'session-id' }
+                    return $file.FullName
+                }
+            }
+        }
+    }
+    if ($CoordinatorId -and $DiscoveryMethod) { $DiscoveryMethod.Value = 'coordinator-launch' }
     if (-not (Test-Path -LiteralPath $searchRoot -PathType Container)) { throw "CONTEXT_GUARD_NO_TRANSCRIPT: no $TranscriptHost transcript folder at $searchRoot" }
     $filter = if ($TranscriptHost -eq 'claude') { '*.jsonl' } else { 'rollout-*.jsonl' }
     $candidates = @(Get-ChildItem -LiteralPath $searchRoot -Recurse -File -Filter $filter -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First $script:DtCtxDiscoveryCandidates)

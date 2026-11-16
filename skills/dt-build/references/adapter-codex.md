@@ -4,6 +4,8 @@ For Codex coordinators (interactive Codex CLI, `codex exec`). Shared rules: `SKI
 
 ## Dispatch
 
+Without `-TranscriptPath`, the context guard matches `CODEX_THREAD_ID` against rollout `session_meta.id` under `CODEX_HOME/sessions`; missing ids/files use existing cwd discovery (`transcript_discovery: cwd-fallback`). The watcher retains coordinator launch-prompt matching.
+
 - Follow `SKILL.md` routing; dispatch pinned runs without `-Model`; omit pins from handoffs.
 - Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `<skill>/scripts/invoke-codex-chunk.ps1` or `<skill>/scripts/invoke-claude-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
 - Run tests/builds/browser checks as `-Kind test|command` jobs.

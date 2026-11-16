@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.50.7
+
+- Context guard finds the caller's own transcript by session id (CLAUDE_CODE_SESSION_ID / CODEX_THREAD_ID) before falling back to working-directory discovery, so a coordinator run from a repo no longer measures its parent session.
+
 ## 2.50.6
 
 - Model router files pending proposals to Command Center and closes them on decision (shared router change).
