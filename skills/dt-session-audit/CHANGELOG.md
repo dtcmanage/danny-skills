@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.7.0 (2026-11-16): Session audits run check-directory-drift.ps1 and route mismatches between the workspace folder list and the real folders as findings; linked worktrees are ignored.
+
 - 0.6.1 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 0.6.0 (2026-10-13): Add a Command Center backstop to reconcile session open and finished items, move misplaced open-for-Danny memory entries, and report list writes.

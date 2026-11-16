@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.6.1
+  version: 0.7.0
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -178,6 +178,19 @@ Discover workspace dynamically. Read relevant files if present:
 Before routing any finding, enumerate which destination files actually exist for the in-play scopes with a single deterministic pass — one `Get-ChildItem` (or Glob) sweep over the root, in-play workstation, and in-play project folders for `CLAUDE.md`, `MEMORY.md`, `CONTEXT.md`, and `glossary.md`, **plus the reference files in the governing `References` tables** (root `00_Resources\` and the in-play workstation's Resources folder) — routed rules land in those, so a sweep that omits them will misfile every routed finding into `CLAUDE.md`. Route only to files confirmed present in that sweep; if a routing decision points at a file that does not exist, propose creating it explicitly rather than assuming it is there.
 
 ## Scan Targets
+
+Run `scripts/check-directory-drift.ps1 -WorkspaceRoot <workspace> -Json` each audit, with
+`<workspace>` resolved to `_Claude-Workspace`. The read-only scan covers content folders
+and repos/substations through depth 2 below each workstation; it skips links, meta folders,
+and repo interiors. Treat every finding as a normal `fact` audit finding, with an explicit
+destination exception: the workspace `CLAUDE.md` Workstation Directory table. Apply a
+deterministic fix when the evidence is unambiguous; otherwise mark `UNCERTAIN`. Routing-map
+discrepancies also require reconciling the root routing row per
+`00_Resources/workstation-creation-template.md`; never silently discard a route.
+This explicitly requested filesystem check supplies fact provenance for deterministic fixes.
+When `full_rescan_due` is true and every finding was resolved (or there were none), rerun
+the check to confirm no findings remain, then update only the date in `Last full verification`
+to today's US Eastern date. Leave the stamp unchanged while anything remains unresolved.
 
 Look for uncaptured findings in five buckets:
 

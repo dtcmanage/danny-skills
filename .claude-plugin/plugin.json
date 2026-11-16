@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "0.27.7",
+  "version": "0.27.8",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Workstation: dt-app-launcher (hardened local GUI launchers), dt-terminal-format-profile (deterministic VS Code terminal colors). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "0.27.8 dt-session-audit 0.7.0: session audits flag drift between the workspace folder list and the real folders; its test suite joins the model router regression list.",
       "0.27.7 dt-build 2.50.7: context guard resolves the caller's transcript by session id instead of working directory.",
       "0.27.6 model router: pending swap, tie, effort and frontier proposals are filed to Command Center automatically and closed when approved, declined, revoked or superseded (new sync-proposal-items.ps1, run after approvals, bench runs and the daily cadence); version policy registers the new script and its test. Skills: dt-build 2.50.6, dt-review 1.18.3, dt-image-gen 0.3.40, dt-writing-draft 0.2.40, dt-writing-edit 0.3.40.",
       "0.27.5 model router: writer roster accepts the approved xhigh effort; bench bank scan skips installed harness dependencies; stale quota-reader test setup and Windows suite time limits fixed so every regression suite passes. Skills: dt-build 2.50.5 (chunk cleanup path matching), dt-review 1.18.2, dt-image-gen 0.3.39, dt-writing-draft 0.2.39, dt-writing-edit 0.3.39.",
