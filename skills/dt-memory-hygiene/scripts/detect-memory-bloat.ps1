@@ -101,7 +101,9 @@ foreach ($f in $targets) {
     }
     $dupRatio = if (@($nonEmpty).Count -gt 0) { [double]$dupCount / [double]@($nonEmpty).Count } else { 0.0 }
 
-    $longLines = @($lines | Where-Object { $_.Length -gt 220 }).Count
+    # Markdown table rows are one line per row by design (the workspace directory and routing
+    # tables), so they never count as long lines; word and token limits still cover them.
+    $longLines = @($lines | Where-Object { $_.Length -gt 220 -and $_ -notmatch '^\s*\|' }).Count
 
     $bulletLines = @($lines | Where-Object { $_ -match '^\s*[-*]\s+' })
     $bulletWordCounts = @()

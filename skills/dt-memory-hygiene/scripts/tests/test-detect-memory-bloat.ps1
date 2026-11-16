@@ -83,6 +83,20 @@ try {
     $rootMemory = @($report.files | Where-Object { $_.tier -eq 'root' -and $_.kind -eq 'memory' })[0]
     Assert-True ($rootClaude.trigger_flags.words -and $rootClaude.should_run_hygiene) 'root CLAUDE.md over 4000 words triggers'
     Assert-True ($rootMemory.trigger_flags.lines -and $rootMemory.should_run_hygiene -and $rootMemory.thresholds.word_max -eq 0) 'root MEMORY.md line ceiling without word ceiling'
+
+    # Long markdown table rows are not long lines; the same text as prose is.
+    $tableDir = Join-Path $fixtureRoot 'tables'
+    New-Item -ItemType Directory -Path $tableDir -Force | Out-Null
+    $cell = ('word ' * 60).Trim()
+    Set-Content -LiteralPath (Join-Path $tableDir 'CLAUDE.md') -Value (@('| A | B |', '| :-- | :-- |') + @(1..30 | ForEach-Object { "| row $_ | $cell |" }))
+    $proseDir = Join-Path $fixtureRoot 'prose'
+    New-Item -ItemType Directory -Path $proseDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $proseDir 'CLAUDE.md') -Value @(1..30 | ForEach-Object { "Line $_ $cell" })
+    $report = & $detector -RootPath $fixtureRoot -AsJson | ConvertFrom-Json
+    $tableFile = @($report.files | Where-Object file -eq (Join-Path $tableDir 'CLAUDE.md'))[0]
+    $proseFile = @($report.files | Where-Object file -eq (Join-Path $proseDir 'CLAUDE.md'))[0]
+    Assert-True ($tableFile.long_lines -eq 0 -and -not $tableFile.trigger_flags.long_lines) 'table rows never count as long lines'
+    Assert-True ($proseFile.long_lines -eq 30 -and $proseFile.trigger_flags.long_lines) 'long prose lines still count'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixtureRoot)
     $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
