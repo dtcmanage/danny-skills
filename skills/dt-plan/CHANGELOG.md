@@ -1,5 +1,7 @@
 # dt-plan changelog
 
+- 1.4.3 (2026-11-22): Linux workspace paths for the default save path and Tech Stack Reference; bash script-call blocks; backticked absolute paths in output.
+
 - 1.4.2 (2026-10-19): Require retained redacted raw auth and endpoint samples for named external API probes (FS-126).
 
 - 1.4.1 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).

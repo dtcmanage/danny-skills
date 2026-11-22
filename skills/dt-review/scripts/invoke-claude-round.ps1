@@ -199,7 +199,7 @@ if ($ReasoningEffort -cne $tierDefaultEffort -and [string]::IsNullOrWhiteSpace($
 
 . (Join-Path $RepoRoot 'scripts\claude-cli-result.ps1')
 $claudeCli = Get-ClaudeCliPath
-$executionDir = Join-Path $env:TEMP ("dt-review-claude-exec-{0}" -f [guid]::NewGuid().ToString('N'))
+$executionDir = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-review-claude-exec-{0}" -f [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $executionDir -Force | Out-Null
 
 if ($Preflight) {

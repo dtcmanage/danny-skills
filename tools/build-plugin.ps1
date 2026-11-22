@@ -1,7 +1,7 @@
 # build-plugin.ps1
 # Packages the danny-skills repo into a drag-installable .plugin file for Cowork.
 #
-# Output: D:\Claude\danny-skills-<version>.plugin
+# Output: <workspace>/danny-skills-<version>.plugin (D:\Claude on Windows, ~/Claude on Linux and the Mac)
 #
 # Reads the version from .claude-plugin\plugin.json so the filename always
 # matches the manifest. Excludes .git, tools, and OS junk from the archive.
@@ -106,11 +106,11 @@ if (-not $name -or -not $version) {
 }
 
 $buildId   = [guid]::NewGuid().ToString('N')
-$staging   = Join-Path $env:TEMP ("$name-build-$buildId")
-$zipOut    = Join-Path $env:TEMP ("$name-$version-$buildId.zip")
-$pluginTmp = Join-Path $env:TEMP ("$name-$version-$buildId.plugin")
+$staging   = Join-Path ([System.IO.Path]::GetTempPath()) ("$name-build-$buildId")
+$zipOut    = Join-Path ([System.IO.Path]::GetTempPath()) ("$name-$version-$buildId.zip")
+$pluginTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("$name-$version-$buildId.plugin")
 $pluginOut = if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    "D:\Claude\$name-$version.plugin"
+    if ($IsWindows) { "D:\Claude\$name-$version.plugin" } else { Join-Path (Join-Path $HOME 'Claude') "$name-$version.plugin" }
 }
 else {
     $outputParent = Split-Path -Parent $OutputPath
@@ -129,10 +129,19 @@ try {
         if (-not (Test-Path -LiteralPath $source -PathType Container)) { continue }
         $destination = Join-Path $staging $relativeRoot
         New-Item -ItemType Directory -Path $destination -Force | Out-Null
-        & robocopy $source $destination /E /XD "node_modules" "__pycache__" ".pytest_cache" /XF "*.pyc" "*.pyo" "_log.md" "_log-archive.md" ".DS_Store" "Thumbs.db" | Out-Null
-        $copyExit = $LASTEXITCODE
-        if ($copyExit -ge 8) {
-            throw "robocopy failed for $relativeRoot with exit code $copyExit; refusing to archive a partial staging tree."
+        if ($IsWindows) {
+            & robocopy $source $destination /E /XD "node_modules" "__pycache__" ".pytest_cache" /XF "*.pyc" "*.pyo" "_log.md" "_log-archive.md" ".DS_Store" "Thumbs.db" | Out-Null
+            $copyExit = $LASTEXITCODE
+            if ($copyExit -ge 8) {
+                throw "robocopy failed for $relativeRoot with exit code $copyExit; refusing to archive a partial staging tree."
+            }
+        }
+        else {
+            # Linux/Mac: rsync with the same exclusions (-L copies through symlinks like robocopy follows junctions).
+            & rsync -aL --exclude node_modules --exclude __pycache__ --exclude .pytest_cache --exclude '*.pyc' --exclude '*.pyo' --exclude _log.md --exclude _log-archive.md --exclude .DS_Store --exclude Thumbs.db ($source.TrimEnd('/') + '/') ($destination.TrimEnd('/') + '/')
+            if ($LASTEXITCODE -ne 0) {
+                throw "rsync failed for $relativeRoot with exit code $LASTEXITCODE; refusing to archive a partial staging tree."
+            }
         }
     }
 
@@ -154,7 +163,7 @@ try {
     Move-Item -LiteralPath $pluginTmp -Destination $pluginOut -Force
 }
 finally {
-    $tempPrefix = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+    $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
     if (-not [IO.Path]::GetFullPath($staging).StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Package staging cleanup escaped temp root.' }
     Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $zipOut, $pluginTmp -Force -ErrorAction SilentlyContinue

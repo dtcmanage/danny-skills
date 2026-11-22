@@ -456,7 +456,12 @@ function Test-DtJobProcessIdentity {
     param($ProcessId, $StartUtc)
     if (-not $ProcessId -or -not $StartUtc) { return $false }
     $actual = Get-DtJobProcessStartUtc -ProcessId ([int]$ProcessId)
-    return ($null -ne $actual -and (ConvertTo-DtJobUtc $actual).Ticks -eq (ConvertTo-DtJobUtc $StartUtc).Ticks)
+    if ($null -eq $actual) { return $false }
+    $delta = [Math]::Abs((ConvertTo-DtJobUtc $actual).Ticks - (ConvertTo-DtJobUtc $StartUtc).Ticks)
+    # Windows reports an exact start time. Linux derives it from boot time plus clock ticks, so two reads of the
+    # same process differ by under a millisecond; allow 100 ms there, far below any PID-reuse window.
+    if ($IsWindows) { return $delta -eq 0 }
+    return $delta -le [TimeSpan]::FromMilliseconds(100).Ticks
 }
 
 function Test-DtJobAlive {
@@ -527,7 +532,11 @@ function Start-DtJobRunner {
         $runnerPid = [int]$result.ProcessId
     }
     else {
-        $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList @('-NoProfile', '-NonInteractive', '-File', $script:DtJobRunnerPath, '-RunFolder', $paths.Root, '-JobId', $Record.job_id)
+        # Start-Process joins an argument array with bare spaces off Windows, which splits a path containing
+        # a space (the main checkout lives under 'Skill Creation'); pass one string with each argument quoted.
+        $runnerArgs = @('-NoProfile', '-NonInteractive', '-File', $script:DtJobRunnerPath, '-RunFolder', $paths.Root, '-JobId', [string]$Record.job_id) |
+            ForEach-Object { '"' + ([string]$_).Replace('"', '\"') + '"' }
+        $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList ($runnerArgs -join ' ')
         $runnerPid = $process.Id
     }
     return [pscustomobject]@{ pid = $runnerPid; start_utc = (Get-DtJobProcessStartUtc -ProcessId $runnerPid) }
@@ -1363,7 +1372,7 @@ function Set-DtJobRunState {
 }
 
 function Get-DtJobRegistryPath {
-    $dir = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'dt-build' }
+    $dir = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:XDG_STATE_HOME) { $env:XDG_STATE_HOME } else { Join-Path $HOME '.local/state' }) 'dt-build' }
     return (Join-Path ([System.IO.Path]::GetFullPath($dir)) 'active-runs.json')
 }
 

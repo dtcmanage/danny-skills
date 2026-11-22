@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.52.1
+  version: 2.52.2
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -297,7 +297,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   - Do NOT fire for SKILL.md-only or content-only edits where the skill folder name is unchanged.
 - For each new skill name, invoke the repo-level propagator:
   `pwsh -NoProfile -File <repo>/scripts/verify-skill-junctions.ps1 -RepoRoot <repo> -NewSkills <names...> -Create -Json`
-  Targets reconciled by the script: `$CODEX_HOME\skills`, `~\.agents\skills`, `D:\Claude\skills`, `_Claude-Workspace\.claude\skills`. Cowork is auto-propagated by its whole-folder junction and is not touched here.
+  It reconciles the four skill-link surfaces named in its header (symlinks on Linux, junctions on Windows). Cowork is auto-propagated by its whole-folder junction and is not touched here.
 - Run this before marking the final checkpoint COMPLETE. Hard fail finalization when any of these surface in the script output:
   - any row with status `missing`, `wrong_target`, `create_failed`, or `collision_not_junction`,
   - any entry in `setup_gaps` (a target parent directory does not exist; never auto-create it),
@@ -318,8 +318,8 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   - same milestone-commit outcome class as pre-refactor dt-build behavior
   - artifact integrity checks still pass
   - no regression to verify/fix budget policy
-- Report primary run artifacts (including the acceptance ledger and `_build-state.md`) as clickable
-  local file links under `../../references/conventions.md`; do the same for `build-run-review.html`
+- Report primary run artifacts (including the acceptance ledger and `_build-state.md`) as full absolute
+  paths in backticks under `../../references/conventions.md`; do the same for `build-run-review.html`
   when Danny asked for it.
 
 ## References

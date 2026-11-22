@@ -5,7 +5,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $SettingsPath = [IO.Path]::GetFullPath($SettingsPath)
 $backup = $SettingsPath + '.router-guard.backup'
-$command = '"C:/Users/Danny/AppData/Local/Python/pythoncore-3.14-64/python.exe" -I "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch-guard.py"'
+$windowsCommand = '"C:/Users/Danny/AppData/Local/Python/pythoncore-3.14-64/python.exe" -I "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch-guard.py"'
+$command = $windowsCommand
+if (-not $IsWindows) {
+    # Linux/Mac: system python3 and the guard in the main checkout (never a feature worktree).
+    . (Join-Path $PSScriptRoot 'router-platform.ps1')
+    $guardPath = (Join-Path (Get-RouterMainCheckout) 'scripts/model-router/dispatch-guard.py').Replace('\', '/')
+    $python = (Get-Command python3 -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+    $command = '"' + $python + '" -I "' + $guardPath + '"'
+}
 $matcher = '^(Agent|Task|Bash|PowerShell)$'
 if ($Action -eq 'rollback' -and (Test-Path -LiteralPath $backup)) {
         [IO.File]::WriteAllBytes($SettingsPath, [IO.File]::ReadAllBytes($backup))
@@ -18,7 +26,7 @@ if (-not $settings.ContainsKey('hooks')) { $settings.hooks = @{} }
 if (-not $settings.hooks.ContainsKey('PreToolUse')) { $settings.hooks.PreToolUse = @() }
 $entries = @($settings.hooks.PreToolUse)
 $installed = @($entries | Where-Object {
-    @($_.hooks | Where-Object { $_.command -eq $command -or $_.command -eq 'python "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch-guard.py"' }).Count -gt 0
+    @($_.hooks | Where-Object { $_.command -eq $command -or $_.command -eq $windowsCommand -or $_.command -eq 'python "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch-guard.py"' }).Count -gt 0
 })
 if ($Action -eq 'rollback') {
     if ($installed.Count -gt 0) {

@@ -62,7 +62,7 @@ function Add-ReceivedRound {
 }
 
 $SkillRoot = Split-Path -Parent $PSScriptRoot
-$testRoot = Join-Path $env:TEMP ("dt-review-final-draft-tests-{0}" -f [guid]::NewGuid().ToString('N'))
+$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-review-final-draft-tests-{0}" -f [guid]::NewGuid().ToString('N'))
 try {
     # Consecutive minor rounds permit only exact, hash-bound ACCEPT/COUNTER replacements.
     $polishProject = Join-Path $testRoot 'polish-project'
@@ -181,7 +181,7 @@ try {
 finally {
     if (Test-Path -LiteralPath $testRoot) {
         $resolved = (Resolve-Path -LiteralPath $testRoot).Path
-        $tempPrefix = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        $tempPrefix = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
         if ($resolved.StartsWith($tempPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
             (Split-Path -Leaf $resolved).StartsWith('dt-review-final-draft-tests-')) {
             Remove-Item -LiteralPath $resolved -Recurse -Force

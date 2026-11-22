@@ -22,13 +22,13 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 function Get-CodexCliPath {
-    foreach ($name in @('codex.cmd', 'codex.exe', 'codex.ps1')) {
+    foreach ($name in @('codex.cmd', 'codex.exe', 'codex.ps1', 'codex')) {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($cmd -and $cmd.CommandType -in @('Application', 'ExternalScript')) {
             return $cmd.Source
         }
     }
-    throw 'Unable to locate codex CLI executable (codex.cmd/codex.exe/codex.ps1).'
+    throw 'Unable to locate codex CLI executable (codex.cmd/codex.exe/codex.ps1/codex).'
 }
 
 if (-not (Test-Path -LiteralPath $ProjectPath -PathType Container)) {
@@ -54,7 +54,7 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
 . (Join-Path $RepoRoot 'scripts\invoke-codex-process.ps1')
 
 $projectRoot = (Resolve-Path -LiteralPath $ProjectPath).Path
-$executionDir = Join-Path $env:TEMP ("dt-review-preflight-{0}" -f [guid]::NewGuid().ToString('N'))
+$executionDir = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-review-preflight-{0}" -f [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $executionDir -Force | Out-Null
 
 Push-Location $executionDir

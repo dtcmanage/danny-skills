@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(codex:*) Bash(claude:*) Bash(git:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.18.3
+  version: 1.18.4
   changelog: "Changelog moved to CHANGELOG.md; newest entries first."
 ---
 
@@ -132,9 +132,8 @@ Follow `references/input-modes.md`:
 Codex lane — run with a 75-second outer timeout. The script has four sequential internal
 budgets (10 + 10 + 15 + 30 seconds) plus bounded cleanup:
 
-```powershell
-pwsh -NoProfile -File "<skill>/scripts/preflight-codex.ps1" `
-  -ProjectPath <abs> -Tier light -TimeoutMs 30000
+```bash
+pwsh -NoProfile -File "<skill>/scripts/preflight-codex.ps1" -ProjectPath <abs> -Tier light -TimeoutMs 30000
 ```
 
 This verifies CLI features (`--output-schema`, `--ephemeral`, `--ignore-user-config`), auth, model
@@ -142,9 +141,8 @@ resolution, and response. Stop on failure.
 
 Claude lane: echo-check the router-selected model once before its first substantive round:
 
-```powershell
-pwsh -NoProfile -File "<skill>/scripts/invoke-claude-round.ps1" `
-  -ProjectPath <abs> -Tier <light|complex> -Preflight -TimeoutMs 60000
+```bash
+pwsh -NoProfile -File "<skill>/scripts/invoke-claude-round.ps1" -ProjectPath <abs> -Tier <light|complex> -Preflight -TimeoutMs 60000
 ```
 
 ### 3. Round N
@@ -156,9 +154,8 @@ preserve settled decisions and the existing severity/round rules.
 
 1. Assemble the prompt deterministically:
 
-   ```powershell
-   pwsh -NoProfile -File "<skill>/scripts/assemble-review-prompt.ps1" `
-     -ProjectPath <abs> -Round <N> -Tier <light|complex>
+   ```bash
+   pwsh -NoProfile -File "<skill>/scripts/assemble-review-prompt.ps1" -ProjectPath <abs> -Round <N> -Tier <light|complex>
    ```
 
 2. Invoke the router-selected model through the review's fixed lane. Set the outer timeout slightly above the
@@ -167,18 +164,14 @@ preserve settled decisions and the existing severity/round rules.
 
    Codex lane:
 
-   ```powershell
-   pwsh -NoProfile -File "<skill>/scripts/invoke-codex-round.ps1" `
-     -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> `
-     -Tier <light|complex> -TimeoutMs <300000|600000>
+   ```bash
+   pwsh -NoProfile -File "<skill>/scripts/invoke-codex-round.ps1" -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> -Tier <light|complex> -TimeoutMs <300000|600000>
    ```
 
    Claude lane:
 
-   ```powershell
-   pwsh -NoProfile -File "<skill>/scripts/invoke-claude-round.ps1" `
-     -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> `
-     -Tier <light|complex> -TimeoutMs <300000|600000>
+   ```bash
+   pwsh -NoProfile -File "<skill>/scripts/invoke-claude-round.ps1" -ProjectPath <abs> -Round <N> -PromptPath <abs-prompt> -Tier <light|complex> -TimeoutMs <300000|600000>
    ```
 
    Invocation reassembles the canonical prompt and binds prompt, draft, state, tier, and any required
@@ -188,9 +181,8 @@ preserve settled decisions and the existing severity/round rules.
 
 3. Parse and persist state:
 
-   ```powershell
-   pwsh -NoProfile -File "<skill>/scripts/parse-verdict.ps1" `
-     -FeedbackPath <review-vN.md> -Round <N> -StatePath <verdicts.json> -Tier <light|complex>
+   ```bash
+   pwsh -NoProfile -File "<skill>/scripts/parse-verdict.ps1" -FeedbackPath <review-vN.md> -Round <N> -StatePath <verdicts.json> -Tier <light|complex>
    ```
 
    **Blocking policy.** Both invokers normalize `blocks_design` before validation and record the
@@ -224,9 +216,8 @@ preserve settled decisions and the existing severity/round rules.
    rejection. Append the same reasoning under `## Orchestrator Response` in `review-v<N>.md`.
 7. Record dispositions:
 
-   ```powershell
-   pwsh -NoProfile -File "<skill>/scripts/record-dispositions.ps1" `
-     -StatePath <verdicts.json> -Round <N> -DispositionsPath <dispositions-vN.json>
+   ```bash
+   pwsh -NoProfile -File "<skill>/scripts/record-dispositions.ps1" -StatePath <verdicts.json> -Round <N> -DispositionsPath <dispositions-vN.json>
    ```
 
 8. Run `evaluate-termination.ps1 -StatePath <verdicts.json> -Round <N> -Tier <tier>` and obey its action.
@@ -268,10 +259,8 @@ If Danny selects an extension, persist it before assembling the next prompt:
 - After `APPLY_POLISH_AND_FINALIZE`, run `prepare-final-draft.ps1` first; the authorizer replays its
   manifest before allowing the confirmation review.
 
-```powershell
-pwsh -NoProfile -File "<skill>/scripts/authorize-next-round.ps1" `
-  -ProjectPath <abs> -Round <N+1> -Tier <light|complex> `
-  -AuthorizedBy Danny -Reason '<explicit decision>'
+```bash
+pwsh -NoProfile -File "<skill>/scripts/authorize-next-round.ps1" -ProjectPath <abs> -Round <N+1> -Tier <light|complex> -AuthorizedBy Danny -Reason '<explicit decision>'
 ```
 
 Use the same command for a user-requested confirmation after `FINALIZE_CURRENT` or

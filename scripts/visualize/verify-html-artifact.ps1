@@ -40,13 +40,27 @@ param(
 
     [int]$MinBytes = 512,
 
-    [string]$SmokeScript = 'D:\Claude\_Claude-Workspace\00_Resources\tools\browser-smoke\smoke.mjs',
+    [string]$SmokeScript = '',
 
     [int]$TimeoutMs = 30000
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if (-not $SmokeScript) {
+    # Host-specific workspace root: /home/danny/Claude (Linux), ~/Claude (Mac) or D:\Claude (Windows).
+    $smokeRel = '_Claude-Workspace/00_Resources/tools/browser-smoke/smoke.mjs'
+    $smokeRoots = @()
+    if ($env:DT_WORKSPACE_ROOT) { $smokeRoots += $env:DT_WORKSPACE_ROOT }
+    if ($HOME) { $smokeRoots += (Join-Path $HOME 'Claude') }
+    $smokeRoots += 'D:\Claude'
+    $SmokeScript = Join-Path $smokeRoots[0] $smokeRel
+    foreach ($root in $smokeRoots) {
+        $candidate = Join-Path $root $smokeRel
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $SmokeScript = $candidate; break }
+    }
+}
 
 $checks = New-Object System.Collections.Generic.List[object]
 

@@ -176,7 +176,9 @@ def test_each_denial_prints_its_own_task_files() -> None:
 
 def test_isolated_interpreter_imports_shared_lexer() -> None:
     payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "timeout 600 claude -p hi"}}
-    run = subprocess.run(["C:/Users/Danny/AppData/Local/Python/pythoncore-3.14-64/python.exe", "-I", str(GUARD)],
+    # The hook interpreter guard-settings.ps1 installs: the pinned Windows Python, or python3 elsewhere.
+    python = "C:/Users/Danny/AppData/Local/Python/pythoncore-3.14-64/python.exe" if os.name == "nt" else "/usr/bin/python3"
+    run = subprocess.run([python, "-I", str(GUARD)],
                          input=json.dumps(payload), capture_output=True, text=True, timeout=15)
     assert run.returncode == 0 and not run.stderr
     assert json.loads(run.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"

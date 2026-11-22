@@ -2,7 +2,7 @@
 name: git-sync-features
 description: "Rebase all active feature branches onto main at the start of a session. Use when there are multiple feature branches in a repo and you need to sync them before starting work. Trigger on /git-sync-features or 'sync feature branches' or 'sync all features'."
 metadata:
-  version: 0.1.3
+  version: 0.1.4
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -24,7 +24,7 @@ Rebase every active feature branch onto `main`. Run at the start of any session 
 
 2. Run the deterministic sync script from this skill:
 
-   ```powershell
+   ```bash
    pwsh -NoProfile -File "<skill>/scripts/sync-features.ps1" -Json
    ```
 

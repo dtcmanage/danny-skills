@@ -279,7 +279,7 @@ function Remove-CodexTempDirectory {
 
     if (-not (Test-Path -LiteralPath $Path)) { return }
     $resolved = (Resolve-Path -LiteralPath $Path).Path
-    $tempRoot = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\', '/')
+    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/')
     $tempPrefix = $tempRoot + [System.IO.Path]::DirectorySeparatorChar
     $leaf = Split-Path -Leaf $resolved
     if (-not $resolved.StartsWith($tempPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or

@@ -1,5 +1,11 @@
 # Dispatch guard: staged release
 
+Linux session host (CT202), 2026-11-22: the guard is not installed in `/home/danny/Claude/settings.json`.
+Re-enable it only after the Codex-lane fixes (TEMP, CODEX_HOME, plain `codex` binary) are on main; then
+`guard-settings.ps1 -Action install` writes `"/usr/bin/python3" -I "<main checkout>/scripts/model-router/dispatch-guard.py"`,
+and the guard's deny message names the `dispatch.ps1` beside it. Sessions cannot edit that settings file, so
+Danny pastes the entry (or approves the install). The release record below is the 2026-11 SNOWWHITE release, kept as history.
+
 Status: staged, inactive. Framework state: provisional. No global settings or
 Codex configuration were changed by this build. Fixture tests establish guard
 decisions. The live `-Mode guard` probe denied all three forms (`opus`, `fork`,

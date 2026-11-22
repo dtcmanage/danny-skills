@@ -46,7 +46,22 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$DefaultSmokeHarness = 'D:\Claude\_Claude-Workspace\00_Resources\tools\browser-smoke\smoke.mjs'
+function Resolve-DefaultSmokeHarness {
+    # The workspace root differs per host: /home/danny/Claude on the Linux session host,
+    # ~/Claude on the Mac, D:\Claude on Windows. Take the first that holds the harness.
+    $rel = '_Claude-Workspace/00_Resources/tools/browser-smoke/smoke.mjs'
+    $roots = @()
+    if ($env:DT_WORKSPACE_ROOT) { $roots += $env:DT_WORKSPACE_ROOT }
+    if ($HOME) { $roots += (Join-Path $HOME 'Claude') }
+    $roots += 'D:\Claude'
+    foreach ($root in $roots) {
+        $candidate = Join-Path $root $rel
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    return (Join-Path $roots[0] $rel)
+}
+
+$DefaultSmokeHarness = Resolve-DefaultSmokeHarness
 
 $state = [ordered]@{
     status = 'failed'
@@ -186,7 +201,8 @@ function Invoke-ShipStep {
     if ($timeoutSec) {
         if (-not $proc.WaitForExit([int]$timeoutSec * 1000)) {
             $timedOut = $true
-            & taskkill.exe /PID $proc.Id /T /F *> $null
+            if ($IsWindows) { & taskkill.exe /PID $proc.Id /T /F *> $null }
+            else { try { $proc.Kill($true) } catch { } }
             $null = $proc.WaitForExit(10000)
         }
     } else {
@@ -326,7 +342,7 @@ if ($featureTree -and -not $AllowLiveJobs) {
     # git prints forward slashes; job records and command lines usually carry backslashes.
     $treeKey = ([System.IO.Path]::GetFullPath($featureTree) -replace '/', '\').TrimEnd('\')
     $mentionsTree = { param([string]$Text) ($Text -replace '/', '\').IndexOf($treeKey, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }
-    $registryDir = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { Join-Path $env:LOCALAPPDATA 'dt-build' }
+    $registryDir = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:XDG_STATE_HOME) { $env:XDG_STATE_HOME } else { Join-Path $HOME '.local/state' }) 'dt-build' }
     $registry = Join-Path $registryDir 'active-runs.json'
     $runs = @()
     try { if (Test-Path -LiteralPath $registry) { $runs = @((Get-Content -LiteralPath $registry -Raw | ConvertFrom-Json).runs) } } catch { $runs = @() }
@@ -345,10 +361,23 @@ if ($featureTree -and -not $AllowLiveJobs) {
         }
     }
     try {
-        foreach ($proc in Get-CimInstance Win32_Process -ErrorAction Stop) {
-            if ($proc.ProcessId -eq $PID -or -not $proc.CommandLine) { continue }
-            if (& $mentionsTree $proc.CommandLine) {
-                $users += "process $($proc.ProcessId) ($($proc.Name))"
+        if ($IsWindows) {
+            foreach ($proc in Get-CimInstance Win32_Process -ErrorAction Stop) {
+                if ($proc.ProcessId -eq $PID -or -not $proc.CommandLine) { continue }
+                if (& $mentionsTree $proc.CommandLine) {
+                    $users += "process $($proc.ProcessId) ($($proc.Name))"
+                }
+            }
+        } else {
+            # Linux/Mac: Get-Process exposes CommandLine (read from /proc or ps), matching
+            # the Windows command-line scan above.
+            foreach ($proc in Get-Process -ErrorAction Stop) {
+                if ($proc.Id -eq $PID) { continue }
+                $line = $null
+                try { $line = $proc.CommandLine } catch { }
+                if ($line -and (& $mentionsTree $line)) {
+                    $users += "process $($proc.Id) ($($proc.ProcessName))"
+                }
             }
         }
     } catch { }

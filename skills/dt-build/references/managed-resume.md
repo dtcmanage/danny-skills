@@ -83,7 +83,7 @@ The next stop's boundary sets `inherited_boundary` to the rollover's `next-opera
 
 For read-only acceptance, add `-DryRun -OutputDirectory <external-folder>` to the builder and `-DigestDirectory <external-folder>` to the verifier. DryRun requires output outside both the run and checkpoint directories, and never publishes a live digest or pin. Inspect originals discovered, unresolved candidates, Markdown/bootstrap characters, deferred original bytes and mandatory full-read bytes in the verification result. A failed build writes discovery diagnostics at its output location and grants no authority.
 
-After the release coordinator installs this fix, an operator can build and verify the digest before re-arming the stopped run. These commands write the digest only when the operator runs them; do not execute them during fixture-only development. Obtain the registered checkpoint from the dt-job registry for this run (no recursive search):
+After the release coordinator installs this fix, an operator can build and verify the digest before re-arming the stopped run. These commands write the digest only when the operator runs them; do not execute them during fixture-only development. Obtain the registered checkpoint from the dt-job registry for this run (no recursive search): (the example is the 2026-09-22 File Sorter run, which lives on SNOWWHITE; on the Linux host use `/home/danny/Claude/...` paths and run the block inside `pwsh`)
 
 ```powershell
 cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"

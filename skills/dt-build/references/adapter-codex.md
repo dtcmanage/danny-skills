@@ -4,7 +4,7 @@ For Codex coordinators (interactive Codex CLI, `codex exec`). Shared rules: `SKI
 
 ## Dispatch
 
-Without `-TranscriptPath`, the context guard matches `CODEX_THREAD_ID` against rollout `session_meta.id` under `CODEX_HOME/sessions`; missing ids/files use existing cwd discovery (`transcript_discovery: cwd-fallback`). The watcher retains coordinator launch-prompt matching.
+Without `-TranscriptPath`, the context guard matches `CODEX_THREAD_ID` against rollout `session_meta.id` under `CODEX_HOME/sessions`; missing ids/files fall back to cwd discovery (`transcript_discovery: cwd-fallback`). The watcher retains coordinator launch-prompt matching.
 
 - Follow `SKILL.md` routing; dispatch pinned runs without `-Model`; omit pins from handoffs.
 - Launch every worker as a job: `dt-job start -CoordinatorId <id> -Kind worker -Category <category> -Vendor <vendor> -Mutates <worktree key> -Command "<wrapper call>"`, using `<skill>/scripts/invoke-codex-chunk.ps1` or `<skill>/scripts/invoke-claude-chunk.ps1`. Add `-DependsOn <job ids>` for prerequisites. Record `job_id` in `_build-state.md`.
@@ -17,10 +17,10 @@ Without `-TranscriptPath`, the context guard matches `CODEX_THREAD_ID` against r
 - Watchdogs: use `dt-job status -CoordinatorId <id> -Json`, `stalled` and heartbeat/activity age; checkpoint age must never be used alone (`_build-state.md`).
 - Codex has no in-session completion notice. Wait in the foreground: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` (at most 600) below the shell timeout.
 - On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again; nothing else between waits.
-- Coordinators never poll with `status`, `sleep` loops, or log tails; delegate watches are separate.
+- Coordinators never poll with `status`, `sleep` loops or log tails; delegate watches are separate.
 - `wait_timeout` lists running jobs' `progress`. Jobs have no time limit; after 20 silent minutes (`STALLED`), check output, then cancel/retry or wait.
-- Waits of hours use managed mode (below).
-- The ledger is the truth: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume, and after any `wait_timeout`.
+- Hours-long waits use managed mode (below).
+- The ledger is the truth: run `dt-job reconcile -CoordinatorId <id>` at every coordinator start and resume.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.
 
 ## Bootstrap and context
@@ -28,12 +28,12 @@ Without `-TranscriptPath`, the context guard matches `CODEX_THREAD_ID` against r
 - Managed resumes follow `managed-resume.md`: compact rulebook and the managed-resume authority read contract first, then mark bootstrap at once. A `dt-build-lean` bridge defers canonical-chain reads to their actions. New starts read the mandatory CLAUDE.md chain, MEMORY.md and governing references first.
 - No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
 - Register: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost codex`. Add `-Managed` when requested. Interactive launch/monitor sessions pass `-Delegate <own session name>`; headless runs omit it.
-- On taking delegation (registration or `delegate`), immediately arm a persistent run-level watch: `dt-job status` with `-Json` (`run_status`, `awaiting`, `stalled`), surviving turns. When `awaiting.awaiting_owner=danny`, tell Danny the decision in your chat (`operation` and `message`), even if `alerted_danny=true`; `delegated_to` names the delegate.
-- Before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host codex`. Use one id; optionally `-TranscriptPath <rollout>`.
+- On taking delegation (registration or `delegate`), arm a persistent run-level watch: `dt-job status` with `-Json` (`run_status`, `awaiting`, `stalled`), surviving turns. When `awaiting.awaiting_owner=danny`, tell Danny the decision (`operation` and `message`) in chat, even if `alerted_danny=true`; `delegated_to` names the delegate.
+- Before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host codex`. One id; optionally `-TranscriptPath <rollout>`.
 - An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host codex`. Each call renews it through long waits; watcher-launched coordinators already hold it.
 - Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` reach a safe stopping point, then rotate; `rotate` rotate now.
-- `ROTATE_REQUIRED` from `dt-job start` means rotate now. Do not retry the dispatch.
-- Rotation: consume handled events, rewrite `_build-state.md` (keep the `run_status` and `last_consumed_event_seq` lines), write the run-folder handoff, `dt-job request-continuation -CoordinatorId <id> -Reason context_rotation`, `dt-job lease -Action release -CoordinatorId <id>`, then end. Interactive: tell Danny the one command to continue in a fresh session, `$dt-build <RUN_ID>`.
+- `ROTATE_REQUIRED` from `dt-job start` means rotate now; never retry the dispatch.
+- Rotation: consume handled events, rewrite `_build-state.md` (keep the `run_status` and `last_consumed_event_seq` lines), write the run-folder handoff, `dt-job request-continuation -CoordinatorId <id> -Reason context_rotation`, `dt-job lease -Action release -CoordinatorId <id>`, then end. Interactive: tell Danny to continue in a fresh session with `$dt-build <RUN_ID>`.
 - Jobs survive rotation. Before an irreversible step run `dt-job irreversible -CoordinatorId <id> -Action begin -Operation <op>`, and `-Action end` after it; rotation waits while it is open.
 
 ## Hooks
@@ -46,7 +46,7 @@ Without `-TranscriptPath`, the context guard matches `CODEX_THREAD_ID` against r
 
 - Managed starts: register with `-Managed`, run `dt-job request-continuation -CoordinatorId <id> -Reason managed_start`; the interactive session takes no lease, and ends; the watcher continues.
 
-- Managed relaunches verify the existing registration through `read-resume-record.ps1`. Use managed mode for long Codex runs. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters the run.
+- Managed relaunches verify the existing registration through `read-resume-record.ps1`. `dt-job finish -CoordinatorId <id>` at COMPLETE unregisters the run.
 - The watcher (`<skill>/scripts/dt-build-watcher.ps1`, every 2 minutes) reconciles, starts queued jobs, and relaunches when unconsumed events wait without a live coordinator. Unconsumed triggers retry after 2/10/30 minutes, then stop; two consecutive thrash launches on unchanged checkpoints pause with one DM.
 - Legacy managed coordinator prompts read `$dt-build resume <RUN_ID> (managed coordinator <id>)`. Continue as `<id>` (reconcile, read `_build-state.md`, carry on); never run `dt-job resume`.
 - Before ending each headless turn: `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>` after handling `dt-job status -CoordinatorId <id> -Json`; an unconsumed trigger fails the launch.

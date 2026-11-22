@@ -191,7 +191,7 @@ function Invoke-RouterCategoryCall {
     if ((Get-Variable RouterResearchInvoker -Scope Script -ErrorAction SilentlyContinue) -and $script:RouterResearchInvoker) { return (& $script:RouterResearchInvoker $Category $Lane $Prompt) }
     if ($Lane -eq 'codex') {
         $codex = (Get-Command codex -ErrorAction Stop).Source
-        $out = Join-Path $env:TEMP ('router-category-' + [guid]::NewGuid().ToString('N') + '.json')
+        $out = Join-Path ([System.IO.Path]::GetTempPath()) ('router-category-' + [guid]::NewGuid().ToString('N') + '.json')
         try {
             $result = Invoke-CodexProcess -CodexPath $codex -Arguments (Get-RouterCategoryCallArguments -Lane codex -OutPath $out) -Prompt $Prompt -WorkingDirectory $PSScriptRoot -TimeoutMs $TimeoutMs
             if ($result.timed_out -or $result.exit_code -ne 0 -or -not (Test-Path -LiteralPath $out)) { throw (Format-RouterCodexFailure -Label 'Category research process failed or timed out' -Result $result) }

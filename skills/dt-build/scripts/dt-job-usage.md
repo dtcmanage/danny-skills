@@ -1,5 +1,7 @@
 # dt-job test exclusivity
 
+The examples below are PowerShell blocks: on the Linux session host start `pwsh -NoProfile` first, then paste them.
+
 ## Durable run folders
 
 For ad-hoc jobs outside a dt-build run, use `<project root>/.dt-build/adhoc/`
@@ -91,7 +93,7 @@ the start/status receipt. Only a nonempty, non-whitespace string opts into
 
 Use exclusivity only for a named suite with a documented reason: state what
 breaks under overlap, cite observed evidence, and describe the workaround that
-was tried first. SNOWWHITE supports parallel work; machine-wide serialization
+was tried first. The build host (CT202 on mothership, which grows cores and memory on demand) supports parallel work; machine-wide serialization
 is never a standing rule.
 
 Example (replace the illustrative reason with actual suite evidence):

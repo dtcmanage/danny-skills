@@ -480,8 +480,8 @@ try {
     $victimDir = Join-Path $helperRoot 'victim'
     Write-Utf8 (Join-Path $victimDir 'SKILL.md') "---`nname: linked`ndescription: `"Fixture.`"`nmetadata:`n  version: 1.0.0`n---`n"
     Write-Utf8 (Join-Path $victimDir 'CHANGELOG.md') "# linked changelog`n`n- 1.0.0 (2026-07-12): current`n"
-    $junctionPath = Join-Path $helperRoot 'skills\linked'
-    New-Item -ItemType Junction -Path $junctionPath -Target $victimDir | Out-Null
+    $junctionPath = Join-Path $helperRoot 'skills/linked'
+    New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $junctionPath -Target $victimDir | Out-Null
     $victimBefore = Get-Content -Raw -LiteralPath (Join-Path $victimDir 'SKILL.md')
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'bump-skill-version.ps1') `
         -SkillsRoot (Join-Path $helperRoot 'skills') -Skill linked -Bump patch -Entry 'junction escape' *> $null
@@ -493,7 +493,7 @@ try {
     Write-Utf8 (Join-Path $canonicalRoot 'mirror-victim\SKILL.md') "---`nname: mirror-victim`ndescription: `"Fixture.`"`nmetadata:`n  version: 1.0.0`n---`n"
     Write-Utf8 (Join-Path $canonicalRoot 'mirror-victim\CHANGELOG.md') "# mirror-victim changelog`n`n- 1.0.0 (2026-07-12): current`n"
     $mirrorRoot = Join-Path $helperRoot 'skills-mirror'
-    New-Item -ItemType Junction -Path $mirrorRoot -Target $canonicalRoot | Out-Null
+    New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $mirrorRoot -Target $canonicalRoot | Out-Null
     $mirrorVictimPath = Join-Path $canonicalRoot 'mirror-victim\SKILL.md'
     $mirrorVictimBefore = Get-Content -Raw -LiteralPath $mirrorVictimPath
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'bump-skill-version.ps1') `

@@ -114,7 +114,7 @@ __SANITIZE__
 }
 $raw = [Console]::In.ReadToEnd()
 $p = $raw | ConvertFrom-Json -AsHashtable
-$answer = $raw | & python '__GUARD__'
+$answer = $raw | & (Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source '__GUARD__'
 $d = if ($answer) { $answer | ConvertFrom-Json -AsHashtable } else { $null }
 $denied = $null -ne $d -and $d.hookSpecificOutput.permissionDecision -eq 'deny' -and $d.hookSpecificOutput.permissionDecisionReason.StartsWith('ROUTER_GUARD_DENY:')
 $commandText = if ($p.tool_name -in @('Bash','PowerShell')) { [string]$p.tool_input.command } else { '' }

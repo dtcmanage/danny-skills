@@ -14,10 +14,8 @@ For an explicitly approved `USER_DECISION`, create a JSON array covering exactly
 finding where `blocks_design` is true or disposition is `DEFER`. Each entry carries `id`, `rationale`,
 `owner`, and `recheck_gate`; all values are trimmed single lines. Then run:
 
-```powershell
-pwsh -NoProfile -File "<skill>/scripts/prepare-final-draft.ps1" `
-  -ProjectPath <project> -Round <N> -Tier <light|complex> `
-  -InstructionsPath <scratch-json> [-ApprovedResidualRisk]
+```bash
+pwsh -NoProfile -File "<skill>/scripts/prepare-final-draft.ps1" -ProjectPath <project> -Round <N> -Tier <light|complex> -InstructionsPath <scratch-json> [-ApprovedResidualRisk]
 ```
 
 `-ApprovedResidualRisk` is valid only after Danny explicitly accepts that `USER_DECISION` outcome.
@@ -47,10 +45,8 @@ the finalization receipt.
 
 Run the deterministic finalizer only after `evaluate-termination.ps1` returns a finalizable action:
 
-```powershell
-pwsh -NoProfile -File "<skill>/scripts/finalize-review.ps1" `
-  -ProjectPath <project> -DraftPath <accepted-draft> -Slug <slug> `
-  -Round <N> -Tier <light|complex> -ContextPath <CONTEXT.md> -GlossaryReconciled
+```bash
+pwsh -NoProfile -File "<skill>/scripts/finalize-review.ps1" -ProjectPath <project> -DraftPath <accepted-draft> -Slug <slug> -Round <N> -Tier <light|complex> -ContextPath <CONTEXT.md> -GlossaryReconciled
 ```
 
 Add `-ApprovedResidualRisk` only after Danny explicitly chose that cap outcome. For every N+1 path,
@@ -63,6 +59,6 @@ containment. It writes atomically and deletes only the verified
 
 ## 4. Report
 
-Report the final artifact and changed context file as clickable local file links under
+Report the final artifact and changed context file as full absolute paths in backticks under
 `../../../references/conventions.md`. When invoked by a pipeline/worker, return to the caller without
 an implementation question. Otherwise stop after the artifact handoff; Danny decides the next stage.

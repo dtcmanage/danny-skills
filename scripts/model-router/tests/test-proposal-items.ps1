@@ -58,7 +58,7 @@ function Invoke-Sync([switch]$DryRun) {
 function Read-Items { return @(Get-Content (Join-Path $temp 'items.json') -Raw | ConvertFrom-Json -Depth 20) }
 try {
     $tiePath = Join-Path $state 'tie-proposals/deep-thinker.json'
-    $tie = [pscustomobject]@{type='tie';job='deep-thinker';tier='standard';run_id='run-one';status='pending';configurations=@{candidate=@{model='claude-opus-5-5';effort='medium'};incumbent=@{model='gpt-6.1-sol';effort='medium'}}}
+    $tie = [pscustomobject]@{type='tie';job='deep-thinker';tier='standard';run_id='run-one';status='pending';configurations=[ordered]@{candidate=@{model='claude-opus-5-5';effort='medium'};incumbent=@{model='gpt-6.1-sol';effort='medium'}}}
     Write-RouterJsonAtomic $tiePath $tie
     $effortPath = Join-Path $state 'effort-proposals/coder-standard.json'
     $effort = [pscustomobject]@{type='effort-swap';job='coder';tier='standard';model='gpt-6.1-sol';current_effort='medium';proposed_effort='high';report='C:/reports/effort-run/report.md';status='pending';created_at='2026-11-15T22:41:00Z'}

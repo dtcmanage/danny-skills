@@ -28,7 +28,7 @@ $script:HookContextWallFile = 'context-wall.json'
 # Everything up to the idle check uses .NET calls only, so a call that exits there loads no module.
 function Get-HookRegistryPath {
     # The run registry, by the same rule as dt-job.ps1 Get-DtJobRegistryPath.
-    $dir = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { [System.IO.Path]::Combine($env:LOCALAPPDATA, 'dt-build') }
+    $dir = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { [System.IO.Path]::Combine($(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:XDG_STATE_HOME) { $env:XDG_STATE_HOME } else { Join-Path $HOME '.local/state' }), 'dt-build') }
     return [System.IO.Path]::Combine([System.IO.Path]::GetFullPath($dir), 'active-runs.json')
 }
 

@@ -4,6 +4,7 @@ At intake, measure the actual execution host after creating `build-state.md`:
 `pwsh -NoProfile -File "<skill>/scripts/measure-build-host.ps1" -RunFolder <folder> [-Kind <kind>]`.
 Per-process memory caps for test runners must come from measured peaks, never a guess.
 Use run-folder history automatically (last 20 finished jobs, optionally filtered by kind, with 25% headroom and a 0.5 GB floor); without measurements, slot sizing falls back to 2 GB. Override with -MemoryPerJobGB only from measured workload peaks.
+The build host is CT202 (ai-workspace) on mothership; the script's Linux branch measures it. That container grows and shrinks cores and memory on demand, so size heavy jobs to what they need and re-measure before heavy dispatch rather than treating one sample as a fixed ceiling. SNOWWHITE incidents below are dated history.
 Repeat for each execution host, on resume and before heavy dispatch. A failed probe is an environment
 gap to resolve, never evidence of an idle machine. Reconcile dt-job state with the process sample;
 sampling alone cannot identify every sleeping VM or remote job. Record those reservations too.

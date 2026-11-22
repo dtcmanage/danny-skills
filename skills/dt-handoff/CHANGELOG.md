@@ -1,5 +1,7 @@
 # dt-handoff changelog
 
+- 0.2.5 (2026-11-22): Bash single-line script calls, forward-slash wording, temp-file rule without a Windows premise; file paths reported as backticked absolute paths.
+
 - 0.2.4 (2026-11-06): Model router repair: describe delegated work as dt-job workers started through dt-build wrappers or dispatch.ps1.
 
 - 0.2.3 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).

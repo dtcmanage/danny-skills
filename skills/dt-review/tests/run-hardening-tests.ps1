@@ -25,7 +25,7 @@ function Write-Utf8([string]$Path, [string]$Content) {
 
 $SkillRoot = Split-Path -Parent $PSScriptRoot
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
-$testRoot = Join-Path $env:TEMP ("dt-review-hardening-{0}" -f [guid]::NewGuid().ToString('N'))
+$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-review-hardening-{0}" -f [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 
 try {
@@ -110,7 +110,7 @@ try {
 finally {
     if (Test-Path -LiteralPath $testRoot) {
         $resolved = (Resolve-Path -LiteralPath $testRoot).Path
-        $tempPrefix = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        $tempPrefix = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
         if ($resolved.StartsWith($tempPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
             (Split-Path -Leaf $resolved).StartsWith('dt-review-hardening-')) {
             Remove-Item -LiteralPath $resolved -Recurse -Force

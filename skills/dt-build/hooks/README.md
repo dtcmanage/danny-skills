@@ -10,7 +10,7 @@ A session counts as a coordinator when `DT_BUILD_COORDINATOR_ID` is set, or when
 
 ## Placeholder
 
-`__DT_BUILD_HOOKS_DIR__` in `settings-snippet.json` stands for the absolute path of this `hooks` folder, written with forward slashes (for example `D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/skills/dt-build/hooks`). Replace every occurrence before merging. `${CLAUDE_PLUGIN_ROOT}` is deliberately not used.
+`__DT_BUILD_HOOKS_DIR__` in `settings-snippet.json` stands for the absolute path of this `hooks` folder, written with forward slashes (for example `/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills/skills/dt-build/hooks`). Replace every occurrence before merging. `${CLAUDE_PLUGIN_ROOT}` is deliberately not used.
 
 Managed Codex coordinators get both hooks as session flags (`codex exec -c hooks.PreToolUse=... -c hooks.PostToolUse=...`) from the launcher, which first records them as trusted in the Codex `config.toml` through `scripts/ensure-codex-hook-trust.ps1` (Codex runs a hook only once its hash is trusted). Codex sends the same hook input as Claude, with shell calls named `Bash`, and the hooks read its rollout transcript.
 
@@ -18,9 +18,11 @@ Managed Codex coordinators get both hooks as session flags (`codex exec -c hooks
 
 ## Live settings file (adoption target)
 
-Checked 2026-10-10 (ET), read-only, on Danny's Windows PC:
+Linux session host (CT202), checked 2026-11-22: `CLAUDE_CONFIG_DIR=/home/danny/Claude`, so the live user settings file is `/home/danny/Claude/settings.json`. It carries the read guard, clock hint, claude-md-watch, bg-watchdog and session-start pull hooks, and none of the coordinator hooks. Adoption there merges `settings-snippet.json` into that file.
+
+History, checked 2026-10-10 (ET), read-only, on Danny's Windows PC (SNOWWHITE):
 
 - `CLAUDE_CONFIG_DIR` is set to `D:\Claude` at User scope, so Claude Code reads its user settings from `D:\Claude\settings.json` and writes transcripts under `D:\Claude\projects\`. That file is the live one. On that date it had no `hooks` key; it now carries the read-guard entries that `ensure_hook.py` maintains, and still none of the coordinator hooks.
 - `C:\Users\Danny\.claude\settings.json` holds a SessionStart hook that runs `D:\Claude\_system-tools\workspace-sync\pull-workspace.ps1`, which logs `START session-start-pull` to `D:\Claude\_system-tools\workspace-sync\sync.log` on every run. The log, covering 2026-10-02 through 2026-10-10 with 127 full-sync runs and many Claude sessions, holds no session-start entry. That file is not loaded.
 
-Adoption target: merge the `hooks` block from `settings-snippet.json` into `D:\Claude\settings.json`. Do not edit `C:\Users\Danny\.claude\settings.json` for these hooks.
+On SNOWWHITE the adoption target was `D:\Claude\settings.json`. Do not edit `C:\Users\Danny\.claude\settings.json` for these hooks.

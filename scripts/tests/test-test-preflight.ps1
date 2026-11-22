@@ -5,6 +5,7 @@ $Temporary = Join-Path ([System.IO.Path]::GetTempPath()) ('fs66-preflight-' + [g
 New-Item -ItemType Directory -Path $Temporary | Out-Null
 $PriorPythonPath = $env:PYTHONPATH
 $PriorSmokeDir = $env:DANNY_BROWSER_SMOKE_DIR
+$Py = if ($IsWindows) { 'python' } else { 'python3' }
 try {
     # Resolve Chromium through a synthetic external installation; never launch a browser.
     $Smoke = Join-Path $Temporary 'browser-smoke'
@@ -17,7 +18,7 @@ try {
     'fs66-nonexistent-package==0.0.0' | Set-Content -LiteralPath $Requirements
     $Output = & pwsh -NoProfile -File (Join-Path $Root 'scripts/test-preflight.ps1') -RequirementsPath $Requirements 2>&1
     $Code = $LASTEXITCODE
-    $Expected = "fs66-nonexistent-package missing or cannot import; fix: python -m pip install --user -r `"$Requirements`""
+    $Expected = "fs66-nonexistent-package missing or cannot import; fix: $Py -m pip install --user -r `"$Requirements`""
     if ($Code -ne 1) { throw "Expected exit 1, got $Code" }
     if ($Expected -notin $Output) { throw "Expected fix line absent: $($Output -join [Environment]::NewLine)" }
     Write-Output 'PASS: missing module exits 1 with the exact fix command.'
@@ -55,7 +56,7 @@ root = Path(__file__).parent.parent
 '@ | Set-Content -LiteralPath (Join-Path $PipFixture '__main__.py')
     $env:PYTHONPATH = $Temporary
     $Output = & pwsh -NoProfile -File (Join-Path $Root 'scripts/test-preflight.ps1') -Scope gate -RequirementsPath $Requirements -HarnessPath $Harness 2>&1
-    if ($LASTEXITCODE -ne 1 -or 'tiktoken missing or cannot import; fix: python -m pip install --user tiktoken==0.12.0' -notin $Output) {
+    if ($LASTEXITCODE -ne 1 -or "tiktoken missing or cannot import; fix: $Py -m pip install --user tiktoken==0.12.0" -notin $Output) {
         throw "Gate did not detect missing required module: $($Output -join [Environment]::NewLine)"
     }
     $Output = & pwsh -NoProfile -File (Join-Path $Root 'scripts/test-preflight.ps1') -Scope gate -Fix -RequirementsPath $Requirements -HarnessPath $Harness 2>&1

@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.4.1
+
+- Shared output contract now reports local files as backticked absolute paths.
+
 ## 1.4.0
 
 - Add deterministic full-design coverage, shared split-build ownership and out-of-build checklist data (FS-122). Roadmaps that predate the gate validate with a COVERAGE_LEGACY warning so in-flight builds resume.

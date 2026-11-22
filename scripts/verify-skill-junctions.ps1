@@ -1,12 +1,13 @@
 # verify-skill-junctions.ps1
-# Skill junction propagation gate (Windows-only).
+# Skill link propagation gate (Windows junctions; symlinks on Linux and the Mac).
 #
 # Reconciles the danny-skills repo's skills/<name>/ folders against the four
-# external surfaces that load skills via per-skill directory junctions:
-#   1. $CODEX_HOME\skills\          (Codex CLI; defaults to C:\Users\<u>\.codex\skills)
-#   2. ~\.agents\skills\            (Claude Code CLI / Agent SDK)
-#   3. D:\Claude\skills\            (CLI mirror)
-#   4. D:\Claude\_Claude-Workspace\.claude\skills\   (CLI mirror)
+# external surfaces that load skills via per-skill links:
+#   1. $CODEX_HOME/skills/          (Codex CLI; defaults to ~/.codex/skills)
+#   2. ~/.agents/skills/            (Claude Code CLI / Agent SDK)
+#   3. <workspace>/skills/          (CLI mirror)
+#   4. <workspace>/_Claude-Workspace/.claude/skills/   (CLI mirror)
+# <workspace> is D:\Claude on Windows and ~/Claude (/home/danny/Claude on the Linux session host) elsewhere.
 #
 # Behavior:
 #   - For each skill folder in <repo>\skills\ (or the -NewSkills subset), verify
@@ -58,16 +59,18 @@ if (-not (Test-Path -LiteralPath $skillsRoot -PathType Container)) {
 # ---- Target locations --------------------------------------------------------
 $codexHome = $env:CODEX_HOME
 if (-not $codexHome) {
-    $codexHome = Join-Path $env:USERPROFILE '.codex'
+    $codexHome = Join-Path $HOME '.codex'
 }
 
-$agentsHome = Join-Path $env:USERPROFILE '.agents'
+$agentsHome = Join-Path $HOME '.agents'
+$workspaceRoot = if ($IsWindows) { 'D:\Claude' } else { Join-Path $HOME 'Claude' }
+$linkType = if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }
 
 $locations = @(
     [pscustomobject]@{ name = 'codex-cli';    path = Join-Path $codexHome 'skills' },
     [pscustomobject]@{ name = 'claude-cli';   path = Join-Path $agentsHome 'skills' },
-    [pscustomobject]@{ name = 'd-claude-mirror'; path = 'D:\Claude\skills' },
-    [pscustomobject]@{ name = 'workspace-mirror'; path = 'D:\Claude\_Claude-Workspace\.claude\skills' }
+    [pscustomobject]@{ name = 'd-claude-mirror'; path = Join-Path $workspaceRoot 'skills' },
+    [pscustomobject]@{ name = 'workspace-mirror'; path = Join-Path $workspaceRoot '_Claude-Workspace/.claude/skills' }
 )
 $locationPaths = @()
 foreach ($l in $locations) { $locationPaths += $l.path }
@@ -182,7 +185,7 @@ foreach ($loc in $locations) {
         else {
             if ($Create) {
                 try {
-                    New-Item -ItemType Junction -Path $junctionPath -Target $expectedTarget -ErrorAction Stop | Out-Null
+                    New-Item -ItemType $linkType -Path $junctionPath -Target $expectedTarget -ErrorAction Stop | Out-Null
                     $observed = Get-ReparseTarget -Path $junctionPath
                     $row.observed_target = $observed
                     if ($observed -and (Test-PathEqual $observed $expectedTarget)) {
@@ -216,7 +219,7 @@ foreach ($loc in $locations) {
 # scan to junctions whose target prefix matches <repo>\skills so unrelated
 # junctions (e.g. find-skills cross-links) are excluded.
 $orphans = New-Object System.Collections.Generic.List[object]
-$skillsRootNormalized = (Normalize-Path $skillsRoot) + '\'
+$skillsRootNormalized = (Normalize-Path $skillsRoot) + [IO.Path]::DirectorySeparatorChar
 foreach ($loc in $locations) {
     if (-not (Test-Path -LiteralPath $loc.path -PathType Container)) { continue }
     Get-ChildItem -LiteralPath $loc.path -Force -ErrorAction SilentlyContinue |

@@ -128,30 +128,6 @@ Owns the whole build. Takes a finalized plan and delivers it on a short-lived `b
 
 ---
 
-## dt-app-launcher
-
-**Trigger:** `/dt-app-launcher`, "create an app launcher", "make this standalone", or "add desktop/start menu shortcut"
-
-Creates or repairs a deterministic Windows standalone launcher for a local app/dashboard.
-
-**What it does:**
-
-- Scaffolds hardened launcher files into the target repo:
-  - `scripts\start-<slug>.ps1`
-  - `scripts\stop-<slug>.ps1`
-  - `scripts\create-<slug>-shortcut.ps1`
-  - `scripts\node\serve-static-app.js`
-  - `start-<slug>.bat`
-  - `<slug>-launcher.json`
-- Launches static HTML/dashboard apps through Edge `--app` mode, not through shell file association.
-- Uses an isolated temp profile and disables sync, extensions, Edge onboarding, default-browser checks, and first-run prompts.
-- Creates Desktop and Start Menu shortcuts that point directly at the hardened start script.
-- Requires a smoke test that verifies `--app`, isolated `--user-data-dir`, `--disable-sync`, `--disable-extensions`, listener state, and cleanup.
-
-**Skip it for:** VS Code terminal colors (`dt-terminal-format-profile`), normal frontend debugging, or remote production service launchers.
-
----
-
 ## dt-session-audit
 
 **Trigger:** `/dt-session-audit`, or "audit this session" / "session audit" / "what did we miss" / "end of session check"

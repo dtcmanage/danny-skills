@@ -106,11 +106,19 @@ if ($LASTEXITCODE -ne 0) { throw "DT_BUILD_LEASE_FAILED: lease acquire for $Coor
 $childPid = $null
 try {
     $pwsh = [System.Environment]::ProcessPath
-    $commandLine = "`"$pwsh`" -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encoded"
-    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
-    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $commandLine; CurrentDirectory = $workDir; ProcessStartupInformation = $startup }
-    if ($result.ReturnValue -ne 0) { throw "DT_BUILD_LAUNCH_FAILED: Win32_Process.Create returned $($result.ReturnValue)" }
-    $childPid = [int]$result.ProcessId
+    if ($IsWindows) {
+        $commandLine = "`"$pwsh`" -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encoded"
+        $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+        $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $commandLine; CurrentDirectory = $workDir; ProcessStartupInformation = $startup }
+        if ($result.ReturnValue -ne 0) { throw "DT_BUILD_LAUNCH_FAILED: Win32_Process.Create returned $($result.ReturnValue)" }
+        $childPid = [int]$result.ProcessId
+    }
+    else {
+        # Linux/Mac: mirror dt-job's non-Windows launch. Under a systemd timer the watcher unit needs
+        # KillMode=process so the coordinator outlives the watcher run.
+        $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded)
+        $childPid = [int]$process.Id
+    }
     & pwsh -NoProfile -NonInteractive -File $dtJob lease -RunFolder $runRoot -Action renew -CoordinatorId $CoordinatorId -Pid $childPid -Json | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "DT_BUILD_LEASE_FAILED: recording pid $childPid for $CoordinatorId exited $LASTEXITCODE" }
 }

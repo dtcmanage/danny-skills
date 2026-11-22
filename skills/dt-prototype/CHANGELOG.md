@@ -1,5 +1,7 @@
 # dt-prototype changelog
 
+- 1.1.7 (2026-11-22): Shared output contract now reports local files as backticked absolute paths.
+
 - 1.1.6 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 1.1.5 (2026-10-17): Plan shape contract adds the required Throughput and hardware section.

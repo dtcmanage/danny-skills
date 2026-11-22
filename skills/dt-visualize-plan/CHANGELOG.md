@@ -1,5 +1,7 @@
 # dt-visualize-plan changelog
 
+- 1.1.8 (2026-11-22): Report output as a backticked absolute path; HTML verifier finds the browser-smoke harness on any host.
+
 - 1.1.7 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 1.1.6 (2026-10-17): Plan shape contract adds the required Throughput and hardware section.

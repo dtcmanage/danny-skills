@@ -273,7 +273,7 @@
   },
   "references/conventions.md": {
     "consumers": [
-      "dt-app-launcher", "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
+      "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
       "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
       "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
       "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
@@ -282,7 +282,7 @@
   },
   "references/deterministic-reference-policy.md": {
     "consumers": [
-      "dt-app-launcher", "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
+      "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
       "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
       "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
       "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
@@ -331,7 +331,7 @@
   },
   "references/versioning-policy.md": {
     "consumers": [
-      "dt-app-launcher", "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
+      "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
       "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
       "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
       "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"

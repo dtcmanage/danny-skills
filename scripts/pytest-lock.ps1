@@ -25,5 +25,6 @@ if ($forward.Count -eq 0) { throw 'PYTEST_LOCK_USAGE: supply an executable and i
 # All callers use the same Python OS lock, including Git Bash and sandbox children.
 $lockArgs = @('--timeout', [string]$lockWaitSec, '--reason', $reason)
 if ($readyFile) { $lockArgs += @('--ready-file', $readyFile) }
-& python (Join-Path $PSScriptRoot 'pytest-lock.py') @lockArgs -- @forward
+$python = (Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+& $python (Join-Path $PSScriptRoot 'pytest-lock.py') @lockArgs -- @forward
 exit $LASTEXITCODE

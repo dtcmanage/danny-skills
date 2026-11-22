@@ -28,7 +28,9 @@ try {
         Assert ($cfg.hooks.PreToolUse[0].hooks[0].command -eq 'python read_guard.py') 'Read guard changed'
         Assert ($cfg.enabledPlugins.timestamps -eq $true) 'Plugin changed'
         $script:entry = $cfg.hooks.PreToolUse[1]
-        Assert ($entry.hooks[0].command -eq '"C:/Users/Danny/AppData/Local/Python/pythoncore-3.14-64/python.exe" -I "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch-guard.py"') 'Not post-merge primary path'
+        $expectedCommand = if ($IsWindows) { '"C:/Users/Danny/AppData/Local/Python/pythoncore-3.14-64/python.exe" -I "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch-guard.py"' }
+            else { . (Join-Path $PSScriptRoot '../router-platform.ps1'); '"' + (Get-Command python3 -CommandType Application | Select-Object -First 1).Source + '" -I "' + (Join-Path (Get-RouterMainCheckout -ScriptRoot (Join-Path $PSScriptRoot '..')) 'scripts/model-router/dispatch-guard.py').Replace('\', '/') + '"' }
+        Assert ($entry.hooks[0].command -eq $expectedCommand) 'Not post-merge primary path'
         foreach ($tool in @('Agent','Task','Bash','PowerShell')) { Assert ($tool -match $entry.matcher) "Matcher misses $tool" }
         Assert ('Workflow' -notmatch $entry.matcher) 'Workflow matched'
         & pwsh -NoProfile -File $installer -SettingsPath $settings -Action install > (Join-Path $root 'reinstall.log')

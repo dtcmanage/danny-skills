@@ -202,12 +202,21 @@ function Read-RouterRoster {
     param([string]$Platform = (Get-RouterPlatform))
     $defaultPath = Join-Path $PSScriptRoot '../../references/model-router/default-roster.json'
     $statePath = if ($Platform -eq 'MacOS') { Join-Path (Get-RouterSharedDir) 'roster.json' } else { Join-Path (Get-RouterStatePath -Platform $Platform) 'roster.json' }
+    $fromShared = $Platform -eq 'MacOS'
+    # A Linux host without its own state roster reads the published shared roster, like the Mac observer,
+    # so dispatch follows Danny's approved roster instead of the default.
+    if ($Platform -eq 'Other' -and -not (Test-Path -LiteralPath $statePath)) {
+        try {
+            $sharedPath = Join-Path (Get-RouterSharedDir) 'roster.json'
+            if (Test-Path -LiteralPath $sharedPath) { $statePath = $sharedPath; $fromShared = $true }
+        } catch { }
+    }
     $validationError = $null
     if (Test-Path -LiteralPath $statePath) {
         try {
             $roster = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -Depth 20
             $errors = @(Test-RouterRoster -Roster $roster)
-            if (-not $errors.Count -and $roster.approved -eq $true) { return [pscustomobject]@{ roster=$roster; source=$(if ($Platform -eq 'MacOS') { 'shared' } else { 'state' }); validation_error=$null; path=$statePath } }
+            if (-not $errors.Count -and $roster.approved -eq $true) { return [pscustomobject]@{ roster=$roster; source=$(if ($fromShared) { 'shared' } else { 'state' }); validation_error=$null; path=$statePath } }
             if ($errors.Count) { $validationError = $errors -join '; ' }
         } catch { $validationError = "ROSTER_PARSE: $($_.Exception.Message)" }
     }

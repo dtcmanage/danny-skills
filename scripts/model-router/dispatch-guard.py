@@ -8,6 +8,9 @@ import sys
 import uuid
 from pathlib import Path
 
+# dispatch.ps1 sits beside this guard, so the denial names a path that exists on this host.
+DISPATCH_PATH = (Path(__file__).resolve().parent / "dispatch.ps1").as_posix()
+
 
 def guard_decision(payload: object) -> dict | None:
     """Return a native deny only for a recognized Claude tool payload."""
@@ -41,8 +44,7 @@ def guard_decision(payload: object) -> dict | None:
     task = "task-" + uuid.uuid4().hex[:8]
     output = f"_dispatch/{task}-output.md" if read_only else f"{task}-output.md"
     command = (
-        'pwsh -NoProfile -File "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/'
-        'scripts/model-router/dispatch.ps1" -ProjectPath ' + quoted_project +
+        'pwsh -NoProfile -File "' + DISPATCH_PATH + '" -ProjectPath ' + quoted_project +
         ' -Category routine-coding -PromptPath "' + task + '-prompt.md" -OutputPath "' + output + '"'
         ' -SelectionReason "Route native delegation through the category resolver" -AdHoc -AllowOutputInProject -Live'
     )

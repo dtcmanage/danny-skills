@@ -28,32 +28,42 @@ if ($Scope -eq 'gate') {
         }
     }
 }
-$PipCommand = "python -m pip install --user -r `"$RequirementsPath`""
-if ($Scope -eq 'gate') { $PipCommand = "python -m pip install --user $($Requirements -join ' ')" }
+$PyName = if ($IsWindows) { 'python' } else { 'python3' }
+$PipCommand = "$PyName -m pip install --user -r `"$RequirementsPath`""
+if ($Scope -eq 'gate') { $PipCommand = "$PyName -m pip install --user $($Requirements -join ' ')" }
 $NpmCommand = "Set-Location -LiteralPath `"$Harness`"; npm ci"
-$Python = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$Python = Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 $Node = $null
 $Npm = $null
 if ($Scope -eq 'full') {
     $Node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     $Npm = Get-Command npm.cmd,npm -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 }
+# Fix hints follow the host: winget on Windows, apt on the Linux session host, brew on the Mac.
+$OnLinux = $IsLinux
+$OnMac = $IsMacOS
+function Get-InstallHint([string]$Windows, [string]$Linux, [string]$Mac) {
+    if ($OnLinux) { return $Linux }
+    if ($OnMac) { return $Mac }
+    return $Windows
+}
 $GateTools = @(
-    @{ Name = 'pwsh'; Fix = 'winget install --exact --id Microsoft.PowerShell' },
-    @{ Name = 'git'; Fix = 'winget install --exact --id Git.Git' },
-    @{ Name = 'robocopy'; Fix = 'DISM.exe /Online /Cleanup-Image /RestoreHealth' }
+    @{ Name = 'pwsh'; Fix = (Get-InstallHint 'winget install --exact --id Microsoft.PowerShell' 'sudo apt install powershell' 'brew install powershell') },
+    @{ Name = 'git'; Fix = (Get-InstallHint 'winget install --exact --id Git.Git' 'sudo apt install git' 'brew install git') }
 )
+if ($IsWindows) { $GateTools += @{ Name = 'robocopy'; Fix = 'DISM.exe /Online /Cleanup-Image /RestoreHealth' } }
+else { $GateTools += @{ Name = 'rsync'; Fix = (Get-InstallHint '' 'sudo apt install rsync' 'brew install rsync') } }
 
 function Get-MissingItems {
-    if (-not $Python) { 'python missing; fix: winget install --exact --id Python.Python.3.14' }
+    if (-not $Python) { "python missing; fix: $(Get-InstallHint 'winget install --exact --id Python.Python.3.14' 'sudo apt install python-is-python3' 'brew install python')" }
     foreach ($Tool in $GateTools) {
         if (-not (Get-Command $Tool.Name -CommandType Application -ErrorAction SilentlyContinue)) {
             "$($Tool.Name) missing; fix: $($Tool.Fix)"
         }
     }
     if ($Scope -eq 'full') {
-        if (-not $Node) { 'node missing; fix: winget install --exact --id OpenJS.NodeJS.LTS' }
-        if (-not $Npm) { 'npm missing; fix: winget install --exact --id OpenJS.NodeJS.LTS' }
+        if (-not $Node) { "node missing; fix: $(Get-InstallHint 'winget install --exact --id OpenJS.NodeJS.LTS' 'sudo apt install nodejs' 'brew install node')" }
+        if (-not $Npm) { "npm missing; fix: $(Get-InstallHint 'winget install --exact --id OpenJS.NodeJS.LTS' 'sudo apt install npm' 'brew install node')" }
     }
     if ($Python) {
         # Keep package names on stdin, so they never appear in process command lines.

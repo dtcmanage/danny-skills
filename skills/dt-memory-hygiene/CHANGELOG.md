@@ -1,5 +1,7 @@
 # dt-memory-hygiene changelog
 
+- 0.4.2 (2026-11-22): Bash script-call blocks; report artifacts as backticked absolute paths.
+
 - 0.4.1 (2026-11-16): Markdown table rows no longer count as long lines, so the workspace directory table does not trigger hygiene on every audit.
 
 - 0.4.0 (2026-11-16): The size check holds workstation, substation and repo CLAUDE.md/MEMORY.md to 1,500 words (MEMORY.md also 150 lines); root files and the workspace directory keep root limits; evidence copies, underscore meta folders and the auto-memory inbox are skipped.

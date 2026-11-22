@@ -3,7 +3,7 @@ name: dt-handoff
 description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Also owns handoff validation: trigger on 'validate the handoff X', 'validate the build X', 'was this handoff acted on?', or '-validate <handoff-path>' to audit a handoff against deterministic evidence. Do not use for capturing memory or preferences mid-session - that is dt-session-audit's job."
 argument-hint: "What should the next session focus on?"
 metadata:
-  version: 0.2.4
+  version: 0.2.5
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -68,9 +68,8 @@ Identify the root folder of the project this session worked on — for a code re
 
 Pick a short kebab-case `<slug>` for today's handoff topic, then run the prep script:
 
-```powershell
-pwsh -NoProfile -File "<skill>/scripts/prep-handoff-folder.ps1" `
-  -ProjectRoot "<project-root>" -Slug "<slug>" -Json
+```bash
+pwsh -NoProfile -File "<skill>/scripts/prep-handoff-folder.ps1" -ProjectRoot "<project-root>" -Slug "<slug>" -Json
 ```
 
 The script:
@@ -82,9 +81,8 @@ The script:
 
 Run the registry script against the project root:
 
-```powershell
-pwsh -NoProfile -File "<skill>/scripts/handoff-registry.ps1" `
-  -Root "<project-root>" -Json
+```bash
+pwsh -NoProfile -File "<skill>/scripts/handoff-registry.ps1" -Root "<project-root>" -Json
 ```
 
 Use its output — do not run a manual ask-per-file loop. If there are OPEN handoffs other than today's, present them to Danny **once** as a single numbered table (name, created, age in days) with your recommendation per row (likely stale vs likely pending, based on age and what this session covered). Danny answers once — e.g. "the first three are stale, keep 4" — and you act on the whole answer:
@@ -96,14 +94,14 @@ Then run the script once more with `-Prune` to sweep CONSUMED files older than 3
 
 ## Step 3: Write the handoff
 
-Write the markdown handoff with the Write tool to `handoff_md_path` from the script output (format: `handoff-YYYY-MM-DD-<slug>.md`). Never use `mktemp` or any bash temp-file command — this is a Windows/PowerShell environment.
+Write the markdown handoff with the Write tool to `handoff_md_path` from the script output (format: `handoff-YYYY-MM-DD-<slug>.md`). Never build it through `mktemp` or other temp files.
 
 Write it as a starting prompt, not a status report. Use this structure:
 
 - **Your task** — one paragraph: what the next session should accomplish. If Danny passed arguments, treat them as the focus and shape this section around them.
 - **Current state** — what is done and where things stand right now.
 - **Next steps** — concrete, ordered actions.
-- **Key files & artifacts** — clickable local file links under `../../references/conventions.md` and
+- **Key files & artifacts** — full absolute paths in backticks under `../../references/conventions.md` and
   URLs, each with a one-line note. Reference PRDs, plans, ADRs, issues, commits, and diffs by path; do
   not duplicate their content.
 - **Decisions & gotchas** — choices already made and traps to avoid.
@@ -125,7 +123,7 @@ Generate the HTML companion only if Danny explicitly asks (see HTML Companion Po
 
 ## Step 4: Report
 
-Report the `.md` handoff as a clickable local file link using the shared contract in
+Report the `.md` handoff as a full absolute path in backticks using the shared contract in
 `../../references/conventions.md`. If an HTML companion was explicitly requested and built, report it
 the same way and include a one-line command to open it; keep the command's literal path in quotes:
 

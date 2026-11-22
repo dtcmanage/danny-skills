@@ -2,7 +2,7 @@
 name: dt-writing-draft
 description: "Turn an idea or a pile of notes into a publishable draft: investor letters, white papers, case studies, marketing copy, decks, DDQ content. Builds a sourced corpus first (digests FT Unhedged and the Economist from Outlook, fetches article URLs, reads memos and prior pieces), surfaces what Danny would forget, shapes the draft section by section, then fact-checks it. Trigger on /dt-writing-draft, dt-writing-draft X, or any request to write, draft, or put together a substantial written piece. Do not use to edit a finished draft (that is dt-writing-edit) or for a single short email."
 metadata:
-  version: 0.2.40
+  version: 0.2.41
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -56,15 +56,15 @@ If unsure, ask: "Are we writing this from scratch, or tightening something you a
 
 Before drafting a single sentence, load the voice references per `../../references/voice-load-order.md` (the canonical three-layer load order: email base → business writing voice → genre style profile, with the business profile winning on conflicts in long-form). This is a standing rule, not a suggestion.
 
-If no genre profile exists at `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md`, run the **style study** below before drafting.
+If no genre profile exists at `/home/danny/Claude/_Claude-Workspace/00_Resources/style-<genre>.md`, run the **style study** below before drafting.
 
 ### Style study (builds or refreshes a genre profile)
 
 Run this when a genre has no profile, when the profile is stale, or on its own when Danny asks to refresh one.
 
-Genre samples live at `D:\Claude\_Claude-Workspace\00_Resources\writing-samples\<genre>\`. For investor letters, that folder holds his recent quarterly letters — his current format is the model; older annual letters are secondary texture. If the folder is empty or thin, tell Danny and ask him to add prior examples. Without samples the study cannot run, and the draft falls back to voice-principles alone.
+Genre samples live at `/home/danny/Claude/_Claude-Workspace/00_Resources/writing-samples/<genre>/`. For investor letters, that folder holds his recent quarterly letters — his current format is the model; older annual letters are secondary texture. If the folder is empty or thin, tell Danny and ask him to add prior examples. Without samples the study cannot run, and the draft falls back to voice-principles alone.
 
-Read every sample in the folder. Then write `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md`:
+Read every sample in the folder. Then write `/home/danny/Claude/_Claude-Workspace/00_Resources/style-<genre>.md`:
 
 ```markdown
 # Style Profile — <Genre>
@@ -102,7 +102,7 @@ Fire ONE `AskUserQuestion` covering:
 1. **Genre** — investor letter, white paper, case study, marketing copy, deck, DDQ content, other. Determines the style profile and the likely source channels.
 2. **Audience** — LPs / current investors, prospects, public, internal, other. Shapes register and how much context to assume.
 3. **Working title / slug** — short, kebab-case-friendly; used for the folder and filenames. Free text via "Other".
-4. **Save location** — infer the workstation or substation from the Routing Map in root `D:\Claude\CLAUDE.md` based on the genre and topic (an investor letter routes to the Investor Letters substation of TCM Website; Astavet copy to Astavet). Default the path to that folder plus the slug — `D:\Claude\_Claude-Workspace\<workstation>\<slug>\`, or `...\<workstation>\<substation>\<slug>\` for a substation (investor letter: `D:\Claude\_Claude-Workspace\TCM Website\Investor Letters\<slug>\`) — and ask Danny to confirm or change.
+4. **Save location** — infer the workstation or substation from the Routing Map in root `/home/danny/Claude/CLAUDE.md` based on the genre and topic (an investor letter routes to the Investor Letters substation of TCM Website; Astavet copy to Astavet). Default the path to that folder plus the slug — `/home/danny/Claude/_Claude-Workspace/<workstation>/<slug>/`, or `.../<workstation>/<substation>/<slug>/` for a substation (investor letter: `/home/danny/Claude/_Claude-Workspace/TCM Website/Investor Letters/<slug>/`) — and ask Danny to confirm or change.
 
 If the trigger phrase already answers any of these, pre-fill it and ask only for confirmation. Do not ask blind questions when context already answers them.
 
@@ -208,16 +208,16 @@ The corpus and draft are already written (you wrote to them inline). Confirm bot
 - key claims table with source anchors,
 - open verification gaps and follow-ups.
 
-If this piece is finished enough to serve as a future style reference, copy the final draft into `D:\Claude\_Claude-Workspace\00_Resources\writing-samples\<genre>\` and refresh the genre style profile so it tracks Danny's style as it evolves. Each finished piece makes the next one's style match better.
+If this piece is finished enough to serve as a future style reference, copy the final draft into `/home/danny/Claude/_Claude-Workspace/00_Resources/writing-samples/<genre>/` and refresh the genre style profile so it tracks Danny's style as it evolves. Each finished piece makes the next one's style match better.
 
-Output clickable local file links per `../../references/conventions.md`:
+Output full absolute paths in backticks per `../../references/conventions.md`:
 
 ```
-Draft saved at [draft filename](<absolute-path-with-forward-slashes>).
-Corpus saved at [corpus filename](<absolute-path-with-forward-slashes>).
+Draft saved at `<absolute path>`.
+Corpus saved at `<absolute path>`.
 ```
 
-If Danny asked for the review HTML and it was built, report it as another clickable local file link.
+If Danny asked for the review HTML and it was built, report it as another full absolute path in backticks.
 
 Close with: "To run a structural and clarity pass when ready, point `dt-writing-edit` at the draft."
 

@@ -5,7 +5,7 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.4.2
+  version: 1.4.3
   changelog: "See skills/dt-plan/CHANGELOG.md."
 ---
 
@@ -72,7 +72,7 @@ Fire ONE `AskUserQuestion` covering all four items below. Use the "Other (specif
 3. **Scope** — this is a tier, not a label. It sets how Step 3 runs (see *Tiering the drive*), so infer it from the description and offer it pre-selected rather than asking blind:
    - Light (a few hours, single component, bounded blast radius)
    - Complex (multi-day, multi-component, cross-system, security-sensitive, or hard to reverse)
-4. **Save path** — where the plan markdown lands. Default offer: `D:\Claude\_Claude-Workspace\<workstation>\<project>\plan-draft.md`, where `<workstation>` is inferred from the Routing Map in workspace `CLAUDE.md` based on the project description. If the workstation isn't obvious, ask in a follow-up. Free text via "Other" for non-default paths.
+4. **Save path** — where the plan markdown lands. Default offer: `/home/danny/Claude/_Claude-Workspace/<workstation>/<project>/plan-draft.md`, where `<workstation>` is inferred from the Routing Map in workspace `CLAUDE.md` based on the project description. If the workstation isn't obvious, ask in a follow-up. Free text via "Other" for non-default paths.
 
 If the trigger phrase already answers any of these, pre-populate them in the question copy ("I think this is a CLI utility — confirm or change"). Don't ask blind questions when context already answers them.
 
@@ -174,7 +174,7 @@ Walk through each section in turn. In each section your job is:
 - **One question at a time within a section.** Stacking three questions in one message kills the conversational flow Cowork is built for.
 - **One section at a time, full stop.** Don't dump the whole plan in chat. After each section, give a one-paragraph "here's what's locked" summary and ask if Danny wants to move on.
 
-If TCM Tech Stack Reference territory is involved (code under `D:\Claude\_Claude-Workspace\`, the production VM, Azure/Supabase/Cloudflare infra, IBKR/STP integrations, or anything in the TCM Database / TCM Website / Valuation workstations), read `D:\Claude\_Claude-Workspace\TCM Tech Stack Reference.md` before strawmanning architecture sections. Ground the plan in the existing wiring rather than inventing it.
+If TCM Tech Stack Reference territory is involved (code under `/home/danny/Claude/_Claude-Workspace/`, the production VM, Azure/Supabase/Cloudflare infra, IBKR/STP integrations, or anything in the TCM Database / TCM Website / Valuation workstations), read `/home/danny/Claude/_Claude-Workspace/TCM Tech Stack Reference.md` before strawmanning architecture sections. Ground the plan in the existing wiring rather than inventing it.
 
 ### The Build-intake revalidation table
 
@@ -221,7 +221,7 @@ When Danny says "save", "we're done", "write it", or equivalent:
    locked — so this is completing the sections still in flight, not a first write.
 2. Validate the shape deterministically before handing off. Do not eyeball it:
 
-   ```powershell
+   ```bash
    pwsh -NoProfile -File "<skill>/scripts/verify-plan-shape.ps1" -Path "<plan-draft.md>" -Json
    ```
 
@@ -272,17 +272,17 @@ Use agreed section names; retain all required sections. Remove placeholders and 
 
 If `CONTEXT.md` was created or updated during the session, it's already saved (you wrote to it inline as terms got pinned). If an ADR was drafted, save it now to `docs/adr/<NNNN>-<kebab-title>.md` next to `CONTEXT.md`. Resolve the number deterministically (do not eyeball the folder):
 
-```powershell
+```bash
 pwsh -NoProfile -File "<skill>/scripts/next-adr-number.ps1" -Dir "<project>/docs/adr"
 ```
 
 The script scans existing ADR filenames and returns JSON `{ next_number, existing_count }` — use `next_number` for `<NNNN>`. A missing or empty `docs/adr/` folder yields `next_number = 1`.
 
-After saving, output exactly this, using clickable local file links under
+After saving, output exactly this, using full absolute paths in backticks under
 `../../references/conventions.md`:
 
 ```
-Plan saved at [plan-draft.md](<absolute-path-with-forward-slashes>).
+Plan saved at `<absolute path>`.
 
 To see the visual, ask and I'll run dt-visualize-plan on it.
 To run adversarial review with Codex when ready, open Claude Code in workspace root and trigger /dt-review pointing at this file.

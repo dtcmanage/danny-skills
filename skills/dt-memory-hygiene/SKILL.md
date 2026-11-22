@@ -2,7 +2,7 @@
 name: dt-memory-hygiene
 description: "Periodic maintenance pass for CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Runs when deterministic bloat thresholds are exceeded. Compacts verbose entries, removes duplicate drift, normalizes shape, and preserves current-state clarity without changing underlying decisions."
 metadata:
-  version: 0.4.1
+  version: 0.4.2
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -46,7 +46,7 @@ Use this skill when:
 
 Run the detector first from workspace root:
 
-```powershell
+```bash
 pwsh -File "<skill>/scripts/detect-memory-bloat.ps1"
 ```
 
@@ -117,7 +117,7 @@ This sweep is advisory and fires once per new candidate — never a blocking gat
 
 After the hygiene edits, re-run the detector on the same targets:
 
-```powershell
+```bash
 pwsh -File "<skill>/scripts/detect-memory-bloat.ps1"
 ```
 
@@ -131,5 +131,5 @@ Produce:
 2. A "what was removed" list (duplicates, stale lines, excessive detail).
 3. A residual-risk list for anything not safely auto-cleaned.
 4. Only when Danny explicitly asks: a companion `memory-hygiene-report.html` with summary cards, change table, and risk/status visualization. Do NOT generate the HTML companion automatically; skipping it is the default.
-5. Clickable local file links for written report artifacts, formatted under
+5. Full absolute paths in backticks for written report artifacts, formatted under
    `../../references/conventions.md`.

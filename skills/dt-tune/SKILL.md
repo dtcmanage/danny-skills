@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Read Write Edit AskUserQuestion Bash(pwsh:*)"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 0.2.3
+  version: 0.2.4
   changelog: "Release history: CHANGELOG.md (newest first)."
 ---
 
@@ -99,7 +99,7 @@ Do NOT fire for:
 - Edit the target `SKILL.md` exactly as approved.
 - Run the deterministic bump script from the repo root (resolve the repo root from this `SKILL.md` location per the shared path convention, two levels up):
 
-  ```powershell
+  ```bash
   pwsh -NoProfile -File "<danny-skills>/scripts/bump-skill-version.ps1" -Skill <target-skill> -Bump <patch|minor|major> -Entry "<approved one-line changelog entry>"
   ```
 

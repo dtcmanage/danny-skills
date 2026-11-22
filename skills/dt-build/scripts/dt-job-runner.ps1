@@ -249,7 +249,7 @@ try {
         $testExe = $psi.FileName
         $testArgs = @($psi.ArgumentList)
         $psi.ArgumentList.Clear()
-        $psi.FileName = (Get-Command python -CommandType Application | Select-Object -First 1).Source
+        $psi.FileName = (Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
         $psi.ArgumentList.Add((Join-Path $DtJobRepoRoot 'scripts/pytest-lock.py'))
         $psi.ArgumentList.Add('--reason')
         $psi.ArgumentList.Add($exclusiveReason)

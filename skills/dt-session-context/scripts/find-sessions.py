@@ -1,12 +1,13 @@
 """Query the local session-hub digest cache without loading whole digests.
 
 Usage:
-  python find-sessions.py [--machine M] [--workstation W] [--tool T] [--days N]
+  python3 find-sessions.py [--machine M] [--workstation W] [--tool T] [--days N]
                           [--grep TEXT] [--limit N] [--json]
-  python find-sessions.py --left-off PATH [--chars N]
+  python3 find-sessions.py --left-off PATH [--chars N]
 
 The cache is the read-only mirror the session-context-hub pusher pulls every
-minute: SNOWWHITE D:\\ClaudeSessionHub, fleet2 and the Mac ~/session-hub.
+minute: ~/session-hub on the Linux session host (ai-workspace) and the Mac;
+D:\\ClaudeSessionHub on SNOWWHITE while it hosted sessions.
 Override with SESSION_HUB_CACHE.
 """
 from __future__ import annotations
@@ -23,10 +24,10 @@ def cache_root() -> Path:
     override = os.environ.get("SESSION_HUB_CACHE")
     if override:
         return Path(override)
-    for candidate in (Path(r"D:\ClaudeSessionHub"), Path.home() / "session-hub"):
+    for candidate in (Path.home() / "session-hub", Path(r"D:\ClaudeSessionHub")):
         if (candidate / "index.json").is_file():
             return candidate
-    raise SystemExit("SESSION_HUB_CACHE_MISSING: no index.json in D:\\ClaudeSessionHub or ~/session-hub")
+    raise SystemExit("SESSION_HUB_CACHE_MISSING: no index.json in ~/session-hub or D:\\ClaudeSessionHub")
 
 
 def load_index(root: Path) -> list[dict]:

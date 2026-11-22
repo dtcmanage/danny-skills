@@ -7,15 +7,15 @@ This file is the single source for what to load and what each layer governs. Ski
 ## The three layers (read in order)
 
 1. **Voice principles — the email base.**
-   `D:\Claude\_Claude-Workspace\00_Resources\voice-principles.md`
+   `/home/danny/Claude/_Claude-Workspace/00_Resources/voice-principles.md`
    Genre-independent floor extracted from Danny's *email*: word choice, banned phrases, tone. Its word-choice and tone rules carry over to long-form, but it does not govern long-form on its own.
 
 2. **Business writing voice — the governing reference for long-form.**
-   `D:\Claude\_Claude-Workspace\00_Resources\voice-principles-business.md`
+   `/home/danny/Claude/_Claude-Workspace/00_Resources/voice-principles-business.md`
    Distilled from Danny's actual business documents. Governs everything long-form: the two registers (personal vs institutional), structure, sentence rhythm, how he handles numbers and bad news, punctuation, and how the voice flexes by document type. **Where it and the email file differ — em dashes and the word "leverage" being the clearest cases — this file wins for business writing.**
 
 3. **Genre style profile — the per-genre layer.**
-   `D:\Claude\_Claude-Workspace\00_Resources\style-<genre>.md`
+   `/home/danny/Claude/_Claude-Workspace/00_Resources/style-<genre>.md`
    `<genre>` is the kebab-case slug (e.g. `style-investor-letter.md`). Captures how Danny actually writes that genre: structure, rhythm, numbers handling, recurring devices, topics to skip. Read it if it exists. If it doesn't, the consuming skill decides whether to build one (the style-study procedure lives in `dt-writing-draft`) or to proceed with weaker structural and rhythm judgments and tell Danny so.
 
 ## Why this matters

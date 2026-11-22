@@ -4,11 +4,11 @@ Runs own the acceptance decision. These read-only proofs permit record-and-conti
 
 ## Published tooling and workspace guides
 
-Invoke `<skill>/scripts/resolve-tooling-revision.ps1 -Path <installed-file> -Json` for danny-skills tooling. The default repository is the source danny-skills checkout, including when invoked through a skill junction. For a workspace guide use `-RepoRoot D:/Claude`; for example:
+Invoke `<skill>/scripts/resolve-tooling-revision.ps1 -Path <installed-file> -Json` for danny-skills tooling. The default repository is the source danny-skills checkout, including when invoked through a skill junction. For a workspace guide use `-RepoRoot /home/danny/Claude` (the workspace root on the Linux session host); for example:
 
 ```powershell
 cd "<danny-skills checkout>"
-pwsh -NoProfile -File "<skill>/scripts/resolve-tooling-revision.ps1" -Path D:/Claude/_Claude-Workspace/00_Resources/ops-conventions.md -RepoRoot D:/Claude -Json
+pwsh -NoProfile -File "<skill>/scripts/resolve-tooling-revision.ps1" -Path /home/danny/Claude/_Claude-Workspace/00_Resources/ops-conventions.md -RepoRoot /home/danny/Claude -Json
 ```
 
 Files within the selected repository infer their repository-relative path. Installed `dt-build/scripts` copies retain the canonical tooling path inference. For an external copy, supply `-RepoRelativePath <repo-path>`.
@@ -21,11 +21,11 @@ A run accepts `ON_MAIN` (exit 0) automatically for published tooling and workspa
 
 ## Append-only machine runtime files
 
-Capture the pinned bytes when creating the pin. Invoke the same helper with `-Path`, `-PinnedSha256`, exactly one of `-PinnedCopyPath <saved-bytes>` or `-PinnedLines <saved-lines-file>`, and one or more `-ProtectedPattern` regexes selecting every row the run depends on. Patterns are case-sensitive .NET regexes, each bounded by a two-second match timeout. For multiple patterns, invoke the script from PowerShell with an array:
+Capture the pinned bytes when creating the pin. Invoke the same helper with `-Path`, `-PinnedSha256`, exactly one of `-PinnedCopyPath <saved-bytes>` or `-PinnedLines <saved-lines-file>`, and one or more `-ProtectedPattern` regexes selecting every row the run depends on. Patterns are case-sensitive .NET regexes, each bounded by a two-second match timeout. For multiple patterns, invoke the script from PowerShell (start `pwsh -NoProfile` first on Linux) with an array:
 
 ```powershell
 cd "<danny-skills checkout>"
-& ./skills/dt-build/scripts/resolve-tooling-revision.ps1 -Path C:/Users/Danny/.ssh/known_hosts -PinnedSha256 <64-hex-digest> -PinnedCopyPath <saved-copy> -ProtectedPattern @('^192\.168\.71\.29 ', '^other-required-host ') -Json
+& ./skills/dt-build/scripts/resolve-tooling-revision.ps1 -Path /home/danny/.ssh/known_hosts -PinnedSha256 <64-hex-digest> -PinnedCopyPath <saved-copy> -ProtectedPattern @('^192\.168\.71\.29 ', '^other-required-host ') -Json
 ```
 
 Inputs must be UTF-8 (strict decoding, no replacement characters). Hash and byte-prefix checks include any BOM. A pinned copy must match the pinned SHA256 or exit 2. A pinned-lines file may contain selected exact rows for diagnostics, but it proves a full prefix only if its exact bytes also match the pinned hash. Without full original bytes, a changed file returns `CHANGED` with `pinned_lines_do_not_prove_full_byte_prefix`; selected rows alone cannot prove append-only behavior. An unchanged current hash still proves `UNCHANGED`.

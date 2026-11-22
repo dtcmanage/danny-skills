@@ -69,7 +69,7 @@ Bench caller effort overrides (including build-roster slot efforts) take precede
 
 ## Main-session delegation
 
-Every session that hands generic work to another model starts it through `dispatch.ps1` with a named category; the session model is never inherited. Fixed lanes stay on their own scripts: dt-review invokers, `request-frontier.ps1`, dt-build's managed attempts through its wrappers, and dt-image-gen. Ad hoc Claude workers have `WebSearch` and `WebFetch`. Context passes in the prompt file. Work that needs an MCP server or the live conversation stays in the parent session. Long work starts as a dt-job job. `dispatch-guard.py` is staged, not active; `dispatch-guard-release.md` holds its release steps and surface labels. The category guide, the cheap-first rule (collecting is `mechanical`, interpreting is `analysis`; round up only when the result cannot be checked), and worked examples live in `D:\Claude\_Claude-Workspace\00_Resources\model-routing.md`, loaded through the root `CLAUDE.md` rule (2026-09-30). Roster note: coder is Codex-first by policy since 2026-09-30. Weekly use is observable for both vendors; at 95%, a job moves to its other-vendor backup.
+Every session that hands generic work to another model starts it through `dispatch.ps1` with a named category; the session model is never inherited. Fixed lanes stay on their own scripts: dt-review invokers, `request-frontier.ps1`, dt-build's managed attempts through its wrappers, and dt-image-gen. Ad hoc Claude workers have `WebSearch` and `WebFetch`. Context passes in the prompt file. Work that needs an MCP server or the live conversation stays in the parent session. Long work starts as a dt-job job. `dispatch-guard.py` is live on SNOWWHITE (installed 2026-11-06) and not installed on the Linux session host (CT202, `/home/danny/Claude/settings.json`) as of 2026-11-22; it is re-enabled there after the Codex-lane fixes merge, with `guard-settings.ps1` building the Linux command. `dispatch-guard-release.md` holds its release steps and surface labels. The category guide, the cheap-first rule (collecting is `mechanical`, interpreting is `analysis`; round up only when the result cannot be checked), and worked examples live in `/home/danny/Claude/_Claude-Workspace/00_Resources/model-routing.md`, loaded through the root `CLAUDE.md` rule (2026-09-30). Roster note: coder is Codex-first by policy since 2026-09-30. Weekly use is observable for both vendors; at 95%, a job moves to its other-vendor backup.
 
 ## Quota readings
 
@@ -259,10 +259,10 @@ tokens, priced dollars, call latency and weekly-quota points moved. Reports stay
 the evidence; the ledger is the long-run statistics record for assessing cost,
 duration and quota per comparison over time.
 
-```powershell
-cd "D:\Claude\_Claude-Workspace\Skill Creation\danny-skills\scripts\model-router\bench"
-python bench_ledger.py --state "<state>" --summary
-python bench_ledger.py --state "<state>" --backfill "<run>\report.json"
+```bash
+cd "/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/bench"
+python3 bench_ledger.py --state "<state>" --summary
+python3 bench_ledger.py --state "<state>" --backfill "<run>/report.json"
 ```
 
 Backfill skips run ids already in the ledger. Ledger writes never fail a

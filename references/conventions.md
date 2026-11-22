@@ -68,31 +68,32 @@ The plugin manifest version (`.claude-plugin/plugin.json` + `marketplace.json`) 
 skill's `metadata.version`. The binding bump rules, changelog order, release transaction, and validation
 gate live only in `references/versioning-policy.md`.
 
-## Local file links in Markdown output
+## Local file paths in output
 
 When a skill reports an artifact it wrote in chat or names a local file in prose inside a Markdown
-artifact, make the filename a Markdown link to the absolute local path. Apply this contract to every
-local file reported by every skill:
+artifact, give the file's full absolute path in backticks. Danny opens files from the Linux session
+host through Command Center v2; until its file preview ships, a backticked absolute path is the
+contract (Danny's decision D1, 2026-11-22). Apply it to every local file reported by every skill:
 
-- Use forward slashes in the Markdown destination, including on Windows.
-- Enclose a destination containing spaces in angle brackets.
-- Keep underscores literal. Never emit a bare Windows path as a clickable link when it contains
-  `\_`; CommonMark treats the backslash as an escape and silently changes the target.
-- Do not use `computer://` or `file://` links.
-- An optional line number follows the path inside the destination, for example `:42`.
-- If a path must be shown literally instead of linked, wrap the entire path in backticks so Markdown
-  cannot consume its backslashes.
+- Give the full absolute path on the host that wrote the file, for example
+  `/home/danny/Claude/_Claude-Workspace/...` on the Linux session host (CT202). Never a relative path
+  or a bare filename.
+- Wrap the entire path in backticks so Markdown cannot consume underscores or backslashes.
+- Do not wrap local paths in Markdown links, and do not use `computer://`, `file://` or
+  `vscode://` schemes.
+- An optional line number follows the path inside the backticks, for example `:42`.
+- A Windows path appears only for a file that genuinely lives on a Windows machine (SNOWWHITE,
+  FLEET2-WIN); write it the same way, in backticks.
 
 Examples (correct):
 
 ```markdown
-Plan saved at [plan-draft.md](<D:/Claude/_Claude-Workspace/Skill Creation/project/plan-draft.md>).
-Source: [worker_file.ts:42](<D:/Claude/_Claude-Workspace/Skill Creation/project/src/worker_file.ts:42>).
-Literal path for a copy-paste command: `D:\Claude\_Claude-Workspace\Skill Creation\project\plan-draft.md`
+Plan saved at `/home/danny/Claude/_Claude-Workspace/Skill Creation/project/plan-draft.md`.
+Source: `/home/danny/Claude/_Claude-Workspace/Skill Creation/project/src/worker_file.ts:42`.
 ```
 
 This is the single skill-pack output contract. Skill-specific instructions point here instead of
-restating a different path format. Run `python "<danny-skills>/scripts/test-file-link-format.py"` after changing this
+restating a different path format. Run `python3 "<danny-skills>/scripts/test-file-link-format.py"` after changing this
 contract or any artifact-reporting instruction.
 
 ## The `_log.md` friction-note convention

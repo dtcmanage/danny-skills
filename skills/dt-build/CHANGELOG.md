@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.52.2
+
+- Run on the Linux session host: dt-job runners start from paths with spaces (quoted Start-Process arguments off Windows; jobs never ran from the main checkout before); process identity allows Linux's sub-millisecond start-time jitter (100 ms) so live jobs and coordinators are not judged dead; portable dt-build state dir (LOCALAPPDATA, XDG_STATE_HOME or ~/.local/state), CODEX_HOME falls back to HOME, watcher process walk and managed-coordinator launch without CIM on Linux, systemd user timer registration, python3 fallback for exclusive pytest; Linux paths in docs; file paths reported in backticks.
+
 ## 2.52.1
 
 - Review fix loop: the final full gate runs every suite the change touches, chosen by changed paths, matching build-process.md; a failed gate reruns failed tests before the next full pass.

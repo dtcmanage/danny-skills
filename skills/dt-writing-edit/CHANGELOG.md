@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.41 (2026-11-22): sha256sum for the original-untouched hash; bash script-call block; backticked absolute paths in output.
+
 - 0.3.40 (2026-11-15): Model router files pending proposals to Command Center and closes them on decision (shared router change).
 
 - 0.3.39 (2026-11-15): Shared model router update: writer roster accepts the approved xhigh effort; bench bank scan skips installed harness dependencies.

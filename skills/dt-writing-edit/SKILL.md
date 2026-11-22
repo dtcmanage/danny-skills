@@ -2,7 +2,7 @@
 name: dt-writing-edit
 description: "Tighten and improve a finished draft: a structural pass (section order, dependency logic, does each section earn its place), a clarity and voice pass (cut padding, split overloaded sentences, enforce voice principles and the genre style profile), and a fact-check against the source corpus when one exists. Writes a new versioned file plus a change summary; the original is never touched. Trigger on /dt-writing-edit, dt-writing-edit X, or any request to edit, revise, tighten, clean up, or improve a written draft. Do not use to write a piece from scratch (that is dt-writing-draft)."
 metadata:
-  version: 0.3.40
+  version: 0.3.41
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -96,17 +96,16 @@ Write the edited piece as a **new versioned file** — never overwrite the origi
 
 Resolve the version number deterministically (do not eyeball the folder):
 
-```powershell
-pwsh -NoProfile -File "<skill>/scripts/next-edit-version.ps1" `
-  -DraftPath "<absolute draft path>" -Json
+```bash
+pwsh -NoProfile -File "<skill>/scripts/next-edit-version.ps1" -DraftPath "<absolute draft path>" -Json
 ```
 
 The script returns `next_version`, `next_edit_path`, `next_summary_path`, and `next_review_html_path` — use those paths for the artifacts below. Format: if the draft is `<name>.md`, the edit lands at `<name>-edit-v<N>.md`.
 
 **Original-untouched guarantee (deterministic).** Before writing anything, hash the original draft:
 
-```powershell
-(Get-FileHash -LiteralPath "<absolute draft path>" -Algorithm SHA256).Hash
+```bash
+sha256sum "<absolute draft path>" | cut -d" " -f1
 ```
 
 After the versioned edit file is written, re-hash the original with the same command and compare. Record the result as `original unchanged: <hash match>` in the change summary. If the hashes differ, stop and report it — something wrote to the original, and that breaks the never-overwrite guarantee.
@@ -134,14 +133,14 @@ The review HTML is on request only. Do NOT generate the HTML companion automatic
 - clarity edits by section,
 - fact-check findings with severity tags.
 
-Output clickable local file links per `../../references/conventions.md`:
+Output full absolute paths in backticks per `../../references/conventions.md`:
 
 ```
-Edited draft saved at [draft filename](<absolute-path-with-forward-slashes>).
-Change summary saved at [summary filename](<absolute-path-with-forward-slashes>).
+Edited draft saved at `<absolute path>`.
+Change summary saved at `<absolute path>`.
 ```
 
-If Danny asked for the review HTML and it was built, report it as another clickable local file link.
+If Danny asked for the review HTML and it was built, report it as another full absolute path in backticks.
 
 ## Guardrails
 

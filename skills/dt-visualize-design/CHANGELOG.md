@@ -1,5 +1,7 @@
 # dt-visualize-design changelog
 
+- 1.1.5 (2026-11-22): Report output as a backticked absolute path (shared output contract).
+
 - 1.1.4 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).
 
 - 1.1.3 (2026-10-01): Consume the shared security posture correction that redacts vendor errors used by the router observability patch.

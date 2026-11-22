@@ -1,5 +1,7 @@
 # git-merge-feature changelog
 
+- 1.2.7 (2026-11-22): Bash single-line script-call block.
+
 - 1.2.6 (2026-10-19): Skip the rebase when main is already an ancestor, so a fast-forwardable branch with merge commits lands with its SHAs intact; regression test added to the ship gate.
 
 - 1.2.5 (2026-10-18): Anchor runnable script paths to resolved skill and repository roots (FS-117).

@@ -87,7 +87,7 @@ function New-MaterialReviewHistory {
 
 $SkillRoot = Split-Path -Parent $PSScriptRoot
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $SkillRoot)
-$testRoot = Join-Path $env:TEMP ("dt-review-tests-{0}" -f [guid]::NewGuid().ToString('N'))
+$testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-review-tests-{0}" -f [guid]::NewGuid().ToString('N'))
 $priorRouterState = $env:DT_MODEL_ROUTER_STATE
 $priorAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
@@ -295,7 +295,7 @@ $promptText = [Console]::In.ReadToEnd()
     Write-Utf8 $heldOutputCli @'
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest)
 $childArgs = @('-NoProfile', '-Command', 'Start-Sleep -Seconds 5')
-$child = Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNewWindow -WorkingDirectory $env:TEMP -PassThru
+$child = Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $childArgs -NoNewWindow -WorkingDirectory ([System.IO.Path]::GetTempPath()) -PassThru
 Set-Content -LiteralPath (Join-Path $PSScriptRoot 'held-output-child.pid') -Value $child.Id
 '@ + "`n"
     $outputWatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -614,7 +614,7 @@ switch ('__MODE__') {
     Copy-Item -LiteralPath $statePath -Destination (Join-Path $externalScratch 'verdicts.json')
     Copy-Item -LiteralPath (Join-Path $scratch 'draft-v2.md') -Destination (Join-Path $externalScratch 'draft-v2.md')
     Write-Utf8 (Join-Path $junctionProject 'CONTEXT.md') "# Context`n"
-    New-Item -ItemType Junction -Path (Join-Path $junctionProject 'design\_review') -Target $externalScratch | Out-Null
+    New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path (Join-Path $junctionProject 'design/_review') -Target $externalScratch | Out-Null
     Assert-Throws { & (Join-Path $SkillRoot 'scripts\finalize-review.ps1') `
         -ProjectPath $junctionProject -DraftPath (Join-Path $junctionProject 'design\_review\draft-v2.md') -Slug 'junction-fixture' `
         -Round 2 -Tier complex -ContextPath (Join-Path $junctionProject 'CONTEXT.md') -GlossaryReconciled } 'reparse point' 'junctioned scratch cleanup was accepted'
@@ -698,7 +698,7 @@ finally {
     $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorCodexSessions
     if (Test-Path -LiteralPath $testRoot) {
         $resolved = (Resolve-Path -LiteralPath $testRoot).Path
-        $tempPrefix = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+        $tempPrefix = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
         if ($resolved.StartsWith($tempPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolved).StartsWith('dt-review-tests-')) {
             Remove-Item -LiteralPath $resolved -Recurse -Force
         }

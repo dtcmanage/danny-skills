@@ -84,8 +84,13 @@ function Update-RouterOutcomesLocked {
     # dt-build keeps run provenance in the worktree it built in, so scan each root's linked worktrees too;
     # their rows carry the root's repo name.
     $scanRoots = [System.Collections.Generic.List[object]]::new()
+    # Sources are paths relative to _Claude-Workspace (the main checkout's grandparent), so one list
+    # serves every host; an absolute path is still used as-is.
+    $workspaceDir = $null
+    try { $workspaceDir = Split-Path -Parent (Split-Path -Parent (Get-RouterMainCheckout)) } catch { }
     foreach ($root in $roots) {
         $rootPath = [string]$root
+        if (-not [IO.Path]::IsPathRooted($rootPath) -and $workspaceDir) { $rootPath = [IO.Path]::GetFullPath((Join-Path $workspaceDir $rootPath)) }
         $scanRoots.Add([pscustomobject]@{ path = $rootPath; repo = (Split-Path -Leaf $rootPath) })
         if (-not (Test-Path -LiteralPath (Join-Path $rootPath '.git'))) { continue }
         $listing = @(& git -C $rootPath worktree list --porcelain 2>$null)

@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.3.6 (2026-11-22): Ships from Linux: browser-smoke harness resolved from the workspace root, timeout kill and live-process scan without taskkill/CIM, portable dt-build registry dir.
+
 - 0.3.5 (2026-10-22): Commit probe commands now run through Invoke-ShipStep with file-backed std handles; a direct child failed ssh with DuplicatedHandle because ship.ps1 clears std-handle inheritance (tcm-database, 2026-10-22).
 
 - 0.3.4 (2026-10-20): Live-jobs preflight tolerates job records without command/working_directory/status instead of crashing under StrictMode; regression fixture added.

@@ -169,10 +169,10 @@ function Get-RouterCodexLiveUsage {
     param([int]$TimeoutMs = 20000)
     if ($env:DT_ROUTER_TEST_FAKE_CLI_ROOT) { return $null }
     $command = if ($env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND) { $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND }
-        else { $found = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue | Where-Object { $_.Source -match '\.(cmd|exe)$' } | Select-Object -First 1; if ($found) { $found.Source } else { $null } }
+        else { $found = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue | Where-Object { -not $IsWindows -or $_.Source -match '\.(cmd|exe)$' } | Select-Object -First 1; if ($found) { $found.Source } else { $null } }
     if (-not $command) { return $null }
     $info = [Diagnostics.ProcessStartInfo]::new()
-    if ($command -match '\.py$') { $info.FileName = 'python'; $info.ArgumentList.Add('-I'); $info.ArgumentList.Add($command) }
+    if ($command -match '\.py$') { $info.FileName = (Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source; $info.ArgumentList.Add('-I'); $info.ArgumentList.Add($command) }
     else { $info.FileName = $command }
     $info.ArgumentList.Add('app-server')
     $info.RedirectStandardInput = $true; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true

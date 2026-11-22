@@ -35,13 +35,13 @@ Set-StrictMode -Version Latest
 function Get-CodexCliPath {
     # Prefer the npm shim on Danny's host: it tracks the current CLI release,
     # while a separate WinGet codex.exe may lag behind.
-    foreach ($name in @('codex.cmd', 'codex.exe', 'codex.ps1')) {
+    foreach ($name in @('codex.cmd', 'codex.exe', 'codex.ps1', 'codex')) {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($cmd -and $cmd.CommandType -in @('Application', 'ExternalScript')) {
             return $cmd.Source
         }
     }
-    throw 'Unable to locate codex CLI executable (codex.cmd/codex.exe/codex.ps1).'
+    throw 'Unable to locate codex CLI executable (codex.cmd/codex.exe/codex.ps1/codex).'
 }
 
 function Write-Atomic([string]$Path, [string]$Content) {
@@ -135,7 +135,7 @@ $reviewJsonPath = Join-Path $scratchDir ("review-v{0}.json" -f $Round)
 $streamPath = Join-Path $scratchDir ("codex-stream-v{0}.log" -f $Round)
 $metadataPath = Join-Path $scratchDir ("round-meta-v{0}.json" -f $Round)
 $tmpJson = Join-Path $scratchDir ("review-v{0}.tmp.{1}.json" -f $Round, [guid]::NewGuid().ToString('N'))
-$executionDir = Join-Path $env:TEMP ("dt-review-exec-{0}" -f [guid]::NewGuid().ToString('N'))
+$executionDir = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-review-exec-{0}" -f [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $executionDir -Force | Out-Null
 
 $promptRaw = Get-Content -LiteralPath $PromptPath -Raw

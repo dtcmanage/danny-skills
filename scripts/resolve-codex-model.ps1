@@ -21,7 +21,7 @@
 # select fails closed under -Strict.
 
 function Get-CodexCachePath {
-    $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+    $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
     return (Join-Path $codexHome 'models_cache.json')
 }
 

@@ -4,9 +4,9 @@ description: "Generate raster/bitmap images and visual assets via Codex's built-
 disable-model-invocation: false
 user-invocable: true
 allowed-tools: "Bash Read Write Edit"
-compatibility: "Windows with Codex CLI authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Node required for helpers/gallery. Requires the danny-skills repo present."
+compatibility: "Codex CLI (Linux, macOS or Windows) authenticated to a ChatGPT Plus/Pro/Business/Enterprise subscription (built-in image_gen tool); driven through the Bash tool. Node required for helpers/gallery. Requires the danny-skills repo present."
 metadata:
-  version: 0.3.40
+  version: 0.3.41
   changelog: "Release history: CHANGELOG.md (newest first)."
 ---
 
@@ -55,8 +55,8 @@ Required (the wrapper fails clear if a needed one is missing): Codex CLI (authen
 
 ## Core discipline: never hand Codex a save path
 
-Codex resolves a caller-supplied save path through .NET/PowerShell, so a bash path like `/tmp/x.png`
-lands at `C:\tmp\x.png`. `gen-image.sh` never hands Codex a target path - it lets Codex write to its
+On Windows, Codex resolves a caller-supplied save path through .NET/PowerShell, so a bash path like `/tmp/x.png`
+lands at `C:\tmp\x.png`; on every host a caller path is ambiguous. `gen-image.sh` never hands Codex a target path - it lets Codex write to its
 default `generated_images` dir and collects the result. Never tell Codex to "save to <path>".
 
 ## Where images are saved
@@ -74,10 +74,10 @@ named scratch folder. The wrapper never overwrites: a collision becomes `name-v2
 ## Procedure - single image
 
 1. **Craft the prompt.** For anything non-trivial, read Codex's prompting guidance first - resolve the
-   path from the user profile, never hardcode it: `$env:USERPROFILE\.codex\skills\.system\imagegen\references\prompting.md`
-   (in bash contexts: `~/.codex/skills/.system/imagegen/references/prompting.md`) and `...\references\sample-prompts.md`
+   path from the user's home, never hardcode it: `~/.codex/skills/.system/imagegen/references/prompting.md`
+   (Windows only: `$env:USERPROFILE\.codex\skills\.system\imagegen\references\prompting.md`) and `sample-prompts.md`
    in the same folder. If that path is absent (Codex updated or moved it), locate it with
-   `Get-ChildItem $env:USERPROFILE\.codex\skills -Recurse -Filter 'imagegen*' -Directory` before falling back
+   `find ~/.codex/skills -type d -name 'imagegen*'` before falling back
    to prompting without the guidance.
    Structure: scene/backdrop -> subject -> key details -> constraints -> intended use. Put literal
    in-image text in quotes; specify typography, color, placement.
@@ -87,7 +87,7 @@ named scratch folder. The wrapper never overwrites: a collision becomes `name-v2
    bash "<skill-dir>/scripts/gen-image.sh" --prompt "<full prompt>" --dest "<assets dir>" --name "<slug>"
    ```
 
-   stdout is the saved Windows path; progress + the expected call-count estimate go to stderr.
+   stdout is the saved absolute path; progress + the expected call-count estimate go to stderr.
 3. **Review.** Open the saved file with the Read tool. Judge subject, composition, text accuracy, constraints.
 4. **Iterate** with one targeted change at a time, restating critical constraints, until it lands.
 5. **Report** the saved path in backticks.
@@ -167,9 +167,8 @@ beside the images. For a single image, skip the gallery - just view and report t
 
 ## Reporting
 
-- Report each saved image and the gallery as clickable local file links under
+- Report each saved image and the gallery as full absolute paths in backticks under
   `../../references/conventions.md`.
-- Backtick a Windows path only when it must be shown literally rather than linked.
 - Note that generation used Codex's built-in engine on the subscription (no API key, no extra billing).
 
 ## Guardrails

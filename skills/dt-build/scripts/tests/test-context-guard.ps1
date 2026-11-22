@@ -137,7 +137,12 @@ function Invoke-DtJobRaw {
     param([string[]]$Arguments, [switch]$Text)
     $extra = @(if (-not $Text) { '-Json' })
     $raw = & pwsh -NoProfile -File $dtJob @Arguments @extra 2>&1
-    return [pscustomobject]@{ exit = $LASTEXITCODE; text = (($raw | ForEach-Object { [string]$_ }) -join "`n"); lines = @($raw | ForEach-Object { [string]$_ }) }
+    $code = $LASTEXITCODE
+    # pwsh's concise error view colours and wraps a thrown message to the console width (narrow on Linux),
+    # so strip ANSI codes and rejoin wrapped '|' continuation lines before matching message text.
+    $joined = (($raw | ForEach-Object { [string]$_ }) -join "`n") -replace '\x1b\[[0-9;]*m', ''
+    $joined = $joined -replace '\s*\r?\n\s*\|\s*', ' '
+    return [pscustomobject]@{ exit = $code; text = $joined; lines = @($raw | ForEach-Object { [string]$_ }) }
 }
 
 function New-BuildState {
@@ -176,8 +181,15 @@ function Start-FakeTree {
     # A pwsh child standing in for the coordinator wrapper, with a ping grandchild standing in for codex.
     param([string]$Name)
     $grandFile = Join-Path $tempRoot "$Name.grand"
-    $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','120','127.0.0.1' -WindowStyle Hidden -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 120"
-    $child = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript -WindowStyle Hidden -PassThru
+    if ($IsWindows) {
+        $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','120','127.0.0.1' -WindowStyle Hidden -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 120"
+        $child = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript -WindowStyle Hidden -PassThru
+    }
+    else {
+        # Linux/Mac: -WindowStyle is Windows-only; a sleep grandchild stands in for codex.
+        $childScript = "`$g = Start-Process -FilePath 'sleep' -ArgumentList '120' -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 120"
+        $child = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript -PassThru
+    }
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while (-not (Test-Path -LiteralPath $grandFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
     $grand = [int](Get-Content -Raw -LiteralPath $grandFile)
@@ -1155,7 +1167,7 @@ catch {
     $exitCode = 1
 }
 finally {
-    foreach ($p in $script:spawned) { Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue | Where-Object { @("ping", "pwsh") -contains $_.ProcessName } | Stop-Process -Force -ErrorAction SilentlyContinue }
+    foreach ($p in $script:spawned) { Get-Process -Id ([int]$p) -ErrorAction SilentlyContinue | Where-Object { @("ping", "pwsh", "sleep") -contains $_.ProcessName } | Stop-Process -Force -ErrorAction SilentlyContinue }
     foreach ($name in $savedEnv.Keys) { [System.Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
     Write-Output "SUMMARY: $script:passed passed"
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

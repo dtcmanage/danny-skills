@@ -720,7 +720,14 @@ function Get-WatcherDescendantProcesses {
         $rootStart = $StartUtc
     }
     if (-not $rootStart) { return @() }
-    $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId -ErrorAction Stop)
+    $all = if ($IsWindows) { @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId -ErrorAction Stop) }
+        else {
+            # Linux/Mac: pwsh reads the parent pid from /proc (or ps); same shape as the CIM rows.
+            @(Get-Process -ErrorAction Stop | ForEach-Object {
+                $parentId = $null; try { $parentId = $_.Parent.Id } catch { }
+                if ($null -ne $parentId) { [pscustomobject]@{ ProcessId = $_.Id; ParentProcessId = $parentId } }
+            })
+        }
     $found = [System.Collections.Generic.List[object]]::new()
     $queue = [System.Collections.Generic.Queue[object]]::new()
     $queue.Enqueue([pscustomobject]@{ pid = $ProcessId; start_utc = $rootStart })

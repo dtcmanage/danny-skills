@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.8.0
+  version: 0.8.1
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -384,8 +384,8 @@ When applying:
 5. Enforce MULTI_SCOPE atomic apply contract.
 6. Report what was written and what remains escalated.
 7. **Command Center backstop:** review the session for anything that now needs Danny, is waiting on someone else, has a real deadline, or finished an item on the list.
-   For each workstation touched, run `pwsh -NoProfile -File "D:\Claude\_Claude-Workspace\Command Center\cc.ps1" list --workstation "<folder>"`; add missing items, update changed ones, and close finished ones with `done <id> --done-note "..."`.
-   Read and follow `D:\Claude\_Claude-Workspace\Command Center\CLAUDE.md` § The session write rule: titles without amounts/account numbers, starter prompts usable in a fresh session, workstation = folder path including substation. Never move open items into `MEMORY.md`; move any open-for-Danny item found there to Command Center.
+   For each workstation touched, run `pwsh -NoProfile -File "<workspace>/_Claude-Workspace/Command Center/cc.ps1" list --workstation "<folder>"` (`<workspace>` is `/home/danny/Claude` on the Linux session host, `~/Claude` on the Mac, `D:\Claude` on a Windows PC; cc.ps1 runs under pwsh on all three); add missing items, update changed ones, and close finished ones with `done <id> --done-note "..."`.
+   Read and follow `<workspace>/_Claude-Workspace/Command Center/CLAUDE.md` § The session write rule: titles without amounts/account numbers, starter prompts usable in a fresh session, workstation = folder path including substation. Never move open items into `MEMORY.md`; move any open-for-Danny item found there to Command Center.
    Report Command Center writes in one line in the audit output.
    Run `<skill>/scripts/check-ai-item-exits.ps1`; the transcript path is discovered automatically as the newest main `*.jsonl` in the current cwd's Claude Code project folder under `$env:CLAUDE_CONFIG_DIR/projects` (non-alphanumeric cwd characters become `-`; nested subagent folders are excluded). Use `-TranscriptPath <session.jsonl>` to override discovery. Route each hit as a Command Center finding, resolving it with one of the three allowed exits printed by the check.
 
@@ -399,16 +399,16 @@ If `should_run_hygiene=true`, invoke `dt-memory-hygiene` automatically.
 
 Session audit is where CLAUDE.md, MEMORY.md, and the other scaffolding files are most likely to have just been edited. As the LAST step of every audit run, push those edits to GitHub immediately instead of waiting for the 4-hourly sync:
 
-On the Windows PC (workspace at `D:\Claude`):
-
-```powershell
-pwsh -NoProfile -File "D:\Claude\_system-tools\workspace-sync\workspace-sync.ps1"
-```
-
-On the Mac (workspace at `~/Claude`):
+On the Linux session host (CT202, workspace at `/home/danny/Claude`) and on the Mac (workspace at `~/Claude`):
 
 ```bash
 bash "$HOME/Claude/_system-tools/workspace-sync/workspace-sync.sh"
+```
+
+On a Windows PC that still holds a workspace clone (workspace at `D:\Claude`):
+
+```bash
+pwsh -NoProfile -File "D:/Claude/_system-tools/workspace-sync/workspace-sync.ps1"
 ```
 
 The script commits any workspace changes (area-grouped message), rebases onto origin, and pushes; it is a no-op when the tree is clean. On failure it writes `SYNC-ALERT.md` at the workspace root and exits 1 — surface that in the audit report rather than retrying. Skip this step only on a machine that has no workspace repo clone.

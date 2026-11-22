@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.1.7
+  version: 1.1.8
   changelog: "Pointer-swap to shared output-paths convention in references/conventions.md instead of restating the no-computer-link rule inline."
 ---
 
@@ -105,5 +105,5 @@ If unsure, default to `plan-plus-mermaid`.
 
 - Do not rewrite the plan content. Render only.
 - Do not block on unavailable upstream skills if a documented fallback exists.
-- Follow the clickable local file-link contract in `../../references/conventions.md`.
+- Follow the local file-path output contract in `../../references/conventions.md`.
 - Keep this skill focused: rendering and surface clarity only.

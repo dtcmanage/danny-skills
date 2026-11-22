@@ -6,7 +6,15 @@ $ErrorActionPreference = 'Stop'
 $summary = [ordered]@{added=@();closed=@();skipped=$null;errors=@()}
 $explicitCc = -not [string]::IsNullOrWhiteSpace($CcCommand)
 if (-not $explicitCc -and $env:DT_ROUTER_CC_COMMAND) { $CcCommand = $env:DT_ROUTER_CC_COMMAND; $explicitCc = $true }
-if (-not $CcCommand) { $CcCommand = 'D:\Claude\_Claude-Workspace\Command Center\cc.ps1' }
+if (-not $CcCommand) {
+    # cc.ps1 sits beside Skill Creation in the workspace that holds the main checkout
+    # (/home/danny/Claude on the Linux session host, D:\Claude on Windows).
+    $CcCommand = 'D:\Claude\_Claude-Workspace\Command Center\cc.ps1'
+    try {
+        $workspaceCc = Join-Path (Split-Path -Parent (Split-Path -Parent (Get-RouterMainCheckout))) 'Command Center/cc.ps1'
+        if (Test-Path -LiteralPath $workspaceCc -PathType Leaf) { $CcCommand = $workspaceCc }
+    } catch { }
+}
 function Get-ProposalValue($Object, [string]$Name, $Default = $null) {
     if ($null -ne $Object -and $Object.PSObject.Properties[$Name]) { return $Object.$Name }
     return $Default
