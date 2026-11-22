@@ -275,7 +275,7 @@
     "consumers": [
       "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
       "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
-      "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
+      "dt-ship", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
       "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
     ],
     "summary_token": "local file-link contract"
@@ -284,7 +284,7 @@
     "consumers": [
       "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
       "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
-      "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
+      "dt-ship", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
       "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
     ],
     "summary_token": "version policy"
@@ -333,7 +333,7 @@
     "consumers": [
       "dt-build", "dt-handoff", "dt-image-gen", "dt-memory-hygiene",
       "dt-pipeline", "dt-plan", "dt-prototype", "dt-review", "dt-roadmap", "dt-session-audit",
-      "dt-ship", "dt-terminal-format-profile", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
+      "dt-ship", "dt-tune", "dt-visualize-design", "dt-visualize-plan",
       "dt-writing-draft", "dt-writing-edit", "git-merge-feature", "git-sync-features", "start-work"
     ],
     "summary_token": "version policy"
