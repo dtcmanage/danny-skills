@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.51.0
+  version: 2.52.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -221,8 +221,11 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   security-sensitive, live-write, or agent-verification milestone before acceptance. Record findings and the
   verifier surface/model, selection reason, and disclosure line. The builder never self-approves. The verifier also flags any diff content beyond
   the milestone's named artifacts and stated scope as an out-of-scope finding — unrequested work is a defect.
+  Every finding carries a type (`app-bug`, `test-env`, `docs`, `design-gap`) and severity; fix them per
+  `references/review-fix-loop.md`: one bundled fix per round, targeted tests, a verifier that reads only the fix diff.
 - e. **Run the acceptance gate.** `<skill>/scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
-  Run each pass to the end past failures; fix everything, rerun until clean.
+  Run each pass to the end past failures; fix everything in one bundled fix and rerun the failed and touched checks until clean (`references/review-fix-loop.md`).
+  A milestone that depends on the real target host (tmux, OS paths, systemd, deploy config) includes a short end-to-end smoke on that host here, added if the roadmap lacks it (`references/review-fix-loop.md` section 6).
 - f. **Run the downgrade-language scan.** `<skill>/scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
 - g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and
   resolved model, `category`, `escalated` (true when the accepted attempt used `-EscalateFrom`), selection reason, disclosure line, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
@@ -254,6 +257,9 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   continue as before. Have a fresh non-builder verifier (via VERIFY_DISPATCH) review the combined diff.
   Include branch SHA, commands, environment, verifier provenance (codex-host: wrapper provenance JSON path), and PASS/BLOCKED
   in `final-integration.json`. Missing or BLOCKED final integration prevents COMPLETE.
+  Run the review rounds before that complete gate, per `references/review-fix-loop.md`: labeled findings,
+  one bundled fix per round, targeted tests and a fix-diff-only verifier between rounds; then the complete
+  gate once on the final candidate before deploy or merge, repeated only when it fails or code changes.
 - Run `<skill>/scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder>`.
   - Omit `-RunTests`: normal finalization renders persisted `acceptance-rows.jsonl` without rerunning lifecycle-sensitive
     milestone tests. Explicitly requested revalidation uses `-RunTests`, emitting `build-acceptance-revalidation.{md,html}`
@@ -320,6 +326,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
 - **Acceptance contract (per-milestone verify-before-complete):** `references/acceptance-contract.md` — binding contract for what counts as "milestone complete."
 - Host adapters (load exactly one): `references/adapter-claude.md`, `references/adapter-codex.md`
 - Subagent prompts: `references/subagent-prompts.md`
+- Review and fix loop (finding labels, bundled fixes, targeted tests, full gate once, real-host smoke): `references/review-fix-loop.md`
 - Artifact integrity contract: `references/artifact-integrity.md`
 - Run-artifact lifecycle: `references/run-artifact-lifecycle.md`
 - Shared-input routing: `references/shared-input-routing.md`

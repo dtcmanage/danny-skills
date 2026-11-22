@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.52.0
+
+- Review and fix loop: findings carry type (app-bug, test-env, docs, design-gap) and severity; one bundled fix per review round; fix rounds run targeted and touched-module tests with a verifier that reads only the fix diff; the complete gate runs once on the final candidate before deploy or merge; host-dependent milestones run a real-host smoke (Command Center item 426).
+
 ## 2.51.0
 
 - Managed resume plans boundary/approval reads with boundary-ledger.ps1 and rereads only sources that are new or changed (FS-49 part 2); regression suite no longer reads the live vendor status page and its settings timeout fixture allows 10 s.

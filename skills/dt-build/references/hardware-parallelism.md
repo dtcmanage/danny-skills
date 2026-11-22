@@ -37,13 +37,12 @@ Overlap the fix round with report-only work: once the independent review confirm
 its defect list, and no step still runs against or reads the candidate (testing and evidence collection
 are done), start the fix round in a separate worktree; report wording corrections run alongside. Never
 fix while a run is still testing the candidate.
-Before each full rerun after a fix round, run the tests that cover the changed files plus any
-fingerprint, manifest or hash checks over them (minutes, not the full pass); fix what they catch, then
-start the full pass. The full pass still decides; the quick pass only saves a wasted full run.
+After a fix round, run only the tests that cover the changed files and touched modules plus any
+fingerprint, manifest or hash checks over them, never the full pass (`review-fix-loop.md` section 3).
 For long end-to-end or durability suites made of independent groups (VM rows, scenario groups),
 iterate fix rounds on the failed groups only, plus any group that exercises the changed code; record
-which clean groups were skipped and why. Once those pass, run one complete pass of every group on the
-final candidate: that pass alone decides acceptance, because a fix can break a group that was clean.
+which clean groups were skipped and why. Run one complete pass of every group on the final candidate:
+that pass alone decides acceptance, because a fix can break a group that was clean.
 
 Never run a test that deliberately saturates CPU (load proofs, stress runs) on a host that serves a
 live production app or another build's timing-sensitive jobs. Run it on a VM or fleet host, or cap it
