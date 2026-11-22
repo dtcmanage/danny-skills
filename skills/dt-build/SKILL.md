@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.52.0
+  version: 2.52.1
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -258,8 +258,9 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   Include branch SHA, commands, environment, verifier provenance (codex-host: wrapper provenance JSON path), and PASS/BLOCKED
   in `final-integration.json`. Missing or BLOCKED final integration prevents COMPLETE.
   Run the review rounds before that complete gate, per `references/review-fix-loop.md`: labeled findings,
-  one bundled fix per round, targeted tests and a fix-diff-only verifier between rounds; then the complete
-  gate once on the final candidate before deploy or merge, repeated only when it fails or code changes.
+  one bundled fix per round, targeted tests and a fix-diff-only verifier between rounds; then the full gate
+  (every suite the change touches, chosen by changed paths) once on the final candidate before deploy or
+  merge, repeated only when it fails or code changes.
 - Run `<skill>/scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder>`.
   - Omit `-RunTests`: normal finalization renders persisted `acceptance-rows.jsonl` without rerunning lifecycle-sensitive
     milestone tests. Explicitly requested revalidation uses `-RunTests`, emitting `build-acceptance-revalidation.{md,html}`

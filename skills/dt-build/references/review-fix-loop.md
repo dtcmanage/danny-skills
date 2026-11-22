@@ -64,11 +64,13 @@ implementation loop limit" in `acceptance-contract.md` and the SKILL.md step 6j 
 
 ## 5. Full suite once, at the end
 
-- When a review round returns no open `important` finding, run the complete gate (every suite, build and
-  E2E group, plus the design-required live checks) once on the final candidate SHA, before deploy,
-  switch-over or merge. That run writes `final-integration.json`.
-- If it fails, label the failures, make one bundled fix, run its targeted tests and fix verification,
-  then run the complete gate once more. A failing complete gate is the only reason to repeat it.
+- When a review round returns no open `important` finding, run the full gate once on the final candidate
+  SHA, before deploy, switch-over or merge. "Full" means every suite the change touches, chosen by
+  changed paths (front end, back end, shared contract) per `00_Resources/build-process.md`, plus the
+  builds, E2E groups and design-required live checks those paths need. That run writes
+  `final-integration.json`.
+- If it fails, label the failures, make one bundled fix, rerun the failed tests plus its targeted tests and
+  fix verification, then run the full gate once more. A failing full gate is the only reason to repeat it.
 
 ## 6. Real-host smoke inside the milestone
 

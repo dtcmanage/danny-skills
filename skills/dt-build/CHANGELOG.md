@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.52.1
+
+- Review fix loop: the final full gate runs every suite the change touches, chosen by changed paths, matching build-process.md; a failed gate reruns failed tests before the next full pass.
+
 ## 2.52.0
 
 - Review and fix loop: findings carry type (app-bug, test-env, docs, design-gap) and severity; one bundled fix per review round; fix rounds run targeted and touched-module tests with a verifier that reads only the fix diff; the complete gate runs once on the final candidate before deploy or merge; host-dependent milestones run a real-host smoke (Command Center item 426).
