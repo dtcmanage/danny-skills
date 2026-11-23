@@ -23,7 +23,7 @@ function Read-Records { @(Get-Content -LiteralPath (Join-Path $script:state 'out
 $saved = $env:DT_MODEL_ROUTER_STATE
 $savedTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $savedSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
-$temp = Join-Path $env:TEMP ('model-router-outcomes-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('model-router-outcomes-' + [guid]::NewGuid().ToString('N'))
 $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'sessions'
 [IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_CODEX_SESSIONS) | Out-Null
 $stub = Join-Path $temp 'transport.ps1'

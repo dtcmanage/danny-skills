@@ -1,7 +1,7 @@
 foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$temp = Join-Path $env:TEMP ('router-category-test-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('router-category-test-' + [guid]::NewGuid().ToString('N'))
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $priorAlerts = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $priorSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS

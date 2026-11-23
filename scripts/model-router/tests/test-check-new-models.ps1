@@ -14,7 +14,7 @@ function Reset-State {
     New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_STATE | Out-Null
 }
 $priorState = $env:DT_MODEL_ROUTER_STATE
-$script:temp = Join-Path $env:TEMP ('model-check-test-' + [guid]::NewGuid().ToString('N'))
+$script:temp = Join-Path ([IO.Path]::GetTempPath()) ('model-check-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $transportPath = Join-Path $temp 'fake-alert-transport.ps1'

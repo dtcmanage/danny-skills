@@ -8,7 +8,7 @@
 # Claude credentials point to a missing fixture path unless the test already supplied an override.
 
 function Enter-RouterTestCodexHome {
-    $root = Join-Path $env:TEMP ('router-test-codex-home-' + [guid]::NewGuid().ToString('N'))
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('router-test-codex-home-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($root) | Out-Null
     $priorFakeRoot = $env:DT_ROUTER_TEST_FAKE_CLI_ROOT
     $env:DT_ROUTER_TEST_FAKE_CLI_ROOT = [IO.Path]::GetTempPath()

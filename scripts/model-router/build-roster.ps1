@@ -400,7 +400,7 @@ function Invoke-RouterTriggeredComparison {
 
 function Build-RouterRosterProposal {
     param([datetime]$Now = (Get-Date), [scriptblock]$BenchInvoker)
-    Assert-RouterWindowsOwner -Action 'Roster proposal construction'
+    Assert-RouterOwner -Action 'Roster proposal construction'
     $notification = [pscustomobject]@{ alert=$null }
     $staged = Use-RouterOutcomeMutex -StateDir (Get-RouterStateDir) -Action { Build-RouterRosterProposalLocked -Now $Now -Notification $notification -StageOnly }
     if (-not $staged.PSObject.Properties['requests']) { return $staged }

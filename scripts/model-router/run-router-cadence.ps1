@@ -123,7 +123,7 @@ function Remove-RouterResolvedResearchFailures {
 
 function Invoke-RouterCadence {
     param([datetime]$Now = (Get-Date), [switch]$CheckOnly, [switch]$Refresh)
-    Assert-RouterWindowsOwner -Action 'Router cadence'
+    Assert-RouterOwner -Action 'Router cadence'
     Publish-RouterRoster
     $state = Get-RouterStateDir
     $queuePath = Join-Path $state 'research-queue.json'

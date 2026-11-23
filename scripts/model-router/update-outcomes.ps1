@@ -397,7 +397,7 @@ function Complete-RouterDriftBench {
 
 function Update-RouterOutcomes {
     param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts, [scriptblock]$BenchInvoker)
-    Assert-RouterWindowsOwner -Action 'Outcome import and drift proposal construction'
+    Assert-RouterOwner -Action 'Outcome import and drift proposal construction'
     . (Join-Path $PSScriptRoot 'build-roster.ps1')
     # Reread outcomes, roster, marks and declines only after obtaining the shared writer lock.
     $state = Get-RouterStateDir

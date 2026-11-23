@@ -24,7 +24,7 @@ $fixtureResetEt = $fixtureReset.ToString("yyyy-MM-dd'T'HH:mm:sszzz")
 $fixtureResetEpoch = $fixtureReset.ToUnixTimeSeconds()
 $saved = @{}
 foreach ($name in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_MODEL_ROUTER_CODEX_SESSIONS','CODEX_HOME','DT_FAKE_CLAUDE_MODE','DT_FAKE_CODEX_MODE','DT_BUILD_DISPATCH_SEAMS','DT_FAKE_DIAGNOSIS','DT_FAKE_DISPATCH_COUNTER')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
-$temp = Join-Path $env:TEMP ('model-router-wiring-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('model-router-wiring-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $priorClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $temp 'missing-claude-credentials.json'

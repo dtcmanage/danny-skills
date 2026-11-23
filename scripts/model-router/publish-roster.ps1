@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 
 function Publish-RouterRoster {
-    Assert-RouterWindowsOwner -Action 'Roster publication'
+    Assert-RouterOwner -Action 'Roster publication'
     Use-RouterRosterMutex -Body {
     $source = Join-Path (Get-RouterStatePath) 'roster.json'
     $destination = Join-Path (Get-RouterSharedDir) 'roster.json'

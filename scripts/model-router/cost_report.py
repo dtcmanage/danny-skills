@@ -1532,8 +1532,8 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
 
 
 def main() -> None:
-    if sys.platform != "win32":
-        raise SystemExit("ROUTER_WINDOWS_OWNER: Weekly cost reporting is owned by Windows.")
+    if sys.platform != "linux":
+        raise SystemExit("ROUTER_OWNER: Weekly cost reporting is owned by the Linux session host (CT202).")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--prices", type=Path, default=DEFAULT_PRICES_PATH)

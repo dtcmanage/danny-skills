@@ -25,6 +25,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cost_report as cr  # noqa: E402
 
 
+@pytest.mark.parametrize("platform", ["win32", "darwin", "freebsd14"])
+def test_cost_report_refuses_observers_before_writes(monkeypatch, tmp_path, platform):
+    monkeypatch.setattr(sys, "platform", platform)
+    target = tmp_path / "must-not-exist"
+    monkeypatch.setattr(sys, "argv", ["cost_report.py", "--state-dir", str(target)])
+    with pytest.raises(SystemExit, match=r"ROUTER_OWNER:.*Linux session host \(CT202\)"):
+        cr.main()
+    assert not target.exists()
+
+
+def test_cost_report_linux_owner_passes_guard(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sys, "argv", ["cost_report.py", "--help"])
+    with pytest.raises(SystemExit) as exc:
+        cr.main()
+    assert exc.value.code == 0
+
+
 def _load_module(path: Path, name: str):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)

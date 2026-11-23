@@ -468,6 +468,7 @@
   "scripts/model-router/tests/test-quota-tiebreak.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-roster-approval.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-router-cadence.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test-router-owner.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-router-research.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-vendor-limits.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/fixtures/fake-codex-limits.py": {"consumers": [], "summary_token": "model router"},

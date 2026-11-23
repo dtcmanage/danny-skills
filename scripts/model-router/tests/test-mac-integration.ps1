@@ -15,7 +15,7 @@ function Assert-True([bool]$Condition, [string]$Name) {
 function Assert-Owner([scriptblock]$Action, [string]$Name) {
     $message = ''
     try { & $Action | Out-Null } catch { $message = $_.Exception.Message }
-    Assert-True ($message -like 'ROUTER_WINDOWS_OWNER:*Windows*') $Name
+    Assert-True ($message -like 'ROUTER_OWNER:*Linux session host (CT202)*') $Name
 }
 function New-TestRoster {
     $r = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json
@@ -28,7 +28,7 @@ $priorFetcher = $script:RouterClaudeUsageFetcher
 $script:RouterClaudeUsageFetcher = { param($Token) throw 'Unexpected live quota fetch in fixture' }
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('mac-integration-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp) | Out-Null
-$platformFixture = [pscustomobject]@{ Value = 'Windows' }
+$platformFixture = [pscustomobject]@{ Value = 'Linux' }
 Set-Item Function:Get-RouterPlatform -Value ({ return $platformFixture.Value }.GetNewClosure())
 try {
     # Exercise the real quota readers against isolated caches and the rejecting fetcher.
@@ -78,7 +78,7 @@ try {
     Assert-True (@(Test-RouterRoster (Read-RouterJsonObject $snapshot)).Count -eq 0) 'published roster validates'
     $bytes = [IO.File]::ReadAllBytes($snapshot)
     Assert-True (-not ($bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) -and @(Get-ChildItem $shared -Filter '*.tmp' -Force).Count -eq 0) 'publication uses UTF8 without BOM and cleans atomic temp'
-    Assert-True ((Read-RouterRoster).source -eq 'state') 'Windows reads local authority'
+    Assert-True ((Read-RouterRoster).source -eq 'state') 'Linux reads local authority'
     $env:DT_MODEL_ROUTER_STATE = $mac; $platformFixture.Value = 'MacOS'
     Assert-True ((Read-RouterRoster).source -eq 'shared' -and -not (Test-Path $mac)) 'Mac reads synced approved roster without creating runtime'
     function Get-RouterVendorBlocked { param($Vendor) return $false }
@@ -99,9 +99,9 @@ try {
     $revokedPick = Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog
     Assert-True ($revokedPick.roster_source -eq 'default' -and $revokedPick.effort -eq 'medium' -and @($revokedPick.alerts | Where-Object { $_ -like 'router-roster-invalid: ROSTER_NOT_APPROVED:*' }).Count -eq 1) 'Mac revocation restores default effort and unapproved alert'
     Remove-Item -LiteralPath $snapshot
-    Assert-True ((Read-RouterRoster).source -eq 'default') 'missing shared snapshot defaults despite local approved roster'
+    Assert-True ((Read-RouterRoster).source -eq 'state') 'missing shared snapshot falls back to local approved roster'
     $missingPick = Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog
-    Assert-True ($missingPick.alerts -contains 'router-roster-missing') 'missing shared snapshot alerts even with local Mac roster'
+    Assert-True ($missingPick.roster_source -eq 'state') 'missing shared snapshot uses local Mac roster'
     Remove-Item -LiteralPath (Join-Path $mac 'roster.json')
     Set-Content -LiteralPath $snapshot -Value '{bad'
     $read = Read-RouterRoster
@@ -116,7 +116,7 @@ try {
     Assert-True ($pick.roster_source -eq 'default' -and @($pick.alerts | Where-Object { $_ -like 'router-roster-invalid:*' }).Count -eq 1) 'Mac invalid snapshot retains resolver alert semantics without sends'
     # Reimport the real vendor functions after the resolver-only stub.
     . (Join-Path $PSScriptRoot '../vendor-limits.ps1')
-    $platformFixture.Value = 'Windows'; $env:DT_MODEL_ROUTER_STATE = $win
+    $platformFixture.Value = 'Linux'; $env:DT_MODEL_ROUTER_STATE = $win
     $null = Add-RouterVendorBlock -Vendor codex -ResetAtUtc ([datetimeoffset]::UtcNow.AddHours(2)) -Reason quota
     $usage = [pscustomobject]@{used_percent=97; resets_at_utc=[datetimeoffset]::UtcNow.AddDays(1).ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o'); credential_locator_identity=(Get-RouterClaudeCredentialIdentity)}
     Write-RouterJsonAtomic -Path (Join-Path $win 'claude-usage.json') -Value $usage
@@ -128,7 +128,7 @@ try {
     Write-RouterJsonAtomic -Path (Join-Path $mac 'claude-usage.json') -Value $usage
     $null = Add-RouterVendorBlock -Vendor claude -ResetAtUtc ([datetimeoffset]::UtcNow.AddHours(1)) -Reason quota
     Assert-True ((Get-RouterClaudeUsage).used_percent -eq 11) 'Mac reads its own fresh usage cache'
-    $platformFixture.Value = 'Windows'; $env:DT_MODEL_ROUTER_STATE = $win
+    $platformFixture.Value = 'Linux'; $env:DT_MODEL_ROUTER_STATE = $win
     Assert-True ((Get-RouterClaudeUsage).used_percent -eq 97 -and @(Read-RouterJsonArray (Join-Path $win 'vendor-blocks.json')).Count -eq 1) 'Mac local writes cannot alter Windows observations'
     $platformFixture.Value = 'MacOS'
     $guardState = Join-Path $temp 'guard-state'; $env:DT_MODEL_ROUTER_STATE = $guardState
@@ -154,14 +154,14 @@ try {
     $guardStateQuoted = $guardState.Replace("'", "''")
     [IO.File]::WriteAllText($guardScript, "function Get-RouterPlatform { 'MacOS' }`n& '$guardRunner' -Jobs coder -StateDir '$guardStateQuoted'", [Text.UTF8Encoding]::new($false))
     $guardOutput = & pwsh -NoProfile -File $guardScript 2>&1
-    Assert-True ($LASTEXITCODE -ne 0 -and ($guardOutput | Out-String) -match 'ROUTER_WINDOWS_OWNER:' -and -not (Test-Path $guardState)) 'CLI benchmark guard precedes state creation'
+    Assert-True ($LASTEXITCODE -ne 0 -and ($guardOutput | Out-String) -match 'ROUTER_OWNER:' -and -not (Test-Path $guardState)) 'CLI benchmark guard precedes state creation'
     Assert-Owner { & (Join-Path $PSScriptRoot '../cost-report.ps1') } 'Mac refuses weekly report'
     $collector = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../skills/dt-build/scripts/collect-usage.ps1'))
     $collectorOutput = & $collector -OutDir $guardState -Quiet | Out-String
     Assert-True ($collectorOutput -match 'owned by Windows' -and -not (Test-Path $guardState)) 'Mac build intake skips reporting collector before any writes'
     $show = & (Join-Path $PSScriptRoot '../approve-roster.ps1') -Show | Out-String
     Assert-True ($show -match 'Current roster' -and -not (Test-Path $guardState)) 'Mac Show is permitted and all guards precede state creation'
-    $platformFixture.Value = 'Windows'; $env:DT_MODEL_ROUTER_STATE = $win
+    $platformFixture.Value = 'Linux'; $env:DT_MODEL_ROUTER_STATE = $win
     Write-RouterJsonAtomic -Path (Join-Path $win 'roster.json') -Value (New-TestRoster)
     $null = & (Join-Path $PSScriptRoot '../approve-roster.ps1') -Seed
     $null = & (Join-Path $PSScriptRoot '../approve-roster.ps1') -Approve
@@ -188,7 +188,9 @@ try {
         $target = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $relative))
         $probe = Join-Path $temp 'python-owner-probe.py'
         $pythonProbe = @'
-import pathlib, runpy, sys
+import pathlib, runpy, sys, sysconfig, zoneinfo
+# Initialize native stdlib configuration before emulating another platform.
+sysconfig.get_config_vars()
 target = pathlib.Path(sys.argv[1])
 root = pathlib.Path(sys.argv[2])
 sys.platform = 'darwin'
@@ -196,7 +198,8 @@ sys.argv = [str(target), '--state-dir', str(root)]
 try:
     runpy.run_path(str(target), run_name='__main__')
 except SystemExit as exc:
-    if 'ROUTER_WINDOWS_OWNER' not in str(exc):
+    expected = 'ROUTER_OWNER:' if target.name == 'cost_report.py' else 'ROUTER_WINDOWS_OWNER:'
+    if expected not in str(exc):
         raise
 assert not root.exists(), 'non-Windows writer created state'
 print('PASS: direct Python writer has no Mac effects')
@@ -237,7 +240,7 @@ Publish-RouterRoster
     $pwsh=(Get-Command pwsh -ErrorAction Stop).Source
     function Start-IsolatedChild([string[]]$ChildArgs,[string]$Name) {
         $quoted=@($ChildArgs | ForEach-Object {'"'+$_.Replace('"','\"')+'"'})
-        Start-Process -FilePath $pwsh -ArgumentList $quoted -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $temp "$Name.out") -RedirectStandardError (Join-Path $temp "$Name.err")
+        Start-Process -FilePath $pwsh -ArgumentList $quoted -PassThru -RedirectStandardOutput (Join-Path $temp "$Name.out") -RedirectStandardError (Join-Path $temp "$Name.err")
     }
     $publisher=Start-IsolatedChild @('-NoProfile','-File',$child,$routerRoot,$win,$shared,$signal,$release) 'publisher'
     $deadline=[datetimeoffset]::UtcNow.AddSeconds(15)

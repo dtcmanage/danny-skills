@@ -15,7 +15,7 @@ function Get-RosterErrors { param([object]$Roster) return @(Test-RouterRoster -R
 function Get-RouterVendorBlocked { param([string]$Vendor) return ($script:blocked -contains $Vendor) }
 $prior = $env:DT_MODEL_ROUTER_STATE
 $priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
-$temp = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 $fakeScript = Join-Path $temp 'fake-transport.ps1'

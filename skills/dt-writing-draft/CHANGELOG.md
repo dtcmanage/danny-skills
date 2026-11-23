@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.42 (2026-11-23): Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.
+
 - 0.2.41 (2026-11-22): Linux workspace paths for style profiles, samples, voice principles and save location; backticked absolute paths in output.
 
 - 0.2.40 (2026-11-15): Model router files pending proposals to Command Center and closes them on decision (shared router change).

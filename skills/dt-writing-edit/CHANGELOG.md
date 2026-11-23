@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.42 (2026-11-23): Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.
+
 - 0.3.41 (2026-11-22): sha256sum for the original-untouched hash; bash script-call block; backticked absolute paths in output.
 
 - 0.3.40 (2026-11-15): Model router files pending proposals to Command Center and closes them on decision (shared router change).

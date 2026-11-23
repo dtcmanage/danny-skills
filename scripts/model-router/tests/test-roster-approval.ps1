@@ -8,7 +8,7 @@ function Invoke-Approval { param([string[]]$Options) & pwsh -NoProfile -File (Jo
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $priorSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
-$temp = Join-Path $env:TEMP ('roster-approval-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('roster-approval-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'sessions'

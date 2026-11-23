@@ -91,7 +91,7 @@ Research runs per category (`run-router-research.ps1 -Categories`), reading the 
 Manage the roster with `approve-roster.ps1`: `-Show`, `-Approve` (uses the approved roster), `-Revoke` (clears approval and uses the default roster with an alert), and `-DeclineDrift -Job <job>` (keep the first choice after a drift alert). Drift on a first choice sends that job to its approved backup until Danny approves the swap proposal or declines it.
 Use `-Approve -Jobs fast,coder` to approve only named jobs when a full proposal exceeds the five-model cap.
 
-At ship, register the Windows Scheduled Tasks from the **main checkout** with `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/register-router-schedules.ps1" -Apply`. They run the weekly cost report on Monday at 07:00 ET, the full research cadence daily at 01:00 ET, and the model-release check daily at 13:00 ET. Do not register them from a build worktree. Research runs only for a new frontier-vendor release (and its confirmation and follow-up passes) or on Danny's call. Refresh research (drift marks, readings older than six months) is queued only when the cadence is run by hand with `-Refresh`; the schedule never queues it (2026-10-06, after nightly re-queued refreshes repeated the same comparison).
+The Linux session host CT202 owns roster proposals, approvals, publication, outcome import, research, benchmarking, cadence, reporting and frontier requests. SNOWWHITE (Windows) and Mac are read-only observers of the published roster. At ship, register the systemd user timers from the **main checkout** with `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/register-router-schedules.ps1" -Apply`. They run the weekly cost report on Monday at 07:00 ET, the full research cadence daily at 01:00 ET, and the model-release check daily at 13:00 ET. The registrar resolves the primary checkout through Git common-dir metadata even when invoked from a worktree. Without `-Apply` it returns a plan without writing files. `-UnitDir` overrides the unit directory and `-NoSystemctl` writes units without enabling timers for tests. Research runs only for a new frontier-vendor release (and its confirmation and follow-up passes) or on Danny's call. Refresh research (drift marks, readings older than six months) is queued only when the cadence is run by hand with `-Refresh`; the schedule never queues it (2026-10-06, after nightly re-queued refreshes repeated the same comparison).
 
 From the repo root, run:
 
@@ -372,7 +372,7 @@ claims about replies deleted or never retained.
 
 # Frontier requests
 
-Frontier requests are Windows-only; the Mac never raises them.
+Frontier requests are owned by the Linux session host CT202; SNOWWHITE and Mac never raise them.
 
 For a coder or deep-thinker piece that failed at hard effort (or has disagreeing
 hard-tier answers), run `<danny-skills>/scripts/model-router/request-frontier.ps1 -Category <category>

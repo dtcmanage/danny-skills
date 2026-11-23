@@ -17,7 +17,7 @@ function Assert-True([bool]$Condition, [string]$Name) {
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $priorSweep = $env:DT_MODEL_ROUTER_USAGE_SWEEP
-$temp = Join-Path $env:TEMP ('cost-report-test-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('cost-report-test-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 

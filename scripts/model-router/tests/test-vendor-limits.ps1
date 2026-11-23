@@ -7,7 +7,7 @@ function Assert-True { param([object]$Condition,[string]$Name) if (-not [bool]$C
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $priorSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
 $priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
-$temp = Join-Path $env:TEMP ('router-limits-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('router-limits-' + [guid]::NewGuid().ToString('N'))
 $state = Join-Path $temp 'state'
 $sessions = Join-Path $temp 'sessions'
 [IO.Directory]::CreateDirectory($state) | Out-Null

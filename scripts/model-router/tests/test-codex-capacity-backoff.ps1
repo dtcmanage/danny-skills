@@ -15,7 +15,7 @@ function Write-Utf8([string]$Path, [string]$Text) {
 # This entire suite uses PowerShell peers, temporary router state, and no Python.
 $saved = @{}
 foreach ($name in @('CODEX_HOME','DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_CODEX_SESSIONS','DT_MODEL_ROUTER_CLAUDE_CREDENTIALS','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_BUILD_DISPATCH_SEAMS','DT_BUILD_RUN_PIN_VENDOR','DT_BUILD_RUN_PIN_MODEL','FS63_COUNTER','FS63_SUCCEED','FS63_SIGNAL','FS63_WORK_MS','FS63_TIME_JUMP_MS','FS63_FINAL')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
-$temp = Join-Path $env:TEMP ('fs63-capacity-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('fs63-capacity-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($temp)
 try {
     foreach ($text in @('Selected model is at capacity','ERROR: Model is currently overloaded','Error: server temporarily at capacity','ERROR: service overloaded','ERROR: overloaded_error','ERROR: model gpt-6.1-sol is overloaded','Error: selected model is over capacity','ERROR: at-capacity refusal','ERROR: vendor overload','{"type":"error","message":"Selected model is at capacity"}',"ERROR: Selected model is at capacity`nWarning: no last agent message")) {
@@ -229,5 +229,5 @@ $params = Get-Content $ArgFile -Raw | ConvertFrom-Json -AsHashtable
 } finally {
     foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
     $resolvedTemp = [IO.Path]::GetFullPath($temp)
-    if ($resolvedTemp.StartsWith([IO.Path]::GetFullPath($env:TEMP).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar) -and (Split-Path -Leaf $resolvedTemp) -like 'fs63-capacity-*') { Remove-Item -LiteralPath $resolvedTemp -Recurse -Force }
+    if ($resolvedTemp.StartsWith([IO.Path]::GetFullPath(([IO.Path]::GetTempPath())).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar) -and (Split-Path -Leaf $resolvedTemp) -like 'fs63-capacity-*') { Remove-Item -LiteralPath $resolvedTemp -Recurse -Force }
 }

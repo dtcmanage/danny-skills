@@ -17,7 +17,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot 'router-platform.ps1')
-Assert-RouterWindowsOwner -Action 'Weekly cost report'
+Assert-RouterOwner -Action 'Weekly cost report'
 
 try {
     $python = $null

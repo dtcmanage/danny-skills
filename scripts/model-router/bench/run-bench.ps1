@@ -289,7 +289,7 @@ function Invoke-RouterBench {
         [scriptblock]$Envelope,[scriptblock]$Outcome,[switch]$NoAlerts,
         [int]$TimeoutMs=120000,[double]$GraderTimeout=30,[int]$LockTimeoutMs=14400000)
     # Bind all shared state readers/diagnosis to the explicit router root.
-    Assert-RouterWindowsOwner -Action 'Benchmark execution'
+    Assert-RouterOwner -Action 'Benchmark execution'
     # Load proposal dependencies before binding explicit state readers locally.
     if ($Trigger -eq 'manual') { . (Join-Path $script:BenchRoot '../build-roster.ps1') }
     $benchStateRoot=[IO.Path]::GetFullPath($StateDir)
@@ -469,7 +469,7 @@ if($MyInvocation.InvocationName -ne '.') {
     # Final stdout must use UTF-8; dot-sourcing must preserve the caller's console.
     [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
     $OutputEncoding=[Text.UTF8Encoding]::new($false)
-    Assert-RouterWindowsOwner -Action 'Benchmark execution'
+    Assert-RouterOwner -Action 'Benchmark execution'
     if(-not $StateDir){$StateDir=Get-RouterStateDir}
     $script:cliBenchStateRoot=[IO.Path]::GetFullPath($StateDir)
     function Get-RouterStateDir {return $script:cliBenchStateRoot}

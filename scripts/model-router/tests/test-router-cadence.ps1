@@ -14,7 +14,7 @@ function Assert-True([bool]$Condition, [string]$Name) {
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $priorTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $priorSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
-$temp = Join-Path $env:TEMP ('router-cadence-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('router-cadence-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'sessions'
@@ -141,8 +141,8 @@ try {
     $second = Resolve-RouterModel -Category complex-coding -Lane codex -Catalog $catalog -SkipModelCheck
     Assert-True ($first.model -and $second.model) 'resolver lookup never invokes model check with or without compatibility switch'
     $tasks = @(Register-RouterSchedules)
-    Assert-True (@($tasks | Where-Object { $_.name -eq 'ModelRouterCadence' -and $_.schedule -eq 'daily 01:00 ET' -and $_.action -match 'run-hidden\.vbs' }).Count -eq 1) 'overnight schedule uses hidden shim'
-    Assert-True (@($tasks | Where-Object { $_.name -eq 'ModelRouterCadenceCheck' -and $_.schedule -eq 'daily 13:00 ET' -and $_.action -match 'run-hidden\.vbs' -and $_.action -match '-CheckOnly' }).Count -eq 1) 'check schedule uses hidden shim'
+    Assert-True (@($tasks | Where-Object { $_.name -eq 'ModelRouterCadence' -and $_.schedule -eq '*-*-* 01:00:00 America/New_York' -and $_.action -match '^/usr/bin/env pwsh ' }).Count -eq 1) 'overnight schedule uses Linux user timer'
+    Assert-True (@($tasks | Where-Object { $_.name -eq 'ModelRouterCadenceCheck' -and $_.schedule -eq '*-*-* 13:00:00 America/New_York' -and $_.action -match '^/usr/bin/env pwsh ' -and $_.action -match '-CheckOnly' }).Count -eq 1) 'check schedule uses Linux user timer'
     $twoPassState = Join-Path $temp 'two-pass'; [IO.Directory]::CreateDirectory($twoPassState) | Out-Null
     $env:DT_MODEL_ROUTER_STATE = $twoPassState
     Initialize-TestBenchEvidence

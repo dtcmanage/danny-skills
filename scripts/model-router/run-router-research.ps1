@@ -262,7 +262,7 @@ function Get-RouterStaleReadingModels {
 
 function Invoke-RouterCategoryResearch {
     param([Parameter(Mandatory)][string[]]$Categories, [Parameter(Mandatory)][string[]]$Models, [string]$NewModel, [ValidateSet('release','confirmation','followup','refresh','manual')][string]$Trigger = 'manual', [ValidateSet('codex','claude')][string]$Lane = 'codex', [string]$Context, [datetime]$Now = (Get-Date))
-    Assert-RouterWindowsOwner -Action 'Roster research'
+    Assert-RouterOwner -Action 'Roster research'
     $state = Get-RouterStateDir
     $lock = Join-Path $state 'research.lock'
     $entry = Enter-RouterResearchLock -Path $lock -Now $Now
@@ -279,7 +279,7 @@ function Invoke-RouterCategoryResearch {
     }
     try {
         New-Item -ItemType Directory -Path $readingsDir -Force | Out-Null
-        Get-ChildItem -LiteralPath $readingsDir -Directory -Filter '.pass-*' | Remove-Item -Recurse -Force
+        Get-ChildItem -LiteralPath $readingsDir -Directory -Force -Filter '.pass-*' | Remove-Item -Recurse -Force
         New-Item -ItemType Directory -Path $stage | Out-Null
         $sources = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/benchmark-sources.json') -Raw | ConvertFrom-Json -Depth 20
         $fixed = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/research-category-prompt.md') -Raw) + "`n`n" + (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/readings-schema.md') -Raw)

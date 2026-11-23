@@ -11,7 +11,7 @@ function Assert-True([bool]$Condition, [string]$Name) {
 }
 
 $priorState = $env:DT_MODEL_ROUTER_STATE
-$temp = Join-Path $env:TEMP ('model-router-alert-test-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('model-router-alert-test-' + [guid]::NewGuid().ToString('N'))
 [System.IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 $priorSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS

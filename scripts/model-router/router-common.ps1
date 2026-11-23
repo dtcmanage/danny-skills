@@ -201,15 +201,14 @@ function Test-RouterRoster {
 function Read-RouterRoster {
     param([string]$Platform = (Get-RouterPlatform))
     $defaultPath = Join-Path $PSScriptRoot '../../references/model-router/default-roster.json'
-    $statePath = if ($Platform -eq 'MacOS') { Join-Path (Get-RouterSharedDir) 'roster.json' } else { Join-Path (Get-RouterStatePath -Platform $Platform) 'roster.json' }
-    $fromShared = $Platform -eq 'MacOS'
-    # A Linux host without its own state roster reads the published shared roster, like the Mac observer,
-    # so dispatch follows Danny's approved roster instead of the default.
-    if ($Platform -eq 'Other' -and -not (Test-Path -LiteralPath $statePath)) {
-        try {
-            $sharedPath = Join-Path (Get-RouterSharedDir) 'roster.json'
-            if (Test-Path -LiteralPath $sharedPath) { $statePath = $sharedPath; $fromShared = $true }
-        } catch { }
+    $localPath = Join-Path (Get-RouterStatePath -Platform $Platform) 'roster.json'
+    $sharedPath = Join-Path (Get-RouterSharedDir) 'roster.json'
+    $fromShared = $Platform -ne (Get-RouterOwnerPlatform)
+    $statePath = if ($fromShared) { $sharedPath } else { $localPath }
+    # Fall back only when absent: an invalid or revoked preferred roster must not revive approval.
+    if (-not (Test-Path -LiteralPath $statePath)) {
+        $fallback = if ($fromShared) { $localPath } else { $sharedPath }
+        if (Test-Path -LiteralPath $fallback) { $statePath = $fallback; $fromShared = -not $fromShared }
     }
     $validationError = $null
     if (Test-Path -LiteralPath $statePath) {

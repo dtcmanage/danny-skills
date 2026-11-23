@@ -19,7 +19,7 @@ function Get-RouterStateInventory {
         }
     }
     [pscustomobject]@{
-        platform=$Platform; machine_role=$(if ($Platform -eq 'Windows') { 'roster-authority' } else { 'local-observer' })
+        platform=$Platform; machine_role=$(if ($Platform -eq (Get-RouterOwnerPlatform)) { 'roster-authority' } else { 'local-observer' })
         runtime_path=(Get-RouterStatePath -Platform $Platform -UserHome $UserHome)
         runtime_provenance=$(if ($env:DT_MODEL_ROUTER_STATE) { 'explicit' } else { 'platform-default' })
         shared_path=(Get-RouterSharedDir)

@@ -13,7 +13,7 @@ $priorState = $env:DT_MODEL_ROUTER_STATE
 $priorHttp = $script:RouterDiagnosisHttp
 $priorDns = $script:RouterDiagnosisDns
 $priorClock = $script:RouterDiagnosisClock
-$temp = Join-Path $env:TEMP ('router-diagnosis-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('router-diagnosis-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 $script:fixtureNow = [datetimeoffset]'2026-10-01T12:00:00Z'
@@ -217,5 +217,5 @@ try {
 } finally {
     $env:DT_MODEL_ROUTER_STATE = $priorState
     $script:RouterDiagnosisHttp = $priorHttp; $script:RouterDiagnosisDns = $priorDns; $script:RouterDiagnosisClock = $priorClock
-    if ([IO.Path]::GetFullPath($temp).StartsWith([IO.Path]::GetFullPath($env:TEMP) + [IO.Path]::DirectorySeparatorChar)) { Remove-Item -LiteralPath $temp -Recurse -Force }
+    if ([IO.Path]::GetFullPath($temp).StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar)) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

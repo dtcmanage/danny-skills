@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
 $priorState = $env:DT_MODEL_ROUTER_STATE
 $priorSessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS
-$temp = Join-Path $env:TEMP ('quota-tie-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('quota-tie-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 $env:DT_MODEL_ROUTER_CODEX_SESSIONS = Join-Path $temp 'sessions'

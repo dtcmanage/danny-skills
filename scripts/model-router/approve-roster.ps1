@@ -36,7 +36,7 @@ $ErrorActionPreference = 'Stop'
 $Difficulty = $Difficulty.ToLowerInvariant()
 . (Join-Path $PSScriptRoot 'resolve-model.ps1')
 . (Join-Path $PSScriptRoot 'publish-roster.ps1')
-if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort -or $ApproveTie -or $DeclineTie -or $RevokeTie -or $ApproveTiers -or $RevokeTiers -or $ApproveFrontier -or $DeclineFrontier) { Assert-RouterWindowsOwner -Action 'Roster mutation' }
+if ($Seed -or $Approve -or $Revoke -or $DeclineDrift -or $ApproveEffort -or $DeclineEffort -or $RevokeEffort -or $ApproveTie -or $DeclineTie -or $RevokeTie -or $ApproveTiers -or $RevokeTiers -or $ApproveFrontier -or $DeclineFrontier) { Assert-RouterOwner -Action 'Roster mutation' }
 if ($Jobs) { $Jobs = @($Jobs | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 
 function Write-RouterApprovalJson {

@@ -6,19 +6,27 @@ if (-not (Get-Command Get-RouterPlatform -CommandType Function -ErrorAction Sile
     function Get-RouterPlatform {
         if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { return 'Windows' }
         if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::OSX)) { return 'MacOS' }
+        if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) { return 'Linux' }
         return 'Other'
     }
 }
 
+function Get-RouterOwnerPlatform { return 'Linux' }
+
+function Assert-RouterOwner {
+    param([string]$Action, [string]$Platform = (Get-RouterPlatform))
+    if ($Platform -ne (Get-RouterOwnerPlatform)) { throw "ROUTER_OWNER: $Action is owned by the Linux session host (CT202)." }
+}
+
 function Assert-RouterWindowsOwner {
     param([string]$Action, [string]$Platform = (Get-RouterPlatform))
-    if ($Platform -ne 'Windows') { throw "ROUTER_WINDOWS_OWNER: $Action is owned by Windows." }
+    Assert-RouterOwner -Action $Action -Platform $Platform
 }
 
 function Use-RouterRosterMutex {
     param([Parameter(Mandatory)][scriptblock]$Body, [string]$StateDir = (Get-RouterStatePath),
         [ValidateRange(1, 60000)][int]$TimeoutMs = 15000)
-    Assert-RouterWindowsOwner -Action 'Roster mutation and publication'
+    Assert-RouterOwner -Action 'Roster mutation and publication'
     $identity = [IO.Path]::GetFullPath($StateDir).TrimEnd('\','/').ToUpperInvariant()
     $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($identity)))
     $mutex = [Threading.Mutex]::new($false, "Local\DannyModelRouterRoster.$hash")

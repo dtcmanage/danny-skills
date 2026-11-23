@@ -1,27 +1,26 @@
-# Windows/Mac router operation
+# Linux owner and Windows/Mac router observers
 
 `<danny-skills>` is the resolved danny-skills repo root; quote script paths when substituting it.
 
-Windows owns roster approval/revocation, publication, proposal generation, research,
+The Linux session host CT202 owns roster approval/revocation, publication, proposal generation, research,
 outcomes importing (`<danny-skills>/scripts/model-router/update-outcomes.ps1`), benchmarking and
-cost reports. Mac reads the approved roster and observes its own subscriptions.
+cost reports. SNOWWHITE (Windows) and Mac read the approved roster and observes its own subscriptions.
 Mac-local raw dispatch events, quota readings, refusal/incident timers, drift and
-alert markers remain local; they are separate from the Windows importer and writers.
+alert markers remain local; they are separate from the Linux owner importer and writers.
 Never run `update-outcomes.ps1` on Mac.
 
-Windows reads its authoritative `model-router/state/roster.json` beside the permanent
+Linux reads its authoritative `model-router/state/roster.json` beside the permanent
 main checkout. Approval/revocation and cadence entry atomically publish the validated
 roster, including approval status, to sibling `model-router/shared/roster.json`.
 Normal workspace sync delivers that snapshot; revocation reaches Mac only after sync.
-Mac validates the shared file on every resolve. Missing, invalid or revoked state
-uses the existing default roster and alert semantics; it never revives cached approval.
+Windows and Mac validate the shared file on every resolve, falling back to their local state roster only when the shared file is absent. Linux reads its state roster first, falling back to shared only when state is absent. Invalid or revoked preferred rosters use the default roster and alert semantics; they never revive cached approval.
 Only the roster snapshot belongs in sync, never runtime caches or credentials.
 
 Mac runtime defaults to `~/Library/Application Support/DannyModelRouter`, shared by
 all local worktrees. Windows retains its existing sibling runtime path and ignored
-state. Windows alone owns research, triggered internal benchmarking, approvals and
-reporting. Mac remains an observer. The retired monthly canary is replaced by the
-Windows-owned `scripts/model-router/bench` successor suites listed below. Reconcile the live monthly schedule during authorized deployment; changing the test harness alone does not change installed schedules.
+state. Linux alone owns research, triggered internal benchmarking, approvals and
+reporting. SNOWWHITE and Mac remain observers. The retired monthly canary is replaced by the
+Linux-owned `scripts/model-router/bench` successor suites listed below. Reconcile the live monthly schedule during authorized deployment; changing the test harness alone does not change installed schedules.
 
 ## Configuration
 
@@ -48,7 +47,9 @@ model calls, research, publication, external alert sends or Git sync.
 
 ## Portable verification boundary
 
-From the permanent Windows primary checkout:
+The following aggregate gate is retained as historical Windows release tooling; it is not the Linux owner's acceptance command. On CT202, run individual router suites directly with `pwsh -NoProfile -File`. The historical gate still refuses Linux because it includes Windows-specific wrapper fixtures.
+
+Historical command from the Windows primary checkout:
 
 ```powershell
 cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"
@@ -62,8 +63,7 @@ This actual-OS Windows-only gate declares 24 suites: the 14 retained suites plus
 and `test-proposal-items.ps1` (isolated fake Command Center reconciliation).
 The obsolete `test-canary.ps1` entry is removed. Use the generated per-suite evidence and final summary for the actual result; the declared list alone is not a passing gate.
 
-M01 contains Windows authority, named-mutex and `Start-Process -WindowStyle Hidden`
-fixtures. Do not run or describe the full gate as native Mac testing.
+M01 now exercises Linux authority and cross-process named mutexes. The historical aggregate still includes other Windows-specific wrapper fixtures. Do not describe the full gate as native Mac testing.
 `test-mac-observer.ps1` stands alone safely on Mac; actual Apply refusal
 assertions are conditional on non-Mac, while installation fixtures use fake commands.
 Accepted Windows evidence executes 84 observer checks (prior 81 + 3); Mac expects 82 (prior 79 + 3) because the two real

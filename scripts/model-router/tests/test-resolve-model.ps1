@@ -10,7 +10,7 @@ function Assert-True([bool]$Condition, [string]$Name) {
 }
 function Get-RouterVendorBlocked([string]$Vendor) { return ($script:blocked -contains $Vendor) }
 $prior = $env:DT_MODEL_ROUTER_STATE
-$temp = Join-Path $env:TEMP ('model-router-test-' + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('model-router-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $env:DT_MODEL_ROUTER_STATE = $temp
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')

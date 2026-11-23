@@ -18,7 +18,7 @@ function Add-Pass { param([string]$Id,[string[]]$Categories=@('complex-coding'))
     [IO.File]::AppendAllText((Join-Path $script:readDir 'passes.jsonl'),((ConvertTo-Json -InputObject ([pscustomobject]@{pass_id=$Id;categories=$Categories}) -Compress) + "`n"))
 }
 $priorState=$env:DT_MODEL_ROUTER_STATE; $priorAlert=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT; $priorSessions=$env:DT_MODEL_ROUTER_CODEX_SESSIONS
-$temp=Join-Path $env:TEMP ([guid]::NewGuid().ToString('N')); [IO.Directory]::CreateDirectory($temp) | Out-Null
+$temp=Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N')); [IO.Directory]::CreateDirectory($temp) | Out-Null
 $env:DT_MODEL_ROUTER_STATE=$temp; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT=Join-Path $temp 'stub-transport.ps1'; $env:DT_MODEL_ROUTER_CODEX_SESSIONS=Join-Path $temp 'empty-sessions'
 [IO.File]::WriteAllText($env:DT_MODEL_ROUTER_ALERT_TRANSPORT,'param([string]$Message)')
 [IO.Directory]::CreateDirectory($env:DT_MODEL_ROUTER_CODEX_SESSIONS) | Out-Null
