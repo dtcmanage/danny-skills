@@ -11,7 +11,7 @@
 #
 # Returns a JSON summary on -Json: branch, resolved_branch, rebase_status,
 # merge_status, branch_deleted, commit_range, worktree_path, worktree_removed,
-# rerere_enabled.
+# rerere_enabled, temporary_worktree.
 #
 # -PurgeWorktree (opt-in, passed by dt-ship): makes post-merge cleanup mandatory.
 # A worktree-remove or branch-delete failure becomes a hard error (exit 1)
@@ -55,11 +55,33 @@ function Remove-MergedBranch {
     return Invoke-Git -GitArgs ($gitArgs + @('branch', '-D', $BranchName))
 }
 
+# Only worktrees created by this invocation are cleaned up on failure. Abort a
+# pending rebase first so removing the temporary tree preserves the branch tip.
+$temporaryWorktree = $false
+$tempWorktreePath = $null
+$mainWorktree = $null
+function Remove-TemporaryWorktree {
+    if (-not $tempWorktreePath) { return }
+    $registered = (Invoke-Git -GitArgs @('-C', $mainWorktree, 'worktree', 'list', '--porcelain')).Output -split "`r?`n"
+    if ($registered -contains "worktree $tempWorktreePath") {
+        $null = Invoke-Git -GitArgs @('-C', $tempWorktreePath, 'rebase', '--abort')
+        $remove = Invoke-Git -GitArgs @('-C', $mainWorktree, 'worktree', 'remove', '--force', $tempWorktreePath)
+        if ($remove.ExitCode -ne 0) {
+            throw "Could not remove temporary worktree '$tempWorktreePath': $($remove.Output)"
+        }
+    }
+    if (Test-Path -LiteralPath $tempWorktreePath) {
+        Remove-Item -LiteralPath $tempWorktreePath -Recurse -Force
+    }
+}
+
 function Fail {
     param([string]$Message, [hashtable]$Detail = @{})
+    Remove-TemporaryWorktree
     $obj = [ordered]@{
         branch = $Branch
         status = 'error'
+        temporary_worktree = $temporaryWorktree
         error_message = $Message
     }
     foreach ($k in $Detail.Keys) { $obj[$k] = $Detail[$k] }
@@ -121,6 +143,19 @@ foreach ($wtLine in ($wtList.Output -split "`r?`n")) {
     }
 }
 
+# A branch without a worktree must never be checked out in the primary tree:
+# unrelated edits from live sessions may be present there.
+try {
+if (-not $branchWorktree) {
+    $tempWorktreePath = Join-Path ([IO.Path]::GetTempPath()) ("merge-feature-" + [guid]::NewGuid().ToString('N'))
+    $add = Invoke-Git -GitArgs @('-C', $mainWorktree, 'worktree', 'add', $tempWorktreePath, $resolvedBranch)
+    if ($add.ExitCode -ne 0) {
+        Fail "Could not create temporary worktree for '$resolvedBranch': $($add.Output)"
+    }
+    $temporaryWorktree = $true
+    $branchWorktree = $tempWorktreePath
+}
+
 if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
     # --- Worktree-aware merge (branch lives in its own worktree) ---
     # Do not check the branch out in the primary tree; inspect/rebase in place.
@@ -158,7 +193,12 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
     }
     if ($wtRebase.ExitCode -ne 0) {
         $null = Invoke-Git -GitArgs @('-C', $branchWorktree, 'rebase', '--abort')
-        Fail "Rebase of '$resolvedBranch' onto main failed in worktree (conflicts). Resolve in '$branchWorktree', then retry. Do NOT fall back to --no-ff." @{ rebase = $wtRebase.Output; worktree_path = $branchWorktree }
+        $recovery = if ($temporaryWorktree) {
+            "The branch is unchanged. Resolve the conflict in a worktree of your own, then retry."
+        } else {
+            "Resolve in '$branchWorktree', then retry."
+        }
+        Fail "Rebase of '$resolvedBranch' onto main failed in worktree (conflicts). $recovery Do NOT fall back to --no-ff." @{ rebase = $wtRebase.Output; worktree_path = $branchWorktree }
     }
 
     # Fast-forward merge into main from the primary tree.
@@ -235,6 +275,7 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
         merge_status = 'ff-only'
         commit_range = $wtCommitRange
         branch_deleted = $wtBranchDeleted
+        temporary_worktree = $temporaryWorktree
         worktree_path = $branchWorktree
         worktree_removed = $wtRemoved
         worktree_dir_leftover = $wtDirLeftover
@@ -258,6 +299,7 @@ if ($branchWorktree -and ($branchWorktree -ne $mainWorktree)) {
     exit 0
 }
 
+# Legacy path: the feature is already checked out in the primary tree.
 # Check for uncommitted changes on the feature branch
 $checkoutFeature = Invoke-Git -GitArgs @('checkout', $resolvedBranch)
 if ($checkoutFeature.ExitCode -ne 0) {
@@ -335,6 +377,7 @@ $summary = [pscustomobject]@{
     merge_status = 'ff-only'
     commit_range = $commitRange
     branch_deleted = $branchDeleted
+    temporary_worktree = $false
     worktree_path = $null
     worktree_removed = $false
     worktree_dir_leftover = $null
@@ -352,4 +395,8 @@ if ($branchDeleted) {
     Write-Output "Deleted local branch '$resolvedBranch'."
 } else {
     Write-Output "Branch '$resolvedBranch' was NOT deleted (see warning above)."
+}
+
+} finally {
+    Remove-TemporaryWorktree
 }
