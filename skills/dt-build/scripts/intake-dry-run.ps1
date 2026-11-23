@@ -1,3 +1,32 @@
+<#
+.SYNOPSIS
+Deterministic dt-build intake: validates the roadmap, writes build-state.md, build-decision-log.md, build-plan.md and
+the reference packs into the run folder, runs the spawn preflight, and reports gate test tools the roadmap needs
+but this host lacks (gate_tooling; a warning, never a failure).
+
+.PARAMETER RepoPath
+The target git repo.
+.PARAMETER RoadmapPath
+The validated roadmap.md for this build.
+.PARAMETER OutputDirectory
+Either the parent of run folders (usually <repo>/.dt-build; the run folder <OutputDirectory>/<RunId> is created)
+or the run folder itself when its last segment equals -RunId (for example <repo>/.dt-build/<RunId>). Never nests
+<RunId>/<RunId>.
+.PARAMETER RunId
+The run id; also the run folder name.
+.PARAMETER IntegrationBranch
+Defaults to build/<RunId>.
+.PARAMETER UseExistingIntegrationBranch
+Resume on an existing integration branch.
+.PARAMETER MergeTarget
+Protected merge target (default main).
+.PARAMETER ResumeRunId
+Resume an existing roadmap-v1 run.
+.PARAMETER DeterministicTimestampUtc
+Timestamp written into scaffolding so repeated intakes are byte-identical.
+.PARAMETER Json
+Print the intake report as JSON.
+#>
 param(
     [Parameter(Mandatory)]
     [string]$RepoPath,
@@ -134,7 +163,8 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
 $baseRef = if ($UseExistingIntegrationBranch -or $integrationExists) { $IntegrationBranch } else { $MergeTarget }
 $baseSha = (& git -C $targetRepo rev-parse $baseRef).Trim()
-$runDir = Join-Path $OutputDirectory $RunId
+# A caller that passes the run folder itself (".dt-build/<RunId>") gets that folder, not <RunId>/<RunId>.
+$runDir = if ((Split-Path -Leaf ([IO.Path]::GetFullPath($OutputDirectory).TrimEnd('/', '\'))) -ceq $RunId) { $OutputDirectory } else { Join-Path $OutputDirectory $RunId }
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 
 $stateTemplate = Join-Path $skillRoot "assets\build-state.md.template"
@@ -173,6 +203,9 @@ $spawnPreflightScript = Join-Path $skillRoot "scripts\spawn-preflight.ps1"
 $spawnJson = & $spawnPreflightScript -ManifestPath $manifestObj.manifest_path -RequiredEntitlements @("contracts", "glossary") -Json
 $spawnObj = $spawnJson | ConvertFrom-Json
 
+# Gate tools the roadmap names (pytest, pytest-xdist, Pester, tiktoken) that this host lacks: a warning with install hints.
+$gateTooling = & (Join-Path $skillRoot "scripts\check-gate-tooling.ps1") -RoadmapPath $RoadmapPath -RepoPath $targetRepo
+
 $result = [pscustomobject]@{
     pass = $true
     roadmap_path = (Resolve-Path -LiteralPath $RoadmapPath).Path
@@ -182,6 +215,8 @@ $result = [pscustomobject]@{
     chunk_count = $validation.chunk_count
     verification_item_count = $validation.verification_item_count
     spawn_preflight = $spawnObj.pass
+    gate_tooling = $gateTooling
+    warnings = @($gateTooling.warnings)
     files = @(
         "build-state.md",
         "build-decision-log.md",
@@ -197,4 +232,5 @@ if ($Json) {
 }
 else {
     Write-Output ("PASS: intake dry-run wrote {0} files to {1}" -f $result.files.Count, $result.output_run_directory)
+    foreach ($warning in @($result.warnings)) { Write-Output "WARNING: $warning" }
 }

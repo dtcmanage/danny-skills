@@ -175,6 +175,23 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     $extracted = Extract-NamedArtifacts -Text 'Run `python -m pytest tests/test_one.py -q` and capture PASS/FAIL.'
     Assert-True ($extracted.commands.Count -eq 1) "python -m pytest was extracted more than once"
     Assert-True ($extracted.commands[0] -eq 'python -m pytest tests/test_one.py -q') "wrong extracted command"
+    # B2 fix 11: the shared recognizer matches dt-roadmap's producer (python3, bash, ./x, uv, make, ...).
+    foreach ($runnable in @('python3 gates/m01.py', 'python3.12 -m pytest -q', 'bash tests/run.sh', 'sh ./check.sh', './run-tests.sh --fast', 'uv run pytest -n 4', 'npx vitest run', 'pnpm test', 'make test', 'go test ./...', 'cargo test', 'python', 'pytest')) {
+        $hit = Extract-NamedArtifacts -Text ("Run ``$runnable`` and capture PASS/FAIL.")
+        Assert-True (@($hit.commands) -ccontains $runnable) "runnable command recognized: $runnable"
+    }
+    foreach ($prose in @('pythonic_style', 'shell-out', 'make-believe', 'gopher', 'uvicorn app:main', 'cargo-cult', 'npmrc', './', 'bashful')) {
+        $miss = Extract-NamedArtifacts -Text ("See ``$prose`` here.")
+        Assert-True (@($miss.commands).Count -eq 0) "prose backtick is not a command: $prose"
+    }
+    $shPath = Extract-NamedArtifacts -Text 'The gate script is `scripts/bulk-archive-cleanup/verify-and-destroy.sh`.'
+    Assert-True (@($shPath.artifacts) -contains 'scripts/bulk-archive-cleanup/verify-and-destroy.sh') '.sh file paths are named artifacts'
+    $python3Roadmap = Join-Path $tempRoot 'roadmap-python3.md'
+    $python3Text = [IO.File]::ReadAllText((Join-Path $scriptDir 'tests/fixtures/intake-gate-tooling-roadmap.md')).Replace('Run `python scripts/repair_campaign_manifest.py', 'Run `python3 scripts/repair_campaign_manifest.py').Replace('Run `pwsh -NoProfile -File tests/slow.ps1` and capture PASS/FAIL. |', 'Run `bash tests/slow.sh` and capture PASS/FAIL. |')
+    Assert-True ($python3Text.Contains('`python3 scripts/repair') -and $python3Text.Contains('`bash tests/slow.sh`')) 'python3 roadmap fixture was built'
+    Write-Utf8 -Path $python3Roadmap -Content $python3Text
+    $validatorOut = & pwsh -NoProfile -File (Join-Path $repoRoot 'skills/dt-roadmap/scripts/roadmap-validator.ps1') -RoadmapPath $python3Roadmap -SchemaPath (Join-Path $repoRoot 'skills/dt-roadmap/references/roadmap-schema.md') -Json 2>&1
+    Assert-True ($LASTEXITCODE -eq 0 -and ($validatorOut -join ' ') -notmatch 'VERIFICATION_NAMES_NO_RUNNABLE') "roadmap whose only checks are python3/bash commands validates ($(($validatorOut -join ' ').Substring(0, [Math]::Min(300, ($validatorOut -join ' ').Length))))"
 
     # Extension matches must end at the path token. In particular, `.js` must
     # never consume the prefix of a `.json` fixture named inside a command.
@@ -622,6 +639,7 @@ if ($args -contains '--version') { Write-Output 'codex-cli fixture'; exit 0 }
 if ($args -contains 'debug') { Get-Content -Raw -LiteralPath (Join-Path $env:CODEX_HOME 'models_cache.json'); exit 0 }
 if ($env:DT_FAKE_SELECTION_RELEASE) { while (-not (Test-Path -LiteralPath $env:DT_FAKE_SELECTION_RELEASE)) { Start-Sleep -Milliseconds 100 } }
 if ($env:DT_FAKE_CODEX_ARGS) { [IO.File]::WriteAllText($env:DT_FAKE_CODEX_ARGS, ($args -join '|')) }
+if ($env:DT_FAKE_LOG_DIR_RECEIPT) { [IO.File]::WriteAllText($env:DT_FAKE_LOG_DIR_RECEIPT, [string]$env:DT_BUILD_LOG_DIR) }
 if ($env:DT_BUILD_LEAN_BOOTSTRAP) { throw 'worker inherited coordinator lean bootstrap' }
 $outIndex = [Array]::IndexOf([object[]]$args, '--output-last-message')
 $outPath = if ($outIndex -ge 0) { [string]$args[$outIndex + 1] } else { '' }
@@ -816,7 +834,11 @@ if($env:DT_FAKE_UNICODE_TEXT){
 
     $codexArgsLog = Join-Path $tempRoot 'codex-effort-args.txt'; $env:DT_FAKE_CODEX_ARGS = $codexArgsLog
     $lowCodexOutput = Join-Path $tempRoot 'codex-effort-low.md'
+    $logReceipt = Join-Path $tempRoot 'codex-log-dir.txt'; $env:DT_FAKE_LOG_DIR_RECEIPT = $logReceipt
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowCodexOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'effort argument fixture' -Json *> $null
+    Remove-Item Env:DT_FAKE_LOG_DIR_RECEIPT
+    $codexLogDir = if (Test-Path -LiteralPath $logReceipt) { [IO.File]::ReadAllText($logReceipt) } else { '' }
+    Assert-True ($codexLogDir -eq [IO.Path]::GetFullPath((Join-Path $tempRoot 'logs')) -and (Test-Path -LiteralPath $codexLogDir -PathType Container) -and -not $codexLogDir.StartsWith([IO.Path]::GetFullPath($workingTree))) "B2 fix 8: Codex builder gets DT_BUILD_LOG_DIR beside its report, outside the worktree ($codexLogDir)"
     Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw -LiteralPath $codexArgsLog) -match 'model_reasoning_effort="low"') 'Codex passes explicit low effort to CLI'
     $lowCodexProv = Get-Content -Raw -LiteralPath "$lowCodexOutput.provenance.json" | ConvertFrom-Json
     Assert-True ($lowCodexProv.effort -eq 'low' -and $lowCodexProv.reasoning_effort -eq 'low' -and $lowCodexProv.disclosure_line -match 'effort low') 'Codex effort provenance and disclosure'
@@ -907,6 +929,7 @@ if ($env:DT_FAKE_SETTINGS_RECEIPT) {
 
 if ($env:DT_FAKE_SELECTION_RELEASE) { while (-not (Test-Path -LiteralPath $env:DT_FAKE_SELECTION_RELEASE)) { Start-Sleep -Milliseconds 100 } }
 if ($env:DT_FAKE_CLAUDE_ARGS) { [System.IO.File]::WriteAllText($env:DT_FAKE_CLAUDE_ARGS, ($args -join '|')) }
+if ($env:DT_FAKE_LOG_DIR_RECEIPT) { [IO.File]::WriteAllText($env:DT_FAKE_LOG_DIR_RECEIPT, [string]$env:DT_BUILD_LOG_DIR) }
 $receivedPrompt=[Console]::In.ReadToEnd()
 if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
 $mode = [string]$env:DT_FAKE_CLAUDE_MODE
@@ -1157,8 +1180,15 @@ Write-Envelope $report
     $verifyArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
     Assert-True ($verifyArgs -match '--tools\|Bash,Read,Glob,Grep(\||$)') "Claude wrapper -ReadOnly still exposed write tools"
     $lowClaudeOutput = Join-Path $tempRoot 'claude-effort-low.md'
+    $logReceipt = Join-Path $tempRoot 'claude-log-dir.txt'; $env:DT_FAKE_LOG_DIR_RECEIPT = $logReceipt
+    $savedJobDir = $env:DT_JOB_DIR; $env:DT_JOB_DIR = Join-Path $tempRoot 'log-run/jobs/j-0042'
+    New-Item -ItemType Directory -Path $env:DT_JOB_DIR -Force | Out-Null
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowClaudeOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort low -SelectionReason 'effort argument fixture' -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw -LiteralPath $claudeArgsLog) -match '--model\|claude-sonnet-5\|--effort\|low(\||$)') 'Claude passes explicit low effort beside model to CLI'
+    $env:DT_JOB_DIR = $savedJobDir; Remove-Item Env:DT_FAKE_LOG_DIR_RECEIPT
+    if (-not $env:DT_JOB_DIR) { Remove-Item Env:DT_JOB_DIR -ErrorAction SilentlyContinue }
+    $claudeLogDir = if (Test-Path -LiteralPath $logReceipt) { [IO.File]::ReadAllText($logReceipt) } else { '' }
+    Assert-True ($claudeLogDir -eq [IO.Path]::GetFullPath((Join-Path $tempRoot 'log-run/jobs/j-0042/logs')) -and (Test-Path -LiteralPath $claudeLogDir -PathType Container)) "B2 fix 8: Claude builder under dt-job gets DT_BUILD_LOG_DIR in its job folder ($claudeLogDir)"
     $lowClaudeProv = Get-Content -Raw -LiteralPath "$lowClaudeOutput.provenance.json" | ConvertFrom-Json
     Assert-True ($lowClaudeProv.effort -eq 'low' -and $lowClaudeProv.disclosure_line -match 'effort low') 'Claude low effort provenance and disclosure'
     $missingEffortLog = Join-Path $tempRoot 'claude-missing-effort.log'
@@ -1283,6 +1313,23 @@ $script:RouterDiagnosisHttp = {
                     }
                 }
             }
+            # B2 fix 5: a preflight that pages (ROUTER_ALERT) keeps -Json stdout one parseable document.
+            Remove-Item (Join-Path $routerState 'vendor-status-cache.json'),(Join-Path $routerState 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
+            $env:DT_BUILD_TEST_VERDICT = 'unexplained'
+            $out = Join-Path $tempRoot "$lane-preflight-alert.md"
+            $resultPath = Join-Path $tempRoot "$lane-preflight-alert.json"
+            $errPath = Join-Path $tempRoot "$lane-preflight-alert.stderr"
+            $cliArgs = if ($lane -eq 'codex') { @('-CodexCliPath', $failureCli) } else { @('-ClaudeCliPath', $failureCli) }
+            & pwsh -NoProfile -File (Join-Path $scriptDir "invoke-$lane-chunk.ps1") -ProjectPath $workingTree -OutputPath $out `
+                -Category code-review -Preflight -TimeoutMs 120000 -Json @cliArgs 1>$resultPath 2>$errPath
+            $stdoutText = [IO.File]::ReadAllText($resultPath).Trim()
+            $stderrText = [IO.File]::ReadAllText($errPath)
+            $parsed = $null; try { $parsed = $stdoutText | ConvertFrom-Json -ErrorAction Stop } catch { }
+            Assert-True ($stdoutText.StartsWith('{') -and $stdoutText.EndsWith('}') -and $null -ne $parsed -and $parsed.preflight -and -not $stdoutText.Contains('ROUTER_ALERT')) "$lane -Preflight -Json stdout is exactly one JSON document ($($stdoutText.Substring(0, [Math]::Min(160, $stdoutText.Length))))"
+            Assert-True ($stderrText.Contains('ROUTER_ALERT:')) "$lane -Preflight -Json pages on stderr"
+            # A coordinator that parses stdout this way (python json.loads) must succeed.
+            & python -c "import json,sys; json.loads(open(sys.argv[1], encoding='utf-8').read())" $resultPath
+            Assert-True ($LASTEXITCODE -eq 0) "$lane -Preflight -Json stdout parses with python json.loads"
         }
     } finally {
         Remove-Item (Join-Path $routerState 'vendor-status-cache.json'),(Join-Path $routerState 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue

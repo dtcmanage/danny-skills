@@ -32,6 +32,17 @@ function Write-Text([string]$Path, [string]$Text) {
 }
 function Assert([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Quote([string]$Text) { "'" + $Text.Replace("'", "''") + "'" }
+# Point an adoption-procedure command at a fixture, whatever live settings path the doc names
+# (D:\Claude\settings.json on Windows, /home/danny/Claude/settings.json on Linux). Fails closed: the command
+# must assign $target exactly once, and afterwards may name no settings file but the fixture.
+function Set-AdoptionSettingsTarget([string]$Code, [string]$FixturePath, [string]$Label) {
+    $assign = [regex]"(?<=\`$target = )'(?:[^']|'')*'"
+    if ($assign.Matches($Code).Count -ne 1) { throw "FAIL: $Label command no longer assigns `$target exactly once" }
+    $result = $assign.Replace($Code, [Text.RegularExpressions.MatchEvaluator] { param($m) Quote $FixturePath }, 1)
+    $other = @([regex]::Matches($result, "'(?:[^']|'')*settings\.json'") | Where-Object { $_.Value -cne (Quote $FixturePath) })
+    if ($other.Count -or $result.Contains('/home/danny/Claude/settings.json') -or $result.Contains('D:\Claude\settings.json')) { throw "FAIL: $Label test would touch the live settings file" }
+    return $result
+}
 function Call([string]$File, [string[]]$Arguments, [switch]$AllowFailure) {
     $script:commands++
     $log = Join-Path $evidence ('command-{0:d4}.txt' -f $script:commands)
@@ -399,8 +410,7 @@ try {
             $expected = if ($fixture -eq 'already-present') { @{theme='fixture'} } else { $initial }
             foreach ($pass in @(1,2)) {
                 $code = ($install -split '\r?\n' | Where-Object { $_ -notmatch '^cd ' }) -join "`n"
-                $code = $code.Replace("'D:\Claude\settings.json'", (Quote $targetPath))
-                Assert (-not $code.Contains('D:\Claude\settings.json')) 'adoption install test would touch the live settings file'
+                $code = Set-AdoptionSettingsTarget $code $targetPath 'adoption install'
                 Push-Location $repoRoot
                 try { & ([scriptblock]::Create($code)) } finally { Pop-Location }
                 $live = Get-Content -Raw $targetPath | ConvertFrom-Json -AsHashtable
@@ -411,8 +421,7 @@ try {
                 if ($fixture -eq 'unrelated') { Assert ($live.hooks.SessionStart[0].hooks[0].command -eq 'echo unrelated' -and $live.hooks.PreToolUse[0].hooks[0].command -eq 'echo unrelated') 'install preserves unrelated hooks' }
             }
             $code = ($rollback -split '\r?\n' | Where-Object { $_ -notmatch '^cd ' }) -join "`n"
-            $code = $code.Replace("'D:\Claude\settings.json'", (Quote $targetPath))
-            Assert (-not $code.Contains('D:\Claude\settings.json')) 'adoption rollback test would touch the live settings file'
+            $code = Set-AdoptionSettingsTarget $code $targetPath 'adoption rollback'
             Push-Location $repoRoot
             try { & ([scriptblock]::Create($code)) } finally { Pop-Location }
             $restored = Get-Content -Raw $targetPath | ConvertFrom-Json -AsHashtable
@@ -736,8 +745,7 @@ function Stop-WatcherProcessTree { param(`$ProcessId) `$script:alive = `$false }
             $settingsPath = Join-Path $r.folder 'synthetic-settings.json'
             $hooksDir = (Resolve-Path (Join-Path $scripts '../hooks')).Path.Replace('\','/')
             Write-Text $settingsPath ($settingsFixture.Replace('__DIR__',$hooksDir))
-            $command = $removeHooks[0].Replace("'D:\Claude\settings.json'",(Quote $settingsPath)).Replace("'skills/dt-build/hooks'",(Quote (Join-Path $scripts '../hooks')))
-            Assert (-not $command.Contains('D:\Claude\settings.json')) 'hook removal test would touch the live settings file'
+            $command = (Set-AdoptionSettingsTarget $removeHooks[0] $settingsPath 'hook removal').Replace("'skills/dt-build/hooks'",(Quote (Join-Path $scripts '../hooks')))
             & ([scriptblock]::Create($command))
             $settings = [IO.File]::ReadAllText($settingsPath) | ConvertFrom-Json -AsHashtable
             Assert ($settings.theme -eq 'light') 'rollback lost unrelated settings'

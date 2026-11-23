@@ -1,0 +1,5 @@
+{
+  "LogLevel": "Critical",
+  "LogChannels": "Operational",
+  "LogIdentity": "dt-build-watcher"
+}

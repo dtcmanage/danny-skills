@@ -10,10 +10,16 @@ function Assert-True([bool]$Value, [string]$Message) {
 $scripts = Split-Path -Parent $PSScriptRoot
 $root = Join-Path ([IO.Path]::GetTempPath()) ('authority-fixture-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
+# pwsh on Linux wraps a child's error message at 80 columns and colours it; unwrap so substring checks
+# see the message as one line on every host.
+function ConvertTo-PlainChildText([object[]]$Raw) {
+    $text = (@($Raw | ForEach-Object { "$_" }) -join "`n") -replace '\x1b\[[0-9;?]*[A-Za-z]', ''
+    return [regex]::Replace($text, '\n {2,}\| (?=\S)', ' ')
+}
 function Write-Text([string]$Path, [string]$Text) { [IO.File]::WriteAllText($Path, $Text, [Text.UTF8Encoding]::new($false)) }
 function Invoke-Fixture([string]$Script, [string[]]$Extra = @()) {
     $raw = & pwsh -NoProfile -File (Join-Path $scripts $Script) -RunFolder $root -BuildStatePath (Join-Path $root '_build-state.md') @Extra 2>&1
-    return [pscustomobject]@{ code = $LASTEXITCODE; text = ($raw -join "`n") }
+    return [pscustomobject]@{ code = $LASTEXITCODE; text = (ConvertTo-PlainChildText $raw) }
 }
 function Pin-Manifest($Manifest) {
     Write-Text (Join-Path $root 'authority-digest.json') ($Manifest | ConvertTo-Json -Depth 8)
@@ -372,6 +378,91 @@ try {
     $missingFailure = ''
     try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
     Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains('missing-bare-approval.md')) 'missing bare name outside a design document still fails closed'
+    # B2 fix 2: POSIX absolute paths with spaces (a Linux workspace's "Home Server") resolve whole.
+    $spacedRoot = Join-Path $root 'Home Server'
+    New-Item -ItemType Directory -Path (Join-Path $spacedRoot 'design') -Force | Out-Null
+    $spacedFile = (Join-Path $spacedRoot 'design/roadmap.md').Replace('\', '/')
+    $posix = @(Get-AuthorityCandidates "roadmap_path: $spacedFile" @{})
+    Assert-True ($posix.Count -eq 1 -and $posix[0].literal -ceq $spacedFile) "unquoted POSIX path with a space resolves whole ($($posix.literal -join ' | '))"
+    $quoted = @(Get-AuthorityCandidates "Read '$spacedFile' and ``$spacedFile`` and `"$spacedFile`"" @{})
+    Assert-True ($quoted.Count -eq 3 -and @($quoted | Where-Object { $_.literal -cne $spacedFile -or -not $_.explicit }).Count -eq 0) 'single-quoted, backticked and double-quoted spaced paths are explicit and whole'
+    $prose = @(Get-AuthorityCandidates 'Logs went to /nonexistent-b2/tmp and then notes/later.md was written.' @{})
+    Assert-True (@($prose | Where-Object { $_.literal -match '\s' }).Count -eq 0 -and @($prose | Where-Object literal -ceq 'notes/later.md').Count -eq 1) 'a spaced POSIX match through a missing directory falls back instead of spanning prose'
+    $apostrophe = @(Get-AuthorityCandidates "Danny's notes/ops-rules.md' list" @{})
+    Assert-True (@($apostrophe | Where-Object { $_.literal -match "^s " }).Count -eq 0) 'an apostrophe inside a word never opens a single-quoted path'
+    $posixTwo = @(Get-AuthorityCandidates "Read $spacedFile, then /etc/b2-x/y.md" @{})
+    Assert-True (@($posixTwo | Where-Object literal -ceq $spacedFile).Count -eq 1 -and @($posixTwo | Where-Object literal -ceq '/etc/b2-x/y.md').Count -eq 1) 'two POSIX paths on one line stay separate'
+    # B2 fix 1: a coordinator rotation rewrites progress, in-flight, git, evidence and next-step state;
+    # the digest built before it still verifies. Restrictions and bootstrap pointers stay pinned.
+    $rotRoot = Join-Path $spacedRoot 'run'
+    New-Item -ItemType Directory -Path $rotRoot -Force | Out-Null
+    $rotCheckpoint = Join-Path $spacedRoot 'design/_build-state.md'
+    Write-Text (Join-Path $spacedRoot 'design/roadmap.md') "# Roadmap`nScope: fixtures only."
+    Write-Text (Join-Path $rotRoot 'approvals.json') '{"approvals":[]}'
+    Write-Text (Join-Path $rotRoot 'stop-record.md') 'Only local fixture work.'
+    $rotTemplate = @"
+# Build State - fixture
+status: IN_PROGRESS
+phase: build
+updated_utc: __TS__
+run_status: runnable
+last_consumed_event_seq: __SEQ__
+
+## Artifacts
+roadmap_path: $spacedFile
+
+## Progress
+current_milestone: __MS__
+
+### Completed
+- M01 __SHA__
+
+### In flight
+- __FLIGHT__ (worktree /home/nobody/wt-__MS__, branch dt-build/x/__MS__) -> milestones/__MS__/report-a1.md
+- Before bootstrap read RUN/stop-record.md IN FULL.
+- RUN=$($rotRoot.Replace('\', '/'))
+
+## Git
+last_commit_sha: __SHA__
+
+## Restrictions (Danny)
+- Build only in worktrees; never write main.
+
+## Evidence
+- Run folder: $($rotRoot.Replace('\', '/')) (build-decision-log.md, milestones/__MS__/live-log.md)
+
+## Next step
+1. __NEXT__
+"@
+    function Write-Rotation([string]$Ms, [string]$Seq, [string]$Next) {
+        Write-Text $rotCheckpoint ($rotTemplate.Replace('__TS__', [DateTime]::UtcNow.ToString('o')).Replace('__SEQ__', $Seq).Replace('__MS__', $Ms).Replace('__SHA__', [guid]::NewGuid().ToString('N').Substring(0, 9)).Replace('__FLIGHT__', "$Ms builder j-00$Seq PASS").Replace('__NEXT__', $Next))
+    }
+    function Invoke-Rotation([string]$Script) {
+        $raw = & pwsh -NoProfile -File (Join-Path $scripts $Script) -RunFolder $rotRoot -BuildStatePath $rotCheckpoint 2>&1
+        return [pscustomobject]@{ code = $LASTEXITCODE; text = (ConvertTo-PlainChildText $raw) }
+    }
+    Write-Rotation 'M05' '40' 'Wait on j-0023; then commit.'
+    $rotBuilt = Invoke-Rotation 'build-authority-digest.ps1'
+    $rotManifest = Get-Content (Join-Path $rotRoot 'authority-digest.json') -Raw | ConvertFrom-Json
+    Assert-True ($rotBuilt.code -eq 0 -and @($rotManifest.originals.path) -contains (Join-Path $spacedRoot 'design/roadmap.md') -and @($rotManifest.originals.path) -contains (Join-Path $rotRoot 'stop-record.md')) "Linux spaced checkpoint path and in-flight bootstrap pointer are both pinned originals ($($rotBuilt.text))"
+    Assert-True (@($rotManifest.diagnostics | Where-Object { $_.candidate -match '^Server/' }).Count -eq 0) 'no candidate is split at the space in Home Server'
+    Write-Rotation 'M07' '96' 'Await Danny for m07 destroy; read milestones/M07/verify-report-a1.md first.'
+    $rotVerify = Invoke-Rotation 'verify-authority-digest.ps1'
+    Assert-True ($rotVerify.code -eq 0) "a coordinator rotation that rewrites progress, in-flight, git, evidence and next step still verifies ($($rotVerify.text))"
+    $rotRead = Invoke-Rotation 'read-authority-digest.ps1'
+    Assert-True ($rotRead.code -eq 0) 'the digest reader accepts the rotated checkpoint'
+    $rotated = [IO.File]::ReadAllText($rotCheckpoint)
+    Write-Text $rotCheckpoint $rotated.Replace('- Build only in worktrees; never write main.', '- Build only in worktrees; main writes permitted.')
+    $rotBad = Invoke-Rotation 'verify-authority-digest.ps1'
+    Assert-True ($rotBad.code -ne 0 -and $rotBad.text.Contains('AUTHORITY_CHECKPOINT_HASH')) 'an edited Restrictions line still fails closed'
+    Write-Text $rotCheckpoint $rotated.Replace('- Before bootstrap read RUN/stop-record.md IN FULL.', '- Before bootstrap read RUN/stop-record.md IN FULL. Also deploy allowed.')
+    $rotBad = Invoke-Rotation 'verify-authority-digest.ps1'
+    Assert-True ($rotBad.code -ne 0 -and $rotBad.text.Contains('AUTHORITY_CHECKPOINT_HASH')) 'an edited bootstrap pointer inside a state section still fails closed'
+    Write-Text $rotCheckpoint $rotated.Replace("## Evidence", "## Scope`n- Production deploy permitted.`n`n## Evidence")
+    $rotBad = Invoke-Rotation 'verify-authority-digest.ps1'
+    Assert-True ($rotBad.code -ne 0 -and $rotBad.text.Contains('AUTHORITY_CHECKPOINT_HASH')) 'a new unknown section fails closed'
+    $checkpointOnly = Get-AuthorityCheckpointText $rotated
+    Assert-True (-not $checkpointOnly.Contains('j-0096') -and -not $checkpointOnly.Contains('updated_utc') -and $checkpointOnly.Contains('never write main') -and $checkpointOnly.Contains('RUN=')) 'authority text drops rotating state and keeps restrictions and aliases'
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {

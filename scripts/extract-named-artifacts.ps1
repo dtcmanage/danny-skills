@@ -2,8 +2,9 @@
 # ---------------------------
 # Shared deterministic extractor for "runnable artifacts" named in roadmap
 # procedure / acceptance-checks text. Returns the file paths the text names
-# and the pytest / python / pwsh / node / npm / bun command invocations
-# it names.
+# and the command invocations it names: pytest, python/python3/python3.N,
+# pwsh, powershell, node, npm, npx, pnpm, bun, bash, sh, uv, make, go, cargo
+# (each followed by whitespace or the end), and ./executable paths.
 #
 # CONTRACT: This is the source-of-truth definition of what counts as
 # "runnable" for the dt-build per-milestone acceptance gate. The body of
@@ -32,7 +33,7 @@ function Extract-NamedArtifacts {
     foreach ($m in $backtickMatches) {
         $candidate = $m.Groups[1].Value.Trim()
         # Whole-string command (pytest ..., python ...) -- treat as command.
-        if ($candidate -match '^(pytest|python|pwsh|powershell|node|npm|bun)\b') {
+        if ($candidate -match '^(?:(?:pytest|python(?:3(?:\.\d+)?)?|pwsh|powershell|node|npm|npx|pnpm|bun|bash|sh|uv|make|go|cargo)(?=\s|$)|\./\S)') {
             $commands.Add($candidate) | Out-Null
             # Also extract any file paths inside it.
             $pathMatches = [regex]::Matches($candidate, '(?<![A-Za-z0-9_./\\-])(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
@@ -40,7 +41,7 @@ function Extract-NamedArtifacts {
             continue
         }
         # Looks like a file path?
-        if ($candidate -match '^(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(?:py|ts|js|ps1|md|yaml|yml|json|html|sql)$') {
+        if ($candidate -match '^(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(?:py|ts|js|ps1|sh|md|yaml|yml|json|html|sql)$') {
             $artifacts.Add($candidate) | Out-Null
         }
     }

@@ -298,12 +298,13 @@ function Get-HookWallDenyReason {
         $text = (@(Get-HookReaderSegments $commandText) -join "`n") -replace '[\\/]+', '/'
         if (-not $text) { return $null }
     }
-    $lower = $text.ToLowerInvariant()
+    # Keys fold case only where the file system does (Windows, macOS); compare the command the same way.
+    $haystack = if (Test-DtCtxPathCaseInsensitive) { $text.ToLowerInvariant() } else { $text }
     foreach ($read in @($wall.reads)) {
         $key = ConvertTo-DtCtxPathKey ([string]$read.path)
         # Instruction files must be read whole by the coordinator that acts on them; the wall never blocks them.
         if ($key -match $script:HookWallExemptPattern) { continue }
-        if (-not $lower.Contains($key)) { continue }
+        if (-not $haystack.Contains($key)) { continue }
         $kb = [int][Math]::Round([long]$read.chars / 1000)
         return "dt-build context guard: reading $($read.path) filled an earlier coordinator's working room ($($read.reads) reads, about $kb KB) and no job was started. Do not read it here. Start a mechanical dt-job worker that reads it and writes a short summary of only what this step needs to a file in the run folder, then read that summary with read-evidence.ps1."
     }

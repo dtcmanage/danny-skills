@@ -38,6 +38,8 @@ param(
     [object]$RouterResolution,
     [string]$LogicalTaskId,
     [string]$PriorDispatchId,
+    # With -Json, stdout is exactly one JSON document; ROUTER_ALERT pages and diagnostics go to stderr.
+    # Capture them apart (1>result.json 2>stderr.log); never merge with 2>&1 before parsing.
     [switch]$Json
 )
 
@@ -558,6 +560,9 @@ try {
     $startInfo.StandardErrorEncoding = $utf8
     $startInfo.CreateNoWindow = $true
     $startInfo.WorkingDirectory = $projectRoot
+    # Builders write logs to DT_BUILD_LOG_DIR (standing rule): the job folder or the run folder, never the worktree.
+    . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
+    if (-not $Preflight) { $startInfo.Environment['DT_BUILD_LOG_DIR'] = Get-WorkerLogDirectory -ProjectRoot $projectRoot -OutputPath $OutputPath -Label 'codex' }
     foreach ($arg in @($prefixArgs) + @($args)) { [void]$startInfo.ArgumentList.Add($arg) }
 
     $readOnlyBefore = if ($verifyReadOnly) { Get-ReadOnlyTreeSnapshot -Root $projectRoot -IgnoreDir (Split-Path -Parent $OutputPath) } else { $null }

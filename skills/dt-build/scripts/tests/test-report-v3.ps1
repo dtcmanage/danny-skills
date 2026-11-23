@@ -219,7 +219,24 @@ try {
         & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $manifestFile -RequiredEntitlements contracts -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -OutputPath "$assembledPath.bad" -MaxFixRounds $badBudget *> $null
         Assert-True ($LASTEXITCODE -ne 0 -and -not (Test-Path "$assembledPath.bad")) "assembler rejects invalid fix-round budget $badBudget"
     }
-    $ruleMatch = [regex]::Match($assembled, '`pwsh -NoProfile -File "(?<path>[^"]+)" tree-hash -WorkingTree "<worktree>"`')
+    # B2 fix 6: comma-separated entitlements through pwsh -File, built-in preamble, and a brief error that names the parameters.
+    $glossaryFile = Join-Path $tempRoot 'assemble\glossary.md'
+    Write-Utf8 -Path $glossaryFile -Content "# Glossary pack`n`n=== REFERENCE PACK PAYLOAD ===`nFixture glossary.`n"
+    $twoManifest = Join-Path $tempRoot 'assemble\manifest-two.json'
+    Write-Utf8 -Path $twoManifest -Content ([ordered]@{ contracts = @{ path = $packFile; payload_sha256 = '' }; glossary = @{ path = $glossaryFile; payload_sha256 = '' } } | ConvertTo-Json -Depth 3)
+    $commaPath = Join-Path $tempRoot 'assemble\prompt-comma.md'
+    $commaLog = & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $twoManifest -RequiredEntitlements contracts,glossary -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -BriefText 'Fixture brief.' -OutputPath $commaPath -Json 2>&1
+    $commaResult = $null; try { $commaResult = ($commaLog -join "`n") | ConvertFrom-Json } catch { }
+    Assert-True ($LASTEXITCODE -eq 0 -and $null -ne $commaResult -and (@($commaResult.entitlements) -join ',') -eq 'contracts,glossary') "pwsh -File -RequiredEntitlements contracts,glossary bundles both packs ($($commaLog -join ' '))"
+    $commaPrompt = [IO.File]::ReadAllText($commaPath)
+    Assert-True ($commaPrompt.Contains('reference_pack_order: contracts,glossary') -and $commaPrompt.Contains('You are a dt-build worker for run fixture-run, chunk fixture-chunk, attempt 1')) 'omitting -PreamblePath and -PreambleText uses the built-in worker preamble'
+    $verifyLog = & pwsh -NoProfile -File (Join-Path $scriptDir 'verify-codex-prompt.ps1') -PromptPath $commaPath -ExpectedRunId fixture-run -ExpectedChunkId fixture-chunk -ExpectedAttempt 1 2>&1
+    Assert-True ($LASTEXITCODE -eq 0) "the default-preamble prompt passes verify-codex-prompt ($($verifyLog -join ' '))"
+    $noBrief = & pwsh -NoProfile -File (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -ManifestPath $twoManifest -RequiredEntitlements 'contracts, glossary' -RunId fixture-run -ChunkId fixture-chunk -Attempt 1 -OutputPath "$commaPath.nobrief" 2>&1
+    Assert-True ($LASTEXITCODE -ne 0 -and (($noBrief -join ' ') -replace '\s+\|\s+', ' ') -match '-BriefPath <brief file>' -and -not (Test-Path "$commaPath.nobrief")) 'a missing brief names exactly which parameter to pass'
+    $helpText = (Get-Help (Join-Path $scriptDir 'assemble-codex-prompt.ps1') -Full | Out-String)
+    Assert-True ($helpText -match 'PreamblePath' -and $helpText -match 'built-in' -and $helpText -match 'BriefText' -and $helpText -match 'contracts,glossary') 'header help documents the preamble, brief and entitlement parameters'
+    $ruleMatch = [regex]::Match($assembled,'`pwsh -NoProfile -File "(?<path>[^"]+)" tree-hash -WorkingTree "<worktree>"`')
     $rulePath = $ruleMatch.Groups['path'].Value
     Assert-True ($ruleMatch.Success -and [System.IO.Path]::IsPathFullyQualified($rulePath) -and (Split-Path -Leaf $rulePath) -eq 'dt-job.ps1' -and (Test-Path -LiteralPath $rulePath -PathType Leaf)) "the assembled checkpoint rule gives a copy-paste tree-hash command with an existing absolute dt-job.ps1 ($rulePath)"
     Assert-True ($assembled -notmatch '(?<![\\/])dt-job tree-hash') 'the assembled rule no longer names a bare dt-job command'

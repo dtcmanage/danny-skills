@@ -106,27 +106,98 @@ function Save-HookBootstrapCapture {
     }
 }
 
+function ConvertTo-HookWorktreePattern {
+    # Command text is only a selector: shell variables, substitutions and backticks become wildcards.
+    # With -BaseDirectory the text is a path: made absolute and normalized (../) before matching.
+    param([string]$Text, [string]$BaseDirectory)
+    $variable = '\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%|`[^`]*`'
+    $placeholder = 'dtbuildvar7f3a'
+    $literal = -not [regex]::IsMatch($Text, $variable)
+    $value = [regex]::Replace($Text, $variable, $placeholder)
+    if ($BaseDirectory -and -not $value.StartsWith($placeholder)) {
+        if (-not [IO.Path]::IsPathRooted($value)) { $value = Join-Path $BaseDirectory $value }
+        $value = [IO.Path]::GetFullPath($value).Replace('\', '/')
+    }
+    $pattern = ([WildcardPattern]::Escape($value)).Replace($placeholder, '*')
+    return [pscustomobject]@{ pattern = $pattern; literal = $literal }
+}
+
+function Get-HookGitWorktrees {
+    # Linked worktrees as git reports them, with the admin directory's creation time.
+    param([Parameter(Mandatory)][string]$Directory)
+    $lines = @(& git -C $Directory -c core.quotePath=false worktree list --porcelain 2>$null)
+    if ($LASTEXITCODE -ne 0) { return @() }
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $current = $null; $first = $true
+    foreach ($line in @($lines) + @('')) {
+        if ($line.StartsWith('worktree ')) { $current = [ordered]@{ path = [IO.Path]::GetFullPath($line.Substring(9)); branch = $null; head = $null; created_utc = $null } }
+        elseif ($null -ne $current -and $line.StartsWith('HEAD ')) { $current.head = $line.Substring(5) }
+        elseif ($null -ne $current -and $line.StartsWith('branch refs/heads/')) { $current.branch = $line.Substring(18) }
+        elseif (-not $line -and $null -ne $current) {
+            if ($first) { $first = $false; $current = $null; continue }
+            try {
+                $match = [regex]::Match([IO.File]::ReadAllText((Join-Path $current.path '.git')).Trim(), '^gitdir:\s*(.+)$')
+                if ($match.Success) {
+                    $adminPath = $match.Groups[1].Value
+                    if (-not [IO.Path]::IsPathRooted($adminPath)) { $adminPath = Join-Path $current.path $adminPath }
+                    $admin = Get-Item -LiteralPath $adminPath -ErrorAction Stop
+                    $current.created_utc = if ($admin.CreationTimeUtc -gt [DateTime]::MinValue.AddYears(1)) { $admin.CreationTimeUtc } else { $admin.LastWriteTimeUtc }
+                }
+            }
+            catch { }
+            $rows.Add([pscustomobject]$current); $current = $null
+        }
+    }
+    return @($rows)
+}
+
 function Save-HookWorktrees {
-    param([Parameter(Mandatory)]$Coordinator, [Parameter(Mandatory)]$HookInput, [string]$Command)
+    # Record worktrees from `git worktree list`, never from command text: a coordinator's command often
+    # names them through shell variables ("$wt", "$br") that only the shell expanded.
+    param([Parameter(Mandatory)]$Coordinator, [Parameter(Mandatory)]$HookInput, [string]$Command, [int]$RecentMinutes = 30)
     if (-not $Coordinator.run_folder -or $script:HookShellTools -notcontains [string](Get-HookProperty $HookInput 'tool_name')) { return }
+    $cwd = [string](Get-HookProperty $HookInput 'cwd')
+    if (-not $cwd) { $cwd = (Get-Location).Path }
+    $caseSensitive = -not ([OperatingSystem]::IsWindows() -or [OperatingSystem]::IsMacOS())
+    $recorded = [System.Collections.Generic.List[string]]::new()
+    foreach ($row in @(Get-DtJobWorktrees -RunFolder $Coordinator.run_folder)) { $recorded.Add([string]$row.path) }
+    $since = [DateTime]::UtcNow.AddMinutes(-$RecentMinutes)
     foreach ($segment in (Split-HookShellSegments $Command)) {
-        $match = [regex]::Match($segment, '(?i)(?:^|\s)git\s+(?:-C\s+(?:"[^"]*"|''[^'']*''|\S+)\s+)?worktree\s+add(?:\s+|$)(.*)$')
+        $match = [regex]::Match($segment, '(?i)(?:^|\s)git\s+(?:-C\s+("[^"]*"|''[^'']*''|\S+)\s+)?worktree\s+add(?:\s+|$)(.*)$')
         if (-not $match.Success) { continue }
-        $args = @([regex]::Matches($match.Groups[1].Value, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } elseif ($_.Groups[2].Success) { $_.Groups[2].Value } else { $_.Groups[3].Value } })
+        $gitDirectory = $cwd
+        if ($match.Groups[1].Success) {
+            $dashC = $match.Groups[1].Value.Trim('"', "'")
+            if (-not (ConvertTo-HookWorktreePattern $dashC).literal) { $dashC = $null }
+            if ($dashC) { $gitDirectory = if ([IO.Path]::IsPathRooted($dashC)) { $dashC } else { Join-Path $cwd $dashC } }
+        }
+        $tokens = @([regex]::Matches($match.Groups[2].Value, '"([^"]*)"|''([^'']*)''|(\S+)') | ForEach-Object { if ($_.Groups[1].Success) { $_.Groups[1].Value } elseif ($_.Groups[2].Success) { $_.Groups[2].Value } else { $_.Groups[3].Value } })
         $positionals = [System.Collections.Generic.List[string]]::new(); $branch = $null
-        for ($i = 0; $i -lt $args.Count; $i++) {
-            if ($args[$i] -ceq '-b' -or $args[$i] -ceq '-B') { if ($i + 1 -lt $args.Count) { $branch = $args[++$i] }; continue }
-            if ($args[$i].StartsWith('-')) { continue }
-            $positionals.Add($args[$i])
+        for ($i = 0; $i -lt $tokens.Count; $i++) {
+            if ($tokens[$i] -cin @('-b', '-B')) { if ($i + 1 -lt $tokens.Count) { $branch = $tokens[++$i] }; continue }
+            if ($tokens[$i] -ceq '--reason') { $i++; continue }
+            if ($tokens[$i] -match '^(?:>|<|\d?>|&>)') { break }
+            if ($tokens[$i].StartsWith('-')) { continue }
+            $positionals.Add($tokens[$i])
         }
         if (-not $positionals.Count) { continue }
-        $path = $positionals[0]
-        if (-not [IO.Path]::IsPathRooted($path)) { $path = Join-Path ([string](Get-HookProperty $HookInput 'cwd')) $path }
-        if ($null -eq $branch -and $positionals.Count -gt 1) { $branch = $positionals[1] }
-        $row = [ordered]@{ ts_utc = [DateTime]::UtcNow.ToString('o'); coordinator_id = $Coordinator.coordinator_id; path = [IO.Path]::GetFullPath($path); branch = $branch; command = $segment.Substring(0, [Math]::Min(300, $segment.Length)) }
-        Invoke-DtJobLocked -RunFolder $Coordinator.run_folder -Action {
-            [IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $Coordinator.run_folder).Worktrees, (($row | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
-        } | Out-Null
+        $pathHint = ConvertTo-HookWorktreePattern $positionals[0] -BaseDirectory $cwd
+        $pathPattern = $pathHint.pattern
+        $branchHint = if ($branch) { ConvertTo-HookWorktreePattern $branch } else { $null }
+        $options = if ($caseSensitive) { [Management.Automation.WildcardOptions]::None } else { [Management.Automation.WildcardOptions]::IgnoreCase }
+        $pathMatcher = [WildcardPattern]::new($pathPattern, $options)
+        foreach ($tree in @(Get-HookGitWorktrees -Directory $gitDirectory)) {
+            if (@($recorded | Where-Object { Test-DtPathEqual $_ $tree.path }).Count) { continue }
+            if (-not $pathMatcher.IsMatch($tree.path.Replace('\', '/'))) { continue }
+            if ($branchHint -and -not [WildcardPattern]::new($branchHint.pattern, $options).IsMatch([string]$tree.branch)) { continue }
+            # A selector with a wildcard only takes trees created by this call, not older siblings.
+            if (-not ($pathHint.literal -and (-not $branchHint -or $branchHint.literal)) -and ($null -eq $tree.created_utc -or $tree.created_utc -lt $since)) { continue }
+            $row = [ordered]@{ ts_utc = [DateTime]::UtcNow.ToString('o'); coordinator_id = $Coordinator.coordinator_id; path = $tree.path; branch = $tree.branch; head = $tree.head; source = 'git worktree list'; command = $segment.Substring(0, [Math]::Min(300, $segment.Length)) }
+            Invoke-DtJobLocked -RunFolder $Coordinator.run_folder -Action {
+                [IO.File]::AppendAllText((Get-DtJobPaths -RunFolder $Coordinator.run_folder).Worktrees, (($row | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+            } | Out-Null
+            $recorded.Add($tree.path)
+        }
     }
 }
 

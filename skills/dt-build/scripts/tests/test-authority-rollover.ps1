@@ -37,9 +37,15 @@ function New-Fixture {
     Write-Text (Join-Path $run 'jobs/events.jsonl') ('{"seq":1,"type":"recorded"}' + "`n" + '{"seq":2,"job_id":"j-0001","type":"completed"}' + "`n")
     Write-Text (Join-Path $run 'review-log.md') "M05 review allowance consumed by j-0001 on 2026-10-14.`n"
 }
+# pwsh on Linux wraps a child's error message at 80 columns and colours it; unwrap so substring checks
+# see the message as one line on every host.
+function ConvertTo-PlainChildText([object[]]$Raw) {
+    $text = (@($Raw | ForEach-Object { "$_" }) -join "`n") -replace '\x1b\[[0-9;?]*[A-Za-z]', ''
+    return [regex]::Replace($text, '\n {2,}\| (?=\S)', ' ')
+}
 function Invoke-Roll([string]$Action, [string[]]$Extra = @()) {
     $raw = & pwsh -NoProfile -File $roll -Action $Action -RunFolder $run -BuildStatePath $checkpoint @Extra 2>&1
-    return [pscustomobject]@{ code = $LASTEXITCODE; text = ($raw -join "`n") }
+    return [pscustomobject]@{ code = $LASTEXITCODE; text = (ConvertTo-PlainChildText $raw) }
 }
 function Read-Ledger([string]$Dir) { Get-Content -Raw -LiteralPath (Join-Path $Dir 'clauses-ledger.json') | ConvertFrom-Json -Depth 64 }
 function Save-Ledger([string]$Dir, $Ledger) { Write-Text (Join-Path $Dir 'clauses-ledger.json') ($Ledger | ConvertTo-Json -Depth 32) }

@@ -5,6 +5,9 @@
 param(
     [switch]$Unregister,
 
+    # Linux: print the generated service and timer units and stop (no files written, no systemctl).
+    [switch]$PrintUnit,
+
     [string]$PwshPath = (Get-Command pwsh -ErrorAction Stop).Source,
 
     [string]$ShimPath = 'D:\Claude\_system-tools\run-hidden\run-hidden.vbs'
@@ -18,7 +21,7 @@ $taskName = 'dt-build-watcher'
 if ($IsLinux) {
     # Linux session host (CT202): a systemd --user service + timer every 2 minutes. KillMode=process keeps
     # coordinators the watcher launches alive after the watcher run exits.
-    # Headless `claude -p` coordinators (and the chunk jobs they start, which inherit this environment) sign in
+    # Headless print-mode Claude coordinators (and the chunk jobs they start, which inherit this environment) sign in
     # with the long-lived CLAUDE_CODE_OAUTH_TOKEN that Command Center v2 keeps in its secrets.env (vault
     # claude-oauth-token); the interactive login in .credentials.json expires and cannot refresh headless.
     # CLAUDE_CONFIG_DIR points them at the workspace config. The leading '-' keeps the unit valid when the
@@ -26,7 +29,7 @@ if ($IsLinux) {
     $unitDir = Join-Path $HOME '.config/systemd/user'
     $service = Join-Path $unitDir "$taskName.service"
     $timer = Join-Path $unitDir "$taskName.timer"
-    if ($Unregister) {
+    if ($Unregister -and -not $PrintUnit) {
         & systemctl --user disable --now "$taskName.timer" 2>$null
         Remove-Item -LiteralPath $service, $timer -ErrorAction SilentlyContinue
         & systemctl --user daemon-reload
@@ -34,8 +37,11 @@ if ($IsLinux) {
         return
     }
     $watcherPath = Join-Path $PSScriptRoot 'dt-build-watcher.ps1'
-    if (-not (Test-Path -LiteralPath $watcherPath)) { throw "DT_BUILD_WATCHER_SETUP: missing $watcherPath" }
-    New-Item -ItemType Directory -Path $unitDir -Force | Out-Null
+    # pwsh on Linux logs its own engine events (startup, NamedPipe IPC, script blocks, perf tracking) to the
+    # journal at Informational by default: ~13,500 entries in 9 hours from this 2-minute timer. The settings
+    # file lowers only the watcher process to Critical; errors still reach the journal through stderr.
+    $settingsPath = Join-Path $PSScriptRoot 'watcher-powershell.config.json'
+    foreach ($path in @($watcherPath, $settingsPath)) { if (-not (Test-Path -LiteralPath $path)) { throw "DT_BUILD_WATCHER_SETUP: missing $path" } }
     $serviceText = @"
 [Unit]
 Description=dt-build watcher: reconciles registered runs and relaunches managed coordinators (no model calls)
@@ -43,10 +49,12 @@ Description=dt-build watcher: reconciles registered runs and relaunches managed 
 [Service]
 Type=oneshot
 Environment=TEMP=/tmp
+Environment=POWERSHELL_TELEMETRY_OPTOUT=1
 Environment=CODEX_HOME=%h/.codex
 Environment=CLAUDE_CONFIG_DIR=%h/Claude
 EnvironmentFile=-%h/.config/command-center-v2/secrets.env
-ExecStart=$PwshPath -NoProfile -NonInteractive -File "$watcherPath"
+ExecStart=$PwshPath -NoProfile -NonInteractive -SettingsFile "$settingsPath" -File "$watcherPath"
+SyslogIdentifier=dt-build-watcher
 TimeoutStartSec=600
 KillMode=process
 "@
@@ -62,6 +70,8 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 "@
+    if ($PrintUnit) { "# $service"; $serviceText; ''; "# $timer"; $timerText; return }
+    New-Item -ItemType Directory -Path $unitDir -Force | Out-Null
     [IO.File]::WriteAllText($service, $serviceText, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($timer, $timerText, [Text.UTF8Encoding]::new($false))
     & systemctl --user daemon-reload

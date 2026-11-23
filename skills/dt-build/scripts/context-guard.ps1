@@ -371,10 +371,18 @@ function Split-DtCtxIrreversibleSteps {
     return [pscustomobject]@{ deferring = @($deferring); stale = @($stale) }
 }
 
+function Test-DtCtxPathCaseInsensitive {
+    # Windows and macOS default to case-insensitive file systems; Linux paths are case-sensitive.
+    return [OperatingSystem]::IsWindows() -or [OperatingSystem]::IsMacOS()
+}
+
 function ConvertTo-DtCtxPathKey {
-    # One spelling per file: forward slashes, single separators, lower case.
+    # One spelling per file: forward slashes, single separators; lower case only where the host's
+    # file system ignores case (Windows, macOS). On Linux /a/Foo.md and /a/foo.md are different files.
     param([Parameter(Mandatory)][string]$Path)
-    return ($Path -replace '[\\/]+', '/').ToLowerInvariant()
+    $key = $Path -replace '[\\/]+', '/'
+    if (Test-DtCtxPathCaseInsensitive) { $key = $key.ToLowerInvariant() }
+    return $key
 }
 
 function Get-DtCtxHeavyReads {
@@ -383,6 +391,9 @@ function Get-DtCtxHeavyReads {
     param([Parameter(Mandatory)][string]$TranscriptPath, [Nullable[DateTime]]$SinceUtc, [int]$Top = 5, [int]$MinChars = 10000)
     if (-not (Test-Path -LiteralPath $TranscriptPath -PathType Leaf)) { return @() }
     $pathRx = [regex]'(?i)(?<![a-z0-9])[a-z]:[\\/]+(?:[^\\/:*?"''<>|\r\n;`]+[\\/]+)*[^\\/:*?"''<>|\r\n;`]+\.[a-z0-9]{1,8}(?![a-z0-9])'
+    # POSIX absolute paths (Linux and macOS hosts): a quoted path may hold spaces ("/home/x/Home Server/a.md");
+    # a bare one stops at whitespace. A URL's //host/path never starts one.
+    $posixRx = [regex]('(?i)(?<=["''])/(?:[^"''\\\r\n<>|*?;`/]+/)*[^"''\\\r\n<>|*?;`/]+\.[a-z0-9]{1,8}(?=\\?["''])|(?<![\w.:~/\\"''-])/(?:[^\s"''\\<>|*?;`/]+/)+[^\s"''\\<>|*?;`/]+\.[a-z0-9]{1,8}(?![a-z0-9])')
     $calls = @{}
     $totals = [ordered]@{}
     $stream = [System.IO.File]::Open($TranscriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
@@ -405,9 +416,10 @@ function Get-DtCtxHeavyReads {
                         if (-not $id) { break }
                         $text = foreach ($name in 'input', 'arguments', 'action') { if ($item.PSObject.Properties[$name] -and $null -ne $item.$name) { if ($item.$name -is [string]) { $item.$name } else { $item.$name | ConvertTo-Json -Compress -Depth 16 } } }
                         $paths = [System.Collections.Generic.List[string]]::new()
-                        foreach ($m in $pathRx.Matches(($text -join ' '))) {
+                        foreach ($m in @($pathRx.Matches(($text -join ' '))) + @($posixRx.Matches(($text -join ' ')))) {
                             $display = ($m.Value -replace '[\\/]+', '/')
-                            if (-not ($paths | Where-Object { $_ -ieq $display })) { $paths.Add($display) }
+                            $displayKey = ConvertTo-DtCtxPathKey $display
+                            if (-not ($paths | Where-Object { (ConvertTo-DtCtxPathKey $_) -ceq $displayKey })) { $paths.Add($display) }
                         }
                         $calls[$id] = @($paths)
                     }

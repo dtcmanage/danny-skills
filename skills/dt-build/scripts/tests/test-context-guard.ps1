@@ -1042,6 +1042,33 @@ try {
     Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $bigFile; offset = 1; limit = 50 }))) 'a data file on the same wall stays blocked'
     Write-Utf8 -Path $wallFile -Content (([ordered]@{ coordinator_id = 'w2'; coordinators = @('w2'); reads = @([ordered]@{ path = $bigFwd; reads = 3; chars = 90000 }) }) | ConvertTo-Json -Depth 4)
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $bigFile; offset = 1; limit = 50 }))) 'the coordinator that hit the wall itself is not blocked mid-handoff'
+    # B2 fix 4: path keys fold case only where the file system does (Windows, macOS), never on Linux.
+    $caseKey = & pwsh -NoProfile -Command ". '$guard'; ConvertTo-DtCtxPathKey '/home/x/Home Server/Plan-Draft.md'"
+    if ($IsLinux) { Assert-True ($caseKey -ceq '/home/x/Home Server/Plan-Draft.md') "Linux path key keeps case ($caseKey)" }
+    else { Assert-True ($caseKey -ceq '/home/x/home server/plan-draft.md') "case-insensitive host path key folds case ($caseKey)" }
+    $mixedDir = Join-Path $fixtures 'Case Dir'
+    New-Item -ItemType Directory -Path $mixedDir -Force | Out-Null
+    $mixedFile = Join-Path $mixedDir 'Big-Mixed.log'
+    Write-Utf8 -Path $mixedFile -Content ('m' * 2000)
+    $mixedFwd = $mixedFile -replace '\\', '/'
+    Write-Utf8 -Path $wallFile -Content (([ordered]@{ coordinator_id = 'w1'; coordinators = @('w1'); reads = @([ordered]@{ path = $mixedFwd; reads = 3; chars = 90000 }) }) | ConvertTo-Json -Depth 4)
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $mixedFile; offset = 1; limit = 50 }))) 'a walled mixed-case path is denied under its own spelling'
+    Assert-True (Test-Denied (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Bash' @{ command = "cat '$mixedFile'" }))) 'a shell read of a walled mixed-case path is denied'
+    if ($IsLinux) {
+        $otherCase = Join-Path $mixedDir 'big-mixed.log'
+        Write-Utf8 -Path $otherCase -Content 'different file on a case-sensitive file system'
+        Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-wall' $wallT 'Read' @{ file_path = $otherCase; offset = 1; limit = 50 }))) 'Linux: a different file whose name differs only in case is not walled'
+    }
+    if (-not $IsWindows) {
+        $posixHeavy = Join-Path $fixtures 'heavy-posix.jsonl'
+        $posixFile = "$mixedDir/Big Posix Ref.md"
+        Add-Line $posixHeavy ([ordered]@{ type = 'assistant'; timestamp = $late; message = [ordered]@{ content = @([ordered]@{ type = 'tool_use'; id = 'pu-1'; name = 'Read'; input = @{ file_path = $posixFile } }) } })
+        Add-Line $posixHeavy ([ordered]@{ type = 'user'; timestamp = $late; message = [ordered]@{ content = @([ordered]@{ type = 'tool_result'; tool_use_id = 'pu-1'; content = ('p' * 30000) }) } })
+        Add-Line $posixHeavy ([ordered]@{ type = 'assistant'; timestamp = $late; message = [ordered]@{ content = @([ordered]@{ type = 'tool_use'; id = 'pu-2'; name = 'Bash'; input = @{ command = "cat /srv/notes/a.md; git -C /srv remote -v # https://github.com/org/repo.git" } }) } })
+        Add-Line $posixHeavy ([ordered]@{ type = 'user'; timestamp = $late; message = [ordered]@{ content = @([ordered]@{ type = 'tool_result'; tool_use_id = 'pu-2'; content = ('q' * 30000) }) } })
+        $heavy = @(& $heavyCall $posixHeavy $null)
+        Assert-True ($heavy.Count -eq 2 -and @($heavy | Where-Object { $_.path -ceq $posixFile -and $_.chars -ge 30000 }).Count -eq 1 -and @($heavy | Where-Object { $_.path -ceq '/srv/notes/a.md' }).Count -eq 1) "POSIX transcript paths (with spaces when quoted) are measured with their case, never a URL ($($heavy | ConvertTo-Json -Compress))"
+    }
     Remove-Item -LiteralPath $wallFile -Force
     $wallLease = Join-Path $wallRun.folder 'coordinator.lease'
     $leaseDoc = Get-Content -Raw -LiteralPath $wallLease | ConvertFrom-Json
@@ -1117,20 +1144,38 @@ try {
     & git -C $resumeRepo init -q | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'resume fixture git init failed' }
     Write-Lease -RunFolder $resumeRun.folder -CoordinatorId 'successor' -LeaseHost 'codex' -LaunchedBy 'watcher' -SessionId 'sess-trees'
+    & git -C $resumeRepo -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m base | Out-Null
     $treeHook = @{ session_id = 'sess-trees'; cwd = $resumeRun.folder; tool_name = 'PowerShell'; tool_input = @{ command = 'git worktree add ../repo-x -b feat/x' } }
-    Assert-True ($null -eq (Invoke-Hook $postHook $treeHook) -and $LASTEXITCODE -eq 0) 'worktree recording is silent and succeeds for a managed coordinator'
     $treeLedger = Join-Path $resumeRun.folder 'worktrees.jsonl'
+    Assert-True ($null -eq (Invoke-Hook $postHook $treeHook) -and $LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $treeLedger)) 'a worktree add that git does not report records nothing (command text is never the record)'
+    Push-Location $resumeRun.folder
+    try { & git worktree add -q ../repo-x -b feat/x 2>$null | Out-Null } finally { Pop-Location }
+    Assert-True ($null -eq (Invoke-Hook $postHook $treeHook) -and $LASTEXITCODE -eq 0) 'worktree recording is silent and succeeds for a managed coordinator'
     $treeRows = @(Get-Content -LiteralPath $treeLedger | ForEach-Object { $_ | ConvertFrom-Json })
     $expectedTree = [IO.Path]::GetFullPath((Join-Path $resumeRun.folder '../repo-x'))
-    Assert-True ($treeRows.Count -eq 1 -and $treeRows[0].path -eq $expectedTree -and $treeRows[0].branch -eq 'feat/x' -and $treeRows[0].coordinator_id -eq 'successor' -and $treeRows[0].command -eq $treeHook.tool_input.command) 'PostToolUse records the normalized relative path, branch, command and coordinator'
+    Assert-True ($treeRows.Count -eq 1 -and $treeRows[0].path -eq $expectedTree -and $treeRows[0].branch -eq 'feat/x' -and $treeRows[0].coordinator_id -eq 'successor' -and $treeRows[0].command -eq $treeHook.tool_input.command -and $treeRows[0].source -eq 'git worktree list') 'PostToolUse records the git-reported path, branch, command and coordinator'
+    Invoke-Hook $postHook $treeHook | Out-Null
+    Assert-True (@(Get-Content -LiteralPath $treeLedger).Count -eq 1) 'a recorded worktree is never recorded twice'
     $treeHook.tool_input.command = 'git status'
     Invoke-Hook $postHook $treeHook | Out-Null
     Assert-True (@(Get-Content -LiteralPath $treeLedger).Count -eq 1) 'an unrelated shell call appends no worktree row'
+    # B2 fix 3: the Home Server coordinator named its tree and branch through shell variables.
+    $varTree = [IO.Path]::GetFullPath((Join-Path $resumeRepo '../mst-m07 tree'))
+    $sibling = [IO.Path]::GetFullPath((Join-Path $resumeRepo '../other-tree'))
+    & git -C $resumeRepo worktree add -q $sibling -b feat/other 2>$null | Out-Null
+    & git -C $resumeRepo worktree add -q --no-checkout -b 'dt-build/mst/M07-chunk' $varTree 2>$null | Out-Null
+    $varCommand = 'wt="' + ($varTree -replace '\\', '/').Replace('mst-m07 tree', 'mst-$m tree') + '"; br="dt-build/mst/$m-chunk"; git -C "' + ($resumeRepo -replace '\\', '/') + '" worktree add -q --no-checkout -b "$br" "' + ($varTree -replace '\\', '/').Replace('mst-m07 tree', 'mst-$m tree') + '" HEAD >/dev/null 2>&1'
+    $treeHook.tool_input.command = $varCommand
+    Invoke-Hook $postHook $treeHook | Out-Null
+    $treeRows = @(Get-Content -LiteralPath $treeLedger | ForEach-Object { $_ | ConvertFrom-Json })
+    $varRow = @($treeRows | Where-Object { $_.path -eq $varTree })
+    Assert-True ($treeRows.Count -eq 2 -and $varRow.Count -eq 1 -and $varRow[0].branch -ceq 'dt-build/mst/M07-chunk' -and -not ($treeRows.path -match '\$') -and -not ($treeRows.branch -match '\$')) "shell-variable worktree commands record the git-expanded path and branch, never `$wt/`$br ($($treeRows | ConvertTo-Json -Compress))"
+    Assert-True (@($treeRows | Where-Object { $_.path -eq $sibling }).Count -eq 0) 'a sibling worktree outside the command selector is not recorded'
     $resumeReader = Join-Path $scriptDir 'read-resume-record.ps1'
     $readRecord = { $raw = & pwsh -NoProfile -File $resumeReader -RunFolder $resumeRun.folder -RunId $resumeRun.run_id -BuildStatePath $resumeRun.state -CoordinatorId 'successor'; if ($LASTEXITCODE -ne 0) { throw 'resume reader failed' }; ($raw -join "`n") | ConvertFrom-Json }
     Assert-True ($null -eq (& $readRecord).kill_handoff) 'no handoff yields a null kill_handoff'
     $record = & $readRecord
-    Assert-True ($record.worktrees.recorded.Count -eq 1 -and $record.worktrees.recorded[0].path -eq $expectedTree -and $record.worktrees.recorded[0].branch -eq 'feat/x' -and $record.worktrees.live_since_run_start -is [array] -and $record.worktrees.live_since_run_start.Count -eq 0) 'resume record includes recorded worktrees and an empty live array without a launch'
+    Assert-True ($record.worktrees.recorded.Count -eq 2 -and @($record.worktrees.recorded | Where-Object { $_.path -eq $expectedTree -and $_.branch -eq 'feat/x' }).Count -eq 1 -and $record.worktrees.live_since_run_start -is [array] -and $record.worktrees.live_since_run_start.Count -eq 0) 'resume record includes recorded worktrees and an empty live array without a launch'
     Add-Line (Join-Path $resumeRun.folder 'launches.jsonl') ([ordered]@{ type = 'launch'; coordinator_id = 'successor'; launched_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o') })
     Assert-True ((& $readRecord).worktrees.live_since_run_start -is [array]) 'resume live discovery in a real git repo returns an array'
     $automaticNote = Join-Path $resumeRun.folder 'coordinator-handoff-killed.md'

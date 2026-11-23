@@ -1,4 +1,4 @@
-# Headless Claude sign-in for launched `claude -p` children (dot-source; functions only).
+# Headless Claude sign-in for launched print-mode (`claude --print`) children (dot-source; functions only).
 #
 # Claude Code strips CLAUDE_CODE_OAUTH_TOKEN from every shell its tools start, so a coordinator or
 # session that launches a Claude worker through its Bash tool hands that worker no token, and the

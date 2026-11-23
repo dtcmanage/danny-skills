@@ -16,11 +16,40 @@ function Get-AuthorityHash {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+# The checkpoint (_build-state.md) is live state that every coordinator rewrites at rotation, and the lean
+# checkpoint contract forbids pinning it by full-file hash (managed-resume.md). Only its authority-bearing
+# text is pinned and scanned for originals: every line outside a state section (Restrictions, Pointers, Run,
+# Artifacts, unknown headings, a flat checkpoint) except rotating key lines, plus the authority pointers a
+# compressed checkpoint keeps inside a state section: alias definitions (STOP=..., RUN=...) and lines that
+# direct a bootstrap read (bootstrap, IN FULL). Progress, next-step, git and evidence prose is not authority.
+$script:AuthorityCheckpointStateHeadings = '(?i)^(?:progress|completed|in[ -]?flight|next steps?|git|evidence|milestones|chunks(?:\s*\(.*\))?|handoff|status|current state)$'
+# Lower-case key lines a coordinator or dt-job rewrites as it goes (status, cursor, timestamp, position).
+$script:AuthorityCheckpointStateKeys = '^(?:run_status|last_consumed_event_seq|updated_utc|status|phase|current_milestone|last_commit_sha):'
+$script:AuthorityCheckpointPointerLine = '^\s*(?:[-*]\s*)?[A-Z][A-Z0-9_]*=|(?i:bootstrap)|IN FULL'
+
+function Get-AuthorityCheckpointText {
+    param([string]$Text)
+    $kept = [Collections.Generic.List[string]]::new()
+    $state = $false; $fenced = $false
+    foreach ($line in ($Text.Replace("`r`n", "`n") -split "`n")) {
+        if ($line -match '^\s*(?:```|~~~)') { $fenced = -not $fenced }
+        elseif (-not $fenced -and $line -match '^#{1,6}\s+(.+?)\s*#*\s*$') {
+            $state = $Matches[1].Trim().TrimEnd(':') -match $script:AuthorityCheckpointStateHeadings
+            if (-not $state) { $kept.Add($line) }
+            continue
+        }
+        if ($line -cmatch $script:AuthorityCheckpointStateKeys) { continue }
+        if ($state -and $line -cnotmatch $script:AuthorityCheckpointPointerLine) { continue }
+        $kept.Add($line)
+    }
+    return ($kept -join "`n")
+}
+
 function Get-AuthorityCheckpointHash {
     param([string]$Text)
-    # These two lines are owned by dt-job, not authorization. Resume/consume may change
-    # them after an operator builds the digest; every other checkpoint character is pinned.
-    $authority = [regex]::Replace($Text.Replace("`r`n", "`n"), '(?m)^(?:run_status|last_consumed_event_seq):[^\n]*(?:\n|$)', '')
+    # Hash only the authority-bearing checkpoint text (Get-AuthorityCheckpointText): resume, rotation and
+    # consume may rewrite status, cursor, progress, git and next-step state after the digest is built.
+    $authority = Get-AuthorityCheckpointText $Text
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($authority))).ToLowerInvariant()
 }
 
@@ -70,6 +99,11 @@ function Get-AuthorityCandidates {
         # FS-132: an absolute path may contain spaces but never runs past another file's extension
         # followed by space or punctuation (e.g. "errors.log). Detail: x.md" is two tokens).
         ('(?<![\w])(?<path>[a-zA-Z]:[\\/](?:(?!\.[A-Za-z0-9]{1,5}[)\],;.:]{0,2}\s)[^`"<>|\r\n])*?\.' + $ext + ')(?=[\s,;.)\]]|$)'),
+        # Single-quoted paths may hold spaces; an apostrophe inside a word (Danny's) never opens one.
+        ("(?<![\w'])'(?<path>[^'`\r\n]+\." + $ext + ")'(?![\w'])"),
+        # A POSIX absolute path follows the same rule as a drive path (spaces allowed, never past another
+        # file's extension); a spaced match must name an existing directory, else it falls to the next pattern.
+        ('(?<![\w.:~/\\-])(?<path>/(?:(?!\.[A-Za-z0-9]{1,5}[)\],;.:]{0,2}\s)[^`"''<>|\r\n])*?\.' + $ext + ')(?=[\s,;.)\]]|$)'),
         ('(?<![\w:/\\])(?<path>(?:[\w.-]+[\\/])+[\w.-]+\.' + $ext + ')')
     )
     if ($Aliases.Count) {
@@ -82,6 +116,7 @@ function Get-AuthorityCandidates {
         foreach ($m in [regex]::Matches($Text, $pattern)) {
             $g = $m.Groups['path']
             if (@($occupied | Where-Object { $g.Index -lt $_.end -and ($g.Index + $g.Length) -gt $_.start }).Count) { continue }
+            if ($pattern.StartsWith('(?<![\w.:~/') -and $g.Value -match '\s' -and -not (Test-Path -LiteralPath (Split-Path -Parent $g.Value) -PathType Container)) { continue }
             $occupied.Add(@{ start = $g.Index; end = $g.Index + $g.Length })
             $literal = $g.Value
             if ($pattern.StartsWith('"')) { $literal = ('"' + $literal + '"') | ConvertFrom-Json }
@@ -91,7 +126,7 @@ function Get-AuthorityCandidates {
                 $prefix = $Matches[1]; $suffix = $Matches[3]
                 $expanded = @($Matches[2] -split ',' | ForEach-Object { $prefix + $_.Trim() + $suffix })
             }
-            foreach ($item in $expanded) { [pscustomobject]@{ literal = $item; index = $g.Index; explicit = ($pattern.StartsWith('`') -or $pattern.StartsWith('\]') -or $pattern.StartsWith('"')) } }
+            foreach ($item in $expanded) { [pscustomobject]@{ literal = $item; index = $g.Index; explicit = ($pattern.StartsWith('`') -or $pattern.StartsWith('\]') -or $pattern.StartsWith('"') -or $pattern.StartsWith("(?<![\w'])'")) } }
             # Compressed lists often give the directory only on the first member.
             if ($literal -match '^(.*[/\\])[^/\\]+\.' + $ext + '$') {
                 $directoryPrefix = $Matches[1]
@@ -146,7 +181,9 @@ function Get-AuthorityInventory {
     $script:AuthorityCheckpointFullReads = @()
     $checkpointText = [IO.File]::ReadAllText($checkpoint)
     $aliases = Get-AuthorityAliases $checkpointText
-    $checkpointCandidates = @(Get-AuthorityCandidates $checkpointText $aliases | Sort-Object index)
+    # Paths named only in rotating state sections (progress, next step, evidence) are not authority.
+    $checkpointAuthorityText = Get-AuthorityCheckpointText ($checkpointText.TrimStart([char]0xFEFF))
+    $checkpointCandidates = @(Get-AuthorityCandidates $checkpointAuthorityText $aliases | Sort-Object index)
     # STOP is the explicit current authority locator in compressed checkpoints.
     if ($aliases.ContainsKey('STOP')) {
         $boundary = Resolve-AuthorityLiteral 'STOP/next-operation-boundary.json' $checkpoint $root $aliases
@@ -177,6 +214,7 @@ function Get-AuthorityInventory {
         }
         $originalBytes = [IO.File]::ReadAllBytes($path)
         $text = [Text.Encoding]::UTF8.GetString($originalBytes).TrimStart([char]0xFEFF)
+        if ($path -eq $checkpoint) { $text = $checkpointAuthorityText }
         $leaf = Split-Path -Leaf $path
         $kind = if ($path -eq $checkpoint) { 'checkpoint' } elseif ($leaf -match 'approval' -or $path -match '[/\\]approvals[/\\]') { 'approval' } elseif ($leaf -match 'operator-notes') { 'operator_notes' } else { 'boundary' }
         # Quote an index of operative lines, never generate or infer an approval. Full originals
@@ -243,7 +281,7 @@ function Get-AuthorityMandatoryPaths {
     }
     # The current boundary is the last boundary pointer in checkpoint order. All checkpoint
     # inline restrictions and complete approvals stay mandatory, regardless of digest size.
-    $checkpointText = [IO.File]::ReadAllText($BuildStatePath)
+    $checkpointText = Get-AuthorityCheckpointText ([IO.File]::ReadAllText($BuildStatePath).TrimStart([char]0xFEFF))
     if ($script:AuthorityCurrentBoundary) {
         $paths.Add($script:AuthorityCurrentBoundary)
         return @($paths | Sort-Object -Unique)
@@ -278,10 +316,9 @@ function Get-AuthorityMarkdownBody {
     param([string]$RunFolder, [object[]]$Records, [string]$BuildStatePath)
     $lines = @('# Authority digest', '', 'Mechanical index only. Original records control authorization. Read each governing original IN FULL immediately before its dependent action.', '')
     $mandatory = @(Get-AuthorityMandatoryPaths -Records $Records -BuildStatePath $BuildStatePath)
-    # Reserve the entire lean checkpoint ceiling so dt-job status/cursor changes do not
-    # alter the deterministic clipping or invalidate a digest built before resume.
-    $checkpointText = [IO.File]::ReadAllText($BuildStatePath).Replace("`r`n", "`n")
-    $checkpointAuthority = [regex]::Replace($checkpointText, '(?m)^(?:run_status|last_consumed_event_seq):[^\n]*(?:\n|$)', '')
+    # Reserve the entire lean checkpoint ceiling, sized from its authority text only, so status,
+    # cursor and rotation state changes do not alter the clipping or invalidate a digest built before resume.
+    $checkpointAuthority = Get-AuthorityCheckpointText ([IO.File]::ReadAllText($BuildStatePath).TrimStart([char]0xFEFF))
     $mandatoryChars = [math]::Max(8192, $checkpointAuthority.Length)
     $prefixes = @()
     $directories = @($Records | ForEach-Object { [IO.Path]::GetRelativePath([IO.Path]::GetFullPath($RunFolder), (Split-Path -Parent $_.path)).Replace('\', '/') } | Sort-Object -Unique)
