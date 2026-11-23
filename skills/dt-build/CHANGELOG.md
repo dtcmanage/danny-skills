@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.52.4
+
+- Linux watcher unit gives headless claude -p coordinators CLAUDE_CONFIG_DIR and the long-lived CLAUDE_CODE_OAUTH_TOKEN (EnvironmentFile on Command Center v2's secrets.env); managed Claude runs on CT202 died at launch with an expired OAuth session (run mst-20261122).
+
 ## 2.52.3
 
 - Codex builders and the managed coordinator run with full access on Linux too, as on Windows: POSIX workspace-write keeps every .git folder read-only (even one passed with --add-dir), so sandboxed builders could not stage or commit, and it blocked package indexes such as PyPI. Read-only reviewers and preflight keep the read-only sandbox.

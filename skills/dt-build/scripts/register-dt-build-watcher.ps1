@@ -18,6 +18,11 @@ $taskName = 'dt-build-watcher'
 if ($IsLinux) {
     # Linux session host (CT202): a systemd --user service + timer every 2 minutes. KillMode=process keeps
     # coordinators the watcher launches alive after the watcher run exits.
+    # Headless `claude -p` coordinators (and the chunk jobs they start, which inherit this environment) sign in
+    # with the long-lived CLAUDE_CODE_OAUTH_TOKEN that Command Center v2 keeps in its secrets.env (vault
+    # claude-oauth-token); the interactive login in .credentials.json expires and cannot refresh headless.
+    # CLAUDE_CONFIG_DIR points them at the workspace config. The leading '-' keeps the unit valid when the
+    # file is absent (managed Claude launches then fail to sign in, as before).
     $unitDir = Join-Path $HOME '.config/systemd/user'
     $service = Join-Path $unitDir "$taskName.service"
     $timer = Join-Path $unitDir "$taskName.timer"
@@ -39,6 +44,8 @@ Description=dt-build watcher: reconciles registered runs and relaunches managed 
 Type=oneshot
 Environment=TEMP=/tmp
 Environment=CODEX_HOME=%h/.codex
+Environment=CLAUDE_CONFIG_DIR=%h/Claude
+EnvironmentFile=-%h/.config/command-center-v2/secrets.env
 ExecStart=$PwshPath -NoProfile -NonInteractive -File "$watcherPath"
 TimeoutStartSec=600
 KillMode=process

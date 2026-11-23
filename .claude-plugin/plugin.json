@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.0.2 dt-build 2.52.4: managed Claude coordinators launched by the Linux watcher can sign in (config dir + long-lived token in the unit).",
       "1.0.1 dt-build 2.52.3: Codex builders and the managed coordinator run with full access on Linux, so they can commit and reach package indexes.",
       "1.0.0 linux-host: run the pack on the Linux session host (CT202). dt-app-launcher removed (retired; apps are reached by URL). dt-terminal-format-profile removed (retired with VS Code Remote; Danny, 2026-11-22). Skill versions: dt-build 2.52.2, dt-handoff 0.2.5, dt-image-gen 0.3.41, dt-memory-hygiene 0.4.2, dt-pipeline 0.2.1, dt-plan 1.4.3, dt-prototype 1.1.7, dt-review 1.18.4, dt-roadmap 1.4.1, dt-session-audit 0.8.1, dt-session-context 0.1.1, dt-ship 0.3.6, dt-tune 0.2.4, dt-visualize-design 1.1.5, dt-visualize-plan 1.1.8, dt-writing-draft 0.2.41, dt-writing-edit 0.3.41, git-merge-feature 1.2.7, git-sync-features 0.1.4, start-work 0.1.5. dt-job runners now start on Linux from paths with spaces, and process identity tolerates Linux start-time jitter. Shared runtime: Codex lane finds the plain codex binary and runs without TEMP/CODEX_HOME/USERPROFILE; model router reads the shared roster on Linux, outcome sources are workspace-relative, proposal items find cc.ps1 beside the main checkout, vendor-limits reads the Linux codex; dispatch guard names the dispatch.ps1 beside it and guard-settings builds a python3 command off Windows; skill link gate creates symlinks on Linux; build-plugin and test-preflight work without robocopy/winget; python3 fallback in pytest-lock and the ship gate; local file-link contract is now backticked absolute paths (file-link contract test updated); voice load order uses Linux paths; process wrapper temp root from GetTempPath; pytest serialization finds python3; test dependencies preflight gives apt hints; visualize harness found on any host; version policy owners map updated.",
       "0.28.1 dt-build 2.52.1: scope the final full gate by changed paths.",

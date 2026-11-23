@@ -1671,6 +1671,7 @@ try { $runs = @(Read-WatcherRegistry); $outcome = "ok:$($runs[0].run_id)" } catc
     }
     $registerText = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'register-dt-build-watcher.ps1')
     Assert-True ($registerText.Contains("-Execute 'wscript.exe'") -and $registerText.Contains('run-hidden.vbs') -and $registerText.Contains('New-TimeSpan -Minutes 2')) 'the scheduled task runs through run-hidden.vbs every 2 minutes'
+    Assert-True ($registerText.Contains('Environment=CLAUDE_CONFIG_DIR=%h/Claude') -and $registerText.Contains('EnvironmentFile=-%h/.config/command-center-v2/secrets.env')) 'the Linux watcher unit gives headless claude -p coordinators the config dir and long-lived sign-in token'
     $launcherText = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'launch-managed-coordinator.ps1')
     # Execute the actual prompt/environment assembly, stopping before lease acquisition or process launch.
     $probeText = $launcherText.Substring(0, $launcherText.IndexOf('# The watcher runs this launcher'))
