@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.54.0
+
+- Orchestration on the Linux host: launch watch (await-coordinator-start, watch-run-state), lane health only by -Preflight, launching session runs resume/approve, watcher relaunches any context-rotation continuation with a starting lease state and finds re-parented survivors by DT_BUILD_COORDINATOR_ID, live-bug fast lane, required plain status_line, gate scope base defined.
+
 ## 2.53.1
 
 - Linux script fixes: authority digest skips the live checkpoint and parses spaced paths; worktree ledger from git; case-sensitive read guard on Linux; clean preflight JSON; assemble-codex-prompt comma lists and default preamble; no double-nested run folder; intake warns on missing gate tools; builder logs in the run folder; quiet watcher journal; runnable recognizer accepts python3/bash/sh/uv/make; orchestration test can no longer write the live settings.json.

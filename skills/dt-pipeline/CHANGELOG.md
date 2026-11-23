@@ -1,5 +1,7 @@
 # dt-pipeline changelog
 
+- 0.2.2 (2026-11-23): Build-state template adds the required plain-English status_line field.
+
 - 0.2.1 (2026-11-22): Report artifacts as backticked absolute paths (shared output contract).
 
 - 0.2.0 (2026-11-06): Model router repair: start pipeline coordinators through dt-job workers and dispatch.ps1 instead of native subagents.
