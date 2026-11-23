@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.52.3
+
+- Codex builders and the managed coordinator run with full access on Linux too, as on Windows: POSIX workspace-write keeps every .git folder read-only (even one passed with --add-dir), so sandboxed builders could not stage or commit, and it blocked package indexes such as PyPI. Read-only reviewers and preflight keep the read-only sandbox.
+
 ## 2.52.2
 
 - Run on the Linux session host: dt-job runners start from paths with spaces (quoted Start-Process arguments off Windows; jobs never ran from the main checkout before); process identity allows Linux's sub-millisecond start-time jitter (100 ms) so live jobs and coordinators are not judged dead; portable dt-build state dir (LOCALAPPDATA, XDG_STATE_HOME or ~/.local/state), CODEX_HOME falls back to HOME, watcher process walk and managed-coordinator launch without CIM on Linux, systemd user timer registration, python3 fallback for exclusive pytest; Linux paths in docs; file paths reported in backticks.

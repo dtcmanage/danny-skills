@@ -812,6 +812,8 @@ if($env:DT_FAKE_UNICODE_TEXT){
     Assert-True ($LASTEXITCODE -eq 0 -and (Get-Content -Raw -LiteralPath $codexArgsLog) -match 'model_reasoning_effort="low"') 'Codex passes explicit low effort to CLI'
     $lowCodexProv = Get-Content -Raw -LiteralPath "$lowCodexOutput.provenance.json" | ConvertFrom-Json
     Assert-True ($lowCodexProv.effort -eq 'low' -and $lowCodexProv.reasoning_effort -eq 'low' -and $lowCodexProv.disclosure_line -match 'effort low') 'Codex effort provenance and disclosure'
+    $builderLaunch = Get-Content -Raw -LiteralPath $codexArgsLog
+    Assert-True ($builderLaunch -match 'default_permissions=":danger-full-access"' -and $builderLaunch -notmatch 'workspace-write') 'Codex builders run with full access on every platform (git commits, package indexes)'
     $missingEffortLog = Join-Path $tempRoot 'codex-missing-effort.log'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowCodexOutput -CodexCliPath $fakeCodex -SelectionReason 'effort argument fixture' -Json *> $missingEffortLog
     Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw -LiteralPath $missingEffortLog) -match '-Effort' -and @(Get-Content -LiteralPath $missingEffortLog).Count -eq 1) 'Codex missing -Effort fails closed with one line'

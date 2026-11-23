@@ -61,9 +61,10 @@ foreach ($name in @('DT_BUILD_STATE_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME')) {
 $lines.Add("Set-Location -LiteralPath $(ConvertTo-SingleQuoted $workDir)")
 if ($CoordinatorHost -eq 'codex') {
     $lines.Add("`$env:DT_BUILD_LEAN_BOOTSTRAP = '1'")
-    # The permission flags invoke-codex-chunk.ps1 uses for a substantive chunk: no approval prompts, and on
-    # Windows (where Codex removed its sandbox) explicit full access instead of a sandbox that fails closed.
-    $permission = if ($env:OS -eq 'Windows_NT') { "-c $(ConvertTo-SingleQuoted 'default_permissions=":danger-full-access"')" } else { '--sandbox workspace-write' }
+    # The permission flags invoke-codex-chunk.ps1 uses for a substantive chunk: no approval prompts and
+    # explicit full access on every platform (Windows has no Codex sandbox; POSIX workspace-write keeps
+    # .git read-only, so a sandboxed coordinator could not commit).
+    $permission = "-c $(ConvertTo-SingleQuoted 'default_permissions=":danger-full-access"')"
     # The same context hooks a Claude coordinator gets, as session flags for this coordinator only: after
     # each step the coordinator sees its context state, so it hands off at a safe point instead of being
     # killed mid-work, and past the hard limit only the handoff steps run. Codex runs them once trusted.

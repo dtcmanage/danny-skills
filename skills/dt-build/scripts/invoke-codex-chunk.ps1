@@ -451,18 +451,21 @@ $dispatchedPromptSha256 = if ($Preflight) { $promptSha256 } else {
     [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([System.Text.UTF8Encoding]::new($false).GetBytes($prompt))).ToLowerInvariant()
 }
 $sandbox = if ($Preflight -or $ReadOnly) { 'read-only' } else { 'workspace-write' }
-# Keep the existing Windows builder route separate from reviewers. Reviewers
-# use a real read-only sandbox; the tree check is only a defensive backstop.
-$windowsUnsandboxed = (-not $Preflight) -and (-not $ReadOnly) -and ($env:OS -eq 'Windows_NT')
+# Builders (not reviews) run with full access on every platform. Windows has no
+# Codex sandbox upstream; on POSIX, workspace-write always keeps .git read-only
+# (even a directory passed with --add-dir), so a sandboxed builder can neither
+# commit nor, by default, reach package indexes. Reviewers keep a real read-only
+# sandbox; the tree check is only a defensive backstop.
+$builderUnsandboxed = (-not $Preflight) -and (-not $ReadOnly)
 $verifyReadOnly = $ReadOnly -and -not $Preflight
 $script:readOnlyWarnings = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-if ($windowsUnsandboxed) { $sandbox = 'danger-full-access (windows: codex sandbox removed upstream)' }
-$sandboxArgs = if ($windowsUnsandboxed) {
+if ($builderUnsandboxed) {
+    $sandbox = if ($env:OS -eq 'Windows_NT') { 'danger-full-access (windows: codex sandbox removed upstream)' } else { 'danger-full-access (posix builder: git commits and package indexes)' }
+}
+$sandboxArgs = if ($builderUnsandboxed) {
     @('-c', 'default_permissions=":danger-full-access"')
-} elseif ($Preflight -or $ReadOnly) {
-    @(Get-CodexReadOnlySandboxArguments)
 } else {
-    @('--sandbox', $sandbox)
+    @(Get-CodexReadOnlySandboxArguments)
 }
 # Ad hoc workers often write their own report at -OutputPath; capture the final chat
 # message separately so it can never overwrite that report.
