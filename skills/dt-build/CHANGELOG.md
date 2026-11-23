@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.53.0
+
+- Release-time severity triage: findings from the final combined review and the final milestone's acceptance block only when critical (broken core flow, data loss, security, broken deploy/rollback); the rest ship unchanged as Known issues in deferred-findings.md via scripts/release-triage.ps1, counted in the acceptance ledger summary, with no fix round or gate rerun. SKILL.md back under its 4490-word cap: usage telemetry, final-ledger options and the build-run-review panels moved to references (usage-telemetry.md, acceptance-contract.md, run-artifact-lifecycle.md), rules unchanged; test-host-adapters checks the Linux hooks adoption target.
+
 ## 2.52.6
 
 - Linux parity: dt-job starts the runner with its own output files (an inherited stdout pipe deadlocked callers that capture 'dt-job start' output) and without unnamed secret-looking variables (Windows contract); a zombie PID counts as gone; the usage sweep runs on the Linux session host (Mac still skipped). Tests run on Linux: cmd/ping stand-ins, one-byte exit codes, symlinks, -WindowStyle only on Windows, 100 ms start-time tolerance.
