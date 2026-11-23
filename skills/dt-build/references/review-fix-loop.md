@@ -71,6 +71,22 @@ implementation loop limit" in `acceptance-contract.md` and the SKILL.md step 6j 
   changed paths (front end, back end, shared contract) per `00_Resources/build-process.md`, plus the
   builds, E2E groups and design-required live checks those paths need. That run writes
   `final-integration.json`.
+- **Changed relative to what.** Changed paths are `git diff --name-only <base>..<candidate>`, where
+  `<base>` is the most recent commit whose gate record is still valid:
+  - A gate record is a `final-integration.json` (this run's `<run-folder>/final-integration.json`, or one
+    left by an earlier dt-build run of the same repo in its run folder under `.dt-build/`) whose
+    gate `result` is PASS and which names the gated SHA and the exact gate command.
+  - It is still valid when (a) it passed, (b) its gate command equals the current `.ship.json`
+    `gateCommand` (or the roadmap's named gate when there is none) and the gate configuration has not
+    changed since that SHA: `git diff --quiet <record-sha>..<candidate> -- .ship.json <suite map>`, where
+    the suite map is the file or folder the gate reads to map paths to suites, and (c) its SHA is an
+    ancestor of the candidate (`git merge-base --is-ancestor <record-sha> <candidate>`).
+  - Of the valid records, take the nearest ancestor of the candidate. Only when none is valid, fall back
+    to the live release SHA (the commit production runs); never the live release when a newer valid
+    record exists. (Command Center v2.1, 2026-11-22: comparing a 3-line fix to a live release far behind
+    `main` selected every suite.)
+  - Record the base in `final-integration.json` as `gate_scope_base: {sha, record_path, reason}` with the
+    changed path list, so the next scoped gate and dt-ship can check it.
 - If it fails, label the failures, make one bundled fix, rerun the failed tests plus its targeted tests and
   fix verification, then run the full gate once more. A failing full gate is the only reason to repeat it.
 

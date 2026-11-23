@@ -127,7 +127,7 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
         & pwsh -NoProfile -File $recordScript -RunFolder $resumeFolder -RunId resume-fixture -BuildStatePath $resumeState -CoordinatorId intruder *> $null
         Assert-True ($LASTEXITCODE -ne 0) 'resume rejects a different coordinator holder'
         $candidate = Join-Path $tempRoot 'checkpoint-candidate.md'
-        Write-Utf8 $candidate "status: IN_PROGRESS`nrun_status: finished`nlast_consumed_event_seq: 0`nBoundary: source only; no deploy.`nHistory: checkpoint-history/`n"
+        Write-Utf8 $candidate "status: IN_PROGRESS`nrun_status: finished`nlast_consumed_event_seq: 0`nstatus_line: M04 is waiting for its review job to finish; next, merge M04 and start M05.`nBoundary: source only; no deploy.`nHistory: checkpoint-history/`n"
         $writer = Join-Path $scriptDir 'write-resume-checkpoint.ps1'
         $written = & pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate
         Assert-True ($LASTEXITCODE -eq 0) 'lean checkpoint rewrite succeeds for an oversized legacy checkpoint'
@@ -137,6 +137,28 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
         Write-Utf8 $candidate ($next + ('x' * 8192))
         & pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate *> $null
         Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw $resumeState) -ceq $next) 'oversized candidate fails without changing the checkpoint'
+        # status_line: required, plain English, at most 200 characters, and outside the 8 KiB count.
+        $statusCases = [ordered]@{
+            missing = "run_status: runnable`nlast_consumed_event_seq: 0`nBoundary: source only.`n"
+            placeholder = "run_status: runnable`nlast_consumed_event_seq: 0`nstatus_line: __STATUS_LINE__`n"
+            compressed = "run_status: runnable`nlast_consumed_event_seq: 0`nstatus_line: Now M09phase2j0359;nativej0360queuedRust waiting on the merge queue today`n"
+            terse = "run_status: runnable`nlast_consumed_event_seq: 0`nstatus_line: M09 running j0359`n"
+            long = "run_status: runnable`nlast_consumed_event_seq: 0`nstatus_line: $((@('M09 is building the export page') * 8) -join ' and ')`n"
+            twice = "run_status: runnable`nlast_consumed_event_seq: 0`nstatus_line: M09 is building the export page in job j-0359 now.`nstatus_line: M09 is building the export page in job j-0359 now.`n"
+        }
+        foreach ($case in $statusCases.GetEnumerator()) {
+            Write-Utf8 $candidate $case.Value
+            $refusal = (& pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate 2>&1) -join ' '
+            Assert-True ($LASTEXITCODE -ne 0 -and $refusal -match 'DT_CHECKPOINT_STATUS_LINE' -and (Get-Content -Raw $resumeState) -ceq $next) "a $($case.Key) status_line is refused without changing the checkpoint ($refusal)"
+        }
+        $plain = 'status_line: M09 is building the export page in job j-0359; the native-app patch waits for the M09 merge, about 40 minutes; next, review M09 at commit 3f9c2ab1 per design/roadmap.md.'
+        $body = "run_status: runnable`nlast_consumed_event_seq: 0`n$plain`nBoundary: source only.`n"
+        $body += 'x' * (8192 - [Text.Encoding]::UTF8.GetByteCount($body) + [Text.Encoding]::UTF8.GetByteCount("$plain`n"))
+        Write-Utf8 $candidate $body
+        & pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate *> $null
+        Assert-True ($LASTEXITCODE -eq 0 -and [Text.Encoding]::UTF8.GetByteCount((Get-Content -Raw $resumeState)) -gt 8192 -and (Get-Content -Raw $resumeState).Contains($plain)) 'a plain status_line passes and does not count toward the 8 KiB cap'
+        $template = Get-Content -Raw -LiteralPath (Join-Path $skillRoot '../dt-pipeline/templates/build-state-template.md')
+        Assert-True ($template -match '(?m)^status_line: __STATUS_LINE__$' -and $template.Contains('at most 200 characters') -and $template.Contains('build-decision-log.md')) 'the build-state template carries the required status_line field'
     }
     finally { $env:DT_BUILD_STATE_DIR = $savedBuildStateDir }
 

@@ -924,7 +924,7 @@ try {
     # ---- FS-64: checkpoint installation stays available at the hard wall.
     $installRun = New-Run -Name 'checkpoint-at-wall'
     $candidate = Join-Path $tempRoot 'wall-candidate.md'
-    Write-Utf8 $candidate "run_status: finished`nlast_consumed_event_seq: 0`nBoundary: fixtures only.`n## Next step`nContinue in a fresh coordinator."
+    Write-Utf8 $candidate "run_status: finished`nlast_consumed_event_seq: 0`nstatus_line: The coordinator hit its context wall; a fresh coordinator continues the same step.`nBoundary: fixtures only.`n## Next step`nContinue in a fresh coordinator."
     $installer = Join-Path $scriptDir 'write-resume-checkpoint.ps1'
     $installCommand = "pwsh -NoProfile -File '$installer' -RunFolder '$($installRun.folder)' -BuildStatePath '$($installRun.state)' -ContentPath '$candidate'"
     Assert-True ($null -eq (Invoke-Hook $preHook (& $mk 'sess-hook' $hookHard 'PowerShell' @{ command = $installCommand }))) 'checkpoint installer is allowed at the hard wall'

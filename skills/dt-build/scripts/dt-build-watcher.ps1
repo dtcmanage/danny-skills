@@ -2,7 +2,8 @@
 # Model-free dt-build watcher. The dt-build-watcher scheduled task runs it every 2 minutes through
 # run-hidden.vbs. For each registered run it reconciles the ledger, retries undelivered stop and approval
 # DMs, then relaunches a managed coordinator only when the run is runnable, has an event past its cursor,
-# and has no coordinator: none ever started, a managed lease is released, or its watcher-launched coordinator is provably gone. It never
+# and has no coordinator: none ever started, a managed lease is released, its watcher-launched coordinator is provably gone, or
+# any coordinator (hand-started too) released the run with a context_rotation handoff (the run is then adopted as managed). It never
 # grants approvals and never changes run_status except to awaiting_danny after repeated failed launches.
 param()
 
@@ -206,6 +207,68 @@ function Test-WatcherProductivePredecessor {
     return $false
 }
 
+function Get-WatcherTaggedProcesses {
+    # Linux only: every live process whose environment carries DT_BUILD_COORDINATOR_ID=<id>. The launcher
+    # sets that tag for the coordinator wrapper, and claude/codex under it inherit it. When a coordinator is
+    # killed on Linux its children are re-parented, so the parent-pid walk in Get-WatcherDescendantProcesses
+    # misses them; the tag does not. Job processes (DT_JOB_ID) are never part of a coordinator tree, since
+    # running jobs survive a rotation, and the watcher's own process is skipped. /proc/<pid>/environ is
+    # readable only for this user's processes, which is every process a coordinator can start.
+    param([Parameter(Mandatory)][string]$CoordinatorId)
+    if (-not $IsLinux -or -not (Test-Path -LiteralPath '/proc' -PathType Container)) { return @() }
+    $tag = "DT_BUILD_COORDINATOR_ID=$CoordinatorId"
+    $found = [System.Collections.Generic.List[object]]::new()
+    foreach ($dir in [System.IO.Directory]::GetDirectories('/proc')) {
+        $name = [System.IO.Path]::GetFileName($dir)
+        if ($name -notmatch '^\d+$' -or [int]$name -eq $PID) { continue }
+        $entries = $null
+        try { $entries = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes("$dir/environ")).Split([char]0) }
+        catch { continue }
+        if ($entries -cnotcontains $tag) { continue }
+        if (@($entries | Where-Object { $_.StartsWith('DT_JOB_ID=', [System.StringComparison]::Ordinal) }).Count -gt 0) { continue }
+        $start = Get-DtJobProcessStartUtc -ProcessId ([int]$name)
+        if ($start) { $found.Add([pscustomobject]@{ pid = [int]$name; start_utc = $start }) }
+    }
+    return @($found)
+}
+
+function Test-WatcherRotationHandoff {
+    # True when the lease holder released the run and the newest run-level request past the cursor is a
+    # context_rotation continuation from that holder (or unnamed): a handoff the watcher picks up whoever
+    # launched the coordinator that wrote it.
+    param([Parameter(Mandatory)][string]$RunFolder, $Lease, [int64]$Cursor)
+    if ($null -eq $Lease -or -not ($Lease.PSObject.Properties['released_utc'] -and $Lease.released_utc)) { return $false }
+    $last = @(Get-DtJobEvents -RunFolder $RunFolder | Where-Object { $_.job_id -eq 'run' -and $_.type -eq 'continuation_requested' } | Sort-Object { [int64]$_.seq } | Select-Object -Last 1)
+    if ($last.Count -eq 0 -or [int64]$last[0].seq -le $Cursor) { return $false }
+    if (-not $last[0].PSObject.Properties['reason'] -or [string]$last[0].reason -cne 'context_rotation') { return $false }
+    if ($last[0].PSObject.Properties['requested_by'] -and $last[0].requested_by -and [string]$last[0].requested_by -cne [string]$Lease.coordinator_id) { return $false }
+    return $true
+}
+
+# An operator note matching this keeps a run's coordinator handoffs manual: the watcher DMs instead of relaunching.
+$script:WatcherManualNotePattern = '(?i)\b(?:manual(?:ly)?\s+(?:relaunch|resume|restart|continu\w*)|relaunch\s*[:=]\s*manual|no\s+auto(?:matic)?[\s-]*relaunch)'
+
+function Test-WatcherManualRelaunchNote {
+    param([Parameter(Mandatory)][string]$RunFolder)
+    return (@(Get-DtJobOperatorNotes -RunFolder $RunFolder | Where-Object { [string]$_.text -match $script:WatcherManualNotePattern }).Count -gt 0)
+}
+
+function Set-WatcherRunManaged {
+    # Adopts a run whose hand-started coordinator rotated: its registration becomes managed, so the relaunched
+    # coordinator's read-resume-record check and every later rotation follow the managed rules.
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$Reason, [Parameter(Mandatory)][DateTime]$NowUtc)
+    Invoke-DtJobRegistryLocked -Body {
+        $runs = @(Get-DtJobRegistryRuns)
+        foreach ($run in $runs) {
+            if (-not (Test-DtPathEqual ([string]$run.run_folder) $RunFolder)) { continue }
+            $run | Add-Member -NotePropertyName managed -NotePropertyValue $true -Force
+            $run | Add-Member -NotePropertyName adopted_utc -NotePropertyValue $NowUtc.ToString('o') -Force
+            $run | Add-Member -NotePropertyName adopted_reason -NotePropertyValue $Reason -Force
+        }
+        Save-DtJobRegistryRuns -Runs $runs
+    } | Out-Null
+}
+
 function Get-WatcherDecision {
     # Pure read: what this tick should do for one run. Called once unlocked and again under the coordinator lock.
     param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)][DateTime]$NowUtc)
@@ -221,6 +284,12 @@ function Get-WatcherDecision {
     if ($trigger -le $state.last_consumed_event_seq) { return [pscustomobject]@{ action = 'none'; detail = 'no unconsumed event' } }
     $managed = [bool]$Entry.managed
     $lease = Get-DtJobLease -RunFolder $folder
+    # A context-rotation handoff is relaunched whoever started the coordinator that wrote it (CC v2.1, Nov 22:
+    # a hand-started run sat idle ~45 minutes after a rotation). The run is adopted as managed at launch.
+    # An operator note asking for manual relaunch keeps the old behaviour: Danny is told instead.
+    $adopt = $false
+    if (-not $managed -and (Test-WatcherRotationHandoff -RunFolder $folder -Lease $lease -Cursor $state.last_consumed_event_seq) -and
+        -not (Test-WatcherManualRelaunchNote -RunFolder $folder)) { $managed = $true; $adopt = $true }
     if ($null -eq $lease -or ($managed -and $lease.PSObject.Properties['released_utc'] -and $lease.released_utc)) {
         # A missing or released managed lease has no live coordinator, so normal launch rules apply.
         if (-not $managed) { return [pscustomobject]@{ action = 'none'; detail = 'no coordinator lease' } }
@@ -228,6 +297,8 @@ function Get-WatcherDecision {
         if ($null -ne $lease -and $lease.launched_by -eq 'watcher') {
             $releasedStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
             if ($lease.pid -and (Test-DtJobProcessIdentity $lease.pid $releasedStart)) { return [pscustomobject]@{ action = 'none'; detail = 'released coordinator process still alive' } }
+            # On Linux a survivor re-parented away from the wrapper still carries the coordinator's tag.
+            if (@(Get-WatcherTaggedProcesses -CoordinatorId ([string]$lease.coordinator_id)).Count -gt 0) { return [pscustomobject]@{ action = 'none'; detail = 'released coordinator still has live processes' } }
         }
     }
     elseif ($lease.launched_by -eq 'interactive') {
@@ -241,7 +312,11 @@ function Get-WatcherDecision {
     else {
         if (-not $managed) { return [pscustomobject]@{ action = 'none'; detail = 'run is not managed' } }
         $pidStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
-        if (Test-DtJobProcessIdentity $lease.pid $pidStart) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator process alive' } }
+        $starting = (Test-DtJobLeaseStarting $lease $NowUtc)
+        if (Test-DtJobProcessIdentity $lease.pid $pidStart) { return [pscustomobject]@{ action = 'none'; detail = $(if ($starting) { 'coordinator starting' } else { 'coordinator process alive' }) } }
+        # The launcher holds the lease before it records the child's pid: still booting, not missing.
+        if (-not $lease.pid -and $starting) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator starting' } }
+        if (@(Get-WatcherTaggedProcesses -CoordinatorId ([string]$lease.coordinator_id)).Count -gt 0) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator processes still alive' } }
         # A provably dead watcher-launched coordinator is not waited out to its lease expiry.
         if (-not (Test-DtJobLeaseHolderGone $lease) -and -not (Test-DtJobLeaseExpired $lease $NowUtc)) { return [pscustomobject]@{ action = 'none'; detail = 'coordinator lease live' } }
     }
@@ -317,7 +392,7 @@ function Get-WatcherDecision {
     if ($thrash -ge $script:WatcherRunLaunchCap) {
         return [pscustomobject]@{ action = 'stop'; stop_kind = 'cap'; trigger_seq = $trigger; detail = "thrash: $thrash launches without a ledger-proven productive predecessor in the last $($script:WatcherRunLaunchWindowMin) minutes" }
     }
-    return [pscustomobject]@{ action = 'launch'; trigger_seq = $trigger; attempt = $attempts.Count + 1; detail = "trigger $trigger" }
+    return [pscustomobject]@{ action = 'launch'; trigger_seq = $trigger; attempt = $attempts.Count + 1; adopt = $adopt; detail = $(if ($adopt) { "trigger $trigger; context rotation of a hand-started coordinator" } else { "trigger $trigger" }) }
 }
 
 function Get-WatcherTriggerSeq {
@@ -425,6 +500,8 @@ function Invoke-WatcherLaunch {
         }
         $chosen = $other
     }
+    $adopted = ($Decision.PSObject.Properties['adopt'] -and [bool]$Decision.adopt)
+    if ($adopted) { Set-WatcherRunManaged -RunFolder $folder -Reason "context_rotation of a hand-started coordinator (trigger $($Decision.trigger_seq))" -NowUtc $NowUtc }
     $coordinatorId = 'mc-{0}-{1}' -f $NowUtc.ToString('yyyyMMddHHmmss'), ([guid]::NewGuid().ToString('N').Substring(0, 6))
     $launcherExit = $null
     $checkpointFingerprint = Get-WatcherCheckpointFingerprint -BuildStatePath ([string]$Entry.build_state_path)
@@ -440,8 +517,8 @@ function Invoke-WatcherLaunch {
     $lease = Get-DtJobLease -RunFolder $folder
     $launchedPid = if ($null -ne $lease -and $lease.coordinator_id -eq $coordinatorId) { $lease.pid } else { $null }
     # Every attempt counts toward the retry schedule, including one whose launcher failed.
-    Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'launch'; trigger_seq = $Decision.trigger_seq; host = $chosen; attempt = $Decision.attempt; launched_utc = $NowUtc.ToString('o'); pid = $launchedPid; coordinator_id = $coordinatorId; launcher_exit = $launcherExit; checkpoint_sha256 = $checkpointFingerprint })
-    return "launched $chosen attempt $($Decision.attempt) as $coordinatorId"
+    Add-WatcherLaunch -RunFolder $folder -Record ([ordered]@{ type = 'launch'; trigger_seq = $Decision.trigger_seq; host = $chosen; attempt = $Decision.attempt; launched_utc = $NowUtc.ToString('o'); pid = $launchedPid; coordinator_id = $coordinatorId; launcher_exit = $launcherExit; checkpoint_sha256 = $checkpointFingerprint; adopted = $adopted })
+    return "launched $chosen attempt $($Decision.attempt) as $coordinatorId$(if ($adopted) { ' (adopted a hand-started run after its context rotation)' })"
 }
 
 function Invoke-WatcherStop {
@@ -619,6 +696,11 @@ function Invoke-WatcherContextRotation {
     $descendants = @()
     try { $descendants = @(Get-WatcherDescendantProcesses -ProcessId ([int]$lease.pid)) }
     catch { $snapshotError = [string]$_.Exception.Message }
+    try {
+        $knownBefore = @($descendants | ForEach-Object { [int]$_.pid })
+        $descendants = @($descendants) + @(Get-WatcherTaggedProcesses -CoordinatorId $coordinatorId | Where-Object { $knownBefore -notcontains [int]$_.pid -and [int]$_.pid -ne [int]$lease.pid })
+    }
+    catch { }
     $killError = $null
     try { Stop-WatcherProcessTree -ProcessId ([int]$lease.pid) }
     catch { $killError = [string]$_.Exception.Message }
@@ -628,8 +710,10 @@ function Invoke-WatcherContextRotation {
     try {
         $after = @(Get-WatcherDescendantProcesses -ProcessId ([int]$lease.pid) -StartUtc $pidStart)
         foreach ($descendant in $descendants) { $after += @(Get-WatcherDescendantProcesses -ProcessId ([int]$descendant.pid) -StartUtc $descendant.start_utc) }
+        # Linux re-parents a killed coordinator's children, so neither walk reaches them; their inherited tag does.
+        $after += @(Get-WatcherTaggedProcesses -CoordinatorId $coordinatorId)
         $known = @($descendants | ForEach-Object { [int]$_.pid })
-        $descendants = @($descendants) + @($after | Where-Object { $known -notcontains [int]$_.pid } | Group-Object -Property pid | ForEach-Object { $_.Group[0] })
+        $descendants = @($descendants) + @($after | Where-Object { $known -notcontains [int]$_.pid -and [int]$_.pid -ne [int]$lease.pid } | Group-Object -Property pid | ForEach-Object { $_.Group[0] })
     }
     catch { $afterError = [string]$_.Exception.Message }
     # The lease is released only once the old coordinator and every descendant are provably gone;
@@ -695,6 +779,15 @@ function Invoke-WatcherKillFailedEpisode {
             catch { $retryErrors.Add([string]$_.Exception.Message) }
         }
         $live = @($live | Where-Object { Test-DtJobProcessIdentity $_.pid $_.start_utc })
+        if ($live.Count -eq 0) {
+            # A tagged process the episode did not list (re-parented on Linux) still holds the run.
+            $tagged = @(Get-WatcherTaggedProcesses -CoordinatorId $coordinatorId)
+            if ($tagged.Count -gt 0) {
+                $episode.survivors = @($tagged | ForEach-Object { [pscustomobject][ordered]@{ pid = [int]$_.pid; start_utc = $_.start_utc } })
+                Write-DtJobAtomic -Path $path -Content ($episode | ConvertTo-Json -Depth 4)
+                $live = @($episode.survivors)
+            }
+        }
         if ($live.Count -eq 0) {
             Complete-WatcherRotation -Entry $Entry -CoordinatorId $coordinatorId -NowUtc $NowUtc -KillFailedPath $path
             return "rotation kill confirmed: $coordinatorId survivors gone; run handed on"
@@ -780,6 +873,24 @@ function Send-WatcherStaleIrreversibleAlerts {
     return @($results)
 }
 
+function Send-WatcherBootOverdueAlert {
+    # One DM when a watcher-launched coordinator is still alive but has not marked bootstrap after its
+    # starting window. Inside the window a booting coordinator is not reported as missing or stuck.
+    param([Parameter(Mandatory)]$Entry, [Parameter(Mandatory)][DateTime]$NowUtc)
+    $folder = [string]$Entry.run_folder
+    $lease = Get-DtJobLease -RunFolder $folder
+    if ($null -eq $lease -or $lease.launched_by -ne 'watcher' -or ($lease.PSObject.Properties['released_utc'] -and $lease.released_utc)) { return $null }
+    if (-not $lease.PSObject.Properties['state'] -or $lease.state -ne 'starting' -or -not $lease.PSObject.Properties['starting_until_utc'] -or -not $lease.starting_until_utc) { return $null }
+    if ((Test-DtJobLeaseStarting $lease $NowUtc) -or -not $lease.pid) { return $null }
+    $pidStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
+    if (-not (Test-DtJobProcessIdentity $lease.pid $pidStart)) { return $null }
+    $runId = [string]$Entry.run_id
+    $coordinatorId = [string]$lease.coordinator_id
+    $log = Join-Path $folder "coordinator-$coordinatorId.log"
+    $text = "dt-build run $runId has a coordinator, $coordinatorId, still running as process $($lease.pid) but has not finished starting (no bootstrap mark) $($script:DtJobLeaseStartingSec / 60) minutes after launch. Its log is $log. The watcher does not start a second coordinator beside it."
+    return (Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:boot-overdue:$coordinatorId" -Message $text)
+}
+
 function Invoke-WatcherRun {
     param([Parameter(Mandatory)]$Entry)
     $folder = [string]$Entry.run_folder
@@ -798,7 +909,11 @@ function Invoke-WatcherRun {
             $source = if (Test-Path -LiteralPath $killFailed) { " reading kill-failed.json ($killFailed)" } else { '' }
             $stepErrors.Add("context rotation failed${source}: $([string]$_.Exception.Message)")
         }
+        $bootAlert = $null
+        try { $bootAlert = Send-WatcherBootOverdueAlert -Entry $Entry -NowUtc (Get-WatcherNow) }
+        catch { $stepErrors.Add("boot check failed: $([string]$_.Exception.Message)") }
         $result = Invoke-WatcherRunTick -Entry $Entry
+        if ($null -ne $bootAlert) { $result | Add-Member -NotePropertyName boot_overdue -NotePropertyValue $bootAlert -Force }
         if ($null -ne $rotation) { $result | Add-Member -NotePropertyName rotation -NotePropertyValue $rotation -Force }
         if ($stale.Count -gt 0) { $result | Add-Member -NotePropertyName stale_irreversible -NotePropertyValue $stale -Force }
         if ($stepErrors.Count -gt 0) { $result | Add-Member -NotePropertyName step_errors -NotePropertyValue @($stepErrors) -Force }

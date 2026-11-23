@@ -504,6 +504,12 @@ switch ($Action) {
         $stopLine = [regex]::Match($checkpointText, '(?m)^(\s*(?:-\s*)?)STOP=.*$')
         if (-not $stopLine.Success) { throw 'AUTHORITY_ROLLOVER_NO_STOP: the checkpoint has no STOP= line to repoint' }
         $candidate = $checkpointText.Substring(0, $stopLine.Index) + $stopLine.Groups[1].Value + 'STOP=' + $RolloverDirectory.Replace('\', '/') + $checkpointText.Substring($stopLine.Index + $stopLine.Length)
+        # The checkpoint writer requires a status_line; a checkpoint written before it existed gets a plain one here.
+        if ($candidate -notmatch '(?m)^status_line:') {
+            $statusLine = 'status_line: Authority was rolled forward into one current record; the next step in this checkpoint is unchanged.'
+            $cursorLine = [regex]::Match($candidate, '(?m)^last_consumed_event_seq:[^\r\n]*\r?\n')
+            $candidate = if ($cursorLine.Success) { $candidate.Insert($cursorLine.Index + $cursorLine.Length, "$statusLine`n") } else { "$statusLine`n$candidate" }
+        }
         $candidatePath = Join-Path $RolloverDirectory 'checkpoint-candidate.md'
         Write-Utf8 $candidatePath $candidate
         # What the action-time read set becomes, and any pre-rollover original the checkpoint still requires.

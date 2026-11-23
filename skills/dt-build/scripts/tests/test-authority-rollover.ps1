@@ -45,7 +45,8 @@ function ConvertTo-PlainChildText([object[]]$Raw) {
 }
 function Invoke-Roll([string]$Action, [string[]]$Extra = @()) {
     $raw = & pwsh -NoProfile -File $roll -Action $Action -RunFolder $run -BuildStatePath $checkpoint @Extra 2>&1
-    return [pscustomobject]@{ code = $LASTEXITCODE; text = (ConvertTo-PlainChildText $raw) }
+    $text = ConvertTo-PlainChildText $raw
+    return [pscustomobject]@{ code = $LASTEXITCODE; text = $text; flat = $text }
 }
 function Read-Ledger([string]$Dir) { Get-Content -Raw -LiteralPath (Join-Path $Dir 'clauses-ledger.json') | ConvertFrom-Json -Depth 64 }
 function Save-Ledger([string]$Dir, $Ledger) { Write-Text (Join-Path $Dir 'clauses-ledger.json') ($Ledger | ConvertTo-Json -Depth 32) }
@@ -239,7 +240,7 @@ try {
     $plainCheckpoint = Get-Content -Raw $checkpoint
     Write-Text $checkpoint ($plainCheckpoint + "- Before bootstrap read STOP/{next-scope.md,next-approval.md} IN FULL.`n")
     $pointers = Invoke-Roll 'install' @('-RolloverDirectory', $dir, '-CandidateOnly')
-    Assert-True ($pointers.code -ne 0 -and $pointers.text -match 'AUTHORITY_ROLLOVER_CHECKPOINT_POINTERS: checkpoint line\(s\) 8 name stop-folder files' -and $pointers.text -match 'next-scope.md') "install names the checkpoint lines that point at stop-folder files a rollover lacks ($($pointers.text))"
+    Assert-True ($pointers.code -ne 0 -and $pointers.flat -match 'AUTHORITY_ROLLOVER_CHECKPOINT_POINTERS: checkpoint line\(s\) 8 name stop-folder files' -and $pointers.flat -match 'next-scope.md') "install names the checkpoint lines that point at stop-folder files a rollover lacks ($($pointers.text))"
     Write-Text $checkpoint $plainCheckpoint
     $candidate = Invoke-Roll 'install' @('-RolloverDirectory', $dir, '-CandidateOnly')
     Assert-True ($candidate.code -eq 0) "install -CandidateOnly succeeds ($($candidate.text))"

@@ -226,6 +226,9 @@ try {
     }
     # Defense against an inherited watcher environment or legacy job spec.
     $psi.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
+    # A job never carries its coordinator's identity tag, so a rotation kill never reaches it.
+    $psi.Environment.Remove('DT_BUILD_COORDINATOR_ID') | Out-Null
+    $psi.Environment.Remove('DT_BUILD_COORDINATOR_LOCK_HELD') | Out-Null
     $psi.Environment['DT_JOB_ID'] = $JobId
     $psi.Environment['DT_JOB_DIR'] = $jobDir
     if ($spec.command) {

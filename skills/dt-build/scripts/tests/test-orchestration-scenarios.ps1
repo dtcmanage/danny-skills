@@ -392,6 +392,11 @@ After both attempts call pwsh -NoProfile -File $(Quote $jobScript) status -RunFo
     }
 }
 
+# The adoption procedure names the live settings file (Windows path historically, the CT202 path since the
+# Linux move). Every test copy of its commands must point at a fixture file instead; a command that still
+# names any live path, or that the redirect did not change, is refused before it runs (2026-11-23: the
+# CT202 path slipped past a Windows-only replace and the commands ran against the live file).
+$script:LiveSettingsPaths = @('D:\Claude\settings.json', '/home/danny/Claude/settings.json')
 try {
     Scenario 11 'Documented adoption settings install and rollback' {
         $doc = Get-Content -Raw (Join-Path $repoRoot 'skills/dt-build/references/adoption-procedure.md')

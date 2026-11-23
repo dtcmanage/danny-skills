@@ -19,6 +19,12 @@ run_status: __RUN_STATUS__
 last_consumed_event_seq: __LAST_CONSUMED_EVENT_SEQ__
 <!-- run_status: runnable | awaiting_danny | finished. last_consumed_event_seq: integer, 0 when none.
      dt-job owns both lines and rewrites only them (atomic full-file rewrite). -->
+status_line: __STATUS_LINE__
+<!-- Required. One plain-English sentence, at most 200 characters, normal spacing: the current milestone,
+     what is running, what is waiting and on what (and when it can start), and the next step. Example:
+     "M09 is building the export page in job j-0359; the native-app patch waits for M09's merge, about 40 minutes; next, review M09."
+     No glued or abbreviated tokens ("M09phase2j0359;nativej0360queuedRust" is refused by write-resume-checkpoint.ps1).
+     It does not count toward the 8 KiB checkpoint cap. History goes to the run folder's build-decision-log.md, never here. -->
 
 ## Artifacts
 plan_path: __PLAN_PATH__

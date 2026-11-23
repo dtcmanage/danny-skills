@@ -103,7 +103,10 @@ if ($env:DT_TEST_LAUNCH_FAIL) {
     & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action release -CoordinatorId $CoordinatorId -Json *> $null
     exit 1
 }
-$child = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' @HiddenWindow -PassThru
+# Like the default launcher off Windows, detach the child's streams: an inherited stdout pipe would hold
+# the watcher's captured launcher call open for the child's whole life.
+$Detach = if ($IsWindows) { @{} } else { @{ RedirectStandardOutput = '/dev/null'; RedirectStandardError = (Join-Path $RunFolder "fake-child-$CoordinatorId.stderr") } }
+$child = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' @HiddenWindow @Detach -PassThru
 & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action renew -CoordinatorId $CoordinatorId -Pid $child.Id -Json *> $null
 # The fake coordinator never consumes its trigger; unless told to stay up, it crashes right after launch.
 if (-not $env:DT_TEST_LIVE_CHILD) { Stop-Process -Id $child.Id -Force; $child.WaitForExit() }
@@ -145,7 +148,11 @@ function Invoke-DtJob {
 function Invoke-DtJobExpectFail {
     param([string[]]$Arguments)
     $raw = & pwsh -NoProfile -File $dtJob @Arguments -Json 2>&1
-    return [pscustomobject]@{ exit = $LASTEXITCODE; text = (($raw | ForEach-Object { [string]$_ }) -join "`n") }
+    $text = ($raw | ForEach-Object { [string]$_ }) -join "`n"
+    # pwsh's error view wraps the message at the console width (80 columns off a terminal on Linux) and
+    # prefixes each continuation with "| "; flatten it so a phrase split across lines still matches.
+    $flat = (($text -replace '\x1b\[[0-9;]*m', '') -replace '\s*\n\s*(?:\|\s*)?', ' ')
+    return [pscustomobject]@{ exit = $LASTEXITCODE; text = $flat; raw = $text }
 }
 
 function New-BuildState {
@@ -161,7 +168,7 @@ function Write-Lease {
 }
 
 function New-Run {
-    param([string]$Name, [string]$PinnedHost = 'claude', [switch]$Unmanaged, [string]$LaunchedBy = 'watcher', [int]$Cursor = 0, [switch]$NoLease)
+    param([string]$Name, [string]$PinnedHost = 'claude', [switch]$Unmanaged, [string]$LaunchedBy = 'watcher', [int]$Cursor = 0, [switch]$NoLease, [Nullable[DateTime]]$ExpiresUtc = $null)
     $rf = Join-Path $tempRoot "runs/$Name"
     New-Item -ItemType Directory -Path $rf -Force | Out-Null
     $bs = Join-Path $tempRoot "planning/$Name/_build-state.md"
@@ -169,7 +176,9 @@ function New-Run {
     $registerArgs = @('register-run', '-RunFolder', $rf, '-BuildStatePath', $bs, '-RunId', $Name, '-PinnedHost', $PinnedHost)
     if (-not $Unmanaged) { $registerArgs += '-Managed' }
     Invoke-DtJob $registerArgs | Out-Null
-    if (-not $NoLease) { Write-Lease -RunFolder $rf -LaunchedBy $LaunchedBy }
+    if (-not $NoLease) {
+        if ($null -ne $ExpiresUtc) { Write-Lease -RunFolder $rf -LaunchedBy $LaunchedBy -ExpiresUtc $ExpiresUtc } else { Write-Lease -RunFolder $rf -LaunchedBy $LaunchedBy }
+    }
     return [pscustomobject]@{ run_id = $Name; folder = $rf; state = $bs }
 }
 
@@ -278,13 +287,16 @@ function Start-RotationFixture {
     $run = New-Run -Name $Name -PinnedHost 'codex' -NoLease
     $grandFile = Join-Path $tempRoot "$Name.grand"
     $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','120','127.0.0.1'$HiddenWindowText -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 120"
-    $child = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript @HiddenWindow -PassThru
+    $coordinatorId = "mc-$Name"
+    # Like the real launcher, the coordinator tree carries its tag in the environment (Linux finds re-parented survivors by it).
+    $env:DT_BUILD_COORDINATOR_ID = $coordinatorId
+    try { $child = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript @HiddenWindow -PassThru }
+    finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while (-not (Test-Path -LiteralPath $grandFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
     $grand = [int](Get-Content -Raw -LiteralPath $grandFile)
     $script:spawned += @($child.Id, $grand)
     $childStart = (Get-Process -Id $child.Id).StartTime.ToUniversalTime().ToString('o')
-    $coordinatorId = "mc-$Name"
     $lease = [ordered]@{ coordinator_id = $coordinatorId; host = 'codex'; session_id = $null; pid = $child.Id; pid_start_utc = $childStart; launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(9).ToString('o'); released_utc = $null }
     Write-Utf8 -Path (Join-Path $run.folder 'coordinator.lease') -Content ($lease | ConvertTo-Json)
     $rollout = Join-Path $tempRoot "$Name-rollout.jsonl"
@@ -555,6 +567,119 @@ try {
         Assert-True ((Get-LaunchCount 'released-alive') -eq 1) 'once that process is gone the next tick relaunches'
     }
     finally { if (-not $tail.HasExited) { $tail.Kill() } }
+
+    # ---- a hand-started (unmanaged) coordinator's context rotation is relaunched and the run adopted as managed.
+    Use-Scenario 'interactive-rotation'
+    $ir = New-Run -Name 'interactive-rotation' -Unmanaged -LaunchedBy interactive -ExpiresUtc ([DateTime]::UtcNow.AddMinutes(9))
+    Invoke-DtJob @('request-continuation','-RunFolder',$ir.folder,'-CoordinatorId','old-coordinator','-Reason','context_rotation') | Out-Null
+    Invoke-DtJob @('lease','-RunFolder',$ir.folder,'-Action','release','-CoordinatorId','old-coordinator') | Out-Null
+    $irTick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'interactive-rotation' })[0]
+    $irEntry = @(Get-Content -Raw -LiteralPath (Join-Path $env:DT_BUILD_STATE_DIR 'active-runs.json') | ConvertFrom-Json).runs | Where-Object { $_.run_id -eq 'interactive-rotation' }
+    $irLaunch = @(Get-LaunchRecords $ir.folder | Where-Object { $_.type -eq 'launch' })
+    Assert-True ((Get-LaunchCount 'interactive-rotation') -eq 1 -and (Get-DmCount 'interactive-rotation') -eq 0 -and $irTick.action -eq 'launch' -and [string]$irTick.detail -match 'adopted') "an interactive coordinator's context rotation is relaunched by the watcher, with no DM ($($irTick | ConvertTo-Json -Compress -Depth 4))"
+    Assert-True ([bool]$irEntry.managed -and $irEntry.adopted_utc -and [string]$irEntry.adopted_reason -match 'context_rotation' -and $irLaunch.Count -eq 1 -and [bool]$irLaunch[0].adopted) 'the adopted run is re-registered as managed and the launch row says adopted'
+    # A plain (non-rotation) continuation from a released hand-started lease keeps the old rule: one DM, no launch.
+    Use-Scenario 'interactive-plain-release'
+    $ip = New-Run -Name 'interactive-plain' -Unmanaged -LaunchedBy interactive -ExpiresUtc ([DateTime]::UtcNow.AddMinutes(9))
+    Invoke-DtJob @('request-continuation','-RunFolder',$ip.folder,'-CoordinatorId','old-coordinator') | Out-Null
+    Invoke-DtJob @('lease','-RunFolder',$ip.folder,'-Action','release','-CoordinatorId','old-coordinator') | Out-Null
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-LaunchCount 'interactive-plain') -eq 0 -and (Get-DmCount 'interactive-plain') -eq 1) 'a released hand-started lease without a context_rotation handoff is not relaunched'
+    # A rotation by another coordinator than the lease holder is not a handoff.
+    Use-Scenario 'interactive-other-holder'
+    $io = New-Run -Name 'interactive-other' -Unmanaged -LaunchedBy interactive -ExpiresUtc ([DateTime]::UtcNow.AddMinutes(9))
+    Invoke-DtJob @('request-continuation','-RunFolder',$io.folder,'-CoordinatorId','somebody-else','-Reason','context_rotation') | Out-Null
+    Invoke-DtJob @('lease','-RunFolder',$io.folder,'-Action','release','-CoordinatorId','old-coordinator') | Out-Null
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-LaunchCount 'interactive-other') -eq 0) 'a context_rotation requested by a coordinator that is not the lease holder does not adopt the run'
+    # An operator note asking for manual relaunch keeps the rotation manual: one DM, no launch.
+    Use-Scenario 'interactive-manual'
+    $im = New-Run -Name 'interactive-manual' -Unmanaged -LaunchedBy interactive -ExpiresUtc ([DateTime]::UtcNow.AddMinutes(9))
+    Invoke-DtJob @('note','-RunFolder',$im.folder,'-Message','Manual relaunch only: I will reopen this run myself.') | Out-Null
+    Invoke-DtJob @('request-continuation','-RunFolder',$im.folder,'-CoordinatorId','old-coordinator','-Reason','context_rotation') | Out-Null
+    Invoke-DtJob @('lease','-RunFolder',$im.folder,'-Action','release','-CoordinatorId','old-coordinator') | Out-Null
+    Invoke-Tick | Out-Null
+    $imEntry = @(Get-Content -Raw -LiteralPath (Join-Path $env:DT_BUILD_STATE_DIR 'active-runs.json') | ConvertFrom-Json).runs | Where-Object { $_.run_id -eq 'interactive-manual' }
+    Assert-True ((Get-LaunchCount 'interactive-manual') -eq 0 -and (Get-DmCount 'interactive-manual') -eq 1 -and -not [bool]$imEntry.managed) 'an operator note saying manual relaunch keeps a hand-started rotation manual'
+    # A paused run is never relaunched, rotation or not.
+    Use-Scenario 'interactive-paused'
+    $ipz = New-Run -Name 'interactive-paused' -Unmanaged -LaunchedBy interactive -ExpiresUtc ([DateTime]::UtcNow.AddMinutes(9))
+    Invoke-DtJob @('request-continuation','-RunFolder',$ipz.folder,'-CoordinatorId','old-coordinator','-Reason','context_rotation') | Out-Null
+    Invoke-DtJob @('lease','-RunFolder',$ipz.folder,'-Action','release','-CoordinatorId','old-coordinator') | Out-Null
+    (Get-Content -Raw -LiteralPath $ipz.state).Replace('run_status: runnable', 'run_status: awaiting_danny') | Set-Content -LiteralPath $ipz.state -NoNewline
+    Invoke-Tick | Out-Null
+    Assert-True ((Get-LaunchCount 'interactive-paused') -eq 0) 'a paused hand-started run is not relaunched after its rotation'
+
+    # ---- the 'starting' lease state: a launch holds the run while it boots; bootstrap ends it; overdue boots DM once.
+    Use-Scenario 'starting'
+    $st = New-Run -Name 'starting' -NoLease
+    $stLease = Invoke-DtJob @('lease','-RunFolder',$st.folder,'-Action','acquire','-CoordinatorId','mc-starting','-Host','codex','-LaunchedBy','watcher')
+    $stUntil = ConvertTo-TestUtc $stLease.starting_until_utc
+    Assert-True ($stLease.state -eq 'starting' -and $stUntil -gt [DateTime]::UtcNow.AddMinutes(14) -and $stUntil -lt [DateTime]::UtcNow.AddMinutes(16)) "a watcher launch acquires the lease in state starting for 15 minutes ($($stLease | ConvertTo-Json -Compress))"
+    $iaFolder = Join-Path $tempRoot 'runs/starting-interactive'
+    New-Item -ItemType Directory -Path $iaFolder -Force | Out-Null
+    $iaLease = Invoke-DtJob @('lease','-RunFolder',$iaFolder,'-Action','acquire','-CoordinatorId','danny-session','-LaunchedBy','interactive')
+    Assert-True ($iaLease.state -eq 'running' -and $null -eq $iaLease.starting_until_utc) 'an interactive acquire is running at once'
+    Invoke-DtJob @('request-continuation','-RunFolder',$st.folder,'-Reason','managed_start') | Out-Null
+    $stTick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'starting' })[0]
+    Assert-True ($stTick.action -eq 'none' -and $stTick.detail -eq 'coordinator starting' -and (Get-LaunchCount 'starting') -eq 0) "a booting coordinator with no pid yet is reported starting, not missing ($($stTick | ConvertTo-Json -Compress))"
+    $stStatus = Invoke-DtJob @('status','-RunFolder',$st.folder)
+    Assert-True ($stStatus.coordinator.state -eq 'starting' -and $stStatus.coordinator.coordinator_id -eq 'mc-starting') "dt-job status shows the coordinator as starting ($($stStatus.coordinator | ConvertTo-Json -Compress))"
+    $stRollout = Join-Path $tempRoot 'starting-rollout.jsonl'
+    New-CodexRollout -Path $stRollout -Inputs @(30000)
+    Invoke-DtJob @('mark-bootstrap','-RunFolder',$st.folder,'-CoordinatorId','mc-starting','-Host','codex','-TranscriptPath',$stRollout) | Out-Null
+    $stAfter = Get-Content -Raw -LiteralPath (Join-Path $st.folder 'coordinator.lease') | ConvertFrom-Json
+    Assert-True ($stAfter.state -eq 'running' -and $stAfter.booted_utc) 'mark-bootstrap ends the starting state'
+    # Past the window with the process still alive: one boot-overdue DM across ticks, and no second coordinator.
+    Use-Scenario 'boot-overdue'
+    $bo = New-Run -Name 'boot-overdue' -NoLease
+    $boProc = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' @HiddenWindow -PassThru
+    $script:spawned += @($boProc.Id)
+    $boStart = (Get-Process -Id $boProc.Id).StartTime.ToUniversalTime().ToString('o')
+    $boLease = [ordered]@{ coordinator_id = 'mc-slow'; host = 'claude'; session_id = $null; pid = $boProc.Id; pid_start_utc = $boStart; launched_by = 'watcher'; state = 'starting'; starting_until_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-16).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(5).ToString('o'); released_utc = $null }
+    Write-Utf8 -Path (Join-Path $bo.folder 'coordinator.lease') -Content ($boLease | ConvertTo-Json)
+    Invoke-DtJob @('request-continuation','-RunFolder',$bo.folder) | Out-Null
+    $boTicks = @(foreach ($n in 1..2) { @(Invoke-Tick | Where-Object { $_.run_id -eq 'boot-overdue' })[0] })
+    $boDms = @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { [string]($_ | ConvertFrom-Json).content } | Where-Object { $_.Contains('mc-slow') })
+    Assert-True ($boDms.Count -eq 1 -and $boDms[0].Contains('has not finished starting') -and (Get-LaunchCount 'boot-overdue') -eq 0 -and $boTicks[0].boot_overdue -eq 'sent') "an overdue boot sends one DM and starts no second coordinator ($($boTicks | ConvertTo-Json -Compress -Depth 4))"
+    $boStatus = Invoke-DtJob @('status','-RunFolder',$bo.folder)
+    Assert-True ($boStatus.coordinator.state -eq 'boot_overdue') 'dt-job status shows boot_overdue past the window'
+    Stop-Process -Id $boProc.Id -Force -ErrorAction SilentlyContinue
+
+    # ---- the coordinator tag: Linux finds tagged processes by environment and never counts a job's process.
+    if ($IsLinux) {
+        $tagScript = Join-Path $tempRoot 'tag-probe.ps1'
+        Write-Utf8 -Path $tagScript -Content @'
+param([string]$Watcher, [string]$Id)
+. $Watcher
+@(Get-WatcherTaggedProcesses -CoordinatorId $Id | ForEach-Object { $_.pid }) -join ','
+'@
+        $env:DT_BUILD_COORDINATOR_ID = 'mc-tagged'
+        try {
+            $taggedProc = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '30', '127.0.0.1' -PassThru
+            $env:DT_JOB_ID = 'j-tagged-job'
+            $jobProc = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '30', '127.0.0.1' -PassThru
+        }
+        finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue }
+        $script:spawned += @($taggedProc.Id, $jobProc.Id)
+        Start-Sleep -Milliseconds 300
+        $found = @(([string](& pwsh -NoProfile -File $tagScript -Watcher $watcher -Id 'mc-tagged')) -split ',' | Where-Object { $_ } | ForEach-Object { [int]$_ })
+        Assert-True ($found -contains $taggedProc.Id -and $found -notcontains $jobProc.Id) "the tag scan finds the tagged coordinator process and skips a job process ($($found -join ','))"
+        $none = [string](& pwsh -NoProfile -File $tagScript -Watcher $watcher -Id 'mc-tagged-other')
+        Assert-True (-not $none.Trim()) 'the tag scan matches the whole id, not a prefix'
+        Stop-Process -Id $taggedProc.Id, $jobProc.Id -Force -ErrorAction SilentlyContinue
+        # A job started by a tagged coordinator does not inherit the tag.
+        Use-Scenario 'job-untagged'
+        $ju = New-Run -Name 'job-untagged' -NoLease
+        $juOut = Join-Path $tempRoot 'job-untagged-env.txt'
+        $env:DT_BUILD_COORDINATOR_ID = 'mc-job-parent'
+        try { $juJob = Invoke-DtJob @('start','-RunFolder',$ju.folder,'-Command',"[IO.File]::WriteAllText('$juOut', [string]`$env:DT_BUILD_COORDINATOR_ID + '|' + [string]`$env:DT_JOB_ID)") }
+        finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
+        $juDeadline = [DateTime]::UtcNow.AddSeconds(30)
+        while (-not (Test-Path -LiteralPath $juOut) -and [DateTime]::UtcNow -lt $juDeadline) { Start-Sleep -Milliseconds 200 }
+        $juText = if (Test-Path -LiteralPath $juOut) { [IO.File]::ReadAllText($juOut) } else { '<missing>' }
+        Assert-True ($juText -ceq "|$($juJob.job_id)") "a job started by a tagged coordinator carries no coordinator tag ($juText)"
+    }
 
     # Non-terminal job events after consume cannot launch or notify; terminal completion can.
     foreach ($unmanaged in @($false,$true)) {
@@ -1023,9 +1148,18 @@ try {
     $ciEvents = Join-Path $ci.folder 'jobs/events.jsonl'
     $countRotations = { if (Test-Path -LiteralPath $ciEvents) { @(Get-Content -LiteralPath $ciEvents | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.type -eq 'continuation_requested' -and $_.reason -eq 'context_rotation' }).Count } else { 0 } }
     $complete = ". '$watcher'; try { Complete-WatcherRotation -Entry (Get-DtJobRegistryEntry -RunFolder '$($ci.folder)') -CoordinatorId 'old-coordinator' -NowUtc ([DateTime]::UtcNow) -KillFailedPath '$ciPath'; 'ok' } catch { 'threw' }"
-    $held = [System.IO.File]::Open($ciPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
-    try { $blocked = @(& pwsh -NoProfile -Command $complete)[-1] }
-    finally { $held.Dispose() }
+    # Windows: an open handle without delete sharing blocks the removal. Linux unlinks open files, so a
+    # read-only run folder blocks it instead (the run lock lives under jobs/locks, which stays writable).
+    if ($IsWindows) {
+        $held = [System.IO.File]::Open($ciPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+        try { $blocked = @(& pwsh -NoProfile -Command $complete)[-1] }
+        finally { $held.Dispose() }
+    }
+    else {
+        & chmod a-w $ci.folder
+        try { $blocked = @(& pwsh -NoProfile -Command $complete)[-1] }
+        finally { & chmod u+w $ci.folder }
+    }
     $ciLease = Get-Content -Raw -LiteralPath (Join-Path $ci.folder 'coordinator.lease') | ConvertFrom-Json
     Assert-True ($blocked -eq 'threw' -and (& $countRotations) -eq 0 -and (Test-Path -LiteralPath $ciPath) -and -not $ciLease.released_utc) "a kill-failed.json that cannot be removed leaves the lease held and appends nothing ($blocked)"
     $done = @(foreach ($n in 1..2) { @(& pwsh -NoProfile -Command $complete)[-1] })
@@ -1154,7 +1288,10 @@ Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
     $inJob = Invoke-DtJob @('start', '-RunFolder', $run.folder, '-Command', "`$o = (& pwsh -NoProfile -File '$dtJob' approve -RunFolder '$($run.folder)' -Operation merge 2>&1 | ForEach-Object { [string]`$_ }) -join ' '; `$r = (& pwsh -NoProfile -File '$dtJob' resume -RunFolder '$($run.folder)' 2>&1 | ForEach-Object { [string]`$_ }) -join ' '; 'approve=' + `$o + ' resume=' + `$r")
     Invoke-DtJob @('wait', '-RunFolder', $run.folder, '-JobId', $inJob.job_id, '-All', '-TimeoutSec', '90') | Out-Null
     $inJobOut = Get-Content -Raw -LiteralPath (Join-Path $run.folder "jobs/$($inJob.job_id)/stdout.log")
-    Assert-True ($inJobOut -match "DT_JOB_OPERATOR_ONLY: approve is Danny's command; it cannot run inside dt-job" -and $inJobOut -match "DT_JOB_OPERATOR_ONLY: resume is Danny's command; it cannot run inside dt-job") "approve and resume inside a dt-job job are refused ($($inJobOut.Substring(0, [Math]::Min(600, $inJobOut.Length))))"
+    # A non-tty child pwsh renders the error in ConciseView: ANSI colour codes and wrapped "     | " lines
+    # at about 80 columns (Linux). Normalize before matching so the wrap point cannot split the phrase.
+    $inJobOut = [regex]::Replace([regex]::Replace(($inJobOut -replace "\x1b\[[0-9;]*m", ''), '\s+\|\s+', ' '), '\s+', ' ')
+    Assert-True ($inJobOut -match "DT_JOB_OPERATOR_ONLY: approve is an operator command for the launching session; it cannot run inside dt-job" -and $inJobOut -match "DT_JOB_OPERATOR_ONLY: resume is an operator command for the launching session; it cannot run inside dt-job") "approve and resume inside a dt-job job are refused ($($inJobOut.Substring(0, [Math]::Min(600, $inJobOut.Length))))"
     Assert-True ((Get-RunState $run.state).run_status -eq 'awaiting_danny') 'a job cannot release the boundary'
     $operatorOk = Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'merge')
     Assert-True ($operatorOk.run_status -eq 'runnable') 'the operator path still approves'

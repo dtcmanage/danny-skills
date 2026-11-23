@@ -132,6 +132,8 @@ $script:DtJobLockDepth = 0
 $script:DtJobLockStream = $null
 $script:DtJobRunnerPath = Join-Path $PSScriptRoot 'dt-job-runner.ps1'
 $script:DtJobLeaseDefaultTtlSec = 600
+# A watcher-launched lease is 'starting' from acquire until its coordinator marks bootstrap, for at most this long.
+$script:DtJobLeaseStartingSec = 900
 # Parameters the command line passed explicitly; dot-sourced callers pass none.
 $script:DtJobExplicitParams = @()
 $script:DtJobLeaseRenewMaxSec = 60
@@ -553,6 +555,9 @@ function Start-DtJobRunner {
         foreach ($item in Get-ChildItem Env:) {
             if (@($script:DtJobEnvSensitive | Where-Object { $item.Name -like $_ }).Count -gt 0) { $withheld[$item.Name] = $null }
         }
+        # Never the coordinator identity: the watcher finds a coordinator's processes by that inherited tag,
+        # and a job must survive its coordinator's rotation kill.
+        foreach ($name in $script:DtJobEnvExclude) { if ([System.Environment]::GetEnvironmentVariable($name)) { $withheld[$name] = $null } }
         $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList ($runnerArgs -join ' ') `
             -RedirectStandardOutput '/dev/null' -RedirectStandardError (Join-Path $jobDir 'runner-stderr.log') -Environment $withheld
         $runnerPid = $process.Id
@@ -1143,6 +1148,12 @@ function Invoke-DtJobStatus {
         }
         $envelope | Add-Member -NotePropertyName run_status -NotePropertyValue $runStatus -Force
         $envelope | Add-Member -NotePropertyName awaiting -NotePropertyValue $awaiting -Force
+        $envelope | Add-Member -NotePropertyName coordinator -NotePropertyValue (Get-DtJobCoordinatorSummary -RunFolder $RunFolder) -Force
+        # The run-level fields above are added after the job list was trimmed; keep the whole reply in budget.
+        while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and @($envelope.jobs).Count -gt 0) {
+            $envelope.jobs.RemoveAt($envelope.jobs.Count - 1)
+            $envelope.truncated = $true
+        }
         Write-DtJobOutput -Object $envelope -AsJson:$Json
     }
 }
@@ -1291,6 +1302,40 @@ function Test-DtJobLeaseExpired {
     param($Lease, [DateTime]$NowUtc = [DateTime]::UtcNow)
     if ($null -eq $Lease -or -not $Lease.expires_utc) { return $true }
     return ((ConvertTo-DtJobUtc $Lease.expires_utc) -le $NowUtc)
+}
+
+function Test-DtJobLeaseStarting {
+    # True while a lease is in its bounded 'starting' window: taken by the launcher, bootstrap not yet marked.
+    param($Lease, [DateTime]$NowUtc = [DateTime]::UtcNow)
+    if ($null -eq $Lease -or -not $Lease.PSObject.Properties['state'] -or $Lease.state -ne 'starting') { return $false }
+    if ($Lease.PSObject.Properties['released_utc'] -and $Lease.released_utc) { return $false }
+    if (-not $Lease.PSObject.Properties['starting_until_utc'] -or -not $Lease.starting_until_utc) { return $false }
+    return ((ConvertTo-DtJobUtc $Lease.starting_until_utc) -gt $NowUtc)
+}
+
+function Get-DtJobCoordinatorSummary {
+    # The run's coordinator as a status watch sees it: none, starting, running, released, gone (a
+    # watcher-launched process that died holding the lease) or expired (an interactive lease that lapsed).
+    param([Parameter(Mandatory)][string]$RunFolder)
+    $lease = Get-DtJobLease -RunFolder $RunFolder
+    if ($null -eq $lease) { return [pscustomobject][ordered]@{ coordinator_id = $null; launched_by = $null; state = 'none'; pid = $null; pid_alive = $null; starting_until_utc = $null } }
+    $released = ($lease.PSObject.Properties['released_utc'] -and $lease.released_utc)
+    $pidStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
+    $alive = if ($lease.pid) { [bool](Test-DtJobProcessIdentity $lease.pid $pidStart) } else { $null }
+    $recorded = if ($lease.PSObject.Properties['state'] -and $lease.state) { [string]$lease.state } else { 'running' }
+    $state = if ($released) { 'released' }
+        elseif ($lease.launched_by -eq 'watcher' -and $lease.pid -and -not $alive) { 'gone' }
+        elseif ($recorded -eq 'starting' -and -not (Test-DtJobLeaseStarting $lease)) { 'boot_overdue' }
+        elseif ($lease.launched_by -ne 'watcher' -and (Test-DtJobLeaseExpired $lease)) { 'expired' }
+        else { $recorded }
+    return [pscustomobject][ordered]@{
+        coordinator_id = [string]$lease.coordinator_id
+        launched_by = $(if ($lease.PSObject.Properties['launched_by']) { [string]$lease.launched_by } else { $null })
+        state = $state
+        pid = $lease.pid
+        pid_alive = $alive
+        starting_until_utc = $(if ($lease.PSObject.Properties['starting_until_utc']) { $lease.starting_until_utc } else { $null })
+    }
 }
 
 function Test-DtJobLeaseHolderGone {
@@ -1714,13 +1759,21 @@ function Invoke-DtJobLease {
             $keepPid = ($holderLive -and $CoordinatorPid -le 0 -and $current.PSObject.Properties['pid'] -and $current.pid)
             $leasePid = if ($CoordinatorPid -gt 0) { $CoordinatorPid } elseif ($keepPid) { $current.pid } else { $null }
             $leasePidStart = if ($keepPid) { $(if ($current.PSObject.Properties['pid_start_utc']) { $current.pid_start_utc } else { $null }) } elseif ($leasePid) { Get-DtJobProcessStartUtc -ProcessId $leasePid } else { $null }
+            $nextLaunchedBy = $(if ($keepLaunchedBy) { [string]$current.launched_by } else { $LaunchedBy })
+            # A watcher launch starts in 'starting' until its coordinator marks bootstrap; a holder's own
+            # re-acquire keeps its state, and an interactive coordinator is running once it holds the lease.
+            $keepState = ($holderLive -and $current.PSObject.Properties['state'] -and $current.state)
+            $leaseState = if ($keepState) { [string]$current.state } elseif ($nextLaunchedBy -eq 'watcher') { 'starting' } else { 'running' }
+            $startingUntil = if ($keepState -and $current.PSObject.Properties['starting_until_utc']) { $current.starting_until_utc } elseif ($leaseState -eq 'starting') { $now.AddSeconds($script:DtJobLeaseStartingSec).ToString('o') } else { $null }
             $next = [pscustomobject][ordered]@{
                 coordinator_id = $CoordinatorId
                 host           = $(if ($CoordinatorHost) { $CoordinatorHost } else { $null })
                 session_id     = $(if ($SessionId) { $SessionId } else { $null })
                 pid            = $leasePid
                 pid_start_utc  = $leasePidStart
-                launched_by    = $(if ($keepLaunchedBy) { [string]$current.launched_by } else { $LaunchedBy })
+                launched_by    = $nextLaunchedBy
+                state          = $leaseState
+                starting_until_utc = $startingUntil
                 ttl_sec        = $ttl
                 acquired_utc   = $now.ToString('o')
                 expires_utc    = $now.AddSeconds($ttl).ToString('o')
@@ -1929,10 +1982,11 @@ function Invoke-DtJobAwaitDanny {
 }
 
 function Assert-DtJobOperator {
-    # approve and resume are Danny's commands: a coordinator or a job can never release its own boundary.
+    # approve and resume are operator commands: the launching or delegate session runs them on Danny's
+    # authority (never asking him to type them); a coordinator or a job can never release its own boundary.
     param([Parameter(Mandatory)][string]$VerbName, [Parameter(Mandatory)][string]$RunFolder, [switch]$AllowLiveCoordinator)
-    if ($env:DT_BUILD_COORDINATOR_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; coordinator $env:DT_BUILD_COORDINATOR_ID cannot run it" }
-    if ($env:DT_JOB_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; it cannot run inside dt-job job $env:DT_JOB_ID" }
+    if ($env:DT_BUILD_COORDINATOR_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is an operator command for the launching session; coordinator $env:DT_BUILD_COORDINATOR_ID cannot run it" }
+    if ($env:DT_JOB_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is an operator command for the launching session; it cannot run inside dt-job job $env:DT_JOB_ID" }
     $callerLease = Get-DtJobLease -RunFolder $RunFolder
     if ($VerbName -in @('approve','resume') -and $null -ne $callerLease -and $callerLease.launched_by -eq 'watcher' -and $callerLease.pid -and
         (Test-DtJobProcessIdentity $callerLease.pid $callerLease.pid_start_utc)) {
@@ -1957,7 +2011,7 @@ function Assert-DtJobOperator {
     $lease = Get-DtJobLease -RunFolder $RunFolder
     if ($null -ne $lease -and $lease.launched_by -eq 'watcher') {
         $leaseStart = if ($lease.PSObject.Properties['pid_start_utc']) { $lease.pid_start_utc } else { $null }
-        if (Test-DtJobProcessIdentity $lease.pid $leaseStart) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is Danny's command; watcher-launched coordinator $($lease.coordinator_id) is still running as pid $($lease.pid)" }
+        if (Test-DtJobProcessIdentity $lease.pid $leaseStart) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is an operator command for the launching session; watcher-launched coordinator $($lease.coordinator_id) is still running as pid $($lease.pid)" }
     }
 }
 
@@ -2304,6 +2358,13 @@ function Invoke-DtJobMarkBootstrap {
         $all = Get-DtJobContextBaselines -RunFolder $RunFolder
         $all.coordinators | Add-Member -NotePropertyName $coordinator -NotePropertyValue $new -Force
         Write-DtJobAtomic -Path $paths.ContextBaseline -Content ($all | ConvertTo-Json -Depth 6)
+        # The bootstrap mark ends the lease's 'starting' window: the coordinator is up.
+        $lease = Get-DtJobLease -RunFolder $RunFolder
+        if ($null -ne $lease -and [string]$lease.coordinator_id -ceq $coordinator -and $lease.PSObject.Properties['state'] -and $lease.state -eq 'starting') {
+            $lease.state = 'running'
+            $lease | Add-Member -NotePropertyName booted_utc -NotePropertyValue $new.marked_utc -Force
+            Save-DtJobLease -RunFolder $RunFolder -Lease $lease
+        }
         return [pscustomobject]@{ entry = $new; marked = $true }
     }
     $script:DtJobContext = Get-DtJobContextReport -RunFolder $RunFolder -CoordinatorId $coordinator

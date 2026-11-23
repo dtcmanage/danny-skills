@@ -138,3 +138,11 @@ Token counts normalize CRLF to LF consistently. The earlier 45,360 budget fell b
 `mark-bootstrap` retains `baseline_tokens` as the full context; context-guard soft/hard limits still use it. `host_overhead_tokens` is the first assistant request's input + cache-read + cache-creation tokens on Claude, or the first token_count event's last input_tokens on Codex. `coordinator_added_tokens = baseline_tokens - host_overhead_tokens` is judged against the 50,000 target (exactly 50,000 fails). The marker and observed-transcript report include all three values and the target result. Missing first-turn usage falls back to the full baseline and explicitly reports host overhead unavailable. The Claude capture hook refreshes the split when it corrects transcript identity.
 
 `python "<skill>/scripts/measure-resume-bootstrap.py" --transcript <transcript.jsonl>` accepts Claude Code assistant tool_use/user tool_result records and Codex rollouts, including CommandExecution events and paired tool calls/results. Only an executed successful marker counts. The read-plan simulation remains a separate conservative estimate; its runtime reserve is not a measured host overhead.
+
+## Transcript discovery for mark-bootstrap
+
+Moved from the host adapters (2026-11-23) to keep them under their word cap; the behaviour is unchanged.
+
+- **Claude Code:** without `-TranscriptPath`, the context guard resolves `CLAUDE_CODE_SESSION_ID` under `CLAUDE_CONFIG_DIR/projects`, preferring the cwd project folder and excluding subagents; missing ids or files use the existing cwd discovery (`transcript_discovery: cwd-fallback`).
+- **Codex:** without `-TranscriptPath`, the context guard matches `CODEX_THREAD_ID` against rollout `session_meta.id` under `CODEX_HOME/sessions`; missing ids or files fall back to cwd discovery (`transcript_discovery: cwd-fallback`).
+- On both hosts the watcher keeps matching a coordinator's launch prompt to find its transcript.

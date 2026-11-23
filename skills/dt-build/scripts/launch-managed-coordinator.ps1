@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 # Default coordinator launcher for dt-build-watcher.ps1 (override with DT_BUILD_COORDINATOR_LAUNCHER).
-# Takes the coordinator lease (launched_by watcher), then starts a hidden, detached headless coordinator
+# Takes the coordinator lease (launched_by watcher, state starting until the coordinator marks bootstrap), then starts a hidden, detached headless coordinator
 # (`claude -p` or `codex exec`) for one managed run, records the child pid in the lease, and returns at once.
 # A refused lease starts nothing; a failed start releases the lease. A replacement launcher keeps that order.
 param(
@@ -42,6 +42,7 @@ Read and follow $resumeGuide as your entry contract, plus the canonical context 
 For a lean bridge, read the compact coordinator rulebook via scripts/read-coordinator-rulebook.ps1 -CoordinatorHost $CoordinatorHost; canonical policy is deferred until its action is triggered.
 Complete required authorization reads, then mark-bootstrap immediately, and continue the checkpoint's next action.
 Do not repeat intake or preload implementation/close-out references. Never run dt-job resume or approve.
+That rule binds you only: the launching session runs resume, approve and relaunch, so never ask Danny to type a command; raise only genuine decisions with dt-job await-danny.
 "@
 $log = Join-Path $runRoot "coordinator-$CoordinatorId.log"
 $workDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($BuildStatePath))
@@ -117,7 +118,15 @@ try {
     else {
         # Linux/Mac: mirror dt-job's non-Windows launch. Under a systemd timer the watcher unit needs
         # KillMode=process so the coordinator outlives the watcher run.
-        $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded)
+        # The wrapper itself carries the coordinator tag from exec (the encoded script's own assignment is not
+        # visible in /proc/<pid>/environ), so the watcher can find it and everything under it after a kill
+        # re-parents the children. dt-job strips the tag from jobs, which survive rotation.
+        # Its own streams are redirected too: an inherited stdout pipe would hold the watcher, which captures
+        # this launcher's output, inside its tick (and coordinator.lock) for the coordinator's whole life
+        # (2026-11-23 on CT202: a launcher returned only when its coordinator exited). The coordinator's
+        # own output already goes to its log through the wrapper's *>>.
+        $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -Environment @{ DT_BUILD_COORDINATOR_ID = $CoordinatorId } `
+            -RedirectStandardOutput '/dev/null' -RedirectStandardError (Join-Path $runRoot "coordinator-$CoordinatorId.wrapper-stderr.log")
         $childPid = [int]$process.Id
     }
     & pwsh -NoProfile -NonInteractive -File $dtJob lease -RunFolder $runRoot -Action renew -CoordinatorId $CoordinatorId -Pid $childPid -Json | Out-Null
