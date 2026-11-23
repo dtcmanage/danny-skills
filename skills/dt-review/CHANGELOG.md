@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.18.7 (2026-11-23): Linux session-host fixes (2026-11-23): see plugin 1.1.3.
+
 - 1.18.6 (2026-11-23): Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.
 
 - 1.18.5 (2026-11-23): Claude rounds restore the long-lived CLAUDE_CODE_OAUTH_TOKEN on the claude child (shared scripts/claude-headless-auth.ps1): Claude Code strips it from tool shells, so rounds launched from a session fell back to an expired login.

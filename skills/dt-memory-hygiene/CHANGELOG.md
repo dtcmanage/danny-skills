@@ -1,5 +1,7 @@
 # dt-memory-hygiene changelog
 
+- 0.4.3 (2026-11-23): Linux session-host fixes (2026-11-23): see plugin 1.1.3.
+
 - 0.4.2 (2026-11-22): Bash script-call blocks; report artifacts as backticked absolute paths.
 
 - 0.4.1 (2026-11-16): Markdown table rows no longer count as long lines, so the workspace directory table does not trigger hygiene on every audit.

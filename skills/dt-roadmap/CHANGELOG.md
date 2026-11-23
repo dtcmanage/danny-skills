@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.4.2
+
+- Linux session-host fixes (2026-11-23): see plugin 1.1.3.
+
 ## 1.4.1
 
 - Shared output contract now reports local files as backticked absolute paths.

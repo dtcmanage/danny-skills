@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.8.2 (2026-11-23): Linux session-host fixes (2026-11-23): see plugin 1.1.3.
+
 - 0.8.1 (2026-11-22): Command Center backstop and workspace upload use host-neutral paths (Linux session host first; cc.ps1 runs under pwsh).
 
 - 0.8.0 (2026-11-16): Add the read-only AI-item exit backstop with transcript discovery, readiness checks, three exit choices and isolated HTTP regression tests.
