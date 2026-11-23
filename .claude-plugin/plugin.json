@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.1.4 dt-build 2.53.1, dt-review 1.18.8, dt-roadmap 1.4.3: Linux script fixes (authority digest resume, spaced paths, worktree ledger, case-sensitive read guard, clean preflight JSON, assemble-codex-prompt, run-folder nesting, gate-tool intake warning, builder log location, quiet watcher journal, python3/bash runnable recognizer in extract-named-artifacts); claude headless auth comment reworded; the orchestration test no longer writes the live /home/danny/Claude/settings.json.",
       "1.1.3 Linux session-host friction fixes: dt-roadmap 1.4.2 accepts python3/bash/sh/uv/make gate commands and derives milestones without an Implementation Sequence; dt-review 1.18.7 requires an Implementation Sequence at finalize; dt-session-audit 0.8.2 finds its own transcript by session id and fails loudly; dt-handoff 0.2.6 prune skips nested git repos; dt-memory-hygiene 0.4.3 takes -Json, prints plain output, scores the assistant kit at root tier.",
       "1.1.2 dt-build 2.53.0, dt-ship 0.4.0: release-time severity triage (only critical findings block a release; others ship as Known issues). New shared scripts/release-triage.ps1 + release-triage-lib.ps1 (release triage); version policy owners map updated for them; dt-build SKILL.md detail moved to references to meet its word cap.",
       "1.1.1 dt-build 2.52.6: Linux parity for dt-job (runner launch streams and secret withholding, zombie PIDs), the usage sweep on the session host, and Linux-runnable dt-build test suites.",

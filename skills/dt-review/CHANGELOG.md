@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.18.8 (2026-11-23): Shared script update: runnable-command recognizer accepts python3/bash/sh/uv/make (dt-roadmap); claude headless auth comment wording (dt-review).
+
 - 1.18.7 (2026-11-23): Linux session-host fixes (2026-11-23): see plugin 1.1.3.
 
 - 1.18.6 (2026-11-23): Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.

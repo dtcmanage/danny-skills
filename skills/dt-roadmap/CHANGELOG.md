@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.4.3
+
+- Shared script update: runnable-command recognizer accepts python3/bash/sh/uv/make (dt-roadmap); claude headless auth comment wording (dt-review).
+
 ## 1.4.2
 
 - Linux session-host fixes (2026-11-23): see plugin 1.1.3.

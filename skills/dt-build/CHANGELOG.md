@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.53.1
+
+- Linux script fixes: authority digest skips the live checkpoint and parses spaced paths; worktree ledger from git; case-sensitive read guard on Linux; clean preflight JSON; assemble-codex-prompt comma lists and default preamble; no double-nested run folder; intake warns on missing gate tools; builder logs in the run folder; quiet watcher journal; runnable recognizer accepts python3/bash/sh/uv/make; orchestration test can no longer write the live settings.json.
+
 ## 2.53.0
 
 - Release-time severity triage: findings from the final combined review and the final milestone's acceptance block only when critical (broken core flow, data loss, security, broken deploy/rollback); the rest ship unchanged as Known issues in deferred-findings.md via scripts/release-triage.ps1, counted in the acceptance ledger summary, with no fix round or gate rerun. SKILL.md back under its 4490-word cap: usage telemetry, final-ledger options and the build-run-review panels moved to references (usage-telemetry.md, acceptance-contract.md, run-artifact-lifecycle.md), rules unchanged; test-host-adapters checks the Linux hooks adoption target.
