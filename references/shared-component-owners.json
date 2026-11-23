@@ -540,5 +540,8 @@
   "scripts/model-router/bench/tasks/ranked-pelican-svg/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/bench/tasks/ranked-single-file-game/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
   "scripts/claude-headless-auth.ps1": {"consumers": ["dt-build", "dt-review"], "summary_token": "claude headless auth"},
-  "scripts/tests/test-claude-headless-auth.ps1": {"consumers": [], "summary_token": "claude headless auth"}
+  "scripts/tests/test-claude-headless-auth.ps1": {"consumers": [], "summary_token": "claude headless auth"},
+  "scripts/release-triage.ps1": {"consumers": ["dt-build", "dt-ship"], "summary_token": "release triage"},
+  "scripts/release-triage-lib.ps1": {"consumers": ["dt-build", "dt-ship"], "summary_token": "release triage"},
+  "scripts/tests/test-release-triage.ps1": {"consumers": [], "summary_token": "release triage"}
 }

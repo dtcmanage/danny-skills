@@ -62,6 +62,9 @@ triages these on operational necessity vs. time: an item the built system cannot
 becomes an addendum chunk — run through the normal prompt/verify/acceptance chain — before the next
 milestone; everything that can wait for a next version lands in `<run-folder>/deferred-findings.md` with a
 one-line reason. The final ledger surfaces that file as an informational "Deferred / Next Version" section.
+Release-time findings (final combined review, final milestone, dt-ship) land in the same file under
+`## Known issues` via `<danny-skills>/scripts/release-triage.ps1`; only critical findings block
+(`review-fix-loop.md` section 7).
 The orchestrator owns these calls and records each one in the build-decision-log; Danny is not consulted
 per item.
 

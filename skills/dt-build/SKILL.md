@@ -261,6 +261,7 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   one bundled fix per round, targeted tests and a fix-diff-only verifier between rounds; then the full gate
   (every suite the change touches, chosen by changed paths) once on the final candidate before deploy or
   merge, repeated only when it fails or code changes.
+  Final-review and final-milestone findings: only critical ones block; the rest ship as Known issues (`references/review-fix-loop.md` section 7).
 - Run `<skill>/scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder>`.
   - Omit `-RunTests`: normal finalization renders persisted `acceptance-rows.jsonl` without rerunning lifecycle-sensitive
     milestone tests. Explicitly requested revalidation uses `-RunTests`, emitting `build-acceptance-revalidation.{md,html}`

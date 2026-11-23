@@ -2,7 +2,8 @@
 
 Read this before acting on any verifier or review finding: the per-milestone verifier (SKILL.md step 6d),
 a BLOCKED acceptance gate (6e), and the final integrated review (6.5). It replaces one-fix-per-finding
-chains and full-suite reruns after every fix.
+chains and full-suite reruns after every fix. Findings at release time (the final combined review, the
+final milestone's acceptance, and dt-ship) follow section 7 instead of the `important`/`minor` rule.
 
 Why: the Command Center v2 final review (run `20261121-command-center-v2`, 2026-11-21/22) ran four
 review rounds that spawned eight separate fix chunks (a docs fix had its own chunk) and thirteen full
@@ -64,7 +65,8 @@ implementation loop limit" in `acceptance-contract.md` and the SKILL.md step 6j 
 
 ## 5. Full suite once, at the end
 
-- When a review round returns no open `important` finding, run the full gate once on the final candidate
+- When a review round returns no open `important` finding (at release time: no open critical finding,
+  section 7), run the full gate once on the final candidate
   SHA, before deploy, switch-over or merge. "Full" means every suite the change touches, chosen by
   changed paths (front end, back end, shared contract) per `00_Resources/build-process.md`, plus the
   builds, E2E groups and design-required live checks those paths need. That run writes
@@ -82,3 +84,30 @@ implementation loop limit" in `acceptance-contract.md` and the SKILL.md step 6j 
 - If the roadmap's checks for that milestone lack it, quote the added smoke in the milestone's
   decision-log entry (step 6a) and run it. Unit tests and local fakes do not substitute. Classify a host
   failure per SKILL.md step 2.7.
+
+## 7. Release-time severity triage
+
+Policy: `00_Resources/build-process.md`, "Minor findings at release time ship as known issues, not
+blockers" (Danny, 2026-11-22). Why: in Command Center v2.1 (run `20261122-v21`) a minor finding at the
+final milestone M07 (F1) re-opened a gated release candidate (operator notes n-021/n-022).
+
+- **Where it applies:** the final combined review (step 6.5), the acceptance of the final milestone (the
+  roadmap's release or `final`-category milestone that produces the ship candidate, including its step 6d
+  verifier and 6e gate findings), any check that runs after the full gate on that candidate, and dt-ship.
+- **Only critical findings block.** Critical is exactly one of: `core-flow` (a broken core user flow),
+  `data-loss` (data loss or corruption), `security` (a security hole), `deploy-rollback` (a broken deploy
+  or rollback). A review severity of `important` does not block on its own here.
+- **Everything else is a known issue:** docs wording, cosmetic UI, a small edge-case bug, test or doc
+  hygiene. Ship the already-gated candidate unchanged; no fix round, no new commit, no full-gate rerun.
+- **Run the triage deterministically:** write the round's findings to `<run-folder>/release-findings-<stage>.json`
+  (`id`, `milestone`, `type`, `what`, `where`, then `critical` + `critical_scenario` for a critical one or
+  `why_not_blocking` for the rest) and run
+  `pwsh -NoProfile -File "<danny-skills>/scripts/release-triage.ps1" -FindingsPath <that file> -Stage final-review|final-milestone -RunFolder <run-folder> -Json`.
+  Exit 0 = ship; the known issues are now under `## Known issues` in `<run-folder>/deferred-findings.md`.
+  Exit 2 = a critical finding: fix only the critical findings in one bundled fix (sections 2-4), then run
+  the full gate once on the new SHA (section 5); the known issues stay logged and unfixed. Exit 1 = a
+  finding is missing a field; fill it and rerun.
+- **Release summary:** the acceptance ledger counts the `## Known issues` entries in its summary and lists them; the final report and
+  `final-integration.json` notes name them; dt-ship carries them via `-KnownIssuesPath`.
+- Record each critical/known-issue call in the decision log. A wrong `critical` claim (for example a
+  docs typo labelled `security`) is a label correction under section 1, not a reason to block.

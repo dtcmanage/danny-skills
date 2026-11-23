@@ -468,6 +468,13 @@ if ($RunFolder) {
         if ([string]::IsNullOrWhiteSpace($deferredText)) { $deferredText = $null }
     }
 }
+# Release-time known issues (scripts/release-triage.ps1): non-critical findings
+# shipped unchanged. Counted for the release summary; never a blocker.
+$knownIssues = @()
+if ($RunFolder) {
+    . (Join-Path $repoRoot 'scripts/release-triage-lib.ps1')
+    $knownIssues = @(Get-KnownIssues -Path (Join-Path $RunFolder 'deferred-findings.md'))
+}
 
 # Revalidation renders current checks without changing recorded acceptance.
 & {
@@ -551,6 +558,9 @@ $summaryParts = @("$totalPass PASS")
 if ($totalApproved -gt 0) { $summaryParts += "$totalApproved APPROVED_DOWNGRADE" }
 $summaryParts += "$totalBlocked BLOCKED"
 $mdLines += "**Summary:** $($summaryParts -join ', ') (of $($ledgerRows.Count) total)."
+if ($knownIssues.Count) {
+    $mdLines += "**Known issues shipped:** $($knownIssues.Count) non-critical (not blockers; listed under Known issues below, fixed next release)."
+}
 if ($deferredText) {
     $mdLines += ""
     $mdLines += "## Deferred / Next Version"
@@ -666,6 +676,7 @@ $deferredHtml = if ($deferredText) {
     @"
 <h2 style="margin-top:32px;font-size:16px;">Deferred / Next Version</h2>
 <div class="meta">Informational &mdash; enhancements the orchestrator triaged out of this run.</div>
+$(if ($knownIssues.Count) { "<div class=`"meta`"><strong>Known issues shipped: $($knownIssues.Count)</strong> &mdash; non-critical, not blockers; fixed next release.</div>" })
 <pre style="white-space:pre-wrap;font-family:'Cascadia Code',Consolas,monospace;font-size:12px;background:#f8f8f8;border:1px solid #e0e0e0;border-radius:6px;padding:12px;">$encodedDeferred</pre>
 "@
 } else { "" }
@@ -710,6 +721,7 @@ $summaryStr = "{0} PASS" -f $totalPass
 if ($totalApproved -gt 0) { $summaryStr += ", {0} APPROVED_DOWNGRADE" -f $totalApproved }
 $summaryStr += ", {0} BLOCKED of {1} total." -f $totalBlocked, $ledgerRows.Count
 Write-Output ("Summary: " + $summaryStr)
+if ($knownIssues.Count) { Write-Output ("Known issues shipped: {0} ({1})" -f $knownIssues.Count, (($knownIssues | ForEach-Object { $_.key }) -join ', ')) }
 foreach ($unknown in @($ledgerRows | Where-Object { $_.PSObject.Properties['router_acceptance'] -and $_.router_acceptance -eq 'unknown' })) {
     Write-Output ("Router acceptance: unknown for {0}: {1}" -f $unknown.dispatch_id, $unknown.router_acceptance_reason)
 }

@@ -24,7 +24,9 @@
 # failed_step. JSON summary: status (shipped | merged_only | not_shipped |
 # failed), failed_step, branch, resolved_branch, merged, pushed, deployed,
 # config_source, hash_match, local_head, prod_commit, probe_attempts, probe_log, smoke [{route, pass}],
-# purged [], skipped [], rerere_enabled, timings {step: seconds}, step_logs, error_message.
+# purged [], skipped [], rerere_enabled, timings {step: seconds}, step_logs, error_message,
+# known_issues [] (from -KnownIssuesPath: non-critical findings shipped as known
+# issues under the release-time triage rule; informational, never a blocker).
 #
 # Gate and deploy run with output on files and an optional per-step hard limit
 # (config stepTimeouts); see references/ship-config.md "Step output and timings".
@@ -40,6 +42,7 @@ param(
     [switch]$SkipPush,
     [switch]$SkipPull,
     [switch]$AllowLiveJobs,
+    [string]$KnownIssuesPath,
     [switch]$Json
 )
 
@@ -85,6 +88,7 @@ $state = [ordered]@{
     timings = [ordered]@{}
     step_logs = $null
     error_message = $null
+    known_issues = @()
 }
 
 function Invoke-Git {
@@ -314,6 +318,22 @@ if (-not $onMain -and -not $resolvedBranch) {
     Fail-Step 'resolve-branch' "No local branch named '$Branch', 'feat/$Branch', or 'feature/$Branch'."
 }
 $state.resolved_branch = $resolvedBranch
+
+# --- Step: preflight-known-issues ----------------------------------------------
+
+# Release summary carries the run's known issues (scripts/release-triage.ps1).
+# A named file that is missing fails closed before any mutation: a silent empty
+# list would hide shipped known issues from the release summary.
+if ($KnownIssuesPath) {
+    if (-not (Test-Path -LiteralPath $KnownIssuesPath -PathType Leaf)) {
+        Fail-Step 'preflight-known-issues' "-KnownIssuesPath '$KnownIssuesPath' does not exist."
+    }
+    $triageSkillRoot = Split-Path -Parent $PSScriptRoot
+    $triageLink = (Get-Item -LiteralPath $triageSkillRoot).ResolveLinkTarget($true)
+    if ($triageLink) { $triageSkillRoot = $triageLink.FullName }
+    . (Join-Path (Split-Path -Parent (Split-Path -Parent $triageSkillRoot)) 'scripts/release-triage-lib.ps1')
+    $state.known_issues = @(Get-KnownIssues -Path $KnownIssuesPath | ForEach-Object { $_.line })
+}
 
 # --- Step: preflight-cwd -------------------------------------------------------
 

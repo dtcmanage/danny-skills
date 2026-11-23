@@ -1,5 +1,6 @@
 # Regression test: dt-ship refuses to merge and purge a worktree that a live
-# dt-job still uses, and proceeds with -AllowLiveJobs.
+# dt-job still uses, and proceeds with -AllowLiveJobs; -KnownIssuesPath puts the
+# run's known issues in the summary without blocking the ship.
 #   pwsh -NoProfile -File skills/dt-ship/tests/test-ship-live-jobs.ps1
 
 Set-StrictMode -Version Latest
@@ -52,6 +53,22 @@ try {
     $result = ($out -join "`n") | ConvertFrom-Json
     Assert ($result.failed_step -ne 'preflight-live-jobs') '-AllowLiveJobs: preflight passes'
     Assert ([bool]$result.merged) '-AllowLiveJobs: branch merged'
+
+    # Release summary carries known issues; a named missing file fails closed before any mutation.
+    git -C $repo worktree add -q -b feat/y (Join-Path $root 'feature-y') main
+    Set-Content -LiteralPath (Join-Path $root 'feature-y/g.txt') -Value 'g'
+    git -C (Join-Path $root 'feature-y') add -A; git -C (Join-Path $root 'feature-y') commit -q -m 'feature y'
+    Push-Location $repo
+    try { $out = & pwsh -NoProfile -File $ship -RepoRoot $repo -Branch y -SkipPull -SkipPush -SkipGate -KnownIssuesPath (Join-Path $root 'missing.md') -Json } finally { Pop-Location }
+    $result = ($out -join "`n") | ConvertFrom-Json
+    Assert ($result.failed_step -eq 'preflight-known-issues' -and -not $result.merged) 'missing -KnownIssuesPath fails closed before merge'
+    $known = Join-Path $runFolder 'deferred-findings.md'
+    Set-Content -LiteralPath $known -Value "# Deferred findings`n`n- later idea`n`n## Known issues`n`n- **M07 F1** (docs, ship): Handoff wording. Where: docs/h.md. Why it does not block: wording only. Fix: next release.`n"
+    Push-Location $repo
+    try { $out = & pwsh -NoProfile -File $ship -RepoRoot $repo -Branch y -SkipPull -SkipPush -SkipGate -KnownIssuesPath $known -Json } finally { Pop-Location }
+    $result = ($out -join "`n") | ConvertFrom-Json
+    Assert ([bool]$result.merged) 'known issues never block the ship'
+    Assert (@($result.known_issues).Count -eq 1 -and @($result.known_issues)[0] -like '- **M07 F1***') 'summary lists known issues only (not other deferred entries)'
 }
 finally {
     $env:DT_BUILD_STATE_DIR = $oldState

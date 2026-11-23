@@ -447,6 +447,13 @@ gantt
 downgrade_approved_by: danny
 rationale: Framework limitation accepted with visible evidence.
 '@
+    Write-Utf8 -Path (Join-Path $runFolder 'deferred-findings.md') -Content @'
+# Deferred findings
+
+## Known issues
+
+- **M07 F1** (docs, final-milestone): Handoff names the old folder. Where: docs/x.md. Why it does not block: wording only. Fix: next release.
+'@
     $ledgerOut = Join-Path $tempRoot 'ledger'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'build-acceptance-ledger.ps1') `
         -RoadmapPath $roadmap -WorkingTree $workingTree -OutDir $ledgerOut -RunFolder $runFolder *> $null
@@ -454,6 +461,7 @@ rationale: Framework limitation accepted with visible evidence.
     $ledgerText = Get-Content -Raw -LiteralPath (Join-Path $ledgerOut 'build-acceptance-ledger.md')
     Assert-True ($ledgerText -match '\| M01 \| YES \| YES \| NO \| APPROVED_DOWNGRADE \|') "semantic approval on a machine PASS was not preserved"
     Assert-True ($ledgerText -match '\| M02 \| NO \| NO \| NO \| BLOCKED \|') "unstarted milestone was reported implemented"
+    Assert-True ($ledgerText -match '\*\*Known issues shipped:\*\* 1 non-critical' -and $ledgerText -match '\*\*M07 F1\*\*') 'ledger release summary counts and lists known issues'
     Assert-True ((Get-Content -Raw $dispatchProv | ConvertFrom-Json).independent_acceptance -eq $false) 'ledger joins final independent acceptance by dispatch identity including downgrade'
 
     $recordedHash=(Get-FileHash $dispatchProv).Hash

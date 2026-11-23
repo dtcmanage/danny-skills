@@ -2,7 +2,7 @@
 name: dt-ship
 description: "One-command close-out for a finished feature: run the build/tests gate, rebase + ff-only merge to main via the shared merge machinery, push, deploy per the repo's .ship.json, PROVE the deploy is live (deployed commit hash must equal local main HEAD, plus browser-smoke on the configured routes), then purge the merged worktree and branch. Trigger on /dt-ship, 'ship it', 'push live', or 'ship and clean tree'. Do NOT use to create branches or worktrees (that is start-work), for design review (dt-review), or for build execution (dt-build)."
 metadata:
-  version: 0.3.6
+  version: 0.4.0
   changelog: See CHANGELOG.md.
 ---
 
@@ -49,6 +49,8 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
    - runs the browser-smoke harness (`00_Resources\tools\browser-smoke\smoke.mjs`) against every `smokeRoutes` URL,
    - emits one JSON summary: `status`, `failed_step`, `config_source`, `merged`, `pushed`, `deployed`, `hash_match`, `local_head`, `prod_commit`, `probe_attempts`, `probe_log [{attempt, status, content_type, outcome, commit, match}]`, `smoke [{route, pass}]`, `purged`, `skipped`, `rerere_enabled`.
 
+   When the ship follows a dt-build run, pass `-KnownIssuesPath "<run-folder>/deferred-findings.md"` so the summary's `known_issues` lists the findings shipped as known issues (a named file that is missing fails at `preflight-known-issues` before any mutation).
+
    If no `gateCommand` is configured, run the repo's build/tests yourself in the feature worktree BEFORE invoking the script; only invoke it on green. Never invoke `-SkipGate` unless you just ran the gate by hand and it passed.
 
 3. **No ship config?** If `.ship.json` does not exist, the script still merges, purges, and pushes, then exits with `status: merged_only` and `deploy`/`verify-hash`/`smoke` in `skipped`. Report exactly that: "merged and pushed, but deploy and live verification were SKIPPED — this repo has no ship config," and offer to scaffold a `.ship.json` from the worked examples in `references/ship-config.md`.
@@ -59,7 +61,9 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
    - `status: merged_only` — merged and pushed, deploy/verify skipped (no config). In on-main mode the same outcome is `status: pushed_only`.
    - `status: failed` — report `failed_step` and `error_message`; nothing after that step ran.
 
-5. **Report a verification table.** One row per claim: what was done, how it was checked, and the concrete evidence. At minimum: gate (command + exit code), merge (commit range), push (origin main), deploy (command exit), hash proof (`prod_commit` vs `local_head`), each smoke route (pass + screenshot path), purge (worktrees/branches removed — quote `purged`, and confirm `git worktree list` shows only the primary tree). If `rerere_enabled` is `false`, suggest `git config --global rerere.enabled true`.
+4a. **Triage any finding raised at ship time.** A review note, a spot check, or an observation on the live system that is not itself a hash or smoke failure goes through release-time triage (Danny, 2026-11-22; `00_Resources/build-process.md`): write it as a findings JSON and run `pwsh -NoProfile -File "<danny-skills>/scripts/release-triage.ps1" -FindingsPath <file> -Stage ship -RunFolder <run-folder> -Json` (a ship with no dt-build run uses the repo's `.dt-build/adhoc/` folder). Only a critical finding blocks — `core-flow` (broken core user flow), `data-loss`, `security`, `deploy-rollback` (broken deploy or rollback) — and only that one gets a fix and a fresh gate. Everything else (docs wording, cosmetic UI, a small edge-case bug, test or doc hygiene) ships the already-gated candidate unchanged, is logged under `## Known issues` in `deferred-findings.md`, and is fixed next release; never re-run the gate for it. A hash mismatch or failing smoke route is critical by definition and stays `not_shipped`.
+
+5. **Report a verification table.** One row per claim: what was done, how it was checked, and the concrete evidence. At minimum: gate (command + exit code), merge (commit range), push (origin main), deploy (command exit), hash proof (`prod_commit` vs `local_head`), each smoke route (pass + screenshot path), purge (worktrees/branches removed — quote `purged`, and confirm `git worktree list` shows only the primary tree). Then a **Known issues** list in the release summary: every entry of `known_issues` plus any found at step 4a, each with what, where and why it does not block — or "none". If `rerere_enabled` is `false`, suggest `git config --global rerere.enabled true`.
 
 6. **Chain if asked.** If Danny's request included an audit or handoff ("ship it and audit sess", "ship and hand off"), invoke `dt-session-audit` / `dt-handoff` after the ship report — a model step, not part of the script.
 
@@ -67,6 +71,7 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
 
 - Never force-push, never `--no-ff`, never rewrite history. The script only ever fast-forward pushes `main`.
 - Never skip the gate. A red or unrun gate means the merge does not happen.
+- Only critical findings block a release (step 4a). A non-critical finding never stops, re-gates or reopens a gated candidate; it ships as a known issue.
 - Never claim shipped without the live proof: `hash_match: true` AND all smoke routes passing. "The deploy command exited 0" is not shipped.
 - The "ship it" instruction is the single approval for the whole chain. Do not re-ask before the merge, the push, the deploy, or the purge.
 - This skill never creates branches or worktrees (that is `start-work`) and never does design review (that is `dt-review`).
