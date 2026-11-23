@@ -537,5 +537,7 @@
   "scripts/model-router/tests/test_bench_quality.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-bench-quality-proposals.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/bench/tasks/ranked-pelican-svg/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
-  "scripts/model-router/bench/tasks/ranked-single-file-game/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"}
+  "scripts/model-router/bench/tasks/ranked-single-file-game/fixtures/input.json": {"consumers": ["dt-build", "dt-image-gen", "dt-review", "dt-writing-draft", "dt-writing-edit"], "summary_token": "model router"},
+  "scripts/claude-headless-auth.ps1": {"consumers": ["dt-build", "dt-review"], "summary_token": "claude headless auth"},
+  "scripts/tests/test-claude-headless-auth.ps1": {"consumers": [], "summary_token": "claude headless auth"}
 }

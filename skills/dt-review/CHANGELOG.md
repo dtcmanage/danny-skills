@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.18.5 (2026-11-23): Claude rounds restore the long-lived CLAUDE_CODE_OAUTH_TOKEN on the claude child (shared scripts/claude-headless-auth.ps1): Claude Code strips it from tool shells, so rounds launched from a session fell back to an expired login.
+
 - 1.18.4 (2026-11-22): Codex lane finds the plain Linux codex binary; temp dirs from GetTempPath so Claude and Codex rounds run without TEMP; bash single-line script calls; backticked absolute paths.
 
 - 1.18.3 (2026-11-15): Model router files pending proposals to Command Center and closes them on decision (shared router change).

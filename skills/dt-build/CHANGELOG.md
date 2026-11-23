@@ -2,7 +2,7 @@
 
 ## 2.52.4
 
-- Linux watcher unit gives headless claude -p coordinators CLAUDE_CONFIG_DIR and the long-lived CLAUDE_CODE_OAUTH_TOKEN (EnvironmentFile on Command Center v2's secrets.env); managed Claude runs on CT202 died at launch with an expired OAuth session (run mst-20261122).
+- Linux watcher unit gives headless claude -p coordinators CLAUDE_CONFIG_DIR and the long-lived CLAUDE_CODE_OAUTH_TOKEN (EnvironmentFile on Command Center v2's secrets.env); managed Claude runs on CT202 died at launch with an expired OAuth session (run mst-20261122). Claude chunks restore the token on the claude child via shared scripts/claude-headless-auth.ps1, because Claude Code strips it from tool shells and dt-job jobs started by a coordinator never had it; never logged or written to spec.json.
 
 ## 2.52.3
 

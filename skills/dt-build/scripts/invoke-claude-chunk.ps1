@@ -82,6 +82,7 @@ function Resolve-SkillRepoRoot {
 
 $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot 'scripts/model-router/dispatch-evidence.ps1')
+. (Join-Path $repoRoot 'scripts/claude-headless-auth.ps1')
 $routerPick = $null
 trap { $failureRecord = $_; if (Get-Command Exit-RouterFrontierFailure -ErrorAction SilentlyContinue) { Exit-RouterFrontierFailure -FailureRecord $failureRecord }; throw $failureRecord }
 $DispatchContext = New-RouterDispatchContext -Context $DispatchContext -PromptPath $PromptPath -AdHoc:$AdHoc -Preflight:$Preflight -Project $ProjectPath -Category $Category -Attempt $Attempt -LogicalTaskId $LogicalTaskId -PriorDispatchId $PriorDispatchId -RequestedModel $Model -OverrideReason $(if ($Model) { $SelectionReason })
@@ -386,6 +387,8 @@ try {
     $args += $outputInvocation.Arguments
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
+    # Claude Code strips its sign-in token from tool shells; restore it on the child only (never logged).
+    $null = Set-ClaudeHeadlessAuth -StartInfo $startInfo
     $cliExtension = [System.IO.Path]::GetExtension($claudeCli).ToLowerInvariant()
     $prefixArgs = @()
     if ($cliExtension -in @('.cmd', '.bat')) {

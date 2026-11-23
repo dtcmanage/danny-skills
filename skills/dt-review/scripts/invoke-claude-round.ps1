@@ -81,6 +81,8 @@ function Invoke-ClaudeProcess {
     )
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    # Claude Code strips its sign-in token from tool shells; restore it on the child only (never logged).
+    $null = Set-ClaudeHeadlessAuth -StartInfo $startInfo
     $cliExtension = [System.IO.Path]::GetExtension($CliPath).ToLowerInvariant()
     $prefixArgs = @()
     $mainArgs = @($Arguments)
@@ -198,6 +200,7 @@ if ($ReasoningEffort -cne $tierDefaultEffort -and [string]::IsNullOrWhiteSpace($
 }
 
 . (Join-Path $RepoRoot 'scripts\claude-cli-result.ps1')
+. (Join-Path $RepoRoot 'scripts/claude-headless-auth.ps1')
 $claudeCli = Get-ClaudeCliPath
 $executionDir = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-review-claude-exec-{0}" -f [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $executionDir -Force | Out-Null
