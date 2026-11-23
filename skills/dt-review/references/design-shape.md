@@ -24,6 +24,7 @@ shape_version: 1
 - Title line
 - Metadata lines already present in the accepted draft (for example date, scope, framework state)
 - Final accepted design body
+- `## Implementation Sequence` — an ordered numbered list, one item per build milestone, each naming its goal, the files/areas it touches, and its verification command (backticked, for example `python -m pytest tests/test_x.py`). dt-roadmap turns item N into milestone M<NN>; `finalize-review.ps1` refuses a final design without at least one numbered item (`IMPLEMENTATION_SEQUENCE_REQUIRED`)
 - `## Build-intake revalidation` when Round 0 created `review-context.md`; each row carries claim, evidence/source, checked-at time, and recheck gate
 - `## Accepted residual risks` only when Danny explicitly approves finalization at the cap; each unresolved finding is a `### <finding-id>` entry with non-empty Rationale, Owner, and Recheck gate fields
 

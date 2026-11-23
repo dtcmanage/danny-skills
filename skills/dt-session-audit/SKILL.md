@@ -278,7 +278,7 @@ writing, all four must hold.
    push root over it.
 
 Measure condition 4 deterministically: run
-`<danny-skills>/skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1` before and after the write and use
+`pwsh -NoProfile -File <danny-skills>/skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1 -RootPath <workspace> -Json` before and after the write and use
 its `word_count` for root `CLAUDE.md` — never an eyeball count. The after count includes
 **everything the run added to root, `References` trigger rows from routed findings included**;
 routing a rule out is not free if its pointer row eats the savings.
@@ -387,17 +387,17 @@ When applying:
    For each workstation touched, run `pwsh -NoProfile -File "<workspace>/_Claude-Workspace/Command Center/cc.ps1" list --workstation "<folder>"` (`<workspace>` is `/home/danny/Claude` on the Linux session host, `~/Claude` on the Mac, `D:\Claude` on a Windows PC; cc.ps1 runs under pwsh on all three); add missing items, update changed ones, and close finished ones with `done <id> --done-note "..."`.
    Read and follow `<workspace>/_Claude-Workspace/Command Center/CLAUDE.md` § The session write rule: titles without amounts/account numbers, starter prompts usable in a fresh session, workstation = folder path including substation. Never move open items into `MEMORY.md`; move any open-for-Danny item found there to Command Center.
    Report Command Center writes in one line in the audit output.
-   Run `<skill>/scripts/check-ai-item-exits.ps1`; the transcript path is discovered automatically as the newest main `*.jsonl` in the current cwd's Claude Code project folder under `$env:CLAUDE_CONFIG_DIR/projects` (non-alphanumeric cwd characters become `-`; nested subagent folders are excluded). Use `-TranscriptPath <session.jsonl>` to override discovery. Route each hit as a Command Center finding, resolving it with one of the three allowed exits printed by the check.
+   Run `pwsh -NoProfile -File <skill>/scripts/check-ai-item-exits.ps1` from the session's own working directory (never `cd` into the skill folder first), or pass `-TranscriptPath <session.jsonl>`. Without `-TranscriptPath` it reads `<session-id>.jsonl` under `$env:CLAUDE_CONFIG_DIR/projects/<cwd with non-alphanumerics as ->`, taking the id from `CLAUDE_SESSION_ID` or `CLAUDE_CODE_SESSION_ID`; with no id it falls back to the newest top-level transcript there and prints a warning naming it. `TRANSCRIPT_NOT_FOUND` (non-zero exit) means the check did not run: report it, never treat it as clean. Route each hit as a Command Center finding, resolving it with one of the three allowed exits printed by the check.
 
 After apply, run:
 
-`<danny-skills>/skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1`
+`pwsh -NoProfile -File <danny-skills>/skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1 -RootPath <workspace> -Json`
 
 If `should_run_hygiene=true`, invoke `dt-memory-hygiene` automatically.
 
 ## Workspace Upload (final step)
 
-Session audit is where CLAUDE.md, MEMORY.md, and the other scaffolding files are most likely to have just been edited. As the LAST step of every audit run, push those edits to GitHub immediately instead of waiting for the 4-hourly sync:
+Session audit is where CLAUDE.md, MEMORY.md, and the other scaffolding files are most likely to have just been edited. As the LAST step of every audit run, push those edits to GitHub immediately instead of waiting for the hourly sync (systemd `workspace-sync.timer` at :07):
 
 On the Linux session host (CT202, workspace at `/home/danny/Claude`) and on the Mac (workspace at `~/Claude`):
 

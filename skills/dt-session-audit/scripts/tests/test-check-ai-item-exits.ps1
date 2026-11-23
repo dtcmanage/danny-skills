@@ -7,6 +7,10 @@ $transcript = Join-Path $fixture 'session.jsonl'
 $passed = 0
 $failed = 0
 $originalConfigDir = $env:CLAUDE_CONFIG_DIR
+$originalSessionIds = @($env:CLAUDE_SESSION_ID, $env:CLAUDE_CODE_SESSION_ID)
+# The suite itself may run inside a Claude session; start with no ambient session id.
+$env:CLAUDE_SESSION_ID = $null
+$env:CLAUDE_CODE_SESSION_ID = $null
 
 function Assert-Check([bool]$Condition, [string]$Name) {
     if ($Condition) { $script:passed++; "PASS: $Name" }
@@ -97,7 +101,7 @@ try {
     try {
         $projectName = (Get-Location).Path -replace '[^a-zA-Z0-9]', '-'
         $projectDir = Join-Path "$env:CLAUDE_CONFIG_DIR/projects" $projectName
-        [void][IO.Directory]::CreateDirectory((Join-Path $projectDir 'subagents'))
+        [void][IO.Directory]::CreateDirectory((Join-Path $projectDir 'nested'))
         $old = Join-Path $projectDir 'old.jsonl'
         $current = Join-Path $projectDir 'current.jsonl'
         Set-Transcript @(@{timestamp='2026-11-16T10:00:00Z'; role='user'; content='No tracked work.'})
@@ -107,17 +111,43 @@ try {
         (Get-Item $old).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-10)
         (Get-Item $current).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-5)
         Set-Transcript @(@{timestamp='2026-11-16T10:00:00Z'; role='user'; content='Work on #16.'})
-        Copy-Item $transcript (Join-Path $projectDir 'subagents/newest.jsonl')
-        $discovered = & $scriptPath -BaseUrl $baseUrl -Json | ConvertFrom-Json
-        Assert-Check (($discovered.touched_items -join ',') -eq '12' -and $discovered.findings.Count -eq 1) 'discovers newest main transcript, Run header and encoded cwd; excludes newer subagent'
+        Copy-Item $transcript (Join-Path $projectDir 'nested/newest.jsonl')
+        $discoveredErr = Join-Path $fixture 'discover.err'
+        $discovered = & pwsh -NoProfile -File $scriptPath -BaseUrl $baseUrl -Json 2> $discoveredErr | ConvertFrom-Json
+        Assert-Check (($discovered.touched_items -join ',') -eq '12' -and $discovered.findings.Count -eq 1) 'without a session id, discovers newest main transcript, Run header and encoded cwd; excludes a newer nested transcript'
+        Assert-Check ([string](Get-Content $discoveredErr -Raw) -match '(?s)WARNING: no session id.*current\.jsonl') 'newest-file fallback warns and names the chosen file'
         $explicit = Invoke-Check
         Assert-Check (($explicit.touched_items -join ',') -eq '16') 'explicit path overrides automatic discovery'
-        Remove-Item -LiteralPath $old, $current
-        $missing = @(& pwsh -NoProfile -File $scriptPath -BaseUrl $baseUrl)
-        Assert-Check ($LASTEXITCODE -eq 0 -and $missing.Count -eq 1 -and $missing[0] -match 'could not find transcript') 'subagent-only folder prints clear missing transcript line and exits zero'
+
+        # A session id picks its own transcript even when another session's file is newer.
+        $mine = Join-Path $projectDir 'aaaa1111-2222-3333-4444-555566667777.jsonl'
+        Copy-Item $old $mine
+        (Get-Item $mine).LastWriteTimeUtc = [datetime]::UtcNow.AddMinutes(-30)
+        foreach ($var in @('CLAUDE_SESSION_ID', 'CLAUDE_CODE_SESSION_ID')) {
+            Set-Item "env:$var" 'aaaa1111-2222-3333-4444-555566667777'
+            $byId = & $scriptPath -BaseUrl $baseUrl -Json | ConvertFrom-Json
+            Assert-Check ($byId.touched_items.Count -eq 0) "$var selects the session's own transcript over a newer one"
+            Set-Item "env:$var" $null
+        }
+        # Run from another directory (e.g. the skill folder): the id still finds the transcript.
+        Push-Location $fixture
+        try {
+            $env:CLAUDE_CODE_SESSION_ID = 'aaaa1111-2222-3333-4444-555566667777'
+            $elsewhere = & $scriptPath -BaseUrl $baseUrl -Json | ConvertFrom-Json
+            Assert-Check ($elsewhere.touched_items.Count -eq 0) 'session id finds the transcript from another working directory'
+            $env:CLAUDE_CODE_SESSION_ID = 'ffff0000-0000-0000-0000-000000000000'
+            $unknown = @(& pwsh -NoProfile -File $scriptPath -BaseUrl $baseUrl -Json 2>&1)
+            Assert-Check ($LASTEXITCODE -ne 0 -and ($unknown -join ' ') -match 'TRANSCRIPT_NOT_FOUND.*ffff0000') 'unknown session id fails with TRANSCRIPT_NOT_FOUND, never another file'
+        } finally { Pop-Location; $env:CLAUDE_CODE_SESSION_ID = $null }
+
+        Remove-Item -LiteralPath $old, $current, $mine
+        $missing = @(& pwsh -NoProfile -File $scriptPath -BaseUrl $baseUrl 2>&1)
+        Assert-Check ($LASTEXITCODE -ne 0 -and ($missing -join ' ') -match 'TRANSCRIPT_NOT_FOUND') 'nested-only folder fails with TRANSCRIPT_NOT_FOUND'
         $env:CLAUDE_CONFIG_DIR = Join-Path $fixture 'missing-config'
-        $missing = @(& pwsh -NoProfile -File $scriptPath -BaseUrl $baseUrl)
-        Assert-Check ($LASTEXITCODE -eq 0 -and $missing.Count -eq 1 -and $missing[0] -match 'could not find transcript') 'missing project folder exits zero'
+        $missing = @(& pwsh -NoProfile -File $scriptPath -BaseUrl $baseUrl 2>&1)
+        Assert-Check ($LASTEXITCODE -ne 0 -and ($missing -join ' ') -match 'TRANSCRIPT_NOT_FOUND') 'missing project folder fails with TRANSCRIPT_NOT_FOUND'
+        $missing = @(& pwsh -NoProfile -File $scriptPath -TranscriptPath (Join-Path $fixture 'nope.jsonl') -BaseUrl $baseUrl 2>&1)
+        Assert-Check ($LASTEXITCODE -ne 0 -and ($missing -join ' ') -match 'TRANSCRIPT_NOT_FOUND') 'missing explicit transcript fails with TRANSCRIPT_NOT_FOUND'
     } finally { Pop-Location }
 
     $listener.Stop()
@@ -129,6 +159,8 @@ try {
     Assert-Check ($LASTEXITCODE -eq 0 -and $output.Count -eq 1 -and $output[0] -match 'could not check') 'unreachable prints one line and exits zero'
 } finally {
     $env:CLAUDE_CONFIG_DIR = $originalConfigDir
+    $env:CLAUDE_SESSION_ID = $originalSessionIds[0]
+    $env:CLAUDE_CODE_SESSION_ID = $originalSessionIds[1]
     $listener.Close()
     if ($null -ne $server) { $server.Dispose() }
     $resolved = [IO.Path]::GetFullPath($fixture)

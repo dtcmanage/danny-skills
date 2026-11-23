@@ -118,7 +118,9 @@ Follow `references/input-modes.md`:
 1. Infer project/workstation/tier from the supplied path and scope, and record the draft's author
    family to fix the reviewer lane (cross-family rule above). Do not routinely ask for tier, lane, or a
    model override; ask only at a genuine fork.
-2. Validate plan shape and write `design\_review\draft-v1.md`.
+2. Validate plan shape and write `design\_review\draft-v1.md`. Give it a numbered `## Implementation
+   Sequence` (one item per milestone: goal, files/areas, verification command) when the plan lacks one;
+   the assembler warns from Round 1 and the finalizer refuses a final design without it.
 3. Load current canonical constraints. For code-backed/current-data claims, inspect the actual source once
    and write `review-context.md` with paths/queries, hashes or timestamps, and build recheck gates.
    **Hard gate:** once `review-context.md` exists, `draft-v1.md` MUST itself contain the

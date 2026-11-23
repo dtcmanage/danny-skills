@@ -1,10 +1,14 @@
 param(
     [string]$RootPath = ".",
-    [switch]$AsJson
+    # -Json matches the sibling audit scripts; -AsJson stays for older callers.
+    [Alias('AsJson')]
+    [switch]$Json
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+# Plain text for transcripts and logs: no ANSI color codes.
+if (Get-Variable -Name PSStyle -ErrorAction SilentlyContinue) { $PSStyle.OutputRendering = 'PlainText' }
 
 function Get-FileKind {
     param([string]$Name)
@@ -42,8 +46,11 @@ function Get-BloatThresholds {
 
 function Is-IgnoredPath {
     param([string]$Path)
-    $p = $Path.ToLowerInvariant()
-    if ($p -like '*\.git\*' -or $p -like '*\node_modules\*' -or $p -like '*\.dt-build\*' -or $p -like '*\dist\*' -or $p -like '*\build\*') { return $true }
+    # Separator-neutral so the same exclusions hold on Linux and Windows.
+    $p = '/' + ([IO.Path]::GetRelativePath($root, $Path).ToLowerInvariant() -replace '\\', '/')
+    foreach ($dirName in @('.git', 'node_modules', '.dt-build', 'dist', 'build')) {
+        if ($p.Contains("/$dirName/")) { return $true }
+    }
     # Copies, not live scaffolding: build evidence, underscore meta folders (_audit, _archive,
     # _handoffs) below the workspace, and the harness auto-memory inbox (root projects\), which
     # dt-session-audit drains under its own rules.
@@ -58,11 +65,19 @@ function Is-IgnoredPath {
 function Get-FileTier {
     # Root tier: files directly in the workspace root, plus the _Claude-Workspace directory
     # file (a cross-workstation map, not a workstation). Everything else has the
-    # 1,500-word workstation/substation/repo budget.
+    # 1,500-word workstation/substation/repo budget. The assistant workspace kit's Claude/
+    # folder is a template of a whole workspace root, so it gets the same two root slots.
     param([IO.FileInfo]$File)
     $dir = $File.DirectoryName.TrimEnd('\', '/')
-    if ($dir -eq $root.TrimEnd('\', '/')) { return 'root' }
-    if ($dir -eq (Join-Path $root '_Claude-Workspace').TrimEnd('\', '/')) { return 'root' }
+    $roots = @($root.TrimEnd('\', '/'))
+    $kit = [regex]::Match(($dir -replace '\\', '/'), '^(.*/assistant-workspace-kit/Claude)(?:/|$)')
+    if ($kit.Success) { $roots += $kit.Groups[1].Value }
+    foreach ($candidate in $roots) {
+        $normalizedDir = $dir -replace '\\', '/'
+        $normalizedRoot = $candidate -replace '\\', '/'
+        if ($normalizedDir -eq $normalizedRoot) { return 'root' }
+        if ($normalizedDir -eq "$normalizedRoot/_Claude-Workspace") { return 'root' }
+    }
     return 'non-root'
 }
 
@@ -166,7 +181,7 @@ $overall = [pscustomobject]@{
     files = $results
 }
 
-if ($AsJson) {
+if ($Json) {
     $overall | ConvertTo-Json -Depth 8
     exit 0
 }
@@ -178,11 +193,12 @@ Write-Output ""
 
 if ($overall.flagged_files -gt 0) {
     Write-Output "Flagged:"
-    $results |
-        Where-Object { $_.should_run_hygiene } |
-        Sort-Object bloat_score -Descending |
-        Select-Object file, kind, token_est, word_count, line_count, long_lines, duplicate_ratio, avg_bullet_words, bloat_score |
-        Format-Table -AutoSize
+    # One explicit line per file: table formatting truncates long paths to the console width.
+    foreach ($r in @($results | Where-Object { $_.should_run_hygiene } | Sort-Object bloat_score -Descending)) {
+        $hits = @($r.trigger_flags.PSObject.Properties | Where-Object { $_.Value } | ForEach-Object { $_.Name }) -join ','
+        Write-Output ("- {0} | kind={1} tier={2} tokens={3} words={4} lines={5} long_lines={6} duplicate_ratio={7} avg_bullet_words={8} score={9} triggers={10}" -f
+            $r.file, $r.kind, $r.tier, $r.token_est, $r.word_count, $r.line_count, $r.long_lines, $r.duplicate_ratio, $r.avg_bullet_words, $r.bloat_score, $hits)
+    }
 } else {
     Write-Output "No files exceeded bloat trigger thresholds."
 }

@@ -6,10 +6,12 @@
 # The intaking session moves the file to consumed\ after loading it.
 #
 # -Prune moves CONSUMED files older than 30 days from '_handoffs\consumed\'
-# into '_handoffs\consumed\_archive\'. Nothing is ever deleted.
+# into '_handoffs\consumed\_archive\'. Nothing is ever deleted. A file whose git
+# toplevel differs from Root's (a code repo nested under the workstation) is never
+# moved; it is reported as skipped_nested_repo so that repo stays clean.
 #
 # Output (default): summary lines.
-# Output (-Json):  { root, handoff_folders[], handoffs[], pruned[] }
+# Output (-Json):  { root, handoff_folders[], handoffs[], pruned[], skipped_nested_repo[] }
 # where each handoff entry is { folder, name, path, created, age_days,
 # status, archived }.
 
@@ -113,11 +115,37 @@ foreach ($folder in $handoffFolders) {
 
 # --- Prune: move CONSUMED files older than 30 days to consumed\_archive ---
 
+function Get-GitToplevel {
+    # Full path of the repository that owns $Directory, or '' when it is in none.
+    param([string]$Directory)
+    $top = & git -C $Directory rev-parse --show-toplevel 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($top)) { return '' }
+    return [System.IO.Path]::GetFullPath(([string]$top).Trim()).TrimEnd('\', '/')
+}
+
 $pruned = @()
+$skippedNestedRepo = @()
 if ($Prune) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw 'PRUNE_NEEDS_GIT: -Prune checks each file''s repository before moving it; install git or run without -Prune.'
+    }
+    $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $rootRepo = Get-GitToplevel -Directory $resolvedRoot
     foreach ($entry in $handoffs) {
         if ($entry.status -ne 'CONSUMED' -or $entry.archived) { continue }
         if ($entry.age_days -le $pruneAgeDays) { continue }
+
+        # Never move a file that belongs to another repository nested under Root.
+        $fileRepo = Get-GitToplevel -Directory (Split-Path -Parent $entry.path)
+        if (-not [string]::Equals($fileRepo, $rootRepo, $pathComparison)) {
+            $skippedNestedRepo += [pscustomobject]@{
+                name = $entry.name
+                path = $entry.path
+                repo = $fileRepo
+                age_days = $entry.age_days
+            }
+            continue
+        }
 
         $archiveFolder = Join-Path (Join-Path $entry.folder 'consumed') '_archive'
         if (-not (Test-Path -LiteralPath $archiveFolder)) {
@@ -150,6 +178,7 @@ $result = [pscustomobject]@{
     handoff_folders = $handoffFolders
     handoffs = $handoffs
     pruned = $pruned
+    skipped_nested_repo = $skippedNestedRepo
 }
 
 if ($Json) {
@@ -179,6 +208,12 @@ else {
             Write-Output "Pruned ($($pruned.Count)):"
             foreach ($p in $pruned) {
                 Write-Output "  $($p.name) -> $($p.to)"
+            }
+        }
+        if ($skippedNestedRepo.Count -gt 0) {
+            Write-Output "Skipped, inside a nested repository ($($skippedNestedRepo.Count)):"
+            foreach ($skip in $skippedNestedRepo) {
+                Write-Output "  $($skip.path)  (repo $($skip.repo))"
             }
         }
     }

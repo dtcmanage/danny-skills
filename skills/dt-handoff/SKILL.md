@@ -35,7 +35,7 @@ When any session or skill intakes a handoff — loads it as the starting prompt 
 - A handoff in `_handoffs\consumed\` (or `consumed\_archive\`) is **CONSUMED**.
 - A handoff anywhere else in `_handoffs\` is **OPEN**.
 
-`scripts\handoff-registry.ps1` reads status straight from this layout — no content parsing, no guessing. `-Prune` moves CONSUMED files older than 30 days into `_handoffs\consumed\_archive\`; nothing is ever deleted.
+`scripts\handoff-registry.ps1` reads status straight from this layout — no content parsing, no guessing. `-Prune` moves CONSUMED files older than 30 days into `_handoffs\consumed\_archive\`; nothing is ever deleted Files inside a git repo nested under the root (a code repo under the workstation) are never moved; `-Prune` reports them as `skipped_nested_repo`.
 
 
 

@@ -69,7 +69,7 @@ try {
     $polishScratch = Join-Path $polishProject 'design\_review'
     New-Item -ItemType Directory -Path $polishScratch -Force | Out-Null
     Write-Utf8 (Join-Path $polishProject 'CONTEXT.md') "# Context`n"
-    $polishSource = "---`nshape_version: 1`n---`n`n# Polish Fixture`n`nTimeout is approximately one minute.`n"
+    $polishSource = "---`nshape_version: 1`n---`n`n# Polish Fixture`n`nTimeout is approximately one minute.`n`n## Implementation Sequence`n`n1. Build the fixture. Files: src/. Verify: ``python -m pytest tests/test_fixture.py``.`n"
     Write-Utf8 (Join-Path $polishScratch 'draft-v2.md') $polishSource
     $polishStatePath = Join-Path $polishScratch 'verdicts.json'
     $polishFinding1 = [ordered]@{
@@ -127,7 +127,7 @@ try {
     $residualScratch = Join-Path $residualProject 'design\_review'
     New-Item -ItemType Directory -Path $residualScratch -Force | Out-Null
     Write-Utf8 (Join-Path $residualProject 'CONTEXT.md') "# Context`n"
-    $residualSource = "---`nshape_version: 1`n---`n`n# Residual Fixture`n`nThe accepted body stays byte-identical.`n"
+    $residualSource = "---`nshape_version: 1`n---`n`n# Residual Fixture`n`nThe accepted body stays byte-identical.`n`n## Implementation Sequence`n`n1. Build the fixture. Files: src/. Verify: ``python -m pytest tests/test_fixture.py``.`n"
     Write-Utf8 (Join-Path $residualScratch 'draft-v3.md') $residualSource
     $residualStatePath = Join-Path $residualScratch 'verdicts.json'
     $carriedFinding = [ordered]@{
@@ -176,7 +176,25 @@ try {
         -GlossaryReconciled -ApprovedResidualRisk) | ConvertFrom-Json
     Assert-True (Test-Path -LiteralPath $residualFinal.final_path -PathType Leaf) 'valid residual preparation did not finalize'
 
-    [pscustomobject]@{ status='ok'; assertions=8 } | ConvertTo-Json -Compress
+    # A final design without an Implementation Sequence is refused: dt-roadmap's primary milestone path needs it.
+    $bareProject = Join-Path $testRoot 'bare-project'
+    $bareScratch = Join-Path $bareProject 'design\_review'
+    New-Item -ItemType Directory -Path $bareScratch -Force | Out-Null
+    Write-Utf8 (Join-Path $bareProject 'CONTEXT.md') "# Context`n"
+    Write-Utf8 (Join-Path $bareScratch 'draft-v1.md') "---`nshape_version: 1`n---`n`n# Bare Fixture`n`n## Milestones`n`nProse with no numbered sequence.`n"
+    $bareReview = [ordered]@{
+        headline='Nothing to add.';dimension_assessments=[ordered]@{intent='ok';completeness='ok';coherence='ok';resilience='ok';economy='ok';feasibility='ok'}
+        prior_finding_checks=@();findings=@();engagement_with_prior_reasoning='First round.'
+        verdict='NOTHING_TO_ADD';confidence='high';confidence_reason='Complete.'
+    }
+    Add-ReceivedRound -Scratch $bareScratch -StatePath (Join-Path $bareScratch 'verdicts.json') -Round 1 -Tier light -Review $bareReview -SkillRoot $SkillRoot
+    Assert-Throws { & (Join-Path $SkillRoot 'scripts\finalize-review.ps1') `
+        -ProjectPath $bareProject -DraftPath (Join-Path $bareScratch 'draft-v1.md') -Slug 'bare-fixture' `
+        -Round 1 -Tier light -ContextPath (Join-Path $bareProject 'CONTEXT.md') -GlossaryReconciled | Out-Null
+    } 'IMPLEMENTATION_SEQUENCE_REQUIRED' 'final design without an Implementation Sequence was finalized'
+    Assert-True (Test-Path -LiteralPath $bareScratch -PathType Container) 'refused finalization deleted recovery state'
+
+    [pscustomobject]@{ status='ok'; assertions=10 } | ConvertTo-Json -Compress
 }
 finally {
     if (Test-Path -LiteralPath $testRoot) {

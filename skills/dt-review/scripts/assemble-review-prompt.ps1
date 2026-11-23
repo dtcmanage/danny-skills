@@ -156,6 +156,15 @@ if (Test-Path -LiteralPath $contextPath -PathType Leaf) {
     }
 }
 
+# finalize-review.ps1 refuses a final design without a numbered Implementation Sequence. Warn from
+# Round 1 so the section is authored while drafts are still mutable.
+$implementationSequenceWarning = ''
+$sequenceMatch = [regex]::Match($draft, '(?ims)^## Implementation Sequence\s*\r?\n(?<body>.*?)(?=^##\s|\z)')
+if (-not $sequenceMatch.Success -or $sequenceMatch.Groups['body'].Value -notmatch '(?m)^\d+[.)]\s+\S') {
+    $implementationSequenceWarning = "draft-v$Round.md has no numbered '## Implementation Sequence' section. finalize-review.ps1 will refuse the final design without it; add one numbered item per milestone (goal, files/areas, verification command) to the next draft."
+    Write-Warning $implementationSequenceWarning
+}
+
 if ($previousReviewPath) {
     $priorReview = Get-Content -LiteralPath $previousReviewPath -Raw
     try {
@@ -301,6 +310,7 @@ $authorizationRequired = [bool]$transition.authorization_required
     authorization_path = [System.IO.Path]::GetFullPath($authorizationPath)
     authorization_sha256 = if ($authorizationRequired) { (Get-FileHash -LiteralPath $authorizationPath -Algorithm SHA256).Hash.ToUpperInvariant() } else { '' }
     build_intake_warning = $buildIntakeWarning
+    implementation_sequence_warning = $implementationSequenceWarning
     prompt_budget_bytes = $promptBudget
     prompt_budget_warning = $promptBudgetWarning
 } | ConvertTo-Json -Compress

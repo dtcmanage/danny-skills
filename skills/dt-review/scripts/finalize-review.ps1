@@ -266,6 +266,12 @@ if ((Test-Path -LiteralPath $reviewContextPath -PathType Leaf) -and $body -notma
     throw 'A review-context.md evidence map exists, so the final design must include a Build-intake revalidation section.'
 }
 
+# dt-roadmap derives build milestones from this section; without it dt-build falls back to weaker heuristics.
+$sequenceMatch = [regex]::Match($body, '(?ims)^## Implementation Sequence\s*\r?\n(?<body>.*?)(?=^##\s|\z)')
+if (-not $sequenceMatch.Success -or $sequenceMatch.Groups['body'].Value -notmatch '(?m)^\d+[.)]\s+\S') {
+    throw "IMPLEMENTATION_SEQUENCE_REQUIRED: the final design needs a '## Implementation Sequence' section with one numbered item per milestone (goal, files/areas, verification command). Carry it into the next draft and run another round."
+}
+
 if ($body -match '(?s)^---\s*\r?\n.*?\r?\n---\s*\r?\n') {
     $frontmatter = $Matches[0]
     if ($frontmatter -match '(?m)^shape_version\s*:\s*1\s*$') {

@@ -42,7 +42,12 @@ $cases = @(
     @{ path = 'workstation/glossary.md'; words = 1600; lines = 160; tier = 'non-root'; max = 0; word_hit = $false; line_hit = $false },
     # The workspace directory file is a cross-workstation map: root limits, not the 1,500 budget.
     @{ path = '_Claude-Workspace/CLAUDE.md'; words = 2200; lines = 50; tier = 'root'; max = 4000; word_hit = $false; line_hit = $false },
-    @{ path = '_Claude-Workspace/Station/MEMORY.md'; words = 1600; lines = 50; tier = 'non-root'; max = 1500; word_hit = $true; line_hit = $false }
+    @{ path = '_Claude-Workspace/Station/MEMORY.md'; words = 1600; lines = 50; tier = 'non-root'; max = 1500; word_hit = $true; line_hit = $false },
+    # The assistant workspace kit's Claude/ folder is a root-tier template (Command Center #106).
+    @{ path = '_Claude-Workspace/Tech HQ/assistant-workspace-kit/Claude/CLAUDE.md'; words = 1919; lines = 60; tier = 'root'; max = 4000; word_hit = $false; line_hit = $false },
+    @{ path = '_Claude-Workspace/Tech HQ/assistant-workspace-kit/Claude/MEMORY.md'; words = 1600; lines = 60; tier = 'root'; max = 0; word_hit = $false; line_hit = $false },
+    @{ path = '_Claude-Workspace/Tech HQ/assistant-workspace-kit/Claude/_Claude-Workspace/CLAUDE.md'; words = 2000; lines = 60; tier = 'root'; max = 4000; word_hit = $false; line_hit = $false },
+    @{ path = '_Claude-Workspace/Tech HQ/assistant-workspace-kit/Claude/_Claude-Workspace/Station/CLAUDE.md'; words = 1600; lines = 60; tier = 'non-root'; max = 1500; word_hit = $true; line_hit = $false }
 )
 # Copies of scaffolding that are never live: evidence trees, underscore meta folders, and the
 # harness auto-memory inbox. None may be scanned.
@@ -50,7 +55,10 @@ $ignored = @(
     '_Claude-Workspace/Station/evidence/run-1/CLAUDE.md',
     '_Claude-Workspace/Station/_audit/backup/MEMORY.md',
     '_Claude-Workspace/_archive/old/CLAUDE.md',
-    'projects/D--Claude/memory/MEMORY.md'
+    'projects/D--Claude/memory/MEMORY.md',
+    # Dependency and build trees, matched on either path separator.
+    'workstation/app/node_modules/pkg/CLAUDE.md',
+    'workstation/app/dist/CLAUDE.md'
 )
 try {
     foreach ($case in $cases) {
@@ -58,7 +66,7 @@ try {
     }
     foreach ($path in $ignored) { Write-Fixture (Join-Path $fixtureRoot $path) 5000 300 }
     # Exercise JSON and text modes through their public entry point.
-    $report = & $detector -RootPath ($fixtureRoot + [IO.Path]::DirectorySeparatorChar) -AsJson | ConvertFrom-Json
+    $report = & $detector -RootPath ($fixtureRoot + [IO.Path]::DirectorySeparatorChar) -Json | ConvertFrom-Json
     Assert-True ($report.scanned_files -eq $cases.Count) 'all fixture files discovered'
     foreach ($path in $ignored) {
         Assert-True (-not @($report.files | Where-Object file -eq (Join-Path $fixtureRoot $path)).Count) "$($path): copy not scanned"
@@ -75,10 +83,17 @@ try {
     Assert-True ($report.should_run_hygiene -and $report.flagged_files -eq $expectedFlagged) 'aggregate flags match file decisions'
     $text = (& $detector -RootPath $fixtureRoot | Out-String)
     Assert-True ($text -match "Flagged files: $expectedFlagged") 'text mode reports flagged count'
+    $legacy = & $detector -RootPath $fixtureRoot -AsJson | ConvertFrom-Json
+    Assert-True ($legacy.flagged_files -eq $expectedFlagged) '-AsJson stays an alias of -Json'
+    # Redirected output (a transcript or log) must not truncate long paths or add color codes.
+    $narrow = (& pwsh -NoProfile -File $detector -RootPath $fixtureRoot) -join "`n"
+    $deepPath = Join-Path $fixtureRoot '_Claude-Workspace/Tech HQ/assistant-workspace-kit/Claude/_Claude-Workspace/Station/CLAUDE.md'
+    Assert-True ($narrow.Contains($deepPath)) 'text mode prints full flagged paths'
+    Assert-True (-not $narrow.Contains([string][char]27)) 'text mode has no ANSI escape codes'
 
     Write-Fixture (Join-Path $fixtureRoot 'CLAUDE.md') 4001 100
     Write-Fixture (Join-Path $fixtureRoot 'MEMORY.md') 1400 150
-    $report = & $detector -RootPath $fixtureRoot -AsJson | ConvertFrom-Json
+    $report = & $detector -RootPath $fixtureRoot -Json | ConvertFrom-Json
     $rootClaude = @($report.files | Where-Object { $_.tier -eq 'root' -and $_.kind -eq 'claude' })[0]
     $rootMemory = @($report.files | Where-Object { $_.tier -eq 'root' -and $_.kind -eq 'memory' })[0]
     Assert-True ($rootClaude.trigger_flags.words -and $rootClaude.should_run_hygiene) 'root CLAUDE.md over 4000 words triggers'
@@ -92,7 +107,7 @@ try {
     $proseDir = Join-Path $fixtureRoot 'prose'
     New-Item -ItemType Directory -Path $proseDir -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $proseDir 'CLAUDE.md') -Value @(1..30 | ForEach-Object { "Line $_ $cell" })
-    $report = & $detector -RootPath $fixtureRoot -AsJson | ConvertFrom-Json
+    $report = & $detector -RootPath $fixtureRoot -Json | ConvertFrom-Json
     $tableFile = @($report.files | Where-Object file -eq (Join-Path $tableDir 'CLAUDE.md'))[0]
     $proseFile = @($report.files | Where-Object file -eq (Join-Path $proseDir 'CLAUDE.md'))[0]
     Assert-True ($tableFile.long_lines -eq 0 -and -not $tableFile.trigger_flags.long_lines) 'table rows never count as long lines'

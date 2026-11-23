@@ -8,19 +8,40 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (-not $TranscriptPath) {
+function Stop-TranscriptNotFound([string]$Detail) {
+    [Console]::Error.WriteLine("TRANSCRIPT_NOT_FOUND: $Detail Run from the session's own working directory or pass -TranscriptPath.")
+    exit 2
+}
+
+if ($TranscriptPath) {
+    if (-not (Test-Path -LiteralPath $TranscriptPath -PathType Leaf)) { Stop-TranscriptNotFound "no transcript at $TranscriptPath." }
+} else {
     $configDir = $env:CLAUDE_CONFIG_DIR
     if (-not $configDir) { $configDir = Join-Path $HOME '.claude' }
+    $projectsDir = Join-Path $configDir 'projects'
     $projectName = (Get-Location).Path -replace '[^a-zA-Z0-9]', '-'
-    $projectDir = Join-Path (Join-Path $configDir 'projects') $projectName
-    # Main transcripts are direct children; never select nested subagent files.
-    $newest = Get-ChildItem -LiteralPath $projectDir -Filter '*.jsonl' -File -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-    if ($null -eq $newest) {
-        'Command Center: could not find transcript for the current project.'
-        exit 0
+    $projectDir = Join-Path $projectsDir $projectName
+    # Many sessions share one project folder, so the session id is the only safe key.
+    $sessionId = @($env:CLAUDE_SESSION_ID, $env:CLAUDE_CODE_SESSION_ID) | Where-Object { $_ } | Select-Object -First 1
+    if ($sessionId) {
+        if ($sessionId -notmatch '^[A-Za-z0-9-]+$') { Stop-TranscriptNotFound "session id '$sessionId' is not a transcript name." }
+        $byId = Join-Path $projectDir "$sessionId.jsonl"
+        if (-not (Test-Path -LiteralPath $byId -PathType Leaf)) {
+            # The session may have started in another directory; ids are unique across project folders.
+            $byId = Get-ChildItem -LiteralPath $projectsDir -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object { Join-Path $_.FullName "$sessionId.jsonl" } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+        }
+        if (-not $byId) { Stop-TranscriptNotFound "no transcript for session $sessionId under $projectsDir." }
+        $TranscriptPath = $byId
+    } else {
+        # Main transcripts are direct children; never select files in nested folders.
+        $newest = Get-ChildItem -LiteralPath $projectDir -Filter '*.jsonl' -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($null -eq $newest) { Stop-TranscriptNotFound "no session id in the environment and no transcript in $projectDir." }
+        $TranscriptPath = $newest.FullName
+        [Console]::Error.WriteLine("WARNING: no session id in the environment; using the newest transcript in the project folder, which may belong to another session: $TranscriptPath")
     }
-    $TranscriptPath = $newest.FullName
 }
 
 function Get-Field($Object, [string]$Name) {

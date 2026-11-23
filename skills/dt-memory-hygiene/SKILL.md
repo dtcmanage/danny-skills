@@ -47,13 +47,15 @@ Use this skill when:
 Run the detector first from workspace root:
 
 ```bash
-pwsh -File "<skill>/scripts/detect-memory-bloat.ps1"
+pwsh -NoProfile -File "<skill>/scripts/detect-memory-bloat.ps1" -RootPath <workspace> -Json
 ```
+
+`-Json` is the machine-readable switch (`-AsJson` remains an alias). Without it the detector prints plain, untruncated text with no color codes.
 
 Trigger hygiene automatically when any file hits:
 
 - `token_est` over file-type threshold, OR
-- `word_count` over `thresholds.word_max` (root CLAUDE.md: 4,000; every non-root CLAUDE.md and MEMORY.md: 1,500), or MEMORY.md at 150 or more lines, OR
+- `word_count` over `thresholds.word_max` (root CLAUDE.md: 4,000; every non-root CLAUDE.md and MEMORY.md: 1,500; the assistant workspace kit's `Claude/` template scores as root), or MEMORY.md at 150 or more lines, OR
 - `long_lines` over threshold, OR
 - `duplicate_ratio` over threshold, OR
 - `avg_bullet_words` over threshold with enough bullets, OR
@@ -118,7 +120,7 @@ This sweep is advisory and fires once per new candidate — never a blocking gat
 After the hygiene edits, re-run the detector on the same targets:
 
 ```bash
-pwsh -File "<skill>/scripts/detect-memory-bloat.ps1"
+pwsh -NoProfile -File "<skill>/scripts/detect-memory-bloat.ps1" -RootPath <workspace> -Json
 ```
 
 Include the before/after detector metrics for every touched file in the report (`token_est`, `long_lines`, `duplicate_ratio`, `avg_bullet_words`, `bloat_score`). A pass that does not improve the failing metric is not done — keep compacting, or surface exactly why that metric cannot move without a semantic change.

@@ -318,6 +318,7 @@ Set-Content -LiteralPath (Join-Path $PSScriptRoot 'held-output-child.pid') -Valu
     Write-Utf8 (Join-Path $scratch 'draft-v1.md') $malicious
     $assemblyJson = & (Join-Path $SkillRoot 'scripts\assemble-review-prompt.ps1') -ProjectPath $project -Round 1 -Tier complex
     $assembly = $assemblyJson | ConvertFrom-Json
+    Assert-True ($assembly.implementation_sequence_warning -match "no numbered '## Implementation Sequence'") 'draft-v1 without an Implementation Sequence did not warn at assembly'
     $prompt = Get-Content -LiteralPath $assembly.prompt_path -Raw
     foreach ($mode in @('prefix','exit','timeout')) {
         $roundPeer = @'
@@ -514,11 +515,12 @@ switch ('__MODE__') {
     Assert-Throws { & (Join-Path $SkillRoot 'scripts\parse-verdict.ps1') -FeedbackPath (Join-Path $scratch 'review-v2.md') -Round 2 -StatePath $statePath -Tier complex } 'must have been closed' 'premature REGRESSION lifecycle was accepted'
 
     # Round 2 closes the prior commitment and finalizes the current draft.
-    $draft2 = "---`nshape_version: 1`n---`n`n# Fixture Design`n`nRollback is specified.`n"
+    $draft2 = "---`nshape_version: 1`n---`n`n# Fixture Design`n`nRollback is specified.`n`n## Implementation Sequence`n`n1. Build the fixture. Files: src/. Verify: ``python -m pytest tests/test_fixture.py``.`n"
     Write-Utf8 (Join-Path $scratch 'draft-v2.md') $draft2
     Write-RoundMeta -Directory $scratch -Round 2 -Tier complex
     $automaticAssembly = (& (Join-Path $SkillRoot 'scripts\assemble-review-prompt.ps1') -ProjectPath $project -Round 2 -Tier complex) | ConvertFrom-Json
     Assert-True ($automaticAssembly.round -eq 2) 'ordinary CONTINUE transition was not automatic'
+    Assert-True ([string]::IsNullOrEmpty($automaticAssembly.implementation_sequence_warning)) 'draft with a numbered Implementation Sequence still warned'
     $review2 = [ordered]@{
         headline = 'No remaining issue.'
         dimension_assessments = [ordered]@{ intent='ok'; completeness='ok'; coherence='ok'; resilience='ok'; economy='ok'; feasibility='ok' }
@@ -637,7 +639,7 @@ switch ('__MODE__') {
     $residualScratch = Join-Path $residualProject 'design\_review'
     [void](New-MaterialReviewHistory -Directory $residualScratch -Tier light -Rounds 3 -SkillRoot $SkillRoot -Disposition DEFER)
     Write-Utf8 (Join-Path $residualProject 'CONTEXT.md') "# Context`n"
-    $residualReviewed = "---`nshape_version: 1`n---`n`n# Residual Fixture`n"
+    $residualReviewed = "---`nshape_version: 1`n---`n`n# Residual Fixture`n`n## Implementation Sequence`n`n1. Build the fixture. Files: src/. Verify: ``python -m pytest tests/test_fixture.py``.`n"
     Write-Utf8 (Join-Path $residualScratch 'draft-v3.md') $residualReviewed
     Write-Utf8 (Join-Path $residualScratch 'round-meta-v3.json') (([ordered]@{
         round = 3

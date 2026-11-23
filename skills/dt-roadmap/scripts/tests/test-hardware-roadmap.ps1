@@ -4,7 +4,7 @@ $passed = 0
 function Check([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw "ASSERT_FAIL: $Message" }; $script:passed++
 }
-$root = Join-Path $PSScriptRoot ('roadmap-fixture-' + [guid]::NewGuid().ToString('N'))
+$root = Join-Path ([IO.Path]::GetTempPath()) ('roadmap-fixture-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 try {
     $design = Join-Path $root 'design.md'
@@ -61,5 +61,5 @@ Host: measured 32 logical processors, 63 GiB RAM, CIM, 2026-10-17; 2 GiB per job
     Write-Output "SUMMARY: $passed passed"
 } finally {
     $resolved = [IO.Path]::GetFullPath($root)
-    if ($resolved.StartsWith([IO.Path]::GetFullPath($PSScriptRoot) + [IO.Path]::DirectorySeparatorChar)) { Remove-Item -LiteralPath $resolved -Recurse -Force }
+    if ($resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))) { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }

@@ -172,6 +172,110 @@ function Parse-MilestonesFromPhaseHeadings {
     return ,$milestones.ToArray()
 }
 
+function Get-MarkdownHeadings {
+    # Returns every level-2/3/4 ATX heading with its level, text and body (up to the
+    # next heading of the same or a higher level). Fenced code is skipped so a
+    # `## ` inside a sample block is not read as structure.
+    param([string]$Text)
+    $lines = $Text -split "`r?`n"
+    $heads = New-Object System.Collections.Generic.List[object]
+    $inFence = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*(```|~~~)') { $inFence = -not $inFence; continue }
+        if ($inFence) { continue }
+        if ($lines[$i] -match '^(#{2,4})\s+(.+?)\s*#*\s*$') {
+            [void]$heads.Add([pscustomobject]@{ level = $Matches[1].Length; text = $Matches[2].Trim(); line = $i; body = '' })
+        }
+    }
+    for ($h = 0; $h -lt $heads.Count; $h++) {
+        $end = $lines.Count
+        for ($n = $h + 1; $n -lt $heads.Count; $n++) {
+            if ($heads[$n].level -le $heads[$h].level) { $end = $heads[$n].line; break }
+        }
+        $start = $heads[$h].line + 1
+        $heads[$h].body = if ($end -gt $start) { ($lines[$start..($end - 1)] -join "`n") } else { '' }
+        $heads[$h] | Add-Member -NotePropertyName end -NotePropertyValue $end
+    }
+    return ,$heads.ToArray()
+}
+
+function ConvertTo-MilestoneRows {
+    # Shared row model: id, name, full_text. Items are { name; text } pairs.
+    param([object[]]$Items)
+    $rows = New-Object System.Collections.Generic.List[object]
+    $idx = 0
+    foreach ($item in $Items) {
+        $idx++
+        [void]$rows.Add([pscustomobject]@{
+            id = ('M{0:D2}' -f $idx)
+            name = $item.name
+            full_text = $item.text
+        })
+    }
+    return ,$rows.ToArray()
+}
+
+function Get-NumberedListItems {
+    # Top-level numbered list items (`1. `, `2) `) with their continuation lines.
+    param([string]$Body)
+    $items = New-Object System.Collections.Generic.List[object]
+    $current = $null
+    foreach ($line in ($Body -split "`r?`n")) {
+        if ($line -match '^(\d+)[.)]\s+(.+)$') {
+            if ($null -ne $current) { [void]$items.Add($current) }
+            $first = $Matches[2].Trim()
+            $current = [pscustomobject]@{ name = (Get-FirstSentence -Text $first); text = $first }
+            continue
+        }
+        # Only the list that sits directly under the heading; child sections own their own lists.
+        if ($line -match '^#{1,6}\s') { break }
+        if ($null -ne $current -and $line -match '\S') { $current.text = ($current.text + ' ' + $line.Trim()).Trim() }
+    }
+    if ($null -ne $current) { [void]$items.Add($current) }
+    return ,$items.ToArray()
+}
+
+function Parse-MilestonesFromMilestoneHeadings {
+    # Second-choice parser for designs without `## Implementation Sequence`: the first
+    # level-2/3 heading whose text names a milestone plan (milestone, phase, sequence,
+    # build order, implementation plan). Its numbered list becomes the milestones; with
+    # no list, its child headings do. Headings that label one item (`Phase 1`,
+    # `Milestone A`) are skipped here and left to the legacy phase-heading parser.
+    param([string]$Text)
+    $heads = Get-MarkdownHeadings -Text $Text
+    foreach ($h in @($heads | Where-Object { $_.level -le 3 })) {
+        $label = ($h.text -replace '^\d+(\.\d+)*[.)]?\s+', '')
+        if ($label -notmatch '(?i)milestone|phase|sequence|build order|implementation plan') { continue }
+        if ($label -match '(?i)^(phase|milestone|step|stage)\s+(\d+|[A-Z]|[IVX]+)\b') { continue }
+        $items = Get-NumberedListItems -Body $h.body
+        if ($items.Count -eq 0) {
+            $parent = $h
+            $children = @($heads | Where-Object { $_.level -eq $parent.level + 1 -and $_.line -gt $parent.line -and $_.line -lt $parent.end })
+            $items = @($children | ForEach-Object {
+                $name = ($_.text -replace '^\d+(\.\d+)*[.)]?\s+', '').Trim()
+                [pscustomobject]@{ name = $name; text = ($name + ' ' + ($_.body -replace '\s+', ' ')).Trim() }
+            })
+        }
+        if ($items.Count -gt 0) { return ,(ConvertTo-MilestoneRows -Items $items) }
+    }
+    return ,@()
+}
+
+function Parse-MilestonesFromNumberedSections {
+    # Last-resort parser: numbered top-level sections (`## 1. Ingest service`) that
+    # describe deliverables. Framing sections (overview, requirements, risks, ...) are
+    # not deliverables and are skipped.
+    param([string]$Text)
+    $framing = '(?i)^(overview|summary|introduction|context|background|motivation|problem|goals?|non-goals?|scope|out of scope|requirements?|assumptions|constraints|decisions?|trade-?offs?|risks?|open questions?|questions|appendix|glossary|references?|validation|validation gates|acceptance|testing|test plan|throughput|design coverage|external api contracts|status|changelog|history|notes)\b'
+    $items = foreach ($h in (Get-MarkdownHeadings -Text $Text)) {
+        if ($h.level -ne 2 -or $h.text -notmatch '^\d+[.)]?\s+(.+)$') { continue }
+        $name = $Matches[1].Trim()
+        if ($name -match $framing) { continue }
+        [pscustomobject]@{ name = $name; text = ($name + ' ' + ($h.body -replace '\s+', ' ')).Trim() }
+    }
+    return ,(ConvertTo-MilestoneRows -Items @($items))
+}
+
 function Test-IsRunnableBackticked {
     # Filters backticked content to only entries the shared extractor
     # (scripts/extract-named-artifacts.ps1, which dt-build's gate also uses)
@@ -180,8 +284,12 @@ function Test-IsRunnableBackticked {
     # `discovery_active` into procedure cells as if they were commands.
     param([string]$Candidate)
     if ([string]::IsNullOrWhiteSpace($Candidate)) { return $false }
-    if ($Candidate -match '^(pytest|python|pwsh|powershell|node|npm|bun)\b') { return $true }
-    if ($Candidate -match '^(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(?:py|ts|js|ps1|md|yaml|yml|json|html|sql)$') { return $true }
+    # Runners end at whitespace or end of string, so `python3` / `python3.12` match
+    # (a bare `\b` after `python` cannot sit before the `3`).
+    if ($Candidate -match '^(?:pytest|python(?:3(?:\.\d+)?)?|pwsh|powershell|node|npm|npx|pnpm|bun|bash|sh|uv|make|go|cargo)(?=\s|$)') { return $true }
+    # Path-invoked executables such as `./scripts/check.sh --fast`.
+    if ($Candidate -match '^\./[A-Za-z0-9_./-]+(?=\s|$)') { return $true }
+    if ($Candidate -match '^(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(?:py|ts|js|ps1|sh|md|yaml|yml|json|html|sql)$') { return $true }
     return $false
 }
 
@@ -328,11 +436,26 @@ $inputContractMode = 'implementation_sequence'
 # all milestones into one). The graceful throw below stays reachable via the Count 0 path.
 $milestones = Parse-MilestonesFromImplementationSequence -Text $redacted
 if ($milestones.Count -eq 0) {
+    $inputContractMode = 'milestone_heading_fallback'
+    $milestones = Parse-MilestonesFromMilestoneHeadings -Text $redacted
+}
+if ($milestones.Count -eq 0) {
     $inputContractMode = 'phase_headings_fallback'
     $milestones = Parse-MilestonesFromPhaseHeadings -Text $redacted
 }
 if ($milestones.Count -eq 0) {
-    throw "No milestones derivable from design. Expected either a `## Implementation Sequence` (or equivalent) section with a numbered list, or legacy `### Phase ...` headings. See skills/dt-roadmap/SKILL.md for the input contract."
+    $inputContractMode = 'numbered_sections_fallback'
+    $milestones = Parse-MilestonesFromNumberedSections -Text $redacted
+}
+if ($milestones.Count -eq 0) {
+    # Explanatory stop, not a stack trace: dt-build surfaces this text to Danny.
+    [Console]::Error.WriteLine(("NO_MILESTONES_DERIVABLE: No milestones derivable from design {0}. Looked for, in order: " +
+        "(1) a '## Implementation Sequence' section (or '## Implementation Order', '## Build Sequence', '## Build Order', '## Milestone Sequence') with a numbered list; " +
+        "(2) any '##'/'###' heading naming milestone, phase, sequence, build order or implementation plan, with a numbered list or child headings; " +
+        "(3) legacy '### Phase ...' / '### Contract Freeze Gate ...' / '### Value Review ...' headings; " +
+        "(4) numbered top-level sections ('## 1. <deliverable>'). " +
+        "Fix: add '## Implementation Sequence' with one numbered item per milestone (goal, files/areas, verification command), then rerun.") -f $DesignPath)
+    exit 2
 }
 
 $gatesByMilestone = Parse-ValidationGates -Text $redacted
