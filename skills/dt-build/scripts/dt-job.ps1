@@ -424,6 +424,12 @@ function Get-DtJobProcessStartUtc {
     param([int]$ProcessId)
     try {
         $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        if ($IsLinux) {
+            # An exited child its parent has not reaped stays a zombie with the same PID and start time;
+            # it is dead (a crashed coordinator must not block its relaunch). State follows the last ')'.
+            $stat = [IO.File]::ReadAllText("/proc/$ProcessId/stat")
+            if ($stat.Substring($stat.LastIndexOf(')') + 1).TrimStart().StartsWith('Z')) { return $null }
+        }
         return $process.StartTime.ToUniversalTime().ToString('o')
     }
     catch { return $null }
@@ -536,7 +542,19 @@ function Start-DtJobRunner {
         # a space (the main checkout lives under 'Skill Creation'); pass one string with each argument quoted.
         $runnerArgs = @('-NoProfile', '-NonInteractive', '-File', $script:DtJobRunnerPath, '-RunFolder', $paths.Root, '-JobId', [string]$Record.job_id) |
             ForEach-Object { '"' + ([string]$_).Replace('"', '\"') + '"' }
-        $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList ($runnerArgs -join ' ')
+        # Redirect the runner's own streams: an inherited stdout pipe would keep a caller that captures
+        # `dt-job start` output (`$raw = & pwsh dt-job.ps1 start ...`) blocked until the job finished, a
+        # deadlock when the caller later releases the job (FS-59 fixture hang on CT202, 2026-11-23).
+        $jobDir = Join-Path $paths.Jobs ([string]$Record.job_id)
+        if (-not (Test-Path -LiteralPath $jobDir)) { New-Item -ItemType Directory -Path $jobDir -Force | Out-Null }
+        # The runner inherits this process's environment here (Windows starts it from the registry profile),
+        # so withhold secret-looking names: a job gets a secret only when its spec names it (-PassEnv).
+        $withheld = @{}
+        foreach ($item in Get-ChildItem Env:) {
+            if (@($script:DtJobEnvSensitive | Where-Object { $item.Name -like $_ }).Count -gt 0) { $withheld[$item.Name] = $null }
+        }
+        $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList ($runnerArgs -join ' ') `
+            -RedirectStandardOutput '/dev/null' -RedirectStandardError (Join-Path $jobDir 'runner-stderr.log') -Environment $withheld
         $runnerPid = $process.Id
     }
     return [pscustomobject]@{ pid = $runnerPid; start_utc = (Get-DtJobProcessStartUtc -ProcessId $runnerPid) }

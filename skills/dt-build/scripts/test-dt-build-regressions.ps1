@@ -1294,8 +1294,8 @@ $script:RouterDiagnosisHttp = {
     # that only mentions the script does not, nested agents and unset models are
     # flagged, and a broken environment never fails the build.
     $usageHome = Join-Path $tempRoot 'usage-claude-home'
-    $usageProject = Join-Path $usageHome 'projects\fixture-project'
-    New-Item -ItemType Directory -Path (Join-Path $usageProject 'sess-orch\subagents') -Force | Out-Null
+    $usageProject = Join-Path $usageHome 'projects/fixture-project'
+    New-Item -ItemType Directory -Path (Join-Path $usageProject 'sess-orch/subagents') -Force | Out-Null
     $usageLine = {
         param($id, $block, $cacheRead)
         (@{ type = 'assistant'; timestamp = '2030-01-01T00:00:00Z'; message = @{ id = $id; model = 'claude-opus-5'
@@ -1306,7 +1306,7 @@ $script:RouterDiagnosisHttp = {
     $mention = @{ type = 'tool_use'; name = 'Bash'; input = @{ command = 'echo "verify-milestone-acceptance.ps1", "write-build-state.ps1"' } }
     $spawn = @{ type = 'tool_use'; name = 'Agent'; input = @{ prompt = 'look around' } }
     Write-Utf8 -Path (Join-Path $usageProject 'sess-orch.jsonl') -Content (& $usageLine 'm1' $gateCall 400000)
-    Write-Utf8 -Path (Join-Path $usageProject 'sess-orch\subagents\agent-builder.jsonl') -Content (& $usageLine 'm2' $spawn 1000)
+    Write-Utf8 -Path (Join-Path $usageProject 'sess-orch/subagents/agent-builder.jsonl') -Content (& $usageLine 'm2' $spawn 1000)
     Write-Utf8 -Path (Join-Path $usageProject 'sess-mention.jsonl') -Content (& $usageLine 'm3' $mention 1000)
     $usageOut = Join-Path $tempRoot 'usage-out'
     $savedClaudeHome = $env:CLAUDE_CONFIG_DIR; $savedUsageCache = $env:DT_BUILD_USAGE_CACHE; $savedCodexHome = $env:CODEX_HOME

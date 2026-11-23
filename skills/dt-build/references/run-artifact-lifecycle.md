@@ -8,7 +8,7 @@ Artifact classes:
 - Retained decision record: `build-plan.md`, `build-state.md`, `build-decision-log.md`.
 - Orchestration state (written only by `<skill>/scripts/dt-job.ps1`, the watcher, and the launcher): `jobs/` (one
   `<job_id>.json` per job, a per-job `jobs/<job_id>/` folder holding `spec.json`, `stdout.log`, `stderr.log`,
-  and `summary.json`, plus `events.jsonl`, `reads.jsonl`, `locks/`), `coordinator.lease`, `coordinator.lock`,
+  `summary.json` and, on Linux, `runner-stderr.log` (the runner's own errors), plus `events.jsonl`, `reads.jsonl`, `locks/`), `coordinator.lease`, `coordinator.lock`,
   `context-baseline.json`, `irreversible.json`, `approvals.json`, `launches.jsonl`, `notifications.jsonl`,
   `rotations.jsonl`, `kill-failed.json`, and `step-errors.json`. Never hand-edit them.
 

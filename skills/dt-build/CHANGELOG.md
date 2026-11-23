@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.52.6
+
+- Linux parity: dt-job starts the runner with its own output files (an inherited stdout pipe deadlocked callers that capture 'dt-job start' output) and without unnamed secret-looking variables (Windows contract); a zombie PID counts as gone; the usage sweep runs on the Linux session host (Mac still skipped). Tests run on Linux: cmd/ping stand-ins, one-byte exit codes, symlinks, -WindowStyle only on Windows, 100 ms start-time tolerance.
+
 ## 2.52.5
 
 - Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.1.1 dt-build 2.52.6: Linux parity for dt-job (runner launch streams and secret withholding, zombie PIDs), the usage sweep on the session host, and Linux-runnable dt-build test suites.",
       "1.1.0 Model router owner moves to the Linux session host (CT202): owner jobs (roster approval/publication, outcome import, cadence, research, cost report, frontier requests, bench) run there under systemd user timers; SNOWWHITE and the Mac read the published roster as observers. Skills: dt-build 2.52.5, dt-review 1.18.6, dt-image-gen 0.3.42, dt-writing-draft 0.2.42, dt-writing-edit 0.3.42. Version policy: shared-component owner entry for the new router-owner test.",
       "1.0.2 dt-build 2.52.4: managed Claude coordinators launched by the Linux watcher can sign in (config dir + long-lived token in the unit); dt-review 1.18.5: Claude chunks and review rounds restore the token stripped from tool shells (claude headless auth, new scripts/claude-headless-auth.ps1; version policy owners map updated).",
       "1.0.1 dt-build 2.52.3: Codex builders and the managed coordinator run with full access on Linux, so they can commit and reach package indexes.",

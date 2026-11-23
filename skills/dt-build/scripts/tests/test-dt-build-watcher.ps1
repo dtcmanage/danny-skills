@@ -24,6 +24,21 @@ $watcher = Join-Path $scriptDir 'dt-build-watcher.ps1'
 $templatePath = Join-Path $repoRoot 'skills\dt-pipeline\templates\build-state-template.md'
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-watcher-tests-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+# Off Windows: 'ping.exe' and 'cmd.exe' stand-ins on PATH (ping -n N waits N seconds; cmd /c runs through sh),
+# and Start-Process -WindowStyle (Windows-only) is splatted, so the fixtures below run unchanged.
+$HiddenWindow = if ($IsWindows) { @{ WindowStyle = 'Hidden' } } else { @{} }
+$HiddenWindowText = if ($IsWindows) { ' -WindowStyle Hidden' } else { '' }
+# Windows reports exact process start times; Linux derives them from boot time plus clock ticks, so two reads
+# differ by under a millisecond (dt-job's Test-DtJobProcessIdentity allows 100 ms there).
+function Test-SameStart([DateTime]$A, [DateTime]$B) { if ($IsWindows) { return $A.Ticks -eq $B.Ticks }; return [Math]::Abs($A.Ticks - $B.Ticks) -le [TimeSpan]::FromMilliseconds(100).Ticks }
+if (-not $IsWindows) {
+    $exeShimDir = Join-Path $tempRoot 'exe-shims'
+    New-Item -ItemType Directory -Path $exeShimDir -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $exeShimDir 'ping.exe'), "#!/bin/sh`nn=4`nwhile [ `$# -gt 0 ]; do [ `"`$1`" = -n ] && { n=`$2; shift; }; shift; done`nexec sleep `"`$n`"`n")
+    [IO.File]::WriteAllText((Join-Path $exeShimDir 'cmd.exe'), "#!/bin/sh`n[ `"`$1`" = /c ] && shift`nexec /bin/sh -c `"`$*`"`n")
+    & chmod +x (Join-Path $exeShimDir 'ping.exe') (Join-Path $exeShimDir 'cmd.exe')
+    $env:PATH = $exeShimDir + [IO.Path]::PathSeparator + $env:PATH
+}
 
 $savedEnv = @{}
 foreach ($name in @('DT_BUILD_STATE_DIR', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALERT_TRANSPORT', 'DT_BUILD_COORDINATOR_LAUNCHER', 'DT_BUILD_VENDOR_LIMITS_SCRIPT', 'DT_BUILD_WATCHER_NOW_UTC', 'DT_BUILD_COORDINATOR_ID', 'DT_TEST_DM_LOG', 'DT_TEST_LAUNCH_LOG', 'DT_TEST_DEAD_PID', 'DT_TEST_BLOCKED', 'DT_TEST_RESET_CLAUDE', 'DT_TEST_RESET_CODEX', 'DT_TEST_DTJOB', 'DT_TEST_LIVE_CHILD', 'DT_TEST_LAUNCH_SLEEP_MS', 'DT_TEST_LAUNCH_FAIL', 'DT_TEST_DM_FAIL', 'DT_BUILD_COORDINATOR_LOCK_HELD', 'DT_JOB_ID', 'DT_TEST_TREE_FAIL', 'DT_TEST_KILLABLE', 'DT_TEST_KILL_LOG', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME')) {
@@ -53,6 +68,7 @@ $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $fakeTransport
 $fakeLauncher = Join-Path $tempRoot 'fake-launcher.ps1'
 Write-Utf8 -Path $fakeLauncher -Content @'
 param([Alias('Host')][string]$CoordinatorHost, [string]$RunId, [string]$RunFolder, [string]$BuildStatePath, [string]$CoordinatorId)
+$HiddenWindow = if ($IsWindows) { @{ WindowStyle = 'Hidden' } } else { @{} }; $HiddenWindowText = if ($IsWindows) { ' -WindowStyle Hidden' } else { '' }
 # Same order as the default launcher: lease first (a refusal starts nothing), then the child, then its pid.
 [System.IO.File]::WriteAllText((Join-Path $RunFolder 'fake-launcher-started'), $CoordinatorId)
 if ($env:DT_TEST_LAUNCH_SLEEP_MS) { Start-Sleep -Milliseconds ([int]$env:DT_TEST_LAUNCH_SLEEP_MS) }
@@ -64,8 +80,8 @@ if ($env:DT_TEST_TREE_FAIL) {
     $childPid = $null
     $grandFile = "$($env:DT_TEST_TREE_FAIL).grand"
     try {
-        $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','90','127.0.0.1' -WindowStyle Hidden -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 90"
-        $childPid = (Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript -WindowStyle Hidden -PassThru).Id
+        $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','90','127.0.0.1'$HiddenWindowText -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 90"
+        $childPid = (Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript @HiddenWindow -PassThru).Id
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         while (-not (Test-Path -LiteralPath $grandFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
         $grandPid = [int](Get-Content -Raw -LiteralPath $grandFile)
@@ -87,7 +103,7 @@ if ($env:DT_TEST_LAUNCH_FAIL) {
     & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action release -CoordinatorId $CoordinatorId -Json *> $null
     exit 1
 }
-$child = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' -WindowStyle Hidden -PassThru
+$child = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' @HiddenWindow -PassThru
 & pwsh -NoProfile -File $env:DT_TEST_DTJOB lease -RunFolder $RunFolder -Action renew -CoordinatorId $CoordinatorId -Pid $child.Id -Json *> $null
 # The fake coordinator never consumes its trigger; unless told to stay up, it crashes right after launch.
 if (-not $env:DT_TEST_LIVE_CHILD) { Stop-Process -Id $child.Id -Force; $child.WaitForExit() }
@@ -106,7 +122,7 @@ $env:DT_BUILD_VENDOR_LIMITS_SCRIPT = $fakeLimits
 $env:DT_TEST_BLOCKED = ''
 # Cases here were written against 40k/70k context margins; pin them.
 $env:DT_BUILD_CTX_SOFT_MARGIN = '40000'; $env:DT_BUILD_CTX_HARD_MARGIN = '70000'
-$deadProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'exit 0' -WindowStyle Hidden -PassThru -Wait
+$deadProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'exit 0' @HiddenWindow -PassThru -Wait
 $env:DT_TEST_DEAD_PID = [string]$deadProcess.Id
 # Operator fixtures need a standalone caller; restore both identities in teardown.
 Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
@@ -261,8 +277,8 @@ function Start-RotationFixture {
     param([string]$Name)
     $run = New-Run -Name $Name -PinnedHost 'codex' -NoLease
     $grandFile = Join-Path $tempRoot "$Name.grand"
-    $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','120','127.0.0.1' -WindowStyle Hidden -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 120"
-    $child = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript -WindowStyle Hidden -PassThru
+    $childScript = "`$g = Start-Process -FilePath 'ping.exe' -ArgumentList '-n','120','127.0.0.1'$HiddenWindowText -PassThru; [System.IO.File]::WriteAllText('$grandFile', [string]`$g.Id); Start-Sleep -Seconds 120"
+    $child = Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile', '-Command', $childScript @HiddenWindow -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while (-not (Test-Path -LiteralPath $grandFile) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
     $grand = [int](Get-Content -Raw -LiteralPath $grandFile)
@@ -462,7 +478,7 @@ try {
     $leaseStart = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'coordinator.lease') | ConvertFrom-Json).expires_utc
     $waitOut = Join-Path $tempRoot 'live-wait-out.txt'
     $env:DT_BUILD_COORDINATOR_ID = 'waiter'
-    $background = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', "`"$dtJob`"", 'wait', '-RunFolder', "`"$($run.folder)`"", '-JobId', $job.job_id, '-All', '-TimeoutSec', '60', '-Json') -RedirectStandardOutput $waitOut -WindowStyle Hidden -PassThru
+    $background = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', "`"$dtJob`"", 'wait', '-RunFolder', "`"$($run.folder)`"", '-JobId', $job.job_id, '-All', '-TimeoutSec', '60', '-Json') -RedirectStandardOutput $waitOut @HiddenWindow -PassThru
     Remove-Item Env:DT_BUILD_COORDINATOR_ID
     Start-Sleep -Seconds 8
     $leaseNow = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'coordinator.lease') | ConvertFrom-Json).expires_utc
@@ -525,7 +541,7 @@ try {
     Invoke-Tick | Out-Null
     Assert-True ((Get-LaunchCount 'managed-release') -eq 1 -and (Get-DmCount 'managed-release') -eq 0) 'released interactive lease on a managed run relaunches next tick'
     # A watcher-launched coordinator that released its lease but is still in its final turn is not overlapped.
-    $tail = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+    $tail = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' @HiddenWindow -PassThru
     try {
         $finalTurn = New-Run -Name 'released-alive' -NoLease
         Invoke-DtJob @('request-continuation','-RunFolder',$finalTurn.folder) | Out-Null
@@ -713,7 +729,7 @@ try {
     $savedLease = if (Test-Path -LiteralPath $leasePath) { Get-Content -Raw -LiteralPath $leasePath } else { $null }
     $closingFixtureScript = Join-Path $run.folder 'closing-fixture.ps1'
     Write-Utf8 $closingFixtureScript 'Start-Sleep -Seconds 120'
-    $closingFixture = Start-Process pwsh -ArgumentList @('-NoProfile','-File', ('"' + $closingFixtureScript + '"')) -WindowStyle Hidden -PassThru
+    $closingFixture = Start-Process pwsh -ArgumentList @('-NoProfile','-File', ('"' + $closingFixtureScript + '"')) @HiddenWindow -PassThru
     $liveLease = [ordered]@{ coordinator_id = 'mc-closing'; host = 'codex'; session_id = $null; pid = $closingFixture.Id; pid_start_utc = $closingFixture.StartTime.ToUniversalTime().ToString('o'); launched_by = 'watcher'; ttl_sec = 600; acquired_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(9).ToString('o'); released_utc = $null }
     Write-Utf8 $leasePath ($liveLease | ConvertTo-Json)
     $liveApprove = Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'parser-review')
@@ -847,7 +863,7 @@ try {
     Write-Utf8 -Path (Join-Path $run.folder 'irreversible.json') -Content '{ not json'
     $tick = @(Invoke-Tick | Where-Object { $_.run_id -eq 'corrupt-ir' })[0]
     Assert-True ((Get-LaunchCount 'corrupt-ir') -eq 1 -and $tick.action -eq 'launch' -and @($tick.step_errors | Where-Object { $_ -match '^stale irreversible check failed' }).Count -eq 1) "a corrupt irreversible.json still lets the tick launch, and reports the error ($($tick | ConvertTo-Json -Compress))"
-    $live = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+    $live = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' @HiddenWindow -PassThru
     try {
         $run = New-Run -Name 'corrupt-baseline' -PinnedHost 'codex' -NoLease
         $liveStart = (Get-Process -Id $live.Id).StartTime.ToUniversalTime().ToString('o')
@@ -863,7 +879,7 @@ try {
     Use-Scenario 'step-repeat'
     $okRun = New-Run -Name 'step-ok' -NoLease
     Invoke-DtJob @('request-continuation', '-RunFolder', $okRun.folder) | Out-Null
-    $live = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' -WindowStyle Hidden -PassThru
+    $live = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' @HiddenWindow -PassThru
     try {
         $run = New-Run -Name 'step-err' -PinnedHost 'codex' -NoLease
         $liveStart = (Get-Process -Id $live.Id).StartTime.ToUniversalTime().ToString('o')
@@ -945,7 +961,7 @@ try {
     $episode = Get-Content -Raw -LiteralPath $killFailedPath | ConvertFrom-Json
     $grandStart = (Get-Process -Id $ep.grandchild).StartTime.ToUniversalTime()
     $grandRow = @(@($episode.survivors) | Where-Object { [int]$_.pid -eq $ep.grandchild })
-    Assert-True ($episode.coordinator_id -eq $ep.coordinator_id -and $episode.first_seen_utc -and $grandRow.Count -eq 1 -and (ConvertTo-TestUtc $grandRow[0].start_utc).Ticks -eq $grandStart.Ticks -and @(@($episode.survivors) | Where-Object { [int]$_.pid -eq $ep.child }).Count -eq 0) "kill-failed.json lists the survivor pid with its start time, the coordinator, and first_seen_utc ($($episode | ConvertTo-Json -Compress -Depth 5))"
+    Assert-True ($episode.coordinator_id -eq $ep.coordinator_id -and $episode.first_seen_utc -and $grandRow.Count -eq 1 -and (Test-SameStart (ConvertTo-TestUtc $grandRow[0].start_utc) $grandStart) -and @(@($episode.survivors) | Where-Object { [int]$_.pid -eq $ep.child }).Count -eq 0) "kill-failed.json lists the survivor pid with its start time, the coordinator, and first_seen_utc ($($episode | ConvertTo-Json -Compress -Depth 5))"
     Remove-Item -LiteralPath $killLog -Force -ErrorAction SilentlyContinue
     $later = @(foreach ($n in 1..2) { Invoke-StubbedRun -RunFolder $ep.folder -Stubs $rootOnlyStub })
     $retried = @(Get-Content -LiteralPath $killLog | Where-Object { $_ } | ForEach-Object { [int]$_ })
@@ -1090,7 +1106,7 @@ Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
     $env:DT_TEST_LAUNCH_SLEEP_MS = '4000'
     $tickOut = Join-Path $tempRoot 'race-tick.txt'
     try {
-        $background = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', "`"$watcher`"") -RedirectStandardOutput $tickOut -WindowStyle Hidden -PassThru
+        $background = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', "`"$watcher`"") -RedirectStandardOutput $tickOut @HiddenWindow -PassThru
         $marker = Join-Path $run.folder 'fake-launcher-started'
         $deadline = [DateTime]::UtcNow.AddSeconds(60)
         while (-not (Test-Path -LiteralPath $marker) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
@@ -1111,7 +1127,7 @@ Invoke-WatcherRun -Entry $entry | ConvertTo-Json -Compress
     Assert-True ($raceWait -ge 2) "the interactive acquire waited on coordinator.lock until the launch finished ($raceWait s)"
     Assert-True ($spawns.Count -eq 1 -and $raceLease.coordinator_id -eq $spawns[0].coordinator_id -and $raceLease.pid -eq $spawns[0].pid -and $raceLease.launched_by -eq 'watcher') 'exactly one holder: the one spawned child holds the lease'
     $childStart = Get-Process -Id ([int]$raceLease.pid) -ErrorAction SilentlyContinue
-    Assert-True ($null -ne $childStart -and ([DateTime]$raceLease.pid_start_utc).ToUniversalTime().Ticks -eq $childStart.StartTime.ToUniversalTime().Ticks) 'the lease records the live child pid and its start time'
+    Assert-True ($null -ne $childStart -and (Test-SameStart ([DateTime]$raceLease.pid_start_utc).ToUniversalTime() $childStart.StartTime.ToUniversalTime())) 'the lease records the live child pid and its start time'
     # Expire the lease while the child lives: acquire is still refused.
     $raceLease.expires_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o')
     Write-Utf8 -Path (Join-Path $run.folder 'coordinator.lease') -Content ($raceLease | ConvertTo-Json)
@@ -1486,7 +1502,7 @@ Get-WatcherDecision -Entry $entry -NowUtc $CheckAtUtc | ConvertTo-Json -Compress
     Use-Scenario 'operator-live'
     $run = New-Run -Name 'operator-live' -NoLease
     Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'merge', '-Message', 'Ready.') | Out-Null
-    $liveCoordinator = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' -WindowStyle Hidden -PassThru
+    $liveCoordinator = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '90', '127.0.0.1' @HiddenWindow -PassThru
     try {
         Write-Lease -RunFolder $run.folder -LaunchedBy 'watcher' -LeasePid $liveCoordinator.Id -PidStartUtc $liveCoordinator.StartTime.ToUniversalTime().ToString('o') -ExpiresUtc ([DateTime]::UtcNow.AddMinutes(10)) -CoordinatorId 'mc-live'
         $liveApprove = Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'merge')
@@ -1608,7 +1624,7 @@ $first = Invoke-WatcherRun -Entry $entry
     Use-Scenario 'reacquire-released'
     $rf = Join-Path $tempRoot 'runs/reacquire-released'
     New-Item -ItemType Directory -Path $rf -Force | Out-Null
-    $holderProc = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' -WindowStyle Hidden -PassThru
+    $holderProc = Start-Process -FilePath 'ping.exe' -ArgumentList '-n', '60', '127.0.0.1' @HiddenWindow -PassThru
     try {
         Invoke-DtJob @('lease', '-RunFolder', $rf, '-Action', 'acquire', '-CoordinatorId', 'mc-hold', '-Host', 'codex', '-LaunchedBy', 'watcher', '-Pid', [string]$holderProc.Id) | Out-Null
         $kept = Invoke-DtJob @('lease', '-RunFolder', $rf, '-Action', 'acquire', '-CoordinatorId', 'mc-hold', '-Host', 'codex')
@@ -1648,7 +1664,7 @@ try { $runs = @(Read-WatcherRegistry); $outcome = "ok:$($runs[0].run_id)" } catc
     $releaseClosing = Join-Path $run.folder 'release-closing'
     $closingScript = Join-Path $run.folder 'closing.ps1'
     Write-Utf8 $closingScript "while (-not (Test-Path -LiteralPath '$releaseClosing')) { Start-Sleep -Milliseconds 100 }"
-    $closing = Start-Process pwsh -ArgumentList @('-NoProfile','-File', ('"' + $closingScript + '"')) -WindowStyle Hidden -PassThru
+    $closing = Start-Process pwsh -ArgumentList @('-NoProfile','-File', ('"' + $closingScript + '"')) @HiddenWindow -PassThru
     $script:spawned += $closing.Id
     Write-Lease -RunFolder $run.folder -LeasePid $closing.Id -PidStartUtc $closing.StartTime.ToUniversalTime().ToString('o') -CoordinatorId 'closing-queue-fixture'
     Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'fixture-queue-review') | Out-Null

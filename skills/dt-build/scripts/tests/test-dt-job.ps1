@@ -27,6 +27,18 @@ $dtJob = Join-Path $scriptDir 'dt-job.ps1'
 $readEvidence = Join-Path $scriptDir 'read-evidence.ps1'
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-job-tests-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+# Start-Process -WindowStyle exists only on Windows; splat it so the same calls run on Linux.
+$HiddenWindow = if ($IsWindows) { @{ WindowStyle = 'Hidden' } } else { @{} }
+# The exit-code cases use `cmd /c exit N` as the native command that fails with a known code. Off
+# Windows a `cmd` stand-in on PATH runs `/c <command>` through sh, so every case text stays identical.
+if (-not $IsWindows) {
+    $cmdShimDir = Join-Path $tempRoot 'cmd-shim'
+    New-Item -ItemType Directory -Path $cmdShimDir -Force | Out-Null
+    $cmdShim = Join-Path $cmdShimDir 'cmd'
+    [IO.File]::WriteAllText($cmdShim, "#!/bin/sh`n[ `"`$1`" = /c ] && shift`nexec /bin/sh -c `"`$*`"`n")
+    & chmod +x $cmdShim
+    $env:PATH = $cmdShimDir + [IO.Path]::PathSeparator + $env:PATH
+}
 
 function New-RunFolder {
     param([string]$Name)
@@ -395,6 +407,12 @@ strict-unset-exact-exit|0|1|Set-StrictMode -Version Latest; Write-Output x; exit
     $pinnedHead['exit-braced-trailing-newline']=0
     $cases['guard-braced-trailing-newline']='cmd /c exit 3; if (${LASTEXITCODE' + "`n} -ne 0) { exit 9 }"
     $pinnedHead['guard-braced-trailing-newline']=9
+    if (-not $IsWindows) {
+        # Linux reports exit codes as one byte (exit -1 is 255), and `mkdir` there is the system program,
+        # not PowerShell's function, so that case uses the cmdlet it stands for on Windows.
+        foreach ($table in @($pinnedHead, $readerExpected)) { foreach ($key in @($table.Keys)) { $table[$key] = $table[$key] -band 0xFF } }
+        if ($cases.Contains('F then mkdir')) { $cases['F then mkdir'] = "cmd /c exit 3; New-Item -ItemType Directory -Force -Path '$tempRoot/m' | Out-Null" }
+    }
     $measurements=@('HEAD control commit: 07a786f6c42c3aa2afc01b9820ff0c3f62952a86')
     foreach($name in $cases.Keys) {
         $command=$cases[$name]
@@ -753,7 +771,9 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
         } finally { [Environment]::SetEnvironmentVariable($identity, $null) }
     }
     $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $pinRun -Kind worker -Vendor claude -Command "'refused'" 2>&1
-    Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_PIN_VENDOR: run is pinned to codex \(gpt-fixture\); worker vendor claude refused') 'worker vendor mismatch refused before job creation'
+    # PowerShell's error view colors and wraps the message to the console width; match the plain text.
+    $plain = (($raw -join ' ') -replace '\x1b\[[0-9;]*m', '' -replace '\s+\|\s+', ' ' -replace '\s+', ' ')
+    Assert-True ($LASTEXITCODE -ne 0 -and $plain -match 'DT_JOB_PIN_VENDOR: run is pinned to codex \(gpt-fixture\); worker vendor claude refused') 'worker vendor mismatch refused before job creation'
     $env:DT_BUILD_RUN_PIN_VENDOR = 'claude'; $env:DT_BUILD_RUN_PIN_MODEL = 'stale'
     foreach ($kind in @('worker', 'command')) {
         $pinJob = Invoke-DtJob @('start', '-RunFolder', $pinRun, '-Kind', $kind, '-Vendor', 'codex', '-Command', "'pinned'")
@@ -817,7 +837,8 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
     $realSkillRoot = Split-Path -Parent $scriptDir
     $realRepoRoot = Split-Path -Parent (Split-Path -Parent $realSkillRoot)
     $junctionLink = Join-Path $tempRoot 'dt-build'
-    New-Item -ItemType Junction -Path $junctionLink -Target $realSkillRoot | Out-Null
+    # A junction on Windows; Linux and the Mac link skills with symlinks.
+    New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $junctionLink -Target $realSkillRoot | Out-Null
     $junctionJob = Join-Path $junctionLink 'scripts/dt-job.ps1'
     $alertPath = (& pwsh -NoProfile -Command ". '$($junctionJob.Replace("'", "''"))'; Write-Output `$script:DtJobAlertScript" | Select-Object -Last 1)
     Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $alertPath -PathType Leaf)) "junction dt-job load resolves an existing alert script ($alertPath)"
@@ -1395,7 +1416,7 @@ Start-Sleep 300
         $workCommand = (New-HeldJobCommand $workRelease).Replace('exit 0', "Set-Content -LiteralPath '$($marker.Replace("'", "''"))' -Value 'ran'")
         $b = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', $workCommand, '-Mutates', 'race')
         Start-Sleep -Milliseconds $delayMs
-        $cancel = Start-Process -FilePath ([System.Environment]::ProcessPath) -ArgumentList @('-NoProfile', '-File', "`"$dtJob`"", 'cancel', '-RunFolder', "`"$rf`"", '-JobId', $b.job_id, '-Json') -PassThru -WindowStyle Hidden
+        $cancel = Start-Process -FilePath ([System.Environment]::ProcessPath) -ArgumentList @('-NoProfile', '-File', "`"$dtJob`"", 'cancel', '-RunFolder', "`"$rf`"", '-JobId', $b.job_id, '-Json') -PassThru @HiddenWindow
         Write-Utf8 $release 'release'
         $cancel.WaitForExit()
         Wait-JobTerminal -RunFolder $rf -JobId $a.job_id | Out-Null
@@ -1509,7 +1530,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
 }
 '@
     New-Item -ItemType Directory -Path (Join-Path $rf 'jobs') -Force | Out-Null
-    $loop = Start-Process -FilePath ([System.Environment]::ProcessPath) -ArgumentList @('-NoProfile', '-File', "`"$loopScript`"", '-DtJob', "`"$dtJob`"", '-RunFolder', "`"$rf`"", '-Stop', "`"$stopFile`"") -PassThru -WindowStyle Hidden
+    $loop = Start-Process -FilePath ([System.Environment]::ProcessPath) -ArgumentList @('-NoProfile', '-File', "`"$loopScript`"", '-DtJob', "`"$dtJob`"", '-RunFolder', "`"$rf`"", '-Stop', "`"$stopFile`"") -PassThru @HiddenWindow
     try {
         $ids = @(1..8 | ForEach-Object { (Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "Start-Sleep -Milliseconds 300; 'ok $_'")).job_id })
         $states = @($ids | ForEach-Object { (Wait-JobTerminal -RunFolder $rf -JobId $_).status })
@@ -1703,7 +1724,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $closingRelease = Join-Path $rf 'closing-release'
     $closingScript = Join-Path $rf 'closing.ps1'
     Write-Utf8 $closingScript (New-HeldJobCommand $closingRelease)
-    $closing = Start-Process pwsh -ArgumentList @('-NoProfile','-File', $closingScript) -WindowStyle Hidden -PassThru
+    $closing = Start-Process pwsh -ArgumentList @('-NoProfile','-File', $closingScript) @HiddenWindow -PassThru
     $lease = [ordered]@{ coordinator_id = 'closing-fixture'; launched_by = 'watcher'; pid = $closing.Id; pid_start_utc = $closing.StartTime.ToUniversalTime().ToString('o'); released_utc = $null }
     Write-Utf8 (Join-Path $rf 'coordinator.lease') ($lease | ConvertTo-Json)
     foreach ($refusal in @('wrong-operation','coordinator','job','wrong-state')) {
@@ -1778,7 +1799,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $wrapping = [regex]::Match($runner, '(?s)    # Only a caller-documented suite.*?(?=    # Recheck under the lock)').Value
     Assert-True ([bool]$wrapping) 'runner opt-in argv block found'
     # Substitute only executable discovery; construction uses product code.
-    $wrapping = $wrapping.Replace('(Get-Command python -CommandType Application | Select-Object -First 1).Source', "'fixture-python-never-launched'")
+    $wrapping = $wrapping.Replace('(Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source', "'fixture-python-never-launched'")
     $DtJobRepoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $scriptDir))
     foreach ($value in @($null, '', '   ', $reason)) {
         $spec = [pscustomobject]@{ command = 'pytest fixture-selection'; exclusive_reason = $value }

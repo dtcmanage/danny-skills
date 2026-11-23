@@ -1097,8 +1097,10 @@ Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}.</p><div class="tiles">{ti
 
 
 def main() -> None:
-    if sys.platform != "win32":
-        print("DT_BUILD_USAGE: Reporting sweep is owned by Windows; Mac collection skipped.")
+    # The sweep runs where sessions run (Linux session host, Windows until SNOWWHITE retires); the
+    # ledger is per machine, so two hosts never write the same file. The Mac only observes quotas.
+    if sys.platform == "darwin":
+        print("DT_BUILD_USAGE: Reporting sweep runs on the session host; Mac collection skipped.")
         return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=None, help="output folder")
