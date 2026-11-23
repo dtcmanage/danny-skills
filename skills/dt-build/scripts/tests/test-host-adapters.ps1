@@ -163,9 +163,9 @@ try {
     }
     Assert-True ($lifecycle -match 'out of milestone commits') 'orchestration files stay out of milestone commits'
 
-    # hooks/README.md: the confirmed live settings file and adoption target.
+    # hooks/README.md: the confirmed live settings file and adoption target (CT202 since 2026-11-22).
     $hooksReadme = Get-Content -Raw -LiteralPath (Join-Path $skillRoot 'hooks\README.md')
-    Assert-True ($hooksReadme.Contains('Adoption target: merge the `hooks` block from `settings-snippet.json` into `D:\Claude\settings.json`.')) 'hooks README names the adoption target'
+    Assert-True ($hooksReadme.Contains('the live user settings file is `/home/danny/Claude/settings.json`') -and $hooksReadme.Contains('Adoption there merges `settings-snippet.json` into that file.')) 'hooks README names the adoption target (Linux session host)'
 
     # invoke-codex-chunk.ps1: without --json, stdout is model text, so a JSON-looking stdout line never
     # replaces stderr as the error source.

@@ -18,3 +18,13 @@ Lifecycle controls:
 - No scratch prompt artifacts should survive run finalization.
 - Orchestration state files stay out of milestone commits; they live in the run folder, never in the worktree diff.
 - The tree-hash temporary index writes git objects into the repository's object store, which `git gc` reclaims; nothing else cleans them.
+
+## build-run-review.html (on request only)
+
+Moved from `SKILL.md` step 6.5 (2026-11-23). Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks for it, generate `build-run-review.html` in the run artifact folder with:
+  - the acceptance ledger as the headline panel (above the milestone status cards),
+  - milestone status cards,
+  - execution timeline,
+  - verify/fix loop outcomes,
+  - blockers/escalations panel,
+  - downgrade-language matches panel (per-milestone, with approved/blocker badge).

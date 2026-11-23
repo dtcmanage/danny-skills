@@ -181,3 +181,16 @@ Final integration must pass the integration branch's `.ship.json` `gateCommand`,
 - A milestone genuinely outside the build scope flagged as missing because the roadmap didn't say so (the gate is contract-bound; if the roadmap didn't name an artifact, the gate doesn't ask for it).
 
 The contract is: **whatever the roadmap explicitly names, the build must explicitly produce and verify.**
+
+## Final ledger
+
+Moved from `SKILL.md` step 6.5 (2026-11-23); unchanged rules for `build-acceptance-ledger.ps1`:
+
+- Omit `-RunTests`: normal finalization renders persisted `acceptance-rows.jsonl` without rerunning lifecycle-sensitive
+  milestone tests. Explicitly requested revalidation uses `-RunTests`, emitting `build-acceptance-revalidation.{md,html}`
+  without overwriting original acceptance.
+- Emits `build-acceptance-ledger.{md,html}`, the build's final answer.
+- Appends existing `<run-folder>/deferred-findings.md` to both outputs as informational "Deferred / Next Version":
+  what the orchestrator deferred and why. No blocker or Danny review. Its `## Known issues` entries are counted in
+  the ledger summary as the release's known issues (`review-fix-loop.md` section 7).
+

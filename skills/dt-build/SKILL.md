@@ -116,18 +116,7 @@ The advisory rules below remain in force until the scenario 8 validation passes 
 
 ## Usage telemetry (automatic)
 
-`<danny-skills>/scripts/collect-usage.ps1` sweeps this machine's Claude Code and Codex session logs for dt-build runs
-(orchestrators and wrapper-launched chunks, either host) and refreshes
-`Skill Creation/dt-build-token-efficiency/usage/usage-ledger-<machine>.jsonl` plus `usage-dashboard.html`:
-weighted tokens by model family, peak context, nested agents, resume messages, idle cache losses, and
-Opus share per run. It is read-only against the logs, incremental, and never blocks a build.
-
-- Run `pwsh -NoProfile -File "<skill>/scripts/collect-usage.ps1" -Quiet` once at intake (step 1) and once after the
-  final ledger (step 6.5). The intake sweep is what captures earlier runs, including ones that never
-  reached COMPLETE; there is no separate manual step.
-- Relay any `DT_BUILD_USAGE_ALERT:` line to Danny verbatim, once. Alerts fire only the first time a run is
-  flagged. They are advisory: never stop, retry, or re-plan a build because of one.
-- Do not read the ledger or dashboard into your context; report the dashboard path only.
+Run `pwsh -NoProfile -File "<skill>/scripts/collect-usage.ps1" -Quiet` at intake (step 1) and after the final ledger (step 6.5); relay any `DT_BUILD_USAGE_ALERT:` line once and never stop a build for one. Detail: `references/usage-telemetry.md`.
 
 ## Procedure (7A intake + 7B execution + 7C acceptance gate)
 
@@ -263,24 +252,14 @@ Opus share per run. It is read-only against the logs, incremental, and never blo
   merge, repeated only when it fails or code changes.
   Final-review and final-milestone findings: only critical ones block; the rest ship as Known issues (`references/review-fix-loop.md` section 7).
 - Run `<skill>/scripts/build-acceptance-ledger.ps1 -RoadmapPath <r> -WorkingTree <wt> -OutDir <run-folder> -RunFolder <run-folder>`.
-  - Omit `-RunTests`: normal finalization renders persisted `acceptance-rows.jsonl` without rerunning lifecycle-sensitive
-    milestone tests. Explicitly requested revalidation uses `-RunTests`, emitting `build-acceptance-revalidation.{md,html}`
-    without overwriting original acceptance.
-  - Emits `build-acceptance-ledger.{md,html}`, the build's final answer.
-  - Appends existing `<run-folder>/deferred-findings.md` to both outputs as informational "Deferred / Next Version":
-    what the orchestrator deferred and why. No blocker or Danny review.
+  - Omit `-RunTests` (revalidation on request only); emits `build-acceptance-ledger.{md,html}`, the build's final
+    answer, with `deferred-findings.md` appended as informational. Detail: `references/acceptance-contract.md`, "Final ledger".
 - Repeat usage sweep (`<danny-skills>/scripts/collect-usage.ps1 -Quiet`); include dashboard path in final output.
 - Update router outcome history: `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/update-outcomes.ps1" -Json`
   (reads run provenance and acceptance rows; relay any `ROUTER_ALERT:` line once).
 - Rewrite pipeline checkpoint `_build-state.md` (same template and location as step 6.i): `status: COMPLETE`,
   final commit SHA, no in-flight work.
-- `build-run-review.html`: Do NOT generate the HTML companion automatically. Build it only when Danny explicitly asks. The render harness stays available; skipping it is the default. When Danny asks for it, generate `build-run-review.html` in the run artifact folder with:
-  - the acceptance ledger as the headline panel (above the milestone status cards),
-  - milestone status cards,
-  - execution timeline,
-  - verify/fix loop outcomes,
-  - blockers/escalations panel,
-  - downgrade-language matches panel (per-milestone, with approved/blocker badge).
+- `build-run-review.html`: never generated automatically; only when Danny asks, with the panels in `references/run-artifact-lifecycle.md`.
 
 7. Guardrails:
 - Branch drift detection via `<skill>/scripts/check-drift.ps1`; drift returns nonzero and blocks progress.
