@@ -61,34 +61,18 @@ function Get-CodexHookList {
 }
 
 function Set-CodexHookTrust {
-    # Writes trusted_hash for one hook key into config.toml: replaces the value under an existing table
-    # for the key, or appends the table. The write is atomic and retried while Codex holds the file.
+    # TOML decodes equivalent quoted/escaped headers, collapses duplicates, and
+    # validates the candidate before atomic replacement. Retry file contention.
     param([Parameter(Mandatory)][string]$ConfigPath, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][string]$Hash)
-    if ($Key.Contains("'") -or $Hash -notmatch '^sha256:[0-9a-f]{64}$') { throw "unexpected hook key or hash: $Key $Hash" }
-    $header = "[hooks.state.'$Key']"
+    if ($Hash -notmatch '^sha256:[0-9a-f]{64}$') { throw "unexpected hook hash: $Hash" }
+    $python = Get-Command python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $python) { $python = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1 }
+    $editor = Join-Path $PSScriptRoot 'codex_hook_trust.py'
     for ($attempt = 1; $attempt -le 5; $attempt++) {
         try {
-            $text = if (Test-Path -LiteralPath $ConfigPath) { [System.IO.File]::ReadAllText($ConfigPath) } else { '' }
-            $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
-            $lines = [System.Collections.Generic.List[string]]::new()
-            if ($text) { $lines.AddRange([string[]]($text -split '\r?\n')) }
-            $at = $lines.IndexOf($header)
-            if ($at -ge 0) {
-                $end = $at + 1
-                while ($end -lt $lines.Count -and -not $lines[$end].TrimStart().StartsWith('[')) { $end++ }
-                $done = $false
-                for ($i = $at + 1; $i -lt $end; $i++) {
-                    if ($lines[$i] -match '^\s*trusted_hash\s*=') { $lines[$i] = "trusted_hash = `"$Hash`""; $done = $true; break }
-                }
-                if (-not $done) { $lines.Insert($at + 1, "trusted_hash = `"$Hash`"") }
-                $out = $lines -join $newline
-            }
-            else {
-                $out = $text.TrimEnd("`r", "`n") + $newline + $newline + $header + $newline + "trusted_hash = `"$Hash`"" + $newline
-            }
-            $tmp = "$ConfigPath.dt-build-$PID.tmp"
-            [System.IO.File]::WriteAllText($tmp, $out, [System.Text.UTF8Encoding]::new($false))
-            Move-Item -LiteralPath $tmp -Destination $ConfigPath -Force
+            $request = @{ config = $ConfigPath; key = $Key; hash = $Hash } | ConvertTo-Json -Compress
+            $failure = $request | & $python.Source $editor 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "Codex hook trust edit refused: $failure" }
             return
         }
         catch {

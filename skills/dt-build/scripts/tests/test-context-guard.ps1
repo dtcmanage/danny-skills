@@ -246,6 +246,10 @@ function Test-Denied {
 $script:spawned = @()
 $exitCode = 0
 try {
+    # Exercise the real trust writer with isolated CODEX_HOME and hooks/list fixtures.
+    $trustPython = if ($env:DANNY_SKILLS_TEST_PYTHON) { $env:DANNY_SKILLS_TEST_PYTHON } else { 'python3' }
+    & $trustPython (Join-Path $PSScriptRoot 'test_codex_hook_trust.py')
+    if ($LASTEXITCODE -ne 0) { throw 'Codex hook trust regressions failed' }
     $fixtures = Join-Path $tempRoot 'fixtures'
 
     # ---- guard reads the latest value for each host.

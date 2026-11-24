@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.61.4
+
+- Prevent duplicate Codex hook trust tables across TOML quoting styles; collapse existing duplicates and validate before atomic replacement.
+
 ## 2.61.3
 
 - Restore bounded ship-gate time with independent fixture shards, single-run bootstrap checks and fresh runspaces for pure test calls.
