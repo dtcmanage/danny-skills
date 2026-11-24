@@ -26,7 +26,7 @@
   ],
   "metadata": {
     "changelog": [
-      "1.2.2 dt-build 2.54.1, dt-ship 0.4.1: test tooling finds and tops up the host's standard build-test venv, so gates run from a plain shell.",
+      "1.2.2 dt-build 2.54.1, dt-ship 0.4.1: test dependencies come from the host's standard build-test venv, found and topped up automatically, so gates and pytest serialization run from a plain shell; version policy owners updated.",
       "1.2.1 git-merge-feature 1.2.8: merge a branch that has no worktree in a temporary worktree, so a dirty primary tree no longer blocks dt-ship.",
       "1.2.0 dt-build 2.54.0, dt-pipeline 0.2.2: launches are watched until the coordinator works or its exit is reported; lane health is decided only by preflight and never skips a required review; the launching session runs resume and approve; the watcher relaunches context rotations whoever launched them and finds re-parented survivors on Linux; live-bug fast lane; required plain status_line in the build state; scoped gate base defined.",
       "1.1.4 dt-build 2.53.1, dt-review 1.18.8, dt-roadmap 1.4.3: Linux script fixes (authority digest resume, spaced paths, worktree ledger, case-sensitive read guard, clean preflight JSON, assemble-codex-prompt, run-folder nesting, gate-tool intake warning, builder log location, quiet watcher journal, python3/bash runnable recognizer in extract-named-artifacts); claude headless auth comment reworded; the orchestration test no longer writes the live /home/danny/Claude/settings.json.",
