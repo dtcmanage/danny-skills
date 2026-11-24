@@ -65,8 +65,16 @@ function Set-CodexHookTrust {
     # validates the candidate before atomic replacement. Retry file contention.
     param([Parameter(Mandatory)][string]$ConfigPath, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][string]$Hash)
     if ($Hash -notmatch '^sha256:[0-9a-f]{64}$') { throw "unexpected hook hash: $Hash" }
-    $python = Get-Command python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $python) { $python = Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1 }
+    # First interpreter that really runs and has tomllib (3.11+); skips the Windows Store stub and old Pythons.
+    $python = $null
+    foreach ($name in @('python3', 'python', 'py')) {
+        foreach ($candidate in @(Get-Command $name -CommandType Application -ErrorAction SilentlyContinue)) {
+            & $candidate.Source -c 'import tomllib' *> $null
+            if ($LASTEXITCODE -eq 0) { $python = $candidate; break }
+        }
+        if ($python) { break }
+    }
+    if (-not $python) { throw 'Codex hook trust needs Python 3.11+ (tomllib) on PATH as python3, python or py' }
     $editor = Join-Path $PSScriptRoot 'codex_hook_trust.py'
     for ($attempt = 1; $attempt -le 5; $attempt++) {
         try {

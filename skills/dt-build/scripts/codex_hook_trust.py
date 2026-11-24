@@ -128,6 +128,8 @@ def set_codex_trust(config: Path, key: str, digest: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(out)
+        if config.exists():
+            os.chmod(temp, config.stat().st_mode & 0o7777)
         # Validate the exact bytes that will replace the original.
         with open(temp, "rb") as handle:
             tomllib.load(handle)
