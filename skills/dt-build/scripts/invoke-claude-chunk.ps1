@@ -24,6 +24,7 @@ param(
     [switch]$ReadOnly,
     [switch]$Scrutiny,
     [switch]$AdHoc,
+    [ValidateRange(1, 2147483647)][int]$MaxFixRounds = 2,
     # Launch the child exactly once. An offline-recovery or unexplained-failure retry would relaunch it;
     # with this switch each fails closed instead (failure_category single-dispatch-refused).
     [switch]$SingleDispatch,
@@ -173,7 +174,8 @@ if (-not $Preflight) {
     if ($AdHoc) {
         . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
         $hardwareRule = Get-WorkerHardwareRule
-        $promptText += "`nStanding execution rules:`n- $hardwareRule`n"
+        $repairRule = if (-not $ReadOnly) { Get-WorkerFixRoundRule -MaxFixRounds $MaxFixRounds }
+        $promptText += "`nStanding execution rules:`n- $hardwareRule`n$(if ($repairRule) { "- $repairRule`n" })- $(Get-WorkerEnvironmentRule -ReadOnly:$ReadOnly)`n"
     }
     # Pasted sources, evidence packets and histories have pushed review prompts past Codex's
     # 1,048,576-character cap. Refuse well below it, before anything is dispatched.
@@ -624,6 +626,7 @@ try {
     $result = [pscustomobject]@{
         approval_operation = $ApprovalOperation
         start_commit = $startCommit
+        write_mode = [bool](-not $ReadOnly -and -not $Preflight)
         actual_changed_files = @(if ($changedFileCheck) { $changedFileCheck.actual_changed_files })
         warnings = @(if ($changedFileCheck) { $changedFileCheck.warnings })
         pass                = [string]::IsNullOrWhiteSpace($failureReason)

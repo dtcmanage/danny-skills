@@ -33,6 +33,14 @@ For each milestone in the roadmap, in DAG order with load-bearing milestones fir
 
 ## Final ledger (replaces the build summary)
 
+### Moved paths and failure evidence
+
+Acceptance scans renamed/deleted paths against the milestone's pre-build commit. Try nonempty `start_commit` values from `-BuilderReportPath` provenance, then `-ProvenancePath`; an explicit `-BaseRef` takes priority. Require a boundary only for write-mode milestones (`write_mode: true` in current provenance, or `-WriteMode` for direct callers). Read-only and older provenance without a start commit skip the scan. Inspect-only runs without provenance retain artifact-only inspection; non-git artifacts have no diff to scan. Every scan error becomes a JSON blocker. Ledger revalidation passes `-SkipMovedPathCheck`: current checks run again, but later milestone deletions cannot change an earlier milestone's moved-path verdict.
+
+The scan matches whole path tokens across tracked and nonignored untracked text in every language. Letters, digits, underscores, dots, slashes, backslashes and hyphens extend a token, so `src/a.json` does not match `src/a.js`. Searches and exclusions are repo-top relative even for a nested `-WorkingTree`. Exclude the old file and detected rename destination. Historical defaults are `**/CHANGELOG*`, `**/history/**`, `**/_history/**`, `**/_archive/**`, `**/design/**`, `**/designs/**`, `**/plans/**`, `**/_planning/**`, `**/design-*.md`, and `**/plan-*.md`. Add repo-relative glob exclusions with `-MovedPathExclude`; other active documentation remains eligible. Remaining consumers block acceptance with file/line hits.
+
+Named commands retain complete stdout/stderr in log files under `DT_BUILD_LOG_DIR` or a temporary `dt-build-acceptance-logs` directory. JSON exposes `stdout_path`, `stderr_path` and tails bounded to 20 lines and 4,000 characters per stream. Failures emit the command, log paths and bounded tails to stderr even when JSON stdout is piped to a file. dt-job records failing invocations in stderr.log. Keep the logs with gate evidence.
+
 Render all Design Coverage `out-of-build` rows as the go-live checklist (owner and reason included),
 and carry it to switch-on. A human/session must record completion evidence before enabling the system.
 

@@ -346,11 +346,14 @@ foreach ($mid in $milestoneIds) {
         "-MilestoneId", $mid,
         "-WorkingTree", $WorkingTree,
         "-RunTests",
+        "-SkipMovedPathCheck",
         "-Json"
     )
 
     # Revalidation evaluates current checks without writing original dispatch
     # acceptance. Identity remains on the rendered row, never on this evaluator.
+    # Moved paths were checked at original acceptance. Today's tree includes
+    # later milestones, so it cannot be used to recheck that historical diff.
     $jsonText = & pwsh -NoProfile @args 2>&1
     # If the script wrote a usage error to stderr it still exits nonzero; capture
     # whatever it produced and best-effort parse JSON. Skip rows that fail to parse.

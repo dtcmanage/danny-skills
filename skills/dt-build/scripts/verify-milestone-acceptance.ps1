@@ -3,6 +3,10 @@ param(
     [Parameter(Mandatory)][string]$MilestoneId,
     [Parameter(Mandatory)][string]$WorkingTree,
     [switch]$RunTests,
+    [string]$BaseRef,
+    [switch]$WriteMode,
+    [switch]$SkipMovedPathCheck,
+    [string[]]$MovedPathExclude = @(),
     [ValidateRange(1000, 3600000)][int]$CommandTimeoutMs = 600000,
     [string]$DispatchId,
     [string]$ProvenancePath,
@@ -210,14 +214,32 @@ function Invoke-NamedCommand {
         $testEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($effectiveCommand))
         $effectiveCommand = "& '$lockPath' -Reason '$reasonQuoted' -ReadyFile '$readyQuoted' pwsh -NoProfile -EncodedCommand $testEncoded; exit `$LASTEXITCODE"
     }
-    $stdoutFile = [System.IO.Path]::GetTempFileName()
-    $stderrFile = [System.IO.Path]::GetTempFileName()
+    $logRoot = if ($env:DT_BUILD_LOG_DIR) { $env:DT_BUILD_LOG_DIR } else { Join-Path ([IO.Path]::GetTempPath()) 'dt-build-acceptance-logs' }
+    if (-not $env:DT_BUILD_LOG_DIR -and (Test-Path -LiteralPath $logRoot)) {
+        # Retain recent evidence; cleanup is best effort and only owns temp logs.
+        Get-ChildItem -LiteralPath $logRoot -Directory | Where-Object { $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-7) -and $_.Name -match '^[a-f0-9]{32}$' } | ForEach-Object {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $logDir = Join-Path $logRoot ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    $stdoutFile = Join-Path $logDir 'stdout.log'
+    $stderrFile = Join-Path $logDir 'stderr.log'
+    function Get-LogTail([string]$Path) {
+        # Bound lines and characters even for commands emitting one enormous line.
+        $tail = (Get-Content -LiteralPath $Path -Tail 20) -join "`n"
+        if ($tail.Length -gt 4000) { return $tail.Substring($tail.Length - 4000) }
+        return $tail
+    }
     $started = Get-Date
     $proc = $null
     try {
         # -EncodedCommand survives embedded quotes and spaces (a -Command "..."
         # wrapper truncates at the first inner double quote, e.g. quoted paths).
-        $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($effectiveCommand))
+        # pwsh -EncodedCommand otherwise collapses a native child's nonzero exit
+        # to 1. Preserve its actual status, while cmdlet failures still return 1.
+        $payload = $effectiveCommand + "`n" + 'if (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }'
+        $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($payload))
         $proc = Start-Process -FilePath "pwsh" `
             -ArgumentList @("-NoProfile", "-EncodedCommand", $encoded) `
             -WorkingDirectory $WorkingTree `
@@ -235,16 +257,20 @@ function Invoke-NamedCommand {
             }
         }
         $completed = $proc.WaitForExit($TimeoutMs)
+        if ($completed) { $proc.WaitForExit() } # Drain redirected stream events before reading files.
         $timedOut = -not $completed
         if ($timedOut) {
             try { $proc.Kill($true) } catch { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
             [void]$proc.WaitForExit(5000)
         }
 
-        $stdout = if (Test-Path -LiteralPath $stdoutFile) { Get-Content -Raw -LiteralPath $stdoutFile } else { "" }
-        $stderr = if (Test-Path -LiteralPath $stderrFile) { Get-Content -Raw -LiteralPath $stderrFile } else { "" }
+        $stdoutTail = Get-LogTail $stdoutFile
+        $stderrTail = Get-LogTail $stderrFile
         $exitCode = if ($timedOut) { 124 } else { $proc.ExitCode }
         $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
+        if ($exitCode -ne 0) {
+            [Console]::Error.WriteLine("FAILED COMMAND (exit=$exitCode): $Command`nSTDOUT: $stdoutFile`n$stdoutTail`nSTDERR: $stderrFile`n$stderrTail")
+        }
         return [pscustomobject]@{
             command            = $Command
             exclusive_reason   = $ExclusiveReason
@@ -254,15 +280,16 @@ function Invoke-NamedCommand {
             timeout_ms         = $TimeoutMs
             duration_ms        = $durationMs
             termination_reason = if ($timedOut) { "command_timeout" } else { "process_exit" }
-            stdout_tail        = ($stdout -split "`n" | Select-Object -Last 20) -join "`n"
-            stderr_tail        = ($stderr -split "`n" | Select-Object -Last 20) -join "`n"
+            stdout_path        = $stdoutFile
+            stderr_path        = $stderrFile
+            stdout_tail        = $stdoutTail
+            stderr_tail        = $stderrTail
         }
     } finally {
         if ($proc -and -not $proc.HasExited) { $proc.Kill($true); [void]$proc.WaitForExit(5000) }
         if ($proc) { $proc.Dispose() }
         if ($lockReady) { Remove-TempFileQuietly -Path $lockReady }
-        Remove-TempFileQuietly -Path $stdoutFile
-        Remove-TempFileQuietly -Path $stderrFile
+        # Keep logs as acceptance evidence, including failed invocations.
     }
 }
 
@@ -443,6 +470,22 @@ $apiContract = Test-ExternalApiContracts -RoadmapPath $RoadmapPath -Text $roadma
 foreach ($b in $apiContract.blockers) { $topBlockers.Add($b) }
 $commandResults = @($commandResults) + @($apiContract.command_results)
 if (@($apiContract.command_results | Where-Object { $_.exit_code -ne 0 }).Count) { $testStatus = 'FAIL' }
+. (Join-Path $PSScriptRoot 'check-moved-path-consumers.ps1')
+try {
+    # A builder's start_commit is the milestone boundary even after it commits.
+    # Inspect-only callers without a boundary retain artifact-only behavior.
+    $baseSources = @(if ($BuilderReportPath) { [IO.Path]::GetFullPath($BuilderReportPath) + '.provenance.json' }; $ProvenancePath)
+    foreach ($source in $baseSources) {
+        if ($BaseRef) { break }
+        if (-not $source -or -not (Test-Path -LiteralPath $source)) { continue }
+        $baseIdentity = Get-Content -LiteralPath $source -Raw | ConvertFrom-Json
+        if ($baseIdentity.PSObject.Properties['write_mode'] -and $baseIdentity.write_mode) { $WriteMode = $true }
+        if ($baseIdentity.PSObject.Properties['start_commit'] -and -not [string]::IsNullOrWhiteSpace([string]$baseIdentity.start_commit)) { $BaseRef = [string]$baseIdentity.start_commit }
+    }
+    if (-not $SkipMovedPathCheck -and ($BaseRef -or ($RunTests -and $WriteMode))) {
+        foreach ($hit in @(Test-MovedPathConsumers -WorkingTree $WorkingTree -BaseRef $BaseRef -ExcludePaths $MovedPathExclude)) { $topBlockers.Add($hit) }
+    }
+} catch { $topBlockers.Add("moved-path check failed: $($_.Exception.Message)") }
 $blockers = $topBlockers.ToArray()
 
 $accepted = $RunTests -and ($blockers.Count -eq 0) -and ($presence.missing.Count -eq 0) -and ($testStatus -eq "PASS")
@@ -450,8 +493,9 @@ $status = if (-not $RunTests) { "INSPECT_ONLY" } elseif ($accepted) { "PASS" } e
 
 if ($BuilderReportPath) {
     $builderProvenance = [IO.Path]::GetFullPath($BuilderReportPath) + '.provenance.json'
-    if ($ProvenancePath -and [IO.Path]::GetFullPath($ProvenancePath) -cne $builderProvenance) { throw 'DISPATCH_ACCEPTANCE_PATH_MISMATCH' }
-    $ProvenancePath = $builderProvenance
+    if ($ProvenancePath -and (Test-Path -LiteralPath $builderProvenance) -and (Test-Path -LiteralPath $ProvenancePath) -and [IO.Path]::GetFullPath($ProvenancePath) -cne $builderProvenance) { throw 'DISPATCH_ACCEPTANCE_PATH_MISMATCH' }
+    # Explicit fallback provenance may supply a base commit, never the report's identity.
+    if ($RunTests -or $ProvenancePath -or (Test-Path -LiteralPath $builderProvenance)) { $ProvenancePath = $builderProvenance }
 }
 if ($ProvenancePath) {
     $identity = Get-Content -LiteralPath $ProvenancePath -Raw | ConvertFrom-Json -Depth 40 -DateKind String
@@ -509,4 +553,7 @@ else {
     }
 }
 
-if ($status -in @("PASS", "INSPECT_ONLY")) { exit 0 } else { exit 1 }
+if ($status -in @("PASS", "INSPECT_ONLY")) { exit 0 } else {
+    [Console]::Error.WriteLine("ACCEPTANCE BLOCKED: $mid; see JSON blockers and command log paths.")
+    exit 1
+}

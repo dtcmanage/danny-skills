@@ -778,6 +778,8 @@ $results | ConvertTo-Json -Compress
     Assert-True ($retryRecord.status -eq 'succeeded' -and (Get-Content -Raw $retryRecord.output_path).Trim() -eq 'one,two|') 'script path and argument list survive relaunch'
     $failedJob = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', 'exit 7', '-Kind', 'test', '-Vendor', 'fixture', '-DependsOn', $scriptJob.job_id)
     $null = Wait-JobTerminal $relaunchRun $failedJob.job_id
+    $failedLog = Get-Content -Raw (Join-Path $relaunchRun "jobs/$($failedJob.job_id)/stderr.log")
+    Assert-True ($failedLog -match 'FAILED COMMAND \(exit=7\): exit 7') 'failed job retains its invocation even when child emits no output'
     $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $failedJob.job_id)
     $retryRecord = Wait-JobTerminal $relaunchRun $retry.job_id
     Assert-True ($retryRecord.status -eq 'failed' -and $retryRecord.exit_code -eq 7 -and $retryRecord.depends_on[0] -eq $scriptJob.job_id) 'failed job relaunch preserves command and dependencies'

@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.56.0
+  version: 2.57.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -187,6 +187,7 @@ Run `pwsh -NoProfile -File "<skill>/scripts/collect-usage.ps1" -Quiet` at intake
 - Build execution in step 6 uses this set to reorder within each DAG layer: when multiple milestones become unblocked simultaneously, the load-bearing one is built first and its `accepted` status must be `PASS` before any dependent non-load-bearing milestone's chunk is assembled.
 
 6. Execute milestones with deterministic execution-side procedures, **per-milestone in this order**:
+- Apply `Get-WorkerEnvironmentRule` from `<skill>/scripts/worker-standing-rules.ps1` before builder/fix/verifier briefs.
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
 - b. **Assemble and verify the chunk prompt (both lanes).** `<skill>/scripts/assemble-codex-prompt.ps1` (canonical for both lanes despite its name; it emits the identity headers and report contract both wrappers enforce; envelope via `<danny-skills>/scripts/wrap-prompt-envelope.ps1`), then the four-check gate `<skill>/scripts/verify-codex-prompt.ps1` before every chunk. An approved retry past the two-attempt budget passes the next `-Attempt` with `-ApprovalOperation <op> -RunFolder <run>` to all three.
 - c. **Run the chunk through the canonical lane.** For Codex, call `<skill>/scripts/invoke-codex-chunk.ps1`

@@ -354,7 +354,19 @@ try {
             $stdoutFile.Flush(); $stderrFile.Flush()
             $exitCode = $process.ExitCode
             if ($exitCode -eq 0) { $outcome = @{ Status = 'succeeded'; ExitCode = 0; Reason = $null } }
-            else { $outcome = @{ Status = 'failed'; ExitCode = $exitCode; Reason = "exit code $exitCode" } }
+            else {
+                $outcome = @{ Status = 'failed'; ExitCode = $exitCode; Reason = "exit code $exitCode" }
+                # Diagnostics must never replace the actual child outcome.
+                try {
+                    $invocation = if ($spec.PSObject.Properties['command'] -and $spec.command) { [string]$spec.command }
+                    elseif ($spec.PSObject.Properties['script_path']) {
+                        [string]$spec.script_path + $(if ($spec.PSObject.Properties['argument_list']) { ' ' + ($spec.argument_list -join ' ') })
+                    } else { '(invocation unavailable)' }
+                    $diagnostic = [Text.Encoding]::UTF8.GetBytes("`nFAILED COMMAND (exit=$exitCode): $invocation`n")
+                    $stderrFile.Write($diagnostic, 0, $diagnostic.Length)
+                    $stderrFile.Flush()
+                } catch { }
+            }
         }
         Complete-DtJobRun @outcome
     }

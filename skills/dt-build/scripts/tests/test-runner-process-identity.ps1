@@ -28,7 +28,9 @@ try {
             $stderrFile = [IO.File]::Create((Join-Path $root 'stderr'))
             $record = [pscustomobject]@{ status='running'; pid=$null; process_start_utc=$null; last_progress=$null }
             $RunFolder = $root; $JobId = 'fixture'; $pytestReadyFile = $null
-            $spec = [pscustomobject]@{ timeout_sec=10 }; $outcome = $null
+            # Minimal script specs omit both command and argument_list. The
+            # failure diagnostic must still complete with the real exit code.
+            $spec = [pscustomobject]@{ timeout_sec=10; script_path='fixture.ps1' }; $outcome = $null
             function Get-DtJobProcessStartUtc {
                 param([Diagnostics.Process]$Process)
                 if ($unavailable -and -not $Process.WaitForExit(10000)) { throw 'Child did not exit' }

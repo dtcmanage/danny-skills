@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.57.0
+
+- Acceptance gates find stale references to moved or deleted paths across languages (whole-token, history and design docs excluded, milestone base), failed gates keep full output in logs with the failing command, and worker briefs loop on their own verification, take network/SSH needs from the gate commands and read live git facts.
+
 ## 2.56.0
 
 - Refresh checkpoint status on lifecycle events without failing ledger appends or checkpoint writes, release writer reservations on completion with status/wait/reconcile queue retries and dead-holder diagnostics, preserve completion events on release errors, bound reservation guard waits to 250 ms and verify concurrent status launches exactly once, track Linux descendant CPU and writer worktree activity, and support ledger-recorded rebased branch CAS with resolved old tips, verified patch sets and failure evidence.

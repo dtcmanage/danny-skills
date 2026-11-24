@@ -3,6 +3,12 @@ function Get-WorkerFixRoundRule {
     return "Run the full named test selection without early-stop flags (no --maxfail, -x or --exitfirst); classify every failure, fix them together, then rerun the full selection. Allow at most $MaxFixRounds fix rounds (a round is a batch of fixes followed by a full rerun, not an individual failing test). Keep going on the most promising path while the remaining failures are narrowing. Stop early if the same failing set appears in two consecutive rounds, or when the round budget is spent; report remaining failures."
 }
 
+function Get-WorkerEnvironmentRule {
+    param([switch]$ReadOnly)
+    $verification = if ($ReadOnly) { 'Run authorized read-only verification and report failures with the failing command, evidence and remaining failures. Do not edit or repair files.' } else { 'Run your own verification and fix failures until green within the fix-round budget; do not return PARTIAL on the first repairable failure. Report a real blocker with the failing command, evidence and remaining failures.' }
+    return $verification + ' Derive network/SSH allowances from the milestone gate and verification commands and their fixtures, including required hosts and credentials; never impose a blanket offline or no-SSH rule. Keep access inside existing authorization; report a conflict with an explicit boundary as a blocker. Read live git facts before work and before reporting: resolve the default branch using git symbolic-ref refs/remotes/origin/HEAD; if unavailable inspect existing local branches and repository configuration (main or master only when present), then git rev-parse <resolved-default-branch>, git rev-parse HEAD, git branch --show-current and git status --short; never copy current hashes or branch state from memory.'
+}
+
 function Get-WorkerHardwareRule {
     return 'Use the brief''s measured host, CPU/shard and RAM budgets. Run safe suites in parallel with pytest-xdist -n <budget> (pytest -n auto only within an allocated CPU budget) or the project''s sharded runner; run independent commands concurrently within the assigned cap. Keep the full selection. Serial work requires the plan''s named reason and evidence; report new contention for a decision revision. Isolate DB/file roots and ports before requesting exclusivity. FS-58 exclusive_reason is opt-in for the affected job only. If a budget or decision is missing, measure and record it before heavy work; never silently default to single-process execution. Test subprocesses are allowed; do not spawn nested agents.'
 }

@@ -50,6 +50,10 @@ $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
+    if ($Shard -in @(0,1)) {
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-gates-briefs.ps1')
+        Assert-True ($LASTEXITCODE -eq 0) 'moved paths, full failure diagnostics and worker brief regressions pass'
+    }
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-boundary-ledger.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'boundary ledger bootstrap regressions pass'
     if ($IsWindows) {
@@ -449,7 +453,7 @@ gantt
     . (Join-Path $repoRoot 'scripts/model-router/dispatch-evidence.ps1')
     $acceptanceContext = New-RouterDispatchContext -Project $workingTree -Category routine-coding -LogicalTaskId 'acceptance-fixture'
     $dispatchProv = Join-Path $tempRoot 'acceptance-fixture.provenance.json'
-    Write-RouterDispatchEvidence $dispatchProv ([pscustomobject]@{}) $acceptanceContext -ExitCode 0
+    Write-RouterDispatchEvidence $dispatchProv ([pscustomobject]@{start_commit=$workingSha}) $acceptanceContext -ExitCode 0
     $verifyJson = & pwsh -NoProfile -File (Join-Path $scriptDir 'verify-milestone-acceptance.ps1') `
         -RoadmapPath $roadmap -MilestoneId M01 -WorkingTree $workingTree -RunTests -CommandTimeoutMs 30000 -DispatchId $acceptanceContext.dispatch_id -ProvenancePath $dispatchProv -Json
     Assert-True ($LASTEXITCODE -eq 0) "high-volume verifier failed"
@@ -767,6 +771,7 @@ if($env:DT_FAKE_UNICODE_TEXT){
         Assert-True ($guardExit -eq 0 -and @($adhocProv.untracked_created).Count -eq 1 -and $adhocProv.untracked_created[0] -match 'worker-created.txt$') 'provenance reports only newly created nonignored untracked files'
         Assert-True (($guardLog -join "`n") -match 'WARNING: ad-hoc worker created untracked paths' -and (Test-Path (Join-Path $workingTree 'worker-created.txt'))) 'ad-hoc warning retains files'
         Assert-True ([IO.File]::ReadAllText($capturedPrompt).Contains('Allow at most 5 fix rounds') -and [IO.File]::ReadAllText($capturedPrompt).Contains('same failing set appears in two consecutive rounds')) 'ad-hoc dispatch receives shared custom fix-round rule'
+        Assert-True ([IO.File]::ReadAllText($capturedPrompt).Contains('network/SSH') -and [IO.File]::ReadAllText($capturedPrompt).Contains('git symbolic-ref')) 'ad-hoc Codex receives verification environment and live facts'
         Remove-Item Env:DT_FAKE_CREATE_UNTRACKED -ErrorAction SilentlyContinue
         & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath "$adhocOut.default" -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'default ad-hoc fixture' -AdHoc -Json *> $null
         $defaultProv = Get-Content -Raw "$adhocOut.default.provenance.json" | ConvertFrom-Json
@@ -784,6 +789,11 @@ if($env:DT_FAKE_UNICODE_TEXT){
         Remove-Item Env:DT_BUILD_PROMPT_MAX_CHARS -ErrorAction SilentlyContinue
         Assert-True ($defaultProv.prompt_sha256 -eq (Get-FileHash -LiteralPath $wrapperPrompt -Algorithm SHA256).Hash.ToLowerInvariant() -and $defaultProv.dispatched_prompt_sha256 -and $defaultProv.dispatched_prompt_sha256 -ne $defaultProv.prompt_sha256) 'prompt_sha256 keeps the prompt file bytes; appended rules get dispatched_prompt_sha256'
         Assert-True ([IO.File]::ReadAllText($capturedPrompt).Contains("This prompt file is $((Resolve-Path -LiteralPath $wrapperPrompt).Path)")) 'ad-hoc standing rules name the prompt path and folder'
+        foreach ($scrutinyMode in @($false,$true)) {
+            & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath "$adhocOut.read-$scrutinyMode" -CodexCliPath $fakeCodex -Category routine-coding -Effort medium -SelectionReason 'read-only environment fixture' -AdHoc -ReadOnly -Scrutiny:$scrutinyMode -Json *> $null
+            $readPrompt = [IO.File]::ReadAllText($capturedPrompt)
+            Assert-True ($LASTEXITCODE -eq 0 -and $readPrompt.Contains('Do not edit or repair files') -and $readPrompt.Contains('network/SSH') -and -not $readPrompt.Contains('until green') -and -not $readPrompt.Contains('fix them together')) "Codex read-only/scrutiny=$scrutinyMode gets verification without repair instructions"
+        }
         $siblingDir = Join-Path $tempRoot 'sibling-prompt'
         New-Item -ItemType Directory -Path $siblingDir -Force | Out-Null
         $siblingPrompt = Join-Path $siblingDir 'brief.md'
@@ -1149,10 +1159,17 @@ Write-Envelope $report
     try {
         $env:DT_FAKE_UNICODE_PROMPT = $hardwarePromptCapture
         $hardwareOutput = Join-Path $tempRoot 'claude-adhoc-hardware.md'
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $hardwareOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'hardware worker rule fixture' -AdHoc -Json *> $null
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $hardwareOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'hardware worker rule fixture' -AdHoc -MaxFixRounds 5 -Json *> $null
         Assert-True ($LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('pytest-xdist -n <budget>')) 'ad-hoc Claude workers receive the shared hardware rule'
+        Assert-True ([IO.File]::ReadAllText($hardwarePromptCapture).Contains('Allow at most 5 fix rounds')) 'ad-hoc Claude receives custom fix-round budget'
+        Assert-True ([IO.File]::ReadAllText($hardwarePromptCapture).Contains('until green') -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('network/SSH') -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('git symbolic-ref')) 'ad-hoc Claude receives repair, environment and live facts'
         $hardwareProvenance = Get-Content -Raw "$hardwareOutput.provenance.json" | ConvertFrom-Json
         Assert-True ($hardwareProvenance.prompt_sha256 -eq (Get-FileHash -LiteralPath $wrapperPrompt -Algorithm SHA256).Hash.ToLowerInvariant() -and $hardwareProvenance.dispatched_prompt_sha256 -ne $hardwareProvenance.prompt_sha256) 'Claude provenance distinguishes source and effective hardware prompt hashes'
+        foreach ($scrutinyMode in @($false,$true)) {
+            & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath "$hardwareOutput.read-$scrutinyMode" -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'read-only environment fixture' -AdHoc -ReadOnly -Scrutiny:$scrutinyMode -Json *> $null
+            $readPrompt = [IO.File]::ReadAllText($hardwarePromptCapture)
+            Assert-True ($LASTEXITCODE -eq 0 -and $readPrompt.Contains('Do not edit or repair files') -and $readPrompt.Contains('network/SSH') -and -not $readPrompt.Contains('until green') -and -not $readPrompt.Contains('fix them together')) "Claude read-only/scrutiny=$scrutinyMode gets verification without repair instructions"
+        }
     } finally { $env:DT_FAKE_UNICODE_PROMPT = $savedPromptCapture }
     $claudeV3Prov = Get-Content -Raw -LiteralPath "$claudeOutput.provenance.json" | ConvertFrom-Json
     Assert-True ($null -eq $claudeV3Prov.report_version_warning) 'Claude v3 report carries no version warning'
@@ -1376,6 +1393,7 @@ $script:RouterDiagnosisHttp = {
     $assembler = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'assemble-codex-prompt.ps1')
     Assert-True ($assembler -match 'Do not spawn subagents') "assembled prompt lost the nested-agent ban"
     Assert-True ($assembler.Contains('Get-WorkerHardwareRule') -and $assembler.Contains('- $hardwareRule')) 'both assembled worker lanes receive the hardware rule'
+    Assert-True ($assembler.Contains('Get-WorkerEnvironmentRule') -and $assembler.Contains('- $environmentRule')) 'both assembled worker lanes receive environment and live-fact rules'
     Assert-True ($assembler -match 'after about 100 tool calls') "assembled prompt lost the checkpoint rule"
     Assert-True ($assembler -match '(?m)^CONTINUATION_STATE:') "assembled report lost the CONTINUATION_STATE field"
 
