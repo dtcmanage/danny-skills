@@ -10,6 +10,13 @@ param(
 
     [string]$RepoPath = (Get-Location).Path,
 
+    [switch]$AllowRebase,
+
+    # Explicit attestation: the old tip from which the caller performed the planned rebase.
+    [string]$RebasedFromSha,
+
+    [string]$RunFolder,
+
     [switch]$Json
 )
 
@@ -58,12 +65,57 @@ if ($currentTargetSha -ne $ExpectedTargetSha) {
 }
 else {
     $ancestorCheck = Invoke-Git -Args @("merge-base", "--is-ancestor", $currentTargetSha, $sourceSha) -AllowFailure
-    if ($ancestorCheck.code -ne 0) {
-        $result.reason = "CAS_BLOCKED: source is not a fast-forward descendant of current $TargetBranch."
+    $resolvedOld = if ($RebasedFromSha) {
+        $oldRef = if ($RebasedFromSha -match '^[0-9a-fA-F]{7,40}$') { $RebasedFromSha.ToLowerInvariant() } else { $RebasedFromSha }
+        (Invoke-Git -Args @('rev-parse', '--verify', "$oldRef^{commit}") -AllowFailure).text.Trim()
+    } else { '' }
+    $rebase = $ancestorCheck.code -eq 1 -and $AllowRebase -and $RunFolder -and $resolvedOld -ceq $currentTargetSha
+    if ($rebase) {
+        # Compare the old divergent range against the same number of commits at the new tip.
+        # range-diff must pair every commit with an identical patch (including empty commits).
+        $common = (Invoke-Git -Args @('merge-base', $currentTargetSha, $sourceSha) -AllowFailure)
+        $equivalent = $false
+        if ($common.code -eq 0) {
+            $oldRange = "$($common.text.Trim())..$currentTargetSha"
+            $count = [int](Invoke-Git -Args @('rev-list', '--count', $oldRange)).text.Trim()
+            $newBase = Invoke-Git -Args @('rev-parse', '--verify', "$sourceSha~$count") -AllowFailure
+            if ($count -gt 0 -and $newBase.code -eq 0) {
+                $diff = Invoke-Git -Args @('range-diff', '--no-color', '--no-ext-diff', $oldRange, "$($newBase.text.Trim())..$sourceSha") -AllowFailure
+                $pairs = @($diff.lines | Where-Object { $_ -match '^\s*\d+:\s+[0-9a-f]+\s+=\s+\d+:\s+[0-9a-f]+\s' })
+                $equivalent = $diff.code -eq 0 -and $pairs.Count -eq $count -and @($diff.lines | Where-Object { $_ -notmatch '^\s*\d+:\s+[0-9a-f]+\s+=\s+\d+:\s+[0-9a-f]+\s' -and $_.Trim() }).Count -eq 0
+            }
+        }
+        if (-not $equivalent) {
+            $rebase = $false
+            $result.reason = 'CAS_BLOCKED: rebased tip patch set does not match the old divergent range.'
+        }
+    }
+    if ($ancestorCheck.code -ne 0 -and -not $rebase) {
+        if (-not $result.reason) { $result.reason = "CAS_BLOCKED: source is not a fast-forward descendant of current $TargetBranch." }
+        if ($AllowRebase) { $result.reason += ' Rebase requires -RunFolder and -RebasedFromSha equal to the expected old tip.' }
     }
     else {
+      try {
         $refName = "refs/heads/$TargetBranch"
-        Invoke-Git -Args @("update-ref", $refName, $sourceSha, $ExpectedTargetSha) | Out-Null
+        if ($rebase) {
+            # Dot-source in a child scope: dt-job's parameters must not clear CAS parameters.
+            & {
+                param($ledgerRun, $branch, $oldTip, $newTip)
+                . (Join-Path $PSScriptRoot 'dt-job.ps1')
+                Invoke-DtJobLocked -RunFolder $ledgerRun -Action {
+                    $reason = "Planned rebase of $branch from $oldTip to $newTip; old tip resolved and patch set verified with git range-diff."
+                    Add-DtJobEvent -RunFolder $ledgerRun -JobId 'run' -Type 'branch_rebase_requested' -Status 'runnable' -Reason $reason
+                    try {
+                        Invoke-Git -Args @('update-ref', "refs/heads/$branch", $newTip, $oldTip) | Out-Null
+                    } catch {
+                        Add-DtJobEvent -RunFolder $ledgerRun -JobId 'run' -Type 'branch_rebase_failed' -Status 'failed' -Reason "$reason $($_.Exception.Message)"
+                        throw
+                    }
+                    Add-DtJobEvent -RunFolder $ledgerRun -JobId 'run' -Type 'branch_rebased' -Status 'accepted' -Reason $reason
+                }
+            } $RunFolder $TargetBranch $ExpectedTargetSha $sourceSha
+            $result.mode = 'compare-and-swap-rebase'
+        } else { Invoke-Git -Args @("update-ref", $refName, $sourceSha, $ExpectedTargetSha) | Out-Null }
         $afterSha = (Invoke-Git -Args @("rev-parse", $TargetBranch)).text.Trim()
         if ($afterSha -ne $sourceSha) {
             $result.reason = "CAS_FAIL: $TargetBranch ref update did not land expected source sha."
@@ -74,6 +126,9 @@ else {
             $result.observed_target_sha = $afterSha
             $result.reason = "PASS"
         }
+      } catch {
+        $result.reason = "CAS_FAIL: $($_.Exception.Message)"
+      }
     }
 }
 

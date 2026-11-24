@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.56.0
+
+- Refresh checkpoint status on lifecycle events without failing ledger appends or checkpoint writes, release writer reservations on completion with status/wait/reconcile queue retries and dead-holder diagnostics, preserve completion events on release errors, bound reservation guard waits to 250 ms and verify concurrent status launches exactly once, track Linux descendant CPU and writer worktree activity, and support ledger-recorded rebased branch CAS with resolved old tips, verified patch sets and failure evidence.
+
 ## 2.55.1
 
 - Speed up the job and context suites with isolated interpreters and bounded job shards; isolate early generator fixture state.

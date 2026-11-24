@@ -20,7 +20,9 @@ This is the entry contract for a watcher-launched coordinator, on either host. I
 
 ## Lean checkpoint
 
-Every rewrite carries one `status_line:` (template field, required by `write-resume-checkpoint.ps1`): one plain-English sentence of at most 200 characters with normal spacing, saying the current milestone, what is running, what is waiting and on what (and when it can start), and the next step. It does not count toward the 8 KiB cap. Compressed or glued tokens are forbidden in it and in decision-log lines ("M09phase2j0359;nativej0360queuedRust" from the Command Center v2.1 run is what this replaces); the writer refuses a missing, placeholder, overlong or glued status line. Example: `status_line: M09 is building the export page in job j-0359; the native-app patch waits for the M09 merge, about 40 minutes; next, review M09.`
+Job lifecycle events refresh `status_line` automatically with current running jobs, waiting count, and the latest event. The checkpoint writer derives it again from the ledger under the run lock. Keep milestone intent, dependency details and next actions in the checkpoint body; the event-derived line owns current job activity.
+
+Every candidate carries one `status_line:` (template field, required by `write-resume-checkpoint.ps1`): plain English of at most 200 characters with normal spacing. Before the first ledger event, supply the current milestone, what runs or waits, and the next step. Once events exist, the writer replaces this candidate line with current job activity from the ledger. It does not count toward the 8 KiB cap. Compressed or glued tokens are forbidden in it and in decision-log lines ("M09phase2j0359;nativej0360queuedRust" from the Command Center v2.1 run is what this replaces); the writer refuses a missing, placeholder, overlong or glued candidate status line.
 
 History beyond the current state goes to the run folder: decisions and their reasons to `<run-folder>/build-decision-log.md`, one plain sentence per line with a timestamp; prior checkpoints to `checkpoint-history/` (the writer archives them).
 

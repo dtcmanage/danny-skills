@@ -17,6 +17,7 @@ Commit boundaries:
 Integration-branch update:
 - The integration branch is updated only by compare-and-swap through `<skill>/scripts/branch-cas-update.ps1` (pass `-RepoPath <project repo>` and `-TargetBranch build/<RUN_ID>`).
 - If the observed integration-branch sha differs from the expected pre-rehearsal sha, the CAS update is blocked.
+- After a planned rebase, use the same helper with `-AllowRebase -RebasedFromSha <old tip used for the rebase> -ExpectedTargetSha <same old tip> -RunFolder <run folder>`. The helper resolves the old tip with `git rev-parse` (abbreviated and uppercase hex are accepted), verifies identical commit patches with `git range-diff`, keeps the atomic compare-and-swap, and records old/new tips in `jobs/events.jsonl` before and after the move. Missing or mismatched old tips and changed patch sets are refused. Ambiguous/nonlinear ranges that cannot be paired completely are refused. Never bypass the helper with raw `git update-ref`.
 
 Accepted-chunk cleanup:
 - After successful CAS, run `<skill>/scripts/cleanup-accepted-chunk.ps1 -RepoPath <project repo> -ChunkBranch <chunk-branch> -IntegrationBranch <integration-branch> -Json` for each accepted chunk, after its worker has terminated.

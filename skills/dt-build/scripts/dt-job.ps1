@@ -102,6 +102,10 @@ param(
 
     [string]$WorkingTree,
 
+    [switch]$ReadOnly,
+
+    [switch]$Writes,
+
     [string]$Record,
 
     [switch]$Json
@@ -386,6 +390,109 @@ function Add-DtJobEvent {
     if ($RequestedBy) { $evt.requested_by = $RequestedBy }
     if ($null -ne $ConsumedEventSeq) { $evt.consumed_event_seq = [long]$ConsumedEventSeq }
     [System.IO.File]::AppendAllText($eventsPath, ($prefix + ($evt | ConvertTo-Json -Compress) + "`n"), [System.Text.UTF8Encoding]::new($false))
+    # The ledger is authoritative; a best-effort display must never fail its append.
+    try { Update-DtJobStatusLine -RunFolder $RunFolder -Event $evt } catch {
+        Write-Verbose "DT_JOB_STATUS_REFRESH_FAILED: $($_.Exception.Message)"
+    }
+}
+
+function Update-DtJobStatusLine {
+    # The caller holds the run lock, also used by checkpoint writers.
+    param([string]$RunFolder, $Event)
+    $statePath = Join-Path $RunFolder '_build-state.md'
+    $entry = Get-DtJobRegistryEntry -RunFolder $RunFolder
+    if ($null -ne $entry) { $statePath = $entry.build_state_path }
+    if (-not (Test-Path -LiteralPath $statePath)) { return }
+    $records = @(Get-DtJobRecords -RunFolder $RunFolder)
+    $running = @($records | Where-Object status -eq 'running')
+    $queued = @($records | Where-Object status -eq 'queued')
+    $runningWords = if ($running.Count -eq 1) { 'job is' } else { 'jobs are' }
+    $line = if ($running.Count) { "$($running.Count) $runningWords running: $(($running.job_id | Select-Object -First 5) -join ', '); $($queued.Count) jobs are waiting." }
+        else { "No jobs are running; $($queued.Count) jobs are waiting." }
+    $line += if ($Event.job_id -eq 'run') { " Latest run event: $($Event.type) ($($Event.status))." }
+        else { " Latest: $($Event.job_id) $($Event.status)." }
+    $text = Read-DtJobText -Path $statePath
+    if ($text -match '(?m)^status_line:') {
+        $text = [regex]::Replace($text, '(?m)^status_line:[^\r\n]*', "status_line: $line")
+    } else { $text = "status_line: $line`n" + $text }
+    Write-DtJobAtomic -Path $statePath -Content $text
+}
+
+function Enter-DtJobWorktree {
+    # Shared across runs. The short OS lock protects reservation inspection/replacement.
+    # A dead runner's active record stays reserved until reconcile proves it terminal.
+    param([string]$RunFolder, $Record)
+    if (-not $Record.PSObject.Properties['worktree_lock_path'] -or -not $Record.worktree_lock_path) { return $null }
+    $path = $Record.worktree_lock_path
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    $guard = $null
+    # Scheduling holds the run lock, including during status/wait polls. Retry on a later poll.
+    $deadline = [DateTime]::UtcNow.AddMilliseconds(250)
+    while ($null -eq $guard) {
+        try { $guard = [IO.File]::Open("$path.guard", 'OpenOrCreate', 'ReadWrite', 'None') }
+        catch [IO.IOException] { if ([DateTime]::UtcNow -ge $deadline) { return "DT_JOB_WORKTREE_LOCK_TIMEOUT: reservation guard is busy: $path" }; Start-Sleep -Milliseconds 50 }
+    }
+    try {
+        if (Test-Path -LiteralPath $path) {
+            try {
+                $holder = Read-DtJobText -Path $path | ConvertFrom-Json
+                $holderRoot = (Get-DtJobPaths -RunFolder $holder.run_folder).Root
+                if ($holderRoot -eq (Get-DtJobPaths -RunFolder $RunFolder).Root -and $holder.job_id -eq $Record.job_id) { return $null }
+                $other = Get-DtJobRecord -RunFolder $holderRoot -JobId $holder.job_id
+                # An archived/deleted record cannot retain a reservation.
+                if ($null -ne $other -and $other.status -in $script:DtJobActive) {
+                    if ($other.status -eq 'running' -and -not (Test-DtJobAlive $other)) {
+                        return "DT_JOB_WORKTREE_HELD: holder $($holder.job_id) in $holderRoot is dead; reconcile its run to release the reservation"
+                    }
+                    $lease = Get-DtJobLease -RunFolder $holderRoot
+                    if ($other.status -eq 'queued' -and $null -ne $lease -and
+                        ((Test-DtJobLeaseHolderGone $lease) -or (Test-DtJobLeaseExpired $lease))) {
+                        # Do not steal from a scheduler between reserving and saving 'running'.
+                        # Try only: the other scheduler may already be waiting on our guard.
+                        try { $holderLock = [IO.File]::Open((Get-DtJobPaths $holderRoot).RunLock, 'OpenOrCreate', 'ReadWrite', 'None') }
+                        catch [IO.IOException] { return "DT_JOB_WORKTREE_HELD: queued holder $($holder.job_id) has a dead coordinator lease; its run is busy, retrying" }
+                        try {
+                            $fresh = Get-DtJobRecord -RunFolder $holderRoot -JobId $holder.job_id
+                            $lease = Get-DtJobLease -RunFolder $holderRoot
+                            if ($null -ne $fresh -and $fresh.status -in $script:DtJobActive -and
+                                ($fresh.status -ne 'queued' -or $null -eq $lease -or
+                                (-not (Test-DtJobLeaseHolderGone $lease) -and -not (Test-DtJobLeaseExpired $lease)))) {
+                                return "DT_JOB_WORKTREE_HELD: holder $($holder.job_id) changed during recovery; retrying"
+                            }
+                            Add-DtJobEvent -RunFolder $RunFolder -JobId $Record.job_id -Type 'reservation_recovered' -Status 'queued' -Reason "Released queued holder $($holder.job_id) in ${holderRoot}: coordinator lease is dead or expired."
+                            # Replace before releasing the other run lock, so it must reacquire.
+                            Write-DtJobAtomic -Path $path -Content (@{ run_folder = (Get-DtJobPaths $RunFolder).Root; job_id = $Record.job_id } | ConvertTo-Json -Compress)
+                            return $null
+                        } finally { $holderLock.Dispose() }
+                    } else {
+                        return "DT_JOB_WORKTREE_HELD: $($Record.working_tree) is reserved by $($holder.job_id) in $holderRoot"
+                    }
+                }
+            } catch {
+                return "DT_JOB_WORKTREE_STALE: reservation $path is unreadable or stale: $($_.Exception.Message)"
+            }
+        }
+        Write-DtJobAtomic -Path $path -Content (@{ run_folder = (Get-DtJobPaths $RunFolder).Root; job_id = $Record.job_id } | ConvertTo-Json -Compress)
+        return $null
+    } finally { $guard.Dispose() }
+}
+
+function Exit-DtJobWorktree {
+    param([string]$RunFolder, $Record)
+    if (-not $Record.PSObject.Properties['worktree_lock_path'] -or -not $Record.worktree_lock_path) { return }
+    $path = $Record.worktree_lock_path
+    # Never wait while finishing a job. A terminal/missing holder is also released on acquisition.
+    try { $guard = [IO.File]::Open("$path.guard", 'OpenOrCreate', 'ReadWrite', 'None') }
+    catch [IO.IOException] { return }
+    try {
+        if (-not (Test-Path -LiteralPath $path)) { return }
+        try { $holder = Read-DtJobText -Path $path | ConvertFrom-Json -ErrorAction Stop }
+        catch { return } # Preserve a corrupt reservation for diagnostic acquisition failure.
+        if ($holder.job_id -eq $Record.job_id -and
+            (Test-DtCtxSamePath $holder.run_folder (Get-DtJobPaths $RunFolder).Root)) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+        }
+    } finally { $guard.Dispose() }
 }
 
 function Set-DtJobState {
@@ -394,6 +501,13 @@ function Set-DtJobState {
     if ($PSBoundParameters.ContainsKey('Reason')) { $Record.status_reason = $Reason }
     if ((Test-DtJobTerminal $Status) -and -not $Record.ended) { $Record.ended = [DateTime]::UtcNow.ToString('o') }
     Save-DtJobRecord -RunFolder $RunFolder -Record $Record
+    if (Test-DtJobTerminal $Status) {
+        try { Exit-DtJobWorktree -RunFolder $RunFolder -Record $Record }
+        catch {
+            # The saved terminal holder is released on acquisition too. Never lose its event.
+            Write-Verbose "DT_JOB_WORKTREE_RELEASE_FAILED: $($Record.job_id): $($_.Exception.Message)"
+        }
+    }
     Add-DtJobEvent -RunFolder $RunFolder -JobId $Record.job_id -Type $EventType -Status $Status -Reason $Reason
 }
 
@@ -608,6 +722,17 @@ function Invoke-DtJobSchedule {
                 if ($holder -and $holder -ne $r.job_id) { $keysFree = $false; break }
             }
             if (-not $keysFree) { continue }
+            $conflict = Enter-DtJobWorktree -RunFolder $RunFolder -Record $r
+            if ($conflict) {
+                if ($conflict.StartsWith('DT_JOB_WORKTREE_STALE:')) {
+                    Set-DtJobState -RunFolder $RunFolder -Record $r -Status 'failed' -EventType 'worktree_conflict' -Reason $conflict
+                }
+                elseif ($r.status_reason -ne $conflict) {
+                    Set-DtJobState -RunFolder $RunFolder -Record $r -Status 'queued' -EventType 'worktree_waiting' -Reason $conflict
+                }
+                continue
+            }
+            $r.status_reason = $null
             foreach ($key in @($r.mutates)) {
                 Write-DtJobAtomic -Path (Get-DtJobKeyLockPath -RunFolder $RunFolder -Key $key) -Content ([ordered]@{ key = $key; job_id = $r.job_id; acquired_utc = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress)
             }
@@ -928,6 +1053,9 @@ function Invoke-DtJobStart {
             Mutates = @($old.mutates)
             RunId = $old.run_id
             TimeoutSec = $old.expected_sec
+            ReadOnly = $(if ($old.PSObject.Properties['read_only']) { [bool]$old.read_only } else { $false })
+            Writes = $(if ($old.PSObject.Properties['writes']) { [bool]$old.writes } else { $false })
+            WorkingTree = $(if ($old.PSObject.Properties['working_tree']) { $old.working_tree } else { $old.working_directory })
         }
         foreach ($name in $fields.Keys) {
             if ($script:DtJobExplicitParams -notcontains $name) { Set-Variable -Name $name -Value $fields[$name] }
@@ -950,6 +1078,17 @@ function Invoke-DtJobStart {
     # No job is stopped on time: -TimeoutSec is the expected duration that check-ins compare against, and
     # only a stall the coordinator confirms ends a job.
     $expectedSec = $TimeoutSec
+    $tree = if ($WorkingTree) { (Resolve-Path -LiteralPath $WorkingTree).ProviderPath } else { $workingDirectory }
+    $gitTree = & git -C $tree rev-parse --show-toplevel 2>$null
+    if ($LASTEXITCODE -eq 0) { $tree = ($gitTree -join '').Trim() }
+    # A non-Git job directory is supported; the discovery probe is not the job's exit code.
+    $global:LASTEXITCODE = 0
+    $tree = (Resolve-Path -LiteralPath $tree).ProviderPath.TrimEnd('/', '\')
+    if ($IsWindows) { $tree = $tree.ToLowerInvariant() }
+    $treeHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($tree)))
+    if ($Writes -and $ReadOnly) { throw 'DT_JOB_USAGE: -Writes and -ReadOnly are mutually exclusive.' }
+    $lockRoot = if ($env:DT_BUILD_STATE_DIR) { $env:DT_BUILD_STATE_DIR } else { Join-Path $HOME '.local/state/dt-job' }
+    $treeLock = if ($Writes) { Join-Path $lockRoot "worktrees/$treeHash.json" } else { $null }
     $TimeoutSec = 0
     $spec = [ordered]@{ exclusive_reason = $ExclusiveReason; command = $null; script_path = $null; argument_list = @($ArgumentList); timeout_sec = $TimeoutSec; environment = (Get-DtJobEnvironment -Extra $PassEnv) }
     if ($null -ne $copiedSpec) {
@@ -1013,6 +1152,10 @@ function Invoke-DtJobStart {
             timeout_sec       = $TimeoutSec
             expected_sec      = $expectedSec
             working_directory = $workingDirectory
+            working_tree      = $tree
+            read_only         = [bool]$ReadOnly
+            writes            = [bool]$Writes
+            worktree_lock_path = $treeLock
             output_path       = (Join-Path $jobDir 'stdout.log')
             stderr_path       = (Join-Path $jobDir 'stderr.log')
             summary_path      = (Join-Path $jobDir 'summary.json')
@@ -1114,6 +1257,7 @@ function Get-DtJobSnapshot {
 }
 
 function Invoke-DtJobStatus {
+    Invoke-DtJobSchedule -RunFolder $RunFolder
     if ($JobId) {
         $snap = Get-DtJobSnapshot -RunFolder $RunFolder -Ids @($JobId)
         $record = @($snap.records)[0]
@@ -1658,6 +1802,7 @@ function Invoke-DtJobWait {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
     $lastRenew = [DateTime]::UtcNow
     while ($true) {
+        Invoke-DtJobSchedule -RunFolder $RunFolder
         $records = @($ids | ForEach-Object { Get-DtJobRecord -RunFolder $RunFolder -JobId $_ })
         $done = @($records | Where-Object { Test-DtJobTerminal $_.status })
         if (($Any -and $done.Count -gt 0) -or ($All -and $done.Count -eq $ids.Count)) { $result = 'finished'; break }

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.2.6 dt-build 2.56.0: refresh runtime status, guard worktree writers, track descendant activity, and support planned rebase CAS.",
       "1.2.5 dt-roadmap 1.5.0: milestone dependencies derived from declared write surfaces and provided/consumed interfaces; unjustified waits flagged, undeclared overlaps rejected.",
       "1.2.4 dt-build 2.55.1: speed up isolated test suites and fix child identity capture under ledger contention; ship gate adds bounded parallel execution, release-metadata-aware path scoping, dt-roadmap suites, retained failure logs and per-step timings; version policy registers gate tooling ownership.",
       "1.2.3 dt-build 2.55.0: lean Claude coordinator start; instructions regenerated from the live CLAUDE.md chain at every launch, skills off, run-chosen tools (60.5k -> 21.5k startup tokens).",

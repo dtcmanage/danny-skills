@@ -136,3 +136,11 @@ pwsh -NoProfile -File $dtJob note -RunFolder $run -Evidence -Clear -Json
 ```
 
 Clearing evidence notes leaves operator notes intact.
+
+# Worktree ownership and activity
+
+Declare `-Writes` to reserve a job's Git worktree across run folders. Reservations are opt-in: existing parallel shards keep running without extra flags. A second declared writer stays queued until the holder finishes or is cancelled/reconciled; every status, wait poll and reconcile pass retries its own run's queue. Completion releases the reservation, and missing/archived holder records count as released. Guard timeout leaves the waiter queued with a reason. A dead running holder keeps the waiter queued until its holder run is reconciled. A queued holder with a dead/expired coordinator lease is released after a locked recheck, with a recovery event identifying the holder and run. Unreadable reservations still fail with `DT_JOB_WORKTREE_STALE` and require investigation. Reservations live under `DT_BUILD_STATE_DIR/worktrees`, or `~/.local/state/dt-job/worktrees`. Use `-WorkingTree <path>` when the target differs from the launch directory. `-ReadOnly` and `-Writes` are mutually exclusive. Explicit `-Mutates` keys still apply to every job. Retries preserve these declarations. Heartbeats count process-tree CPU and job output for all jobs, and worktree changes only for declared writers.
+
+Heartbeats watch the resolved worktree, excluding the run folder's own ledger writes. Linux CPU activity includes descendants from `/proc`, including CPU of waited-for children.
+
+Lifecycle events automatically refresh checkpoint `status_line` under the run lock, showing running jobs, waiting count, and the latest event. Checkpoint writes derive that line again from the latest ledger event so an older coordinator snapshot cannot restore stale job status. Keep milestone intent and next steps in the checkpoint body.

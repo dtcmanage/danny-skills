@@ -54,6 +54,11 @@ $result = Invoke-DtJobLocked -RunFolder $ResumeRunFolder -Action {
     $archive = Join-Path $ResumeRunFolder "checkpoint-history/$hash.md"
     if (-not (Test-Path -LiteralPath $archive)) { Write-DtJobAtomic -Path $archive -Content $old }
     Write-DtJobAtomic -Path $ResumeBuildStatePath -Content $next
-    [ordered]@{ checkpoint = [IO.Path]::GetFullPath($ResumeBuildStatePath); history = $archive; bytes = [Text.Encoding]::UTF8.GetByteCount($next) }
+    $events = @(Get-DtJobEvents -RunFolder $ResumeRunFolder)
+    if ($events.Count) {
+        try { Update-DtJobStatusLine -RunFolder $ResumeRunFolder -Event $events[-1] }
+        catch { Write-Verbose "DT_JOB_STATUS_REFRESH_FAILED: $($_.Exception.Message)" }
+    }
+    [ordered]@{ checkpoint = [IO.Path]::GetFullPath($ResumeBuildStatePath); history = $archive; bytes = (Get-Item -LiteralPath $ResumeBuildStatePath).Length }
 }
 $result | ConvertTo-Json -Compress

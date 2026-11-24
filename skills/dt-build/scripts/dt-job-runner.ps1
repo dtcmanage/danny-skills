@@ -101,6 +101,40 @@ function Get-DtJobTreeCpuSeconds {
         }
         return $total
     }
+    if ($IsLinux) {
+        if (-not (Get-Variable DtJobClockTicks -Scope Script -ErrorAction Ignore)) {
+            $script:DtJobClockTicks = [double](& getconf CLK_TCK)
+        }
+        $ticks = $script:DtJobClockTicks
+        $rows = @{}
+        foreach ($dir in [IO.Directory]::EnumerateDirectories('/proc')) {
+            if ([IO.Path]::GetFileName($dir) -notmatch '^\d+$') { continue }
+            try {
+                $stat = [IO.File]::ReadAllText((Join-Path $dir 'stat'))
+                # comm may contain spaces and parentheses; fields follow its LAST closing parenthesis.
+                $fields = $stat.Substring($stat.LastIndexOf(')') + 2) -split '\s+'
+                $rows[[int][IO.Path]::GetFileName($dir)] = @{
+                    parent = [int]$fields[1]
+                    seconds = ([double]$fields[11] + [double]$fields[12] + [double]$fields[13] + [double]$fields[14]) / $ticks
+                }
+            } catch { } # Processes can exit during the snapshot.
+        }
+        $children = @{}
+        foreach ($id in $rows.Keys) {
+            $parent = $rows[$id].parent
+            if (-not $children.ContainsKey($parent)) { $children[$parent] = [Collections.Generic.List[int]]::new() }
+            $children[$parent].Add($id)
+        }
+        $queue = [Collections.Generic.Queue[int]]::new(); $queue.Enqueue($RootPid)
+        $seen = [Collections.Generic.HashSet[int]]::new(); $total = 0.0
+        while ($queue.Count) {
+            $id = $queue.Dequeue()
+            if (-not $seen.Add($id)) { continue }
+            if ($rows.ContainsKey($id)) { $total += $rows[$id].seconds }
+            if ($children.ContainsKey($id)) { foreach ($child in $children[$id]) { $queue.Enqueue($child) } }
+        }
+        return $total
+    }
     return (Get-Process -Id $RootPid -ErrorAction Stop).TotalProcessorTime.TotalSeconds
 }
 
@@ -141,13 +175,14 @@ function Wait-DtJobProcess {
     # Waits for the job without a time limit unless the job has one, and every heartbeat records whether
     # it showed any sign of life: CPU in its process tree, output, or file changes in its working
     # directory outside the run folder. Returns $false only when a job time limit ran out.
-    param([Parameter(Mandatory)]$Process, [int]$TimeoutSec, [Parameter(Mandatory)][string]$WorkDir, [Parameter(Mandatory)][System.IO.Stream[]]$Outputs, [string]$AdmissionReady)
+    param([Parameter(Mandatory)]$Process, [int]$TimeoutSec, [Parameter(Mandatory)][string]$WorkDir, [Parameter(Mandatory)][System.IO.Stream[]]$Outputs, [string]$AdmissionReady, [bool]$Writes = $false)
     $heartbeatSec = Get-DtJobSettingSec -Name 'DT_JOB_HEARTBEAT_SEC' -Default $script:DtJobHeartbeatSec
     $beatPath = Join-Path $jobDir 'heartbeat.json'
     $runRoot = [System.IO.Path]::GetFullPath($paths.Root).TrimEnd('\', '/')
     $sourceId = "dtjob-fs-$JobId"
     $fsWatcher = $null
     try {
+        if (-not $Writes) { throw 'Worktree activity is only attributed to declared writers.' }
         $fsWatcher = [System.IO.FileSystemWatcher]::new($WorkDir)
         $fsWatcher.IncludeSubdirectories = $true
         $fsWatcher.InternalBufferSize = 65536
@@ -175,7 +210,7 @@ function Wait-DtJobProcess {
             if ($null -ne $fsWatcher) {
                 foreach ($evt in @(Get-Event -ErrorAction SilentlyContinue | Where-Object { $_.SourceIdentifier -like "$sourceId-*" })) {
                     $full = [string]$evt.SourceEventArgs.FullPath
-                    if (-not $full.StartsWith($runRoot, [System.StringComparison]::OrdinalIgnoreCase)) { $newFiles++ }
+                    if ($full -ne $runRoot -and -not $full.StartsWith($runRoot + [IO.Path]::DirectorySeparatorChar, [System.StringComparison]::Ordinal)) { $newFiles++ }
                     Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
                 }
             }
@@ -301,7 +336,11 @@ try {
         }
 
         $timeoutSec = [int]$spec.timeout_sec
-        $finished = Wait-DtJobProcess -Process $process -TimeoutSec $timeoutSec -WorkDir $psi.WorkingDirectory -Outputs @($stdoutFile, $stderrFile) -AdmissionReady $pytestReadyFile
+        # Record is a typed string parameter inherited from dt-job; use a distinct variable here.
+        $activityRecord = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId
+        $activityTree = if ($activityRecord.PSObject.Properties['working_tree']) { $activityRecord.working_tree } else { $psi.WorkingDirectory }
+        $isWriter = $activityRecord.PSObject.Properties['writes'] -and [bool]$activityRecord.writes
+        $finished = Wait-DtJobProcess -Process $process -TimeoutSec $timeoutSec -WorkDir $activityTree -Outputs @($stdoutFile, $stderrFile) -AdmissionReady $pytestReadyFile -Writes $isWriter
         if (-not $finished) {
             $process.Kill($true)
             $process.WaitForExit()
