@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.61.5
+
+- Codex hook trust: pick a Python with tomllib (skips the Windows Store stub and pre-3.11 interpreters with a clear error) and keep config.toml permissions across the atomic replace.
+
 ## 2.61.4
 
 - Prevent duplicate Codex hook trust tables across TOML quoting styles; collapse existing duplicates and validate before atomic replacement.
