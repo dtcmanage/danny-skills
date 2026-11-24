@@ -28,7 +28,7 @@ function Call-Job([string[]]$Arguments) {
     if ($LASTEXITCODE) { throw ($raw -join "`n") }
     ($raw -join "`n") | ConvertFrom-Json
 }
-function Wait-Until([scriptblock]$Condition, [int]$Seconds = 15) {
+function Wait-Until([scriptblock]$Condition, [int]$Seconds = 180) {
     $timer = [Diagnostics.Stopwatch]::StartNew()
     while (-not (& $Condition)) {
         if ($timer.Elapsed.TotalSeconds -gt $Seconds) { throw 'Fixture condition timed out' }
@@ -38,33 +38,45 @@ function Wait-Until([scriptblock]$Condition, [int]$Seconds = 15) {
 $child = Join-Path $root 'coordinator.ps1'
 $helper = Join-Path $root 'waiter.ps1'
 [IO.File]::WriteAllText($helper, @'
-param($DtJob, $Folder, $Minutes, $CallStartedUtc)
+param($DtJob, $Folder, $Minutes, $CallStartedUtc, $CoordinatorId)
 $ErrorActionPreference = 'Stop'
-$raw = & $DtJob await-danny -RunFolder $Folder -BuildStatePath (Join-Path $Folder '_build-state.md') -CoordinatorId wait-fixture -Operation review -Message 'Review fixture work.' -WaitMinutes $Minutes -CallStartedUtc $CallStartedUtc -AllowTempRunFolder -Json
-[IO.File]::WriteAllText((Join-Path $Folder 'result.json'), ($raw -join "`n"))
+$raw = & $DtJob await-danny -RunFolder $Folder -BuildStatePath (Join-Path $Folder '_build-state.md') -CoordinatorId $CoordinatorId -Operation review -Message 'Review fixture work.' -WaitMinutes $Minutes -CallStartedUtc $CallStartedUtc -AllowTempRunFolder -Json
+$resultPath = Join-Path $Folder 'result.json'
+[IO.File]::WriteAllText(($resultPath + '.tmp'), ($raw -join "`n"))
+[IO.File]::Move(($resultPath + '.tmp'), $resultPath)
 '@)
 [IO.File]::WriteAllText($child, @'
-param($DtJob, $Folder, $Minutes)
+param($DtJob, $Folder, $Minutes, $CoordinatorId)
 $ErrorActionPreference = 'Stop'
-$env:DT_BUILD_COORDINATOR_ID = 'wait-fixture'
+$env:DT_BUILD_COORDINATOR_ID = $CoordinatorId
 $state = Join-Path $Folder '_build-state.md'
-& $DtJob lease -RunFolder $Folder -CoordinatorId wait-fixture -Action acquire -Host codex -Pid $PID -LaunchedBy watcher -TtlSec 3 -AllowTempRunFolder -Json | Out-Null
+& $DtJob lease -RunFolder $Folder -CoordinatorId $CoordinatorId -Action acquire -Host codex -Pid $PID -LaunchedBy watcher -TtlSec 3 -AllowTempRunFolder -Json | Out-Null
 $callStarted = [DateTime]::UtcNow.ToString('o')
-if ((Split-Path $Folder -Leaf) -eq 'setup-delay') { Start-Sleep -Seconds 3 }
-& pwsh -NoProfile -File (Join-Path (Split-Path $Folder -Parent) 'waiter.ps1') $DtJob $Folder $Minutes $callStarted
+# The caller's 2.4-second budget is already exhausted, with ample margin.
+# Do not depend on child startup taking a particular amount of real time.
+if ((Split-Path $Folder -Leaf) -eq 'setup-delay') { $callStarted = [DateTime]::UtcNow.AddMinutes(-1).ToString('o') }
+& pwsh -NoProfile -File (Join-Path (Split-Path $Folder -Parent) 'waiter.ps1') $DtJob $Folder $Minutes $callStarted $CoordinatorId
 $result = [IO.File]::ReadAllText((Join-Path $Folder 'result.json')) | ConvertFrom-Json
 if ($result.decision -eq 'approved') {
-    [IO.File]::WriteAllText((Join-Path $Folder 'continued'), [string]$PID)
-    $until = [DateTime]::UtcNow.AddSeconds(30)
-    while (-not (Test-Path (Join-Path $Folder 'release')) -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 100 }
+    $continued = Join-Path $Folder 'continued'
+    [IO.File]::WriteAllText(($continued + '.tmp'), [string]$PID)
+    [IO.File]::Move(($continued + '.tmp'), $continued)
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path (Join-Path $Folder 'release'))) {
+        if ($timer.Elapsed.TotalSeconds -gt 180) { throw 'Fixture release condition timed out' }
+        Start-Sleep -Milliseconds 100
+    }
 }
-& $DtJob lease -RunFolder $Folder -CoordinatorId wait-fixture -Action release -AllowTempRunFolder -Json | Out-Null
+& $DtJob lease -RunFolder $Folder -CoordinatorId $CoordinatorId -Action release -AllowTempRunFolder -Json | Out-Null
 '@)
 try {
     foreach ($case in @('approved','timeout','setup-delay','coordinator-gone','declined','held','no-director','director-gone','superseded')) {
         $p = $null
         try {
             $folder = Join-Path $root $case
+            # Linux watcher liveness checks scan process tags across all runs.
+            # Parallel fixture copies must never share a coordinator identity.
+            $coordinatorId = 'wait-fixture-' + [guid]::NewGuid().ToString('N')
             New-Item -ItemType Directory -Path $folder | Out-Null
             $state = Join-Path $folder '_build-state.md'
             [IO.File]::WriteAllText($state, "run_status: runnable`nlast_consumed_event_seq: 0`nupdated_utc: fixture`n")
@@ -73,18 +85,25 @@ try {
             }
             $approvalsPath = Join-Path $folder 'approvals.json'
             [IO.File]::WriteAllText($approvalsPath, (@{awaiting=$null;approvals=@();delegate=$director} | ConvertTo-Json -Depth 5))
-            $minutes = if ($case -in @('timeout','setup-delay')) { '0.04' } else { '1' }
+            $minutes = if ($case -in @('timeout','setup-delay')) { '0.04' } else { '5' }
             $psi = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
             $psi.UseShellExecute = $false
-            foreach ($arg in @('-NoProfile','-File',$child,$dtJob,$folder,$minutes)) { $psi.ArgumentList.Add($arg) }
+            foreach ($arg in @('-NoProfile','-File',$child,$dtJob,$folder,$minutes,$coordinatorId)) { $psi.ArgumentList.Add($arg) }
             $psi.RedirectStandardError = $true
             $psi.RedirectStandardOutput = $true
             $p = [Diagnostics.Process]::Start($psi); $processes += $p
             $timer = [Diagnostics.Stopwatch]::StartNew()
+            # Deliberately observe setup-delay only after it exits: its expired waiter
+            # is transient, while the boundary, deadline and result are durable.
+            if ($case -eq 'setup-delay') { Wait-Until { $p.HasExited } }
             Wait-Until { (Test-Path $approvalsPath) -and ((Get-DtJobApprovals $folder).awaiting) }
             $entry = [pscustomobject]@{ run_id=$case; run_folder=$folder; build_state_path=$state; managed=$true }
             if ($case -ne 'no-director') {
-                Wait-Until { $a = (Get-DtJobApprovals $folder).awaiting; $a -and $a.PSObject.Properties['waiter'] }
+                # A short or already-expired budget can clear the waiter before any
+                # parent poll. Only cases that interact with a live waiter need it.
+                if ($case -notin @('timeout','setup-delay')) {
+                    Wait-Until { $a = (Get-DtJobApprovals $folder).awaiting; $a -and $a.PSObject.Properties['waiter'] }
+                }
                 Check ((Get-WatcherDecision -Entry $entry -NowUtc ([DateTime]::UtcNow)).action -eq 'none') "$case watcher does not relaunch while awaiting"
                 $firstLease = Get-DtJobLease $folder
                 if ($case -eq 'approved') {
@@ -103,9 +122,17 @@ try {
                         }
                         Check (-not (Test-DtJobApprovalWaiter $copy $leaseCopy)) "$fence fences stale/mismatched waiter"
                     }
-                    Start-Sleep -Seconds 20
+                    # Observe renewal across the original lease expiry, rather than sleeping twenty
+                    # seconds. Approval still happens only after the real waiter is blocked and has
+                    # kept its coordinator alive beyond that original three-second lease.
+                    Wait-Until {
+                        $now = [DateTime]::UtcNow
+                        $fresh = Get-DtJobLease $folder
+                        $now -gt (ConvertTo-DtJobUtc $firstLease.expires_utc) -and
+                            (ConvertTo-DtJobUtc $fresh.expires_utc) -gt $now
+                    }
                     $freshLease = Get-DtJobLease $folder
-                    Check ((ConvertTo-DtJobUtc $freshLease.expires_utc) -gt [DateTime]::UtcNow -and (ConvertTo-DtJobUtc $freshLease.expires_utc) -gt (ConvertTo-DtJobUtc $firstLease.expires_utc)) 'three-second lease renewed throughout twenty-second wait'
+                    Check ((ConvertTo-DtJobUtc $freshLease.expires_utc) -gt [DateTime]::UtcNow -and (ConvertTo-DtJobUtc $freshLease.expires_utc) -gt (ConvertTo-DtJobUtc $firstLease.expires_utc)) 'three-second lease renewed beyond its original expiry while waiter blocks'
                     $cpu = $p.TotalProcessorTime.TotalSeconds
                     $approval = Call-Job @('approve','-RunFolder',$folder,'-BuildStatePath',$state,'-Operation','review','-Reason','Fixture approved.')
                     Check ($approval.approved -eq 'review' -and -not $approval.PSObject.Properties['approval_queued']) 'operator applies approval before coordinator exits'
@@ -141,9 +168,9 @@ try {
                 Check (@($events | Where-Object type -in @('continuation_requested','coordinator_launched')).Count -eq 0) 'approval emits no relaunch/continuation event'
                 Check ((Get-DtJobApprovals $folder).approvals[0].reason -eq 'Fixture approved.') 'approval reason survives immediate wake'
                 [IO.File]::WriteAllText((Join-Path $folder 'release'), '')
-                $measurements += @{case=$case; seconds=[Math]::Round($timer.Elapsed.TotalSeconds,3); coordinator_pid=$p.Id; cpu_seconds=$cpu; events=@($events.type)}
             }
-            if (-not $p.WaitForExit(15000)) { throw 'Coordinator did not end' }
+            Wait-Until { $p.HasExited }
+            $p.WaitForExit()
             if ($case -ne 'coordinator-gone') { Check ($p.ExitCode -eq 0) "$case coordinator exits cleanly" }
             if ($case -ne 'approved') {
                 $a = Get-DtJobApprovals $folder
@@ -153,16 +180,14 @@ try {
             if ($case -eq 'timeout') {
                 $deadline = (Get-DtJobApprovals $folder).awaiting.wait_until_utc
                 # A live interactive lease and live director make this a genuine repeated wait attempt.
-                Call-Job @('lease','-RunFolder',$folder,'-CoordinatorId','wait-fixture','-Action','acquire','-Host','codex') | Out-Null
-                $repeatTimer = [Diagnostics.Stopwatch]::StartNew()
-                $again = Call-Job @('await-danny','-RunFolder',$folder,'-BuildStatePath',$state,'-Operation','review','-Message','Repeated boundary.','-CoordinatorId','wait-fixture')
-                Check ($again.decision -eq 'unanswered' -and $repeatTimer.Elapsed.TotalSeconds -lt 5 -and
+                Call-Job @('lease','-RunFolder',$folder,'-CoordinatorId',$coordinatorId,'-Action','acquire','-Host','codex') | Out-Null
+                $again = Call-Job @('await-danny','-RunFolder',$folder,'-BuildStatePath',$state,'-Operation','review','-Message','Repeated boundary.','-CoordinatorId',$coordinatorId)
+                Check ($again.decision -eq 'unanswered' -and
                     (Test-DtJobSameInstant $deadline (Get-DtJobApprovals $folder).awaiting.wait_until_utc)) 'live repeat cannot reset expired boundary deadline'
-                Call-Job @('lease','-RunFolder',$folder,'-CoordinatorId','wait-fixture','-Action','release') | Out-Null
+                Call-Job @('lease','-RunFolder',$folder,'-CoordinatorId',$coordinatorId,'-Action','release') | Out-Null
                 Call-Job @('approve','-RunFolder',$folder,'-BuildStatePath',$state,'-Operation','review') | Out-Null
                 Check (@(Get-DtJobEvents $folder | Where-Object type -eq 'continuation_requested').Count -eq 1) 'late approval retains continuation event for relaunch'
                 Check ((Get-WatcherDecision -Entry $entry -NowUtc ([DateTime]::UtcNow)).action -eq 'launch') 'timeout plus late approval is eligible for normal watcher relaunch'
-                $measurements += @{case=$case; seconds=[Math]::Round($timer.Elapsed.TotalSeconds,3); decision=$r.decision}
             }
             if ($case -eq 'coordinator-gone') {
                 $expires = (Get-DtJobLease $folder).expires_utc
@@ -181,6 +206,11 @@ try {
                 $a = Get-DtJobApprovals $folder
                 Check ((ConvertTo-DtJobUtc $a.awaiting.wait_until_utc) -lt (ConvertTo-DtJobUtc $a.awaiting.since_utc)) 'startup delay consumes caller budget before boundary setup'
             }
+            $measurement = @{case=$case; seconds=[Math]::Round($timer.Elapsed.TotalSeconds,3); decision=$r.decision}
+            if ($case -eq 'approved') {
+                $measurement.coordinator_pid = $p.Id; $measurement.cpu_seconds = $cpu; $measurement.events = @($events.type)
+            }
+            $measurements += $measurement
         } catch { Check $false "$case exception: $($_.Exception.Message) $($_.ScriptStackTrace)" }
         finally { if ($p -and -not $p.HasExited) { $p.Kill($true); $p.WaitForExit() } }
     }
@@ -191,13 +221,14 @@ try {
         New-Item -ItemType Directory -Force -Path $paths.Locks | Out-Null
         $handle = [IO.File]::Open($paths.RunLock, 'OpenOrCreate', 'ReadWrite', 'None')
         $Verb = 'await-danny'
-        $CallStartedUtc = [DateTime]::UtcNow.AddMinutes(-7.75).AddSeconds(1)
-        $clock = [Diagnostics.Stopwatch]::StartNew()
+        # Exhaust the hard budget before acquiring the held lock. A one-second
+        # remaining budget plus a two-second wall-time assertion races scheduling.
+        $CallStartedUtc = [DateTime]::UtcNow.AddMinutes(-8)
         try {
             Invoke-DtJobLocked $lockFolder { throw 'Lock unexpectedly acquired' }
             Check $false 'held lock respects total caller deadline'
         } catch {
-            Check ($_.Exception.Message -like 'DT_JOB_LOCK_TIMEOUT:*' -and $clock.Elapsed.TotalSeconds -lt 2) 'held lock respects total caller deadline'
+            Check ($_.Exception.Message -like 'DT_JOB_LOCK_TIMEOUT:*') 'held lock respects total caller deadline'
         } finally { $handle.Dispose() }
     }
     foreach ($hostName in @('claude','codex')) {

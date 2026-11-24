@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.61.1
+
+- Keep context-guard permission fixtures nonblocking regardless of parent director; profile assertion timings and replace approval fixture sleeps with observed lease renewal and a backdated caller budget. Tolerate loaded hosts with condition-driven fixture waits, durable expired-budget observations, atomic result publication, safely exhausted timestamp budgets, and unique coordinator identities for parallel fixtures.
+
 ## 2.61.0
 
 - Add bounded bootstrap entry sections and a verified compact coordinator state digest; defer implementation and canonical policies until their actions, preserve full mandatory authority, and enforce a 20k read-plan budget.

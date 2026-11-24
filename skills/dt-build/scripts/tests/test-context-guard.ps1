@@ -1,14 +1,22 @@
-param()
+# Optional JSONL profile: time since the preceding assertion, including fixture setup.
+param([string]$TimingPath)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
+$script:testClock = [Diagnostics.Stopwatch]::StartNew()
+$script:lastAssertionMs = 0L
 . (Join-Path $PSScriptRoot 'test-shell.ps1')
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
     if (-not $Condition) { throw "ASSERT_FAIL: $Message" }
     $script:passed++
+    if ($TimingPath) {
+        $now = $script:testClock.ElapsedMilliseconds
+        [IO.File]::AppendAllText($TimingPath, (([ordered]@{ assertion = $Message; elapsed_ms = $now - $script:lastAssertionMs; total_ms = $now } | ConvertTo-Json -Compress) + "`n"))
+        $script:lastAssertionMs = $now
+    }
 }
 
 function Write-Utf8 {
@@ -478,7 +486,8 @@ try {
             @('irreversible', '-RunFolder', $run.folder, '-Action', 'end', '-Operation', 'probe'),
             @('lease', '-RunFolder', $run.folder, '-Action', 'acquire', '-CoordinatorId', 'cv', '-Host', 'claude'),
             @('lease', '-RunFolder', $run.folder, '-Action', 'renew', '-CoordinatorId', 'cv'),
-            @('await-danny', '-RunFolder', $run.folder, '-Operation', 'merge', '-Message', 'test boundary.'),
+            # This checks context access, not blocking approval (covered by test-approval-wait).
+            @('await-danny', '-RunFolder', $run.folder, '-Operation', 'merge', '-Message', 'test boundary.', '-WaitMinutes', '0'),
             @('lease', '-RunFolder', $run.folder, '-Action', 'release', '-CoordinatorId', 'cv')
         )
         foreach ($c in $checks) {
@@ -543,7 +552,9 @@ try {
     Assert-True ($renewedAt -gt [DateTime]::UtcNow.AddSeconds(500)) "the -CoordinatorId call renews the interactive lease (expires $($renewedAt.ToString('o')))"
     $iStatus = Invoke-DtJob @('status', '-RunFolder', $run.folder, '-CoordinatorId', 'ci')
     Assert-True ($iStatus.context -like 'context: 170000 rotate *') "a -CoordinatorId call carries the context line ($($iStatus.context))"
-    Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Operation', 'merge', '-Message', 'test boundary.') | Out-Null
+    # Keep the operator-only assertion independent of whether the suite has a live director parent.
+    $iBoundary = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Operation', 'merge', '-Message', 'test boundary.', '-WaitMinutes', '0')
+    Assert-True ($iBoundary.decision -eq 'unanswered') 'nonblocking context fixture leaves the approval unanswered'
     $iApprove = Invoke-DtJobRaw @('approve', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Operation', 'merge')
     $iState = Get-Content -Raw -LiteralPath $run.state
     Assert-True ($iApprove.exit -ne 0 -and $iApprove.text -match 'DT_JOB_OPERATOR_ONLY' -and $iState -match '(?m)^run_status: awaiting_danny') "approve with only -CoordinatorId (no env var) is refused ($($iApprove.text))"
