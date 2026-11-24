@@ -182,6 +182,40 @@ class StateDigestTests(unittest.TestCase):
     def digest(self, *args: str) -> subprocess.CompletedProcess:
         return self.call('read-coordinator-state.ps1','-RunFolder',str(self.run),'-RunId','digest-test','-BuildStatePath',str(self.state),'-CoordinatorId','fixture',*args)
 
+    def populate_long_run(self) -> None:
+        dims = json.loads((Path(__file__).parent / 'fixtures/resume-long-run.json').read_text())
+        self.roadmap.write_text(self.roadmap.read_text() + '\n## Historical implementation\n' + 'Deferred implementation detail.\n' * (dims['roadmap_chars'] // 32))
+        for name in ('build-state.md', 'build-plan.md'):
+            with (self.run / name).open('a') as handle:
+                handle.write(f'\nroadmap_path: {self.roadmap}\n')
+        (self.run / 'operator-notes.json').write_text(json.dumps({'notes': [{'id': 'n-standing', 'text': 'Standing restriction: local only. ' * (dims['standing_notes_chars'] // 32)}]}))
+        (self.run / 'approvals.json').write_text(json.dumps({'awaiting': {'operation': 'device-test'}, 'approvals': [{'operation': 'local', 'seq': i, 'scope': 'Local only, never deploy.'} for i in range(dims['approvals_chars'] // 80)]}))
+        jobs = self.run / 'jobs'
+        jobs.mkdir(exist_ok=True)
+        for i in range(1, dims['completed_jobs'] + 1):
+            (jobs / f'j-{i:04d}.json').write_text(json.dumps({'job_id': f'j-{i:04d}', 'status': 'succeeded', 'kind': 'worker', 'spec': 'historical spec ' * 200}))
+        (jobs / 'j-0039.json').write_text(json.dumps({'job_id': 'j-0039', 'status': 'running', 'kind': 'worker', 'depends_on': [], 'status_reason': None}))
+        (jobs / 'j-0040.json').write_text(json.dumps({'job_id': 'j-0040', 'status': 'blocked', 'kind': 'worker', 'depends_on': ['j-0039'], 'status_reason': 'waiting for dependency'}))
+        (jobs / 'events.jsonl').write_text(''.join(json.dumps({'seq': i, 'type': 'completed', 'job_id': f'j-{i % 38 + 1:04d}'}) + '\n' for i in range(1, dims['events'] + 1)))
+        (self.run / 'acceptance-rows.jsonl').write_text('Historical acceptance evidence.\n' * (dims['acceptance_chars'] // 32))
+        (self.run / 'build-decision-log.md').write_text('Historical decision evidence.\n' * (dims['decision_chars'] // 30))
+
+    def test_long_run_history_is_deferred_without_duplicate_authority(self) -> None:
+        self.populate_long_run()
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('Historical acceptance evidence.', result.stdout)
+        self.assertNotIn('Deferred implementation detail.', result.stdout)
+        self.assertNotIn('historical spec', result.stdout)
+        original = result.stdout.split('## Mandatory original (full): ' + str(self.run / 'operator-notes.json'), 1)[1]
+        self.assertEqual(original.count('Standing restriction: local only.'), 5335 // 32)
+        self.assertIn('device-test', result.stdout)
+        self.assertIn('"seq":156', result.stdout)
+        self.assertNotIn('"seq":150,', result.stdout)
+        self.assertIn('"status":"running"', result.stdout)
+        self.assertIn('"status":"blocked"', result.stdout)
+        self.assertIn('waiting for dependency', result.stdout)
+
     def test_complete_authority_compact_navigation_no_dispatch(self) -> None:
         result = self.digest()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -260,7 +294,179 @@ class StateDigestTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn('| ID | name |', result.stdout)
                 self.assertIn(f'| {key} | current |', result.stdout)
-                self.assertNotIn('| M02 | unrelated |', result.stdout)
+                if 'M02' not in milestone:
+                    self.assertNotIn('| M02 | unrelated |', result.stdout)
+
+    def test_free_text_multiple_exact_milestones(self) -> None:
+        for cursor in ('M02 (awaiting device test) and M03 (builder j-0024 running)', 'M03 password stop, then M02'):
+            self.state.write_text(self.checkpoint.replace('current_milestone: M02', f'current_milestone: {cursor}'))
+            result = self.digest()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('| M02 | current |', result.stdout)
+            self.assertIn('| M03 | future |', result.stdout)
+        for cursor in ('M020', 'M02a', 'prefix-M02', 'm02'):
+            self.state.write_text(self.checkpoint.replace('current_milestone: M02', f'current_milestone: {cursor}'))
+            result = self.digest()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('current_milestone: M01', result.stderr)
+            self.assertIn('Write', result.stderr)
+
+    def test_previous_lifecycle_manifest_migrates_only_verified_bytes(self) -> None:
+        self.populate_long_run()
+        self.state.write_text(self.checkpoint + 'status_line: running\n')
+        legacy = self.call('build-authority-digest.ps1', '-RunFolder', str(self.run), '-BuildStatePath', str(self.state), '-LegacyLifecycleLocators')
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+        before = json.loads((self.run / 'authority-digest.json').read_text())
+        self.assertIn(str(self.roadmap), before['mandatory_paths'])
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after = json.loads((self.run / 'authority-digest.json').read_text())
+        self.assertNotIn(str(self.roadmap), after['mandatory_paths'])
+        self.assertEqual(before['originals'], after['originals'])
+        self.state.write_text(self.checkpoint + 'status_line: completed\n')
+        self.assertEqual(self.digest().returncode, 0)
+
+    def test_snapshot_survives_lifecycle_changes_but_rejects_authority(self) -> None:
+        (self.run / 'build-plan.md').write_text('Mandatory restriction.\n' * 1400)
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        first = self.digest('-Part', '1', '-ExpectSha', plan['sha256'])
+        self.state.write_text(self.checkpoint + 'status_line: job running\n')
+        (self.run / 'jobs').mkdir(exist_ok=True)
+        (self.run / 'jobs' / 'events.jsonl').write_text('{"seq":9,"type":"running","job_id":"j-0024"}\n')
+        again = self.digest('-Part', '1', '-ExpectSha', plan['sha256'])
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(first.stdout, again.stdout)
+        (self.run / 'operator-notes.json').write_text('{"notes":[{"text":"Never merge"}]}')
+        changed = self.digest('-Part', '2', '-ExpectSha', plan['sha256'])
+        self.assertNotEqual(changed.returncode, 0)
+        self.assertEqual(changed.stdout, '')
+
+    def multipart_plan(self) -> dict:
+        (self.run / 'build-plan.md').write_text('Mandatory restriction.\n' * 1400)
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def shadow_reader(self, mutation: str = '', omit_mandatory: bool = False) -> Path:
+        shadow = self.root / 'scripts'
+        shadow.mkdir(exist_ok=True)
+        reader = (SCRIPT.parent / 'read-coordinator-state.ps1').read_text()
+        marker = '# Recheck after collecting sources;'
+        (shadow / 'read-coordinator-state.ps1').write_text(reader.replace(marker, mutation + '\n' + marker))
+        (shadow / 'dt-job.ps1').write_text(f". '{SCRIPT.parent / 'dt-job.ps1'}' @args\n")
+        for name in ('read-resume-record.ps1', 'build-authority-digest.ps1', 'verify-authority-digest.ps1', 'read-authority-digest.ps1', 'read-authority-original.ps1'):
+            body = f"& '{SCRIPT.parent / name}' @args\n"
+            if omit_mandatory and name == 'verify-authority-digest.ps1':
+                body = f"$v = & '{SCRIPT.parent / name}' @args | ConvertFrom-Json\n$v.mandatory_paths = @($v.mandatory_paths | Where-Object {{ (Split-Path -Leaf $_) -notin @('approvals.json','operator-notes.json') }})\n$v | ConvertTo-Json -Depth 10 -Compress\n"
+            (shadow / name).write_text(body)
+        return shadow / 'read-coordinator-state.ps1'
+
+    def shadow_digest(self, path: Path) -> subprocess.CompletedProcess:
+        return self.call(str(path), '-RunFolder', str(self.run), '-RunId', 'digest-test', '-BuildStatePath', str(self.state), '-CoordinatorId', 'fixture')
+
+    def test_every_part_rechecks_lease_registration_and_stopped_state(self) -> None:
+        plan = self.multipart_plan()
+        # Exercise after an earlier part was served, where ownership could have changed.
+        self.assertEqual(self.digest('-Part', '1', '-ExpectSha', plan['sha256']).returncode, 0)
+        lease = self.run / 'coordinator.lease'
+        original = lease.read_text()
+        for update in ({'coordinator_id': 'intruder', 'launched_by': 'watcher'},
+                       {'coordinator_id': 'fixture', 'launched_by': 'watcher', 'released_utc': '2026-11-24T12:00:00Z'}):
+            lease.write_text(json.dumps(update))
+            result = self.digest('-Part', '2', '-ExpectSha', plan['sha256'])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, '')
+            self.assertIn('DT_RESUME_IDENTITY', result.stderr)
+        lease.write_text(original)
+        self.state.write_text(self.checkpoint.replace('runnable', 'awaiting_danny'))
+        result = self.digest('-Part', '2', '-ExpectSha', plan['sha256'])
+        self.assertIn('DT_RESUME_STOPPED', result.stderr)
+        self.state.write_text(self.checkpoint)
+        unregister = self.call('dt-job.ps1', 'unregister-run', '-RunFolder', str(self.run))
+        self.assertEqual(unregister.returncode, 0, unregister.stderr)
+        result = self.digest('-Part', '2', '-ExpectSha', plan['sha256'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('DT_RESUME_IDENTITY', result.stderr)
+
+    def test_multipart_discovers_new_authority_and_rebuilt_manifest(self) -> None:
+        for name, body in (('operator-notes.json', '{"notes":[{"text":"Never merge"}]}'),
+                           ('approvals.json', '{"awaiting":{"operation":"new-stop"},"approvals":[]}')):
+            with self.subTest(name=name):
+                (self.run / name).unlink()
+                for file in self.run.glob('authority-digest.*'):
+                    file.unlink()
+                plan = self.multipart_plan()
+                (self.run / name).write_text(body)
+                result = self.digest('-Part', '1', '-ExpectSha', plan['sha256'])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, '')
+                rebuild = self.call('build-authority-digest.ps1', '-RunFolder', str(self.run), '-BuildStatePath', str(self.state))
+                self.assertEqual(rebuild.returncode, 0, rebuild.stderr)
+                result = self.digest('-Part', '1', '-ExpectSha', plan['sha256'])
+                self.assertIn('DT_RESUME_CHANGED', result.stderr)
+
+    def test_authority_record_present_without_mandatory_paths(self) -> None:
+        (self.run / 'context-wall.json').write_text('{"reason":"context stop needs review"}')
+        (self.run / 'operator-notes.json').write_text('{"notes":[{"text":"Never merge"}]}')
+        result = self.shadow_digest(self.shadow_reader(omit_mandatory=True))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for text in ('Never merge', 'context stop needs review', '"operation":"ship"'):
+            self.assertIn(text, result.stdout)
+
+    def test_full_record_recheck_catches_unpinned_context_wall(self) -> None:
+        path = self.shadow_reader(f"[IO.File]::WriteAllText('{self.run / 'context-wall.json'}', '{{\"reason\":\"new context stop\"}}')")
+        result = self.shadow_digest(path)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('DT_RESUME_CHANGED: run record', result.stderr)
+
+    def test_final_part_refreshes_jobs_events_and_deletes_private_snapshot(self) -> None:
+        plan = self.multipart_plan()
+        cache = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'dt-build/coordinator-snapshots'
+        snapshots = list(cache.glob(f"*-{plan['sha256']}.json"))
+        self.assertEqual(len(snapshots), 1)
+        if os.name != 'nt':
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
+        jobs = self.run / 'jobs'
+        jobs.mkdir(exist_ok=True)
+        (jobs / 'j-0041.json').write_text(json.dumps({'job_id':'j-0041','status':'blocked','kind':'worker','status_reason':'fresh stop','depends_on':[]}))
+        (jobs / 'events.jsonl').write_text('{"seq":99,"type":"blocked","job_id":"j-0041"}\n')
+        result = self.digest('-Part', str(plan['parts']), '-ExpectSha', plan['sha256'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        tail = result.stdout.split('## Final-part refreshed evidence', 1)[1]
+        self.assertIn('fresh stop', tail)
+        self.assertIn('"seq":99', tail)
+        self.assertFalse(snapshots[0].exists())
+
+    def test_multipart_rechecks_unpinned_context_wall(self) -> None:
+        plan = self.multipart_plan()
+        (self.run / 'context-wall.json').write_text('{"reason":"new context stop"}')
+        result = self.digest('-Part', '1', '-ExpectSha', plan['sha256'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+
+    def test_empty_milestones_report_actionable_error(self) -> None:
+        self.roadmap.write_text('## Milestones\n| id | name |\n| --- | --- |\n')
+        result = self.digest()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('DT_RESUME_MILESTONE: Milestones table has no data rows', result.stderr)
+
+    def test_lifecycle_locator_is_navigation_but_scope_is_mandatory(self) -> None:
+        for name in ('build-plan.md', 'build-state.md'):
+            (self.run / name).write_text(f'roadmap_path: {self.roadmap}\nRestriction: never deploy.\n')
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('## Mandatory original (full): ' + str(self.roadmap), result.stdout)
+        for name in ('build-plan.md', 'build-state.md'):
+            (self.run / name).write_text(f'roadmap_path: {self.roadmap}\nScope per design:\n{self.roadmap}\n')
+        for file in self.run.glob('authority-digest.*'):
+            file.unlink()
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('## Mandatory original (full): ' + str(self.roadmap), result.stdout)
 
     def test_invalid_and_duplicate_milestones_fail_closed(self) -> None:
         for cursor in ('', '???', 'M02 and M03', 'M02', 'M02\ncurrent_milestone: M03'):
@@ -322,6 +528,7 @@ class StateDigestTests(unittest.TestCase):
         marker = '# Recheck after collecting sources;'
         reader = reader.replace(marker, f"[IO.File]::WriteAllText('{self.run / 'coordinator.lease'}', '{{\"coordinator_id\":\"intruder\",\"launched_by\":\"watcher\"}}')\n{marker}")
         (shadow / 'read-coordinator-state.ps1').write_text(reader)
+        (shadow / 'dt-job.ps1').write_text(f". '{SCRIPT.parent / 'dt-job.ps1'}' @args\n")
         for name in ('read-resume-record.ps1', 'build-authority-digest.ps1', 'verify-authority-digest.ps1', 'read-authority-digest.ps1', 'read-authority-original.ps1'):
             (shadow / name).write_text(f"& '{SCRIPT.parent / name}' @args\n")
         result = subprocess.run(['pwsh', '-NoProfile', '-File', str(shadow / 'read-coordinator-state.ps1'), '-RunFolder', str(self.run), '-RunId', 'digest-test', '-BuildStatePath', str(self.state), '-CoordinatorId', 'fixture'], env=self.env, capture_output=True, text=True)
@@ -344,6 +551,24 @@ class StateDigestTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, '')
         self.assertIn('AUTHORITY_ARTIFACT_UNENUMERATED', result.stderr)
+
+    def test_rebuilt_authority_during_collection_cannot_mix_snapshots(self) -> None:
+        shadow = self.root / 'scripts'
+        shadow.mkdir()
+        reader = (SCRIPT.parent / 'read-coordinator-state.ps1').read_text()
+        mutation = (
+            f"[IO.File]::WriteAllText('{self.run / 'build-plan.md'}', 'Changed restriction: never merge.')\n"
+            f"$null = & '{SCRIPT.parent / 'build-authority-digest.ps1'}' -RunFolder $RunFolder -BuildStatePath $BuildStatePath\n"
+        )
+        reader = reader.replace('# Recheck after collecting sources;', mutation + '# Recheck after collecting sources;')
+        (shadow / 'read-coordinator-state.ps1').write_text(reader)
+        (shadow / 'dt-job.ps1').write_text(f". '{SCRIPT.parent / 'dt-job.ps1'}' @args\n")
+        for name in ('read-resume-record.ps1', 'build-authority-digest.ps1', 'verify-authority-digest.ps1', 'read-authority-digest.ps1', 'read-authority-original.ps1'):
+            (shadow / name).write_text(f"& '{SCRIPT.parent / name}' @args\n")
+        result = self.call(str(shadow / 'read-coordinator-state.ps1'), '-RunFolder', str(self.run), '-RunId', 'digest-test', '-BuildStatePath', str(self.state), '-CoordinatorId', 'fixture')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('DT_RESUME_CHANGED', result.stderr)
 
     def test_missing_milestone_fails_closed(self) -> None:
         self.roadmap.write_text('## Milestones\n| id | name |\n| --- | --- |\n| M01 | old |\n')

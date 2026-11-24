@@ -2,6 +2,30 @@
 
 ## Lean coordinator entry (November 24, 2026)
 
+The long-run repair accepts every exact roadmap ID mentioned in a free-text
+`current_milestone`, including multiple concurrent milestones. Unknown IDs fail
+with a concrete replacement line. Multipart reads serve one content-addressed
+temporary snapshot; each part checks live identity, runnable state, the checkpoint
+(excluding auto-maintained `status_line`) and all pinned source hashes. Changed
+authority or next-action state still fails closed. `status_line` is also excluded
+from the authority checkpoint hash for newly built manifests.
+
+Approvals and standing operator notes appear once, as complete mandatory originals.
+The current view adds live jobs and the latest five events. Evidence-note and
+recovery history remains available through `-Section history`, with event/job
+files named for further reads. Plain artifact locator fields in generated
+`build-plan.md` and `build-state.md` are navigation; explicit scope references and
+full-read instructions still require the entire original. Verified old manifests
+migrate only with unchanged pinned source bytes; stale authority requires the
+existing full-read recovery.
+
+The budget fixture now includes synthetic history sized from the trusted-devices
+run: 38 completed jobs, 156 events, 35,008 roadmap characters, 15,000 acceptance
+characters, 19,000 decision-log characters, 5,335 standing-note characters and
+2,380 approval characters. Mandatory approval/note history is retained; evidence
+history and implementation prose are deferred. The fixture also retains its large
+mandatory-plan stress case, and every numbered part counts against the reserve.
+
 The coordinator bootstrap now reads the generated system instructions, the bounded
 entry, the state digest, then marks bootstrap. `read-coordinator-rulebook.ps1`
 defaults to `-Section entry`; its named sections retain execution, adapter,
@@ -50,6 +74,13 @@ roadmap are rechecked after collection. Large legitimate authority sets use
 numbered output parts requiring `-ExpectSha` from the initial plan; a changed
 snapshot fails with no partial output and requires restarting the complete read;
 no source is clipped to meet a token target.
+Every part rechecks the live managed registration, watcher lease and runnable
+state, and rediscovers authority paths against the pinned manifest, including
+previously absent known files. Approvals, standing notes and context-wall state
+are included before the marker regardless of mandatory-path selection. The final
+part appends a freshly read jobs/events view that supersedes the snapshot's
+evidence; read it before marking bootstrap. Snapshots live in a per-user 0700
+directory and are deleted when the final part is served.
 
 Before the independent review fixes, a live Opus 5.5 probe using the launcher's lean flags and tools, against an isolated
 copy of the real phone-look run, measured **20,164 first-turn tokens, 35,333 at

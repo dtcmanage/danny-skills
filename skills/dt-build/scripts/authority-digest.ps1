@@ -6,6 +6,7 @@ $script:AuthorityReadBudgetChars = 32000
 $script:AuthorityReadCeilingChars = 96000
 # Used only to verify a pre-2.60 pinned manifest before a classification-only migration.
 $script:AuthorityLegacyArtifactKinds = $false
+$script:AuthorityLegacyLifecycleLocators = $false
 
 # Evidence-only files: named in authority text but never authority. authority-history.jsonl is the
 # rollover's append-only audit log, and the provenance sidecar, consolidations file and clause ledger are
@@ -26,7 +27,15 @@ function Get-AuthorityHash {
 # direct a bootstrap read (bootstrap, IN FULL). Progress, next-step, git and evidence prose is not authority.
 $script:AuthorityCheckpointStateHeadings = '(?i)^(?:progress|completed|in[ -]?flight|next steps?|git|evidence|milestones|chunks(?:\s*\(.*\))?|handoff|status|current state)$'
 # Lower-case key lines a coordinator or dt-job rewrites as it goes (status, cursor, timestamp, position).
-$script:AuthorityCheckpointStateKeys = '^(?:run_status|last_consumed_event_seq|updated_utc|status|phase|current_milestone|last_commit_sha):'
+$script:AuthorityCheckpointStateKeys = '^(?:run_status|last_consumed_event_seq|updated_utc|status_line|status|phase|current_milestone|last_commit_sha):'
+
+function Test-AuthorityLifecycleLocator {
+    param([string]$Path, [string]$Line)
+    return (-not $script:AuthorityLegacyLifecycleLocators -and
+        (Split-Path -Leaf $Path) -in @('build-plan.md', 'build-state.md') -and
+        $Line -match '^(?:roadmap|design|plan)_path:\s*[^\r\n]+$' -and
+        $Line -notmatch '(?i)IN FULL|before\s*bootstrap')
+}
 $script:AuthorityCheckpointPointerLine = '^\s*(?:[-*]\s*)?[A-Z][A-Z0-9_]*=|(?i:bootstrap)|IN FULL'
 
 function Get-AuthorityCheckpointText {
@@ -287,6 +296,7 @@ function Get-AuthorityInventory {
             # A checkpoint locator alone is navigation; any other authority reference is a full read.
             $sourceLine = ($text.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($text.Substring($candidate.index) -split '\r?\n')[0]
             if (-not $script:AuthorityLegacyArtifactKinds -and $resolved -in $script:AuthorityArtifactPaths -and
+                -not (Test-AuthorityLifecycleLocator $path $sourceLine) -and
                 (($kind -in @('boundary', 'approval', 'operator_notes') -and -not $isImplementation) -or
                  ($path -eq $checkpoint -and $sourceLine -notmatch '^(?:roadmap|design|plan)_path:'))) {
                 $script:AuthorityCheckpointFullReads += $resolved
@@ -321,6 +331,9 @@ function Get-AuthorityInventory {
         if ($record.kind -ne 'implementation') { continue }
         foreach ($boundaryRecord in @($records | Where-Object kind -eq 'boundary')) {
             foreach ($candidate in @(Get-AuthorityCandidates ([IO.File]::ReadAllText($boundaryRecord.path)) $aliases)) {
+                $boundaryText = [IO.File]::ReadAllText($boundaryRecord.path)
+                $line = ($boundaryText.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($boundaryText.Substring($candidate.index) -split '\r?\n')[0]
+                if (Test-AuthorityLifecycleLocator $boundaryRecord.path $line) { continue }
                 $resolved = Resolve-AuthorityLiteral $candidate.literal $boundaryRecord.path $root $aliases
                 if ($resolved -eq $record.path) { $script:AuthorityCheckpointFullReads += $record.path }
             }

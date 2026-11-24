@@ -14,6 +14,7 @@ try:
     case.setUp()
     # Exercise real multipart reconstruction within the 10k reserve, not just a tiny header.
     (case.run / 'build-plan.md').write_text('Scope: local source changes only. Never deploy.\n' * 500)
+    case.populate_long_run()
     result = case.digest()
     if result.returncode:
         raise RuntimeError(result.stderr)

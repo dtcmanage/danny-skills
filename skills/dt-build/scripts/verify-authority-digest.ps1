@@ -1,7 +1,9 @@
 #Requires -Version 7.0
-param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [string]$DigestDirectory, [switch]$PreferDigest, [Parameter(DontShow)][switch]$LegacyArtifactKinds)
+param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [string]$DigestDirectory, [switch]$PreferDigest, [Parameter(DontShow)][switch]$LegacyArtifactKinds, [Parameter(DontShow)][switch]$LegacyLifecycleLocators)
 . (Join-Path $PSScriptRoot 'authority-digest.ps1')
 $script:AuthorityLegacyArtifactKinds = [bool]$LegacyArtifactKinds
+$script:AuthorityLegacyLifecycleLocators = [bool]$LegacyLifecycleLocators
+if ($LegacyLifecycleLocators) { $script:AuthorityCheckpointStateKeys = $script:AuthorityCheckpointStateKeys.Replace('|status_line', '') }
 $destination = if ($DigestDirectory) { $DigestDirectory } else { $RunFolder }
 $jsonPath = Join-Path $destination 'authority-digest.json'
 $mdPath = Join-Path $destination 'authority-digest.md'
