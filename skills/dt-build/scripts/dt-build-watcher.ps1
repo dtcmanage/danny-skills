@@ -400,7 +400,7 @@ function Get-WatcherTriggerSeq {
     $max = [int64]0
     foreach ($event in (Get-DtJobEvents -RunFolder $RunFolder)) {
         $actionable = if ($event.job_id -eq 'run') { $event.type -in @('continuation_requested', 'awaiting_danny', 'finished') }
-        else { $event.status -in @('succeeded', 'failed', 'timeout', 'orphaned', 'cancelled', 'blocked') }
+        else { $event.type -eq 'job_stalled' -or $event.status -in @('succeeded', 'failed', 'timeout', 'orphaned', 'cancelled', 'blocked') }
         if ($actionable -and [int64]$event.seq -gt $max) { $max = [int64]$event.seq }
     }
     return $max
@@ -912,7 +912,7 @@ function Invoke-WatcherRun {
         $bootAlert = $null
         try { $bootAlert = Send-WatcherBootOverdueAlert -Entry $Entry -NowUtc (Get-WatcherNow) }
         catch { $stepErrors.Add("boot check failed: $([string]$_.Exception.Message)") }
-        $result = Invoke-WatcherRunTick -Entry $Entry
+        $result = Invoke-WatcherRunTick -Entry $Entry -StepErrors $stepErrors
         if ($null -ne $bootAlert) { $result | Add-Member -NotePropertyName boot_overdue -NotePropertyValue $bootAlert -Force }
         if ($null -ne $rotation) { $result | Add-Member -NotePropertyName rotation -NotePropertyValue $rotation -Force }
         if ($stale.Count -gt 0) { $result | Add-Member -NotePropertyName stale_irreversible -NotePropertyValue $stale -Force }
@@ -983,13 +983,18 @@ function Repair-WatcherLostApproval {
 }
 
 function Invoke-WatcherRunTick {
-    param([Parameter(Mandatory)]$Entry)
+    param([Parameter(Mandatory)]$Entry, [Collections.Generic.List[string]]$StepErrors = [Collections.Generic.List[string]]::new())
     $folder = [string]$Entry.run_folder
     $runId = [string]$Entry.run_id
     Receive-DtJobQueuedApproval -RunFolder $folder
     if (-not (Test-Path -LiteralPath $folder)) { return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = 'run folder missing' } }
     & pwsh -NoProfile -NonInteractive -File $script:WatcherDtJob reconcile -RunFolder $folder -Json *> $null
     $reconcileExit = $LASTEXITCODE
+    # Stalls must reach the director even while a live coordinator is blocked or confused.
+    if (Test-Path -LiteralPath ([string]$Entry.build_state_path)) {
+        try { Invoke-DtJobStallEscalation -RunFolder $folder -RunId $runId -BuildStatePath ([string]$Entry.build_state_path) }
+        catch { $StepErrors.Add("stall escalation failed: $([string]$_.Exception.Message)") }
+    }
     # Stop and approval DMs that failed to send are retried while the run still waits on Danny.
     $statePath = [string]$Entry.build_state_path
     $retried = @()
@@ -1006,6 +1011,12 @@ function Invoke-WatcherRunTick {
     $decision = Get-WatcherDecision -Entry $Entry -NowUtc $now
     if ($decision.action -eq 'none') { return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = $decision.detail; reconcile_exit = $reconcileExit; pending_alerts = $retried } }
     if ($decision.action -eq 'notify_interactive') {
+        $cursor = (Get-DtJobRunState -BuildStatePath $statePath).last_consumed_event_seq
+        $unread = @(Get-DtJobEvents -RunFolder $folder | Where-Object { [long]$_.seq -gt $cursor })
+        if ($unread.Count -and @($unread | Where-Object { $_.type -notin @('job_stalled', 'job_stall_acknowledged', 'job_stall_cleared', 'job_stall_escalated') }).Count -eq 0) {
+            # A stall uses its timed director boundary, never the generic idle-session DM.
+            return [pscustomobject]@{ run_id = $runId; action = 'none'; detail = 'stall awaits coordinator action or its director escalation deadline'; reconcile_exit = $reconcileExit; pending_alerts = $retried }
+        }
         # Never replace an interactive coordinator; tell Danny once per waiting period.
         $text = "dt-build run $runId has new results waiting (event $($decision.trigger_seq)) and its interactive session is idle. Reopen that session or run: /dt-build resume $runId"
         $alert = Send-DtJobRunAlert -RunFolder $folder -Key "dt-build:${runId}:interactive:$($decision.trigger_seq)" -Message $text

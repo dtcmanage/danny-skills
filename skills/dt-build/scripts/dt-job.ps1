@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 param(
-    [ValidateSet('start', 'requeue', 'status', 'wait', 'cancel', 'reconcile', 'lease', 'register-run', 'unregister-run', 'pin', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
+    [ValidateSet('start', 'requeue', 'status', 'wait', 'cancel', 'reconcile', 'stall-ack', 'lease', 'register-run', 'unregister-run', 'pin', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -83,6 +83,9 @@ param(
     [long]$Seq = -1,
 
     [string]$Reason,
+
+    # Minutes from now; acknowledgement is bounded and never stops a process.
+    [ValidateRange(0.01, 1440)][double]$Until = 20,
 
     [string]$Operation,
 
@@ -174,6 +177,7 @@ $script:DtJobEvidenceAuthorityPattern = '(?i)\b(?:approv(?:e|es|ed|ing|al|als)|a
 . (Join-Path $PSScriptRoot 'context-guard.ps1')
 . (Join-Path $PSScriptRoot 'report-contract.ps1')
 . (Join-Path $PSScriptRoot 'model-selection.ps1')
+. (Join-Path $PSScriptRoot 'dt-job-stalls.ps1')
 
 function Get-DtJobPaths {
     param([Parameter(Mandatory)][string]$RunFolder)
@@ -418,12 +422,18 @@ function Update-DtJobStatusLine {
     if (-not (Test-Path -LiteralPath $statePath)) { return }
     $records = @(Get-DtJobRecords -RunFolder $RunFolder)
     $running = @($records | Where-Object status -eq 'running')
+    $stalls = @($running | ForEach-Object { Get-DtJobActivity -RunFolder $RunFolder -Record $_ } | Where-Object stalled)
+    $stallIds = @($stalls | ForEach-Object job_id)
+    $running = @($running | Where-Object { $stallIds -notcontains $_.job_id })
     $queued = @($records | Where-Object status -eq 'queued')
     $runningWords = if ($running.Count -eq 1) { 'job is' } else { 'jobs are' }
     $line = if ($running.Count) { "$($running.Count) $runningWords running: $(($running.job_id | Select-Object -First 5) -join ', '); $($queued.Count) jobs are waiting." }
         else { "No jobs are running; $($queued.Count) jobs are waiting." }
-    $line += if ($Event.job_id -eq 'run') { " Latest run event: $($Event.type) ($($Event.status))." }
-        else { " Latest: $($Event.job_id) $($Event.status)." }
+    if ($stalls.Count) { $line = (($stalls.line | Select-Object -First 5) -join '; ') + '. ' + $line }
+    if ($null -ne $Event) {
+        $line += if ($Event.job_id -eq 'run') { " Latest run event: $($Event.type) ($($Event.status))." }
+            else { " Latest: $($Event.job_id) $($Event.status)." }
+    }
     $text = Read-DtJobText -Path $statePath
     if ($text -match '(?m)^status_line:') {
         $text = [regex]::Replace($text, '(?m)^status_line:[^\r\n]*', "status_line: $line")
@@ -703,6 +713,7 @@ function Invoke-DtJobSchedule {
     $entryForAlert = Get-DtJobRegistryEntry -RunFolder $RunFolder
     if ($entryForAlert) { $null = Send-DtJobDelegateEscalation -RunFolder $RunFolder -RunId $entryForAlert.run_id }
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+        Update-DtJobStalls -RunFolder $RunFolder
         $changed = $true
         while ($changed) {
             $changed = $false
@@ -1304,6 +1315,10 @@ function Invoke-DtJobStatus {
                     if ($pending.PSObject.Properties['host_conflicts']) { $awaiting.host_conflicts = @($pending.host_conflicts) }
                     $runIdNow = (Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $statePath -RunId $RunId).run_id
                     $alertKey = "dt-build:${runIdNow}:awaiting:$($awaiting.operation):$($awaiting.seq)"
+                    if ($pending.PSObject.Properties['stall_notice_seq']) {
+                        $awaiting.stall_notice_seq = $pending.stall_notice_seq
+                        $alertKey += ":stall:$($pending.stall_notice_seq)"
+                    }
                     $awaiting.alerted_danny = @(Get-DtJobNotifications -RunFolder $RunFolder | Where-Object {
                         [string]$_.key -ceq $alertKey -and (Test-DtJobNotificationDelivered $_)
                     }).Count -gt 0
@@ -1796,11 +1811,14 @@ function Get-DtJobActivity {
     $files = if ($null -ne $beat) { [int]$beat.file_changes } else { $null }
     $line = "$($Record.job_id) running $runningMin min, last activity $(if ($idleSec -lt 120) { "$idleSec s" } else { "$([int][Math]::Floor($idleSec / 60)) min" }) ago"
     if ($null -ne $beat) { $line += " (cpu $cpu s, $files file changes)" } else { $line += ' (no heartbeat yet)' }
+    if ($stalled) {
+        $since = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId($lastActive, 'America/New_York').ToString('h:mm tt')
+        $line = "$($Record.job_id) stalled $([int][Math]::Floor($idleSec / 60)) min, no output or CPU activity since $since ET"
+    }
     if ($expected -gt 0 -and ($now - $started).TotalSeconds -gt $expected) { $line += "; past its expected $([int][Math]::Ceiling($expected / 60)) min" }
-    if ($stalled) { $line += "; STALLED: no activity for $([int][Math]::Floor($idleSec / 60)) min. Check its output, then cancel and retry or keep waiting" }
     $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $Record
     if ($null -ne $outcome.report_verdict) { $line += " verdict=$($outcome.report_verdict)" }
-    return [pscustomobject][ordered]@{ job_id = $Record.job_id; running_min = $runningMin; idle_sec = $idleSec; stalled = $stalled; cpu_seconds = $cpu; file_changes = $files; line = $line }
+    return [pscustomobject][ordered]@{ job_id = $Record.job_id; running_min = $runningMin; idle_sec = $idleSec; stalled = $stalled; last_activity_utc = $lastActive.ToString('o'); cpu_seconds = $cpu; file_changes = $files; line = $line }
 }
 
 function Get-DtJobWaitRenewSec {
@@ -1825,6 +1843,12 @@ function Invoke-DtJobWait {
         Invoke-DtJobSchedule -RunFolder $RunFolder
         $records = @($ids | ForEach-Object { Get-DtJobRecord -RunFolder $RunFolder -JobId $_ })
         $done = @($records | Where-Object { Test-DtJobTerminal $_.status })
+        $unhandled = @($records | Where-Object status -eq 'running' | Where-Object {
+            $activity = Get-DtJobActivity -RunFolder $RunFolder -Record $_
+            $stall = Get-DtJobStall -RunFolder $RunFolder -JobId $_.job_id
+            $activity.stalled -and (-not $stall -or -not $stall.ack -or (ConvertTo-DtJobUtc $stall.ack.until_utc) -le [DateTime]::UtcNow)
+        })
+        if ($unhandled.Count) { $result = 'stalled'; break }
         if (($Any -and $done.Count -gt 0) -or ($All -and $done.Count -eq $ids.Count)) { $result = 'finished'; break }
         if ([DateTime]::UtcNow -ge $deadline) { $result = 'wait_timeout'; break }
         if ($coordinator -and ([DateTime]::UtcNow - $lastRenew).TotalSeconds -ge $renewEverySec) {
@@ -1852,11 +1876,21 @@ function Invoke-DtJobWait {
     $progress = @($records | Where-Object { $_.status -eq 'running' } | ForEach-Object { Get-DtJobActivity -RunFolder $RunFolder -Record $_ })
     $notes = @(Get-DtJobOperatorNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } })
     $envelope = [ordered]@{ result = $result; pin = (Get-DtJobRunPinLabel -RunFolder $RunFolder); evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, evidence-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; evidence_notes = @(Get-DtJobEvidenceNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } }); evidence_notes_label = $script:DtJobEvidenceNotesLabel; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
+    $envelope.stalled = @($records | Where-Object status -eq 'running' | Where-Object { (Get-DtJobActivity -RunFolder $RunFolder -Record $_).stalled } | Select-Object -First 5 | ForEach-Object { Get-DtJobStallFacts -RunFolder $RunFolder -Record $_ })
     if ($Json -and $null -ne $script:DtJobContext) { $envelope.context = $script:DtJobContext.line }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
         $lines.RemoveAt($lines.Count - 1)
         $envelope.omitted++
+        $cut = $true
+    }
+    $envelope.omitted_stalls = 0
+    while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $envelope.stalled.Count -gt 1) {
+        $envelope.stalled = @($envelope.stalled | Select-Object -First ($envelope.stalled.Count - 1))
+        $envelope.omitted_stalls++; $cut = $true
+    }
+    while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $envelope.progress.Count -gt 1) {
+        $envelope.progress = @($envelope.progress | Select-Object -First ($envelope.progress.Count - 1))
         $cut = $true
     }
     $envelope.truncated = $cut
@@ -1866,6 +1900,7 @@ function Invoke-DtJobWait {
     if (@($envelope.evidence_notes).Count) { $lines.Add($script:DtJobEvidenceNotesLabel) }
     foreach ($note in $envelope.evidence_notes) { $lines.Add("evidence note $($note.id): $($note.text)") }
     foreach ($entry in $envelope.progress) { $lines.Add([string]$entry.line) }
+    foreach ($stall in $envelope.stalled) { $lines.Add(($stall | ConvertTo-Json -Depth 5 -Compress)) }
     if ($result -eq 'wait_timeout') { $lines.Add((Limit-DtJobLine "wait_timeout still_running=$($running -join ',')" ([ref]$cut))) }
     return $lines
 }
@@ -2274,6 +2309,7 @@ function Assert-DtJobOperator {
 function Complete-DtJobApproval {
     param($Context, $Approvals, $Receipt, [switch]$Waiting)
     $Receipt | Add-Member -NotePropertyName approved_utc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
+    Complete-DtJobStallApproval -RunFolder $Context.run_folder -Pending $Approvals.awaiting -ApprovedUtc (ConvertTo-DtJobUtc $Receipt.approved_utc)
     $Approvals.approvals = @($Approvals.approvals) + @($Receipt)
     $Approvals.awaiting = $null
     Save-DtJobApprovals -RunFolder $Context.run_folder -Approvals $Approvals
@@ -2593,7 +2629,8 @@ function Send-DtJobDelegateEscalation {
     $text = "Build $RunId needs a decision before $($pending.operation): $decision $absence Open or reopen the build's session in Command Center to answer."
     if ($held) { $text += " The director had put it on hold: $($held.reason)." }
     $text += Get-DtJobHostConflictAlert -Awaiting $pending
-    return (Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:${RunId}:awaiting:$($pending.operation):$($pending.seq)" -Message $text -RecordPending)
+    $notice = if ($pending.PSObject.Properties['stall_notice_seq']) { ":stall:$($pending.stall_notice_seq)" } else { '' }
+    return (Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:${RunId}:awaiting:$($pending.operation):$($pending.seq)$notice" -Message $text -RecordPending)
 }
 
 function Get-DtJobOperatorNotes {
@@ -2970,6 +3007,7 @@ $verbOutput = switch ($Verb) {
     'wait' { Invoke-DtJobWait }
     'cancel' { Invoke-DtJobCancel }
     'reconcile' { Invoke-DtJobReconcile }
+    'stall-ack' { Invoke-DtJobStallAck }
     'lease' { Invoke-DtJobLease }
     'pin' { Invoke-DtJobPin }
     'register-run' { Invoke-DtJobRegisterRun }

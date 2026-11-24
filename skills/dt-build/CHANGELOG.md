@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.62.0
+
+- Persist stall episodes, interrupt waits with activity facts, accept expiring stall acknowledgements, and independently escalate overdue jobs through the director with deduplicated fallback; stabilize check-in and resume-contract fixtures.
+
 ## 2.61.5
 
 - Codex hook trust: pick a Python with tomllib (skips the Windows Store stub and pre-3.11 interpreters with a clear error) and keep config.toml permissions across the atomic replace.

@@ -194,6 +194,7 @@ function Wait-DtJobProcess {
     $executionStarted = if ($AdmissionReady) { $null } else { $started }
     $lastActivity = $started
     $lastCpu = $null; $lastBytes = [long]-1; $fileChanges = 0; $newFiles = 0
+    $lastSample = $started
     $nextBeat = $started
     $nextMemorySample = $started
     try {
@@ -219,11 +220,14 @@ function Wait-DtJobProcess {
             if ($now -ge $nextBeat) {
                 $cpu = try { Get-DtJobTreeCpuSeconds -RootPid $Process.Id } catch { $null }
                 $bytes = [long]0; foreach ($s in $Outputs) { try { $bytes += $s.Position } catch { } }
-                $active = $newFiles -gt 0 -or ($lastBytes -ge 0 -and $bytes -ne $lastBytes) -or ($null -ne $cpu -and $null -ne $lastCpu -and ($cpu - $lastCpu) -ge 1)
+                # Sampling a sleeping loop consumes tiny amounts of CPU; that is not progress.
+                # Require sustained work (10% of one core by default), scaled to elapsed sample time.
+                $active = $newFiles -gt 0 -or ($lastBytes -ge 0 -and $bytes -ne $lastBytes) -or (Test-DtJobCpuActivity -Cpu $cpu -LastCpu $lastCpu -ElapsedSec ($now - $lastSample).TotalSeconds)
                 if ($active) { $lastActivity = $now }
                 $fileChanges += $newFiles; $newFiles = 0
                 if ($null -ne $cpu) { $lastCpu = $cpu }
                 $lastBytes = $bytes
+                $lastSample = $now
                 $beat = [ordered]@{ sampled_utc = $now.ToString('o'); last_activity_utc = $lastActivity.ToString('o'); cpu_seconds = $(if ($null -ne $cpu) { [int]$cpu } else { $null }); output_bytes = $bytes; file_changes = $fileChanges }
                 try { Write-DtJobAtomic -Path $beatPath -Content ($beat | ConvertTo-Json -Compress) } catch { }
                 $nextBeat = $now.AddSeconds($heartbeatSec)

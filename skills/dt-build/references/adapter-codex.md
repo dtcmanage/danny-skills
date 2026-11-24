@@ -17,9 +17,9 @@ Transcript discovery for `mark-bootstrap`: `resume-bootstrap-measurement.md`.
 
 - Watchdogs: use `dt-job status -CoordinatorId <id> -Json`, `stalled` and heartbeat/activity age; checkpoint age must never be used alone.
 - Codex has no in-session completion notice. Wait in the foreground: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec <n> -Json`, with `-TimeoutSec` (at most 600) below the shell timeout.
-- On `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again; nothing else between waits.
+- Only on `wait_timeout`, run `dt-job reconcile -CoordinatorId <id>`, then call `dt-job wait` again; nothing else between waits.
 - Coordinators never poll with `status`, `sleep` loops or log tails; delegate watches are separate.
-- `wait_timeout` lists running jobs' `progress`. Jobs have no time limit; after 20 silent minutes (`STALLED`), check output, then cancel/retry or wait.
+- On `result=stalled`, inspect command/output/process tree this turn; cancel/fix or `dt-job stall-ack -CoordinatorId <id> -JobId <job> -Reason "<dependency; why keep>" -Until <minutes>`. Never re-wait without action. Expiry re-escalates.
 - Hours-long waits use managed mode (below).
 - The ledger is the truth: run `dt-job reconcile -CoordinatorId <id>` at every start and resume.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.

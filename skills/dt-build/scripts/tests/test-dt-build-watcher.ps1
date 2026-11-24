@@ -1848,7 +1848,7 @@ try { $runs = @(Read-WatcherRegistry); $outcome = "ok:$($runs[0].run_id)" } catc
         Assert-True ($wrapper.Contains('read-coordinator-rulebook.ps1') -and $wrapper.Contains('Complete required authorization reads')) 'managed launch retains rulebook and authorization instructions'
     }
     Assert-True ($env:DT_BUILD_LEAN_BOOTSTRAP -ceq $parentLean) 'launcher assembly does not set an interactive/parent environment variable'
-    Assert-True ($launcherText.Contains('references/managed-resume.md') -and $launcherText.Contains('Run folder: $runRoot') -and $launcherText.Contains('Checkpoint: $BuildStatePath') -and $launcherText.Contains('canonical context bridge') -and $launcherText.Contains('-LaunchedBy watcher') -and -not $launcherText.Contains('$skillPrefix')) 'the default launcher supplies the bounded resume contract and exact run paths while retaining the watcher lease and canonical bridge'
+    Assert-True ($launcherText.Contains('read-coordinator-rulebook.ps1') -and $launcherText.Contains('Run folder: $runRoot') -and $launcherText.Contains('Checkpoint: $BuildStatePath') -and $launcherText.Contains('canonical context bridge') -and $launcherText.Contains('-LaunchedBy watcher') -and -not $launcherText.Contains('$skillPrefix')) 'the default launcher supplies the bounded resume contract and exact run paths while retaining the watcher lease and canonical bridge'
     $acquireAt = $launcherText.IndexOf('-Action acquire')
     $createAt = $launcherText.IndexOf('-MethodName Create')
     $pidAt = $launcherText.IndexOf('-Action renew -CoordinatorId $CoordinatorId -Pid $childPid')

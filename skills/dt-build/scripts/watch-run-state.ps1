@@ -46,7 +46,10 @@ function Get-WatchSnapshot {
         $status = (Get-DtJobRunState -BuildStatePath ([string]$entry.build_state_path)).run_status
         if ($status -eq 'awaiting_danny') {
             $pending = (Get-DtJobApprovals -RunFolder $paths.Root).awaiting
-            if ($null -ne $pending) { $awaiting = "$($pending.operation)#$(if ($pending.PSObject.Properties['seq']) { $pending.seq })" }
+            if ($null -ne $pending) {
+                $awaiting = "$($pending.operation)#$(if ($pending.PSObject.Properties['seq']) { $pending.seq })"
+                if ($pending.PSObject.Properties['stall_notice_seq']) { $awaiting += ":stall:$($pending.stall_notice_seq)" }
+            }
         }
     }
     $jobs = @{}

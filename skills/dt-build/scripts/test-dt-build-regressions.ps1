@@ -64,6 +64,10 @@ $originalHeadless = $env:DT_BUILD_HEADLESS
 $env:DT_BUILD_HEADLESS = '1'
 
 try {
+    if ($Shard -in @(0,6)) {
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-job-stalls.ps1')
+        Assert-True ($LASTEXITCODE -eq 0) 'job stalls interrupt waits and escalate independently through the watcher'
+    }
     # Independent helper suites run once, outside the wrapper fixture shards.
     if ($Shard -in @(0,5)) {
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-regression-fixtures.ps1')

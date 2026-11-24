@@ -17,7 +17,7 @@ Transcript discovery for `mark-bootstrap`: `resume-bootstrap-measurement.md`.
 - Watchdogs: use `dt-job status -CoordinatorId <id> -Json`, `stalled` and heartbeat/activity age; checkpoint age must never be used alone.
 - Top-level coordinators: `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 600 -Json`, Bash `run_in_background: true`, longer Bash `timeout`; end the turn and await notification.
 - Subagent/teammate coordinators (no direct user turn): foreground wait with `dt-job wait -CoordinatorId <id> -JobId <job ids, comma-separated> -Any|-All -TimeoutSec 540 -Json`, Bash `run_in_background: false`, `timeout: 600000`. Repeat after every `wait_timeout` check-in; never end the turn while jobs run.
-- `wait_timeout` lists running jobs' `progress`. Jobs have no time limit; after 20 silent minutes (`STALLED`), check output, then cancel/retry or wait.
+- On `result=stalled`, inspect command/output/process tree this turn; cancel/fix or `dt-job stall-ack -CoordinatorId <id> -JobId <job> -Reason "<dependency; why keep>" -Until <minutes>`. Never re-wait without action. Expiry re-escalates.
 - Coordinators never use CronCreate, Monitor heartbeats, `sleep` loops, or repeated `status` calls; delegate watches are separate.
 - Run `dt-job reconcile -CoordinatorId <id>` at start, resume and `wait_timeout`, then repeat the appropriate wait for remaining jobs.
 - `wait` and `status` carry `last_event_seq` and `last_consumed_event_seq`. Consume only from run-level `dt-job status -CoordinatorId <id> -Json` after handling every job state shown; never from job-scoped wait or status envelopes. Run `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>`.

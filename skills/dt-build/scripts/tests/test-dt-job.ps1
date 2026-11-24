@@ -1253,11 +1253,31 @@ exit 0
         $busyCommand = (New-HeldJobCommand $busyRelease).Replace('Start-Sleep -Milliseconds 100', "Write-Output 'step'; Start-Sleep -Milliseconds 100")
         $busy = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', ($busyCommand + ' # invoke-codex-chunk.ps1'))
         } finally { Pop-Location }
-        Start-Sleep -Seconds 7
+        # Synchronize on observed heartbeats, not process-start wall time: under load
+        # PowerShell startup can still consume CPU seven seconds after admission.
+        # Require a complete quiet interval after that activity and a working busy peer.
+        $settled = $false
+        $settleDeadline = [DateTime]::UtcNow.AddSeconds(60)
+        $quietBeatPath = Join-Path $rf "jobs/$($quiet.job_id)/heartbeat.json"
+        $busyBeatPath = Join-Path $rf "jobs/$($busy.job_id)/heartbeat.json"
+        do {
+            try {
+                $quietBeat = Get-Content -Raw -LiteralPath $quietBeatPath -ErrorAction Stop | ConvertFrom-Json
+                $busyBeat = Get-Content -Raw -LiteralPath $busyBeatPath -ErrorAction Stop | ConvertFrom-Json
+                $now = [DateTime]::UtcNow
+                $quietLast = [DateTime]::Parse($quietBeat.last_activity_utc).ToUniversalTime()
+                $quietSample = [DateTime]::Parse($quietBeat.sampled_utc).ToUniversalTime()
+                $busyLast = [DateTime]::Parse($busyBeat.last_activity_utc).ToUniversalTime()
+                $settled = ($quietSample - $quietLast).TotalSeconds -ge 4 -and
+                    ($now - $busyLast).TotalSeconds -lt 4 -and $busyBeat.output_bytes -gt 0
+            } catch { $settled = $false } # A runner may not have published its first beat yet.
+            if (-not $settled) { Start-Sleep -Milliseconds 100 }
+        } until ($settled -or [DateTime]::UtcNow -ge $settleDeadline)
+        if (-not $settled) { throw 'Check-in fixture never observed settled quiet activity and an active busy peer.' }
         $checkin = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', "$($quiet.job_id),$($busy.job_id)", '-Any', '-TimeoutSec', '1')
         $q = @($checkin.progress | Where-Object { $_.job_id -eq $quiet.job_id })[0]
         $b = @($checkin.progress | Where-Object { $_.job_id -eq $busy.job_id })[0]
-        Assert-True ($checkin.result -eq 'wait_timeout' -and $q.stalled -and $q.line -match 'STALLED' -and $q.line -match 'past its expected 1 min') "a silent agent job is reported stalled at a check-in ($($q.line))"
+        Assert-True ($checkin.result -eq 'stalled' -and $q.stalled -and $q.line -match 'STALLED' -and $q.line -match 'past its expected 1 min') "a silent agent job is reported stalled at a check-in ($($q.line))"
         Assert-True (-not $b.stalled -and $b.idle_sec -lt 4 -and $b.line -match 'last activity') "a working agent job reports activity, not a stall ($($b.line))"
         $status = Invoke-DtJob @('status', '-RunFolder', $rf, '-JobId', $quiet.job_id)
         Assert-True ($status.activity -match 'STALLED') "status shows a running job's activity ($($status.activity))"

@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.61.5
+  version: 2.62.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -105,7 +105,7 @@ These rules are enforced by scripts both hosts must call; the adapter gives each
   Per-process memory caps for test runners must come from measured peaks, never a guess.
   FS-58 `exclusive_reason` stays opt-in; never lock unrelated safe work.
 
-- **Run work as jobs.** Workers, tests, builds, and browser checks run as `<skill>/scripts/dt-job.ps1` jobs, never in the coordinator's foreground. Read only capped `dt-job status|wait -Json` envelopes, checking `report_verdict`/`failure_category`; run state is `run_status`, never event type. Run `dt-job reconcile` at every start, resume and `wait_timeout`; each wait is a 10-minute check-in flagging stalls.
+- **Run work as jobs.** Workers, tests, builds, and browser checks run as `<skill>/scripts/dt-job.ps1` jobs, never in coordinator foreground. Read only capped `dt-job status|wait -Json` envelopes, checking `report_verdict`/`failure_category`; run state is `run_status`, never event type. Run `dt-job reconcile` at start, resume and `wait_timeout`; handle stalls per `managed-resume.md`, never merely repeat a wait.
 - **Read deeper deliberately.** Open job evidence only through `<skill>/scripts/read-evidence.ps1` (`-Lines a-b` or `-Grep`), never by reading stream logs or output files directly.
 - **Mark bootstrap once.** After the mandatory reads and before the first dispatch, run `dt-job mark-bootstrap`; the context limits are measured from that point.
 - **Rotate on the limit.** On a `checkpoint` context line, reach a safe stopping point and rotate. On a `rotate` line or `ROTATE_REQUIRED`, rotate as the adapter says: rewrite `_build-state.md`, write a handoff note, `dt-job request-continuation`, release the lease, end. Running jobs continue; verification is never skipped or shortened to save context.
