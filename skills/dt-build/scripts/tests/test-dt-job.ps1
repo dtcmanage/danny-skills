@@ -8,6 +8,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$env:DT_BUILD_HEADLESS = '1' # Fixtures are automation, never borrow the test runner's director.
 $script:passed = 0
 $script:failed = 0
 . (Join-Path $PSScriptRoot 'test-shell.ps1')
@@ -1709,7 +1710,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
         Assert-True ($conflicts[0].kind -ceq 'test' -and ([datetime]$conflicts[0].started_utc).ToUniversalTime() -eq ([datetime]'2026-07-01T16:30:00Z').ToUniversalTime() -and $conflicts[0].run_folder -ceq $hostB) 'host conflict records kind, start instant and run folder'
         $status = Invoke-DtJob @('status', '-RunFolder', $hostA)
         Assert-True (($status.awaiting.host_conflicts | ConvertTo-Json -Compress) -ceq ($conflicts | ConvertTo-Json -Compress)) 'status JSON exposes the persisted host conflicts inside awaiting'
-        $dm = @((Get-Content $env:DT_TEST_DM_LOG | ForEach-Object { ($_ | ConvertFrom-Json).content }) | Where-Object { $_ -match 'host-a is paused' })[-1]
+        $dm = @((Get-Content $env:DT_TEST_DM_LOG | ForEach-Object { ($_ | ConvertFrom-Json).content }) | Where-Object { $_ -match 'Build host-a needs a decision' })[-1]
         Assert-True ($dm.Contains("host-b/$($otherJob.job_id) (started 2026-07-01 12:30 PM ET)") -and $dm.Contains('Wait for them before powering off') -and -not $dm.Contains("host-a/$($ownJob.job_id)")) 'fake alert names the other job with Eastern daylight time and wait instruction'
         Invoke-DtJob @('await-danny', '-RunFolder', $hostA, '-Operation', 'reboot-host', '-Message', 'Crash recovery fixture.') | Out-Null
         $status = Invoke-DtJob @('status', '-RunFolder', $hostA)
@@ -1729,43 +1730,282 @@ while (-not (Test-Path -LiteralPath $Stop)) {
         $env:DT_BUILD_STATE_DIR = $hostRegistry
     }
 
+    # Round-two regressions run in an isolated process and the suite's private registry.
+    $roundTwoScript = Join-Path $tempRoot 'director-regressions.ps1'
+    Write-Utf8 $roundTwoScript @'
+param($Runtime, $Root)
+. $Runtime
+$env:DT_BUILD_HEADLESS = $null
+$env:DT_BUILD_COORDINATOR_ID = $null
+$env:DT_JOB_ID = $null
+$env:CC_SESSION_NAME = 'Reopened director'
+$env:CC_SESSION_ID = 'reopened-session'
+$env:CODEX_THREAD_ID = 'codex-reopened-thread'
+$env:CLAUDE_CODE_SESSION_ID = 'claude-reopened-session'
+$LaunchedBy = 'interactive'
+$AllowTempRunFolder = $true
+$Json = $true
+$script:DtJobExplicitParams = @()
+$script:failures = @()
+function Check($Condition, $Message) { if (-not $Condition) { $script:failures += $Message } }
+# Deterministic ancestry, including misleading wrapper names and headless children.
+function Get-Process { param([int]$Id, $ErrorAction); [pscustomobject]@{ Id=$Id; ProcessName=$script:names[$Id] } }
+function ps { param([string]$o, [int]$p); $script:parents[$p] }
+function Get-CimInstance { param($ClassName, $Filter, $ErrorAction); [pscustomobject]@{ ParentProcessId=$script:parents[[int]($Filter -replace 'ProcessId=', '')] } }
+function Get-DtJobProcessArguments { param([int]$ProcessId); $script:arguments[$ProcessId] }
+function Get-DtJobProcessStartUtc { param([int]$ProcessId); '2026-11-24T00:00:00Z' }
+$script:names = @{ $PID='pwsh'; 900001='codex-code-mode'; 900002='node'; 900003='claude'; 900004='codex'; 900005='systemd' }
+$script:parents = @{ $PID=900001; 900001=900002; 900002=900003; 900003=900004; 900004=900005; 900005=1 }
+$script:arguments = @{ 900001=@('codex-code-mode'); 900002=@('node','claude'); 900003=@('claude','-p','prompt'); 900004=@('codex') }
+$found = Get-DtJobLaunchingDirector
+Check ($found.pid -eq 900004) 'skips wrappers and claude -p to interactive codex'
+Check ($found.session_id -ceq 'codex-reopened-thread') 'Codex provider thread wins over inherited Claude and CC ids'
+foreach ($argv in @(@('codex','--model','e','resume','e'), @('codex','resume','e'), @('codex','--config','key="e"','e'), @('codex','-C','/tmp','exec'))) {
+    $expected = $argv[-1] -ceq 'exec' -or $argv[1] -ceq '--config'
+    Check ((Test-DtJobCodexHeadless -Arguments $argv) -eq $expected) ('Codex first-subcommand parsing: ' + ($argv -join ' '))
+}
+$script:arguments[900003] = @('claude')
+Check ((Get-DtJobLaunchingDirector).session_id -ceq 'claude-reopened-session') 'Claude provider session wins over CC id'
+$script:arguments[900003] = @('claude','-p','prompt')
+$CoordinatorId = 'explicit-coordinator'
+Check ($null -eq (Get-DtJobLaunchingDirector)) 'explicit CoordinatorId never records director'
+try { Assert-DtJobOperator -VerbName 'director takeover' -RunFolder $Root -AllowLiveCoordinator; Check $false 'explicit CoordinatorId refused' } catch { Check ($_ -match 'DT_JOB_OPERATOR_ONLY') 'explicit CoordinatorId refused' }
+$CoordinatorId = $null
+$script:DtJobExplicitParams = @('CoordinatorId')
+Check ($null -eq (Get-DtJobLaunchingDirector)) 'even an empty explicitly passed CoordinatorId excludes director registration'
+$script:DtJobExplicitParams = @()
+$script:arguments[900003] = @('claude','--print','prompt')
+Check ((Get-DtJobLaunchingDirector).pid -eq 900004) 'skips claude --print'
+$script:arguments[900003] = @('codex','exec','prompt'); $script:names[900003]='codex'
+Check ((Get-DtJobLaunchingDirector).pid -eq 900004) 'skips codex exec'
+$script:arguments[900004] = @('codex','exec','prompt')
+Check ($null -eq (Get-DtJobLaunchingDirector)) 'headless-only systemd ancestry has no director'
+$script:parents[900002] = 900005
+Check ($null -eq (Get-DtJobLaunchingDirector)) 'node and codex-code-mode never become directors'
+$LaunchedBy = 'watcher'
+Check ($null -eq (Get-DtJobLaunchingDirector)) 'watcher launch has no director'
+$LaunchedBy = 'interactive'
+Remove-Item Function:Get-Process
+Remove-Item Function:ps
+Remove-Item Function:Get-CimInstance
+Remove-Item Function:Get-DtJobProcessStartUtc
+# Reload real process identity implementation, then supply a stable interactive caller.
+. $Runtime
+$LaunchedBy = 'interactive'; $AllowTempRunFolder=$true; $Json=$true
+$script:caller = New-DtJobDirector -Name 'Reopened director' -Identity ([pscustomobject]@{ pid=$PID; pid_start_utc=(Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o'); session_id='reopened-session' })
+function Get-DtJobLaunchingDirector { $script:caller }
+foreach ($mode in @('register-run','status','approve','resume')) {
+    $RunFolder = Join-Path $Root $mode
+    New-Item -ItemType Directory -Force $RunFolder | Out-Null
+    $BuildStatePath = Join-Path $RunFolder '_build-state.md'; $RunId = 'takeover-' + $mode; $PinnedHost='codex'
+    [IO.File]::WriteAllText($BuildStatePath, "run_status: runnable`nlast_consumed_event_seq: 0`n")
+    $script:DtJobExplicitParams=@()
+    Invoke-DtJobRegisterRun | Out-Null
+    $saved = Get-DtJobApprovals -RunFolder $RunFolder
+    $saved.delegate.pid_start_utc='2000-01-01T00:00:00Z'
+    if ($mode -ne 'resume') {
+        $saved.awaiting=[pscustomobject]@{ operation='review'; seq=1; delegated_to='Old director' }
+        Set-DtJobRunState -BuildStatePath $BuildStatePath -RunStatus 'awaiting_danny'
+    }
+    Save-DtJobApprovals -RunFolder $RunFolder -Approvals $saved
+    $Operation='review'
+    switch ($mode) {
+        'register-run' { Invoke-DtJobRegisterRun | Out-Null }
+        'status' { Invoke-DtJobStatus | Out-Null }
+        'approve' { Invoke-DtJobApprove | Out-Null }
+        'resume' { Invoke-DtJobResume | Out-Null }
+    }
+    $after = Get-DtJobApprovals -RunFolder $RunFolder
+    Check (Test-DtJobDirectorAlive $after.delegate) "$mode takes over dead process"
+    Check (@($after.director_replacements).Count -eq 1 -and $after.director_replacements[0].previous.pid_start_utc -eq '2000-01-01T00:00:00Z' -and $after.director_replacements[0].replacement.session_id -eq 'reopened-session') "$mode persists replacement identities"
+    Check (Test-DtJobSameInstant (Get-DtJobRegistryEntry -RunFolder $RunFolder).director.pid_start_utc $script:caller.pid_start_utc) "$mode updates registered identity"
+    Check (-not (Test-Path (Join-Path $RunFolder 'notifications.jsonl'))) "$mode sends no DM"
+    if ($mode -in @('register-run','status')) { Check ($after.awaiting.delegated_to -eq 'Reopened director') "$mode transfers pending stop" }
+    Invoke-DtJobStatus | Out-Null
+    Check (@((Get-DtJobApprovals -RunFolder $RunFolder).director_replacements).Count -eq 1) "$mode preserves live director and history"
+}
+# A different interactive session cannot gain authority via status or re-registration.
+$saved = Get-DtJobApprovals -RunFolder $RunFolder
+$saved.delegate.pid_start_utc='2000-01-01T00:00:00Z'
+Save-DtJobApprovals -RunFolder $RunFolder -Approvals $saved
+$originalCaller = $script:caller
+$script:caller = New-DtJobDirector -Name 'Unrelated interactive session' -Identity ([pscustomobject]@{pid=$PID;pid_start_utc=$originalCaller.pid_start_utc;session_id='different-session'})
+$before = Get-Content -Raw (Join-Path $RunFolder 'approvals.json')
+Invoke-DtJobStatus | Out-Null
+Invoke-DtJobRegisterRun | Out-Null
+Check ((Get-Content -Raw (Join-Path $RunFolder 'approvals.json')) -ceq $before) 'different-id status and registration preserve authority'
+$script:caller = $originalCaller
+Update-DtJobReopenedDirector -RunFolder $RunFolder
+# Cleared environment cannot hide a coordinator or job process tree.
+$leasePath = Join-Path $RunFolder 'coordinator.lease'
+[IO.File]::WriteAllText($leasePath, ([pscustomobject]@{pid=$PID;pid_start_utc=$originalCaller.pid_start_utc;launched_by='interactive'} | ConvertTo-Json))
+Check (Test-DtJobAutomationCaller) 'live coordinator ancestry detected without environment'
+$otherFolder = $RunFolder; $RunFolder = Join-Path $Root 'unrelated-run'
+Check (Test-DtJobAutomationCaller) 'coordinator cannot register as director of another run'
+$RunFolder = $otherFolder
+try { Assert-DtJobOperator -VerbName 'director takeover' -RunFolder $RunFolder -AllowLiveCoordinator; Check $false 'coordinator tree refused' } catch { Check ($_ -match 'DT_JOB_OPERATOR_ONLY') 'coordinator tree refused' }
+Remove-Item $leasePath
+$jobDir = Join-Path $RunFolder 'jobs'; New-Item -ItemType Directory -Force $jobDir | Out-Null
+$jobPath = Join-Path $jobDir 'j-automation.json'
+[IO.File]::WriteAllText($jobPath, ([pscustomobject]@{job_id='j-automation';runner_pid=$PID;runner_start_utc=$originalCaller.pid_start_utc} | ConvertTo-Json))
+Check (Test-DtJobAutomationCaller) 'live job ancestry detected without environment'
+$otherFolder = $RunFolder; $RunFolder = Join-Path $Root 'unrelated-run'
+Check (Test-DtJobAutomationCaller) 'job cannot register as director of another run'
+$RunFolder = $otherFolder
+Remove-Item $jobPath
+# Explicit names must resolve to their own live registered owner.
+$script:DtJobExplicitParams=@('Delegate'); $Delegate='Other session'
+$before = Get-Content -Raw (Join-Path $RunFolder 'approvals.json')
+foreach ($verb in @('register-run','delegate')) {
+    try { if ($verb -eq 'delegate') { Invoke-DtJobDelegate | Out-Null } else { Invoke-DtJobRegisterRun | Out-Null }; Check $false "$verb refuses unresolved delegate" }
+    catch { Check ($_ -match 'DT_JOB_DELEGATE_UNRESOLVED') "$verb refuses unresolved delegate clearly" }
+}
+Check ((Get-Content -Raw (Join-Path $RunFolder 'approvals.json')) -ceq $before) 'refused delegate preserves authority'
+$Delegate='Reopened director'
+Invoke-DtJobDelegate | Out-Null
+Check ((Get-DtJobDirector -RunFolder $RunFolder).pid -eq $PID) 'matching caller name keeps own identity'
+$script:caller = New-DtJobDirector -Name 'Different launcher' -Identity ([pscustomobject]@{pid=999999;pid_start_utc='2000-01-01T00:00:00Z'})
+Invoke-DtJobDelegate | Out-Null
+Check ((Get-DtJobDirector -RunFolder $RunFolder).pid -eq $PID) 'named delegate resolves its own registered identity'
+$shape = @((Get-DtJobDirector -RunFolder $RunFolder).PSObject.Properties.Name | Sort-Object) -join ','
+Check ($shape -eq 'name,pid,pid_start_utc,session_id,set_utc') 'director record shape is explicit'
+$saved = Get-DtJobApprovals -RunFolder $RunFolder
+$saved.delegate = New-DtJobDirector -Name 'Dead director' -Identity ([pscustomobject]@{pid=999999;pid_start_utc='2000-01-01T00:00:00Z'})
+$saved.awaiting = [pscustomobject]@{operation='review';seq=1;message='Review'}
+Save-DtJobApprovals -RunFolder $RunFolder -Approvals $saved
+$script:attempts=0; $script:retryRequested=$false
+function Send-DtJobRunAlert { param($RunFolder, $Key, $Message, [switch]$RetryUntilDelivered, [switch]$RecordPending); $script:attempts++; $script:retryRequested = $script:retryRequested -or $RetryUntilDelivered; 'failed' }
+Invoke-DtJobSchedule -RunFolder $RunFolder
+Check ($script:attempts -eq 1 -and -not $script:retryRequested) 'scheduling makes one escalation send attempt'
+Invoke-DtJobSchedule -RunFolder $RunFolder
+Check ($script:attempts -eq 2) 'next scheduling pass retries undelivered escalation'
+[pscustomobject]@{ failures=@($script:failures) } | ConvertTo-Json -Depth 8 -Compress
+
+'@
+    $roundTwo = Invoke-TestShell -File $roundTwoScript -Arguments @($dtJob, (New-RunFolder 'director-regressions'))
+    Assert-True ($roundTwo.ExitCode -eq 0) ('director regression fixture completes: ' + ($roundTwo.Output -join ' '))
+    if ($roundTwo.ExitCode -eq 0) {
+        $regressionResult = ($roundTwo.Output -join "`n") | ConvertFrom-Json
+        Assert-True (@($regressionResult.failures).Count -eq 0) ('director regressions: ' + ($regressionResult.failures -join '; '))
+    }
+
     # FS-110: launch-time delegation uses the operator verb's record and safety checks.
+    # Exercise discovery/registration with a deterministic owning CLI process, while retaining
+    # real PID/start-time liveness. Other fixtures explicitly identify themselves as headless.
+    $autoRun = New-RunFolder 'automatic-director'
+    $autoState = Join-Path $autoRun '_build-state.md'
+    Write-Utf8 $autoState "run_status: runnable`nlast_consumed_event_seq: 0`n"
+    $autoScript = Join-Path $autoRun 'register.ps1'
+    Write-Utf8 $autoScript @'
+param($Runtime, $Folder, $State, [switch]$HeadlessFixture)
+. $Runtime
+$env:DT_BUILD_HEADLESS = $null
+$env:CC_SESSION_ID = 'cc-director-fixture'
+$env:CODEX_THREAD_ID = 'codex-director-fixture'
+$env:CC_SESSION_NAME = 'Director fixture'
+$LaunchedBy = 'interactive'
+function Get-Process {
+    param([int]$Id, $ErrorAction)
+    $actual = Microsoft.PowerShell.Management\Get-Process -Id $Id -ErrorAction Stop
+    if ($Id -ne $PID) { $actual | Add-Member -NotePropertyName ProcessName -NotePropertyValue codex -Force }
+    return $actual
+}
+function Get-DtJobProcessArguments { param([int]$ProcessId); if ($HeadlessFixture) { @('codex', 'exec', '--json') } else { @('codex') } }
+$RunFolder = $Folder; $BuildStatePath = $State; $RunId = Split-Path -Leaf $Folder; $PinnedHost = 'codex'
+$Json = $true
+Invoke-DtJobRegisterRun
+'@
+    $autoEnv = @{}
+    foreach ($key in @('DT_BUILD_HEADLESS', 'CC_SESSION_ID', 'CC_SESSION_NAME')) { $autoEnv[$key] = [Environment]::GetEnvironmentVariable($key) }
+    try { $auto = Invoke-TestShell -File $autoScript -Arguments @($dtJob, $autoRun, $autoState) }
+    finally { foreach ($key in $autoEnv.Keys) { [Environment]::SetEnvironmentVariable($key, $autoEnv[$key]) } }
+    Assert-True ($auto.ExitCode -eq 0) 'interactive registration succeeds without explicit Delegate'
+    $autoApproval = Get-Content -Raw (Join-Path $autoRun 'approvals.json') | ConvertFrom-Json
+    Assert-True ($autoApproval.delegate.name -ceq 'Director fixture' -and $autoApproval.delegate.session_id -ceq 'codex-director-fixture' -and $autoApproval.delegate.pid -and $autoApproval.delegate.pid_start_utc) 'automatic director records provider identity and owning process identity'
+    $autoDirector = $autoApproval.delegate
+    $headlessRun = New-RunFolder 'headless-director'
+    $headlessState = Join-Path $headlessRun '_build-state.md'
+    Write-Utf8 $headlessState "run_status: runnable`nlast_consumed_event_seq: 0`n"
+    try { $headless = Invoke-TestShell -File $autoScript -Arguments @($dtJob, $headlessRun, $headlessState, '-HeadlessFixture') }
+    finally { foreach ($key in $autoEnv.Keys) { [Environment]::SetEnvironmentVariable($key, $autoEnv[$key]) } }
+    $headlessRegistration = ($headless.Output -join "`n") | ConvertFrom-Json
+    Assert-True ($headless.ExitCode -eq 0 -and $null -eq $headlessRegistration.director -and -not (Test-Path (Join-Path $headlessRun 'approvals.json'))) 'headless CLI registration ignores inherited session ids and records no director'
+    $headlessStop = Invoke-DtJob @('await-danny', '-RunFolder', $headlessRun, '-Operation', 'review', '-Message', 'Review headless work.')
+    Assert-True ($headlessStop.alert -eq 'sent') 'headless-only run keeps direct decision alerts'
+    # A null legacy delegate recovers the registered director at await time.
+    $autoApproval.delegate = $null
+    Write-Utf8 (Join-Path $autoRun 'approvals.json') ($autoApproval | ConvertTo-Json -Depth 10)
+    $legacy = Invoke-DtJob @('await-danny', '-RunFolder', $autoRun, '-Operation', 'merge', '-Message', 'Merge internal work.')
+    Assert-True ($legacy.alert -eq 'delegated') 'legacy null delegate routes to live registered director'
+    $leaseRun = New-RunFolder 'legacy-director-lease'
+    $leaseState = Join-Path $leaseRun '_build-state.md'
+    Write-Utf8 $leaseState "run_status: runnable`nlast_consumed_event_seq: 0`n"
+    Invoke-DtJob @('register-run', '-RunFolder', $leaseRun, '-RunId', 'legacy-director-lease', '-BuildStatePath', $leaseState, '-PinnedHost', 'codex', '-LaunchedBy', 'watcher') | Out-Null
+    $legacyLease = [ordered]@{ coordinator_id = 'legacy-operator'; launched_by = 'interactive'; host = 'codex'; session_id = 'legacy'; pid = $autoDirector.pid; pid_start_utc = $autoDirector.pid_start_utc; acquired_utc = [DateTime]::UtcNow.ToString('o'); expires_utc = [DateTime]::UtcNow.AddMinutes(10).ToString('o'); ttl_sec = 600; released_utc = $null }
+    Write-Utf8 (Join-Path $leaseRun 'coordinator.lease') ($legacyLease | ConvertTo-Json)
+    $leaseStop = Invoke-DtJob @('await-danny', '-RunFolder', $leaseRun, '-Operation', 'merge', '-Message', 'Legacy operator decision.')
+    Assert-True ($leaseStop.alert -eq 'delegated') 'legacy interactive lease recovers its live operator without an explicit delegate'
+    Remove-Item (Join-Path $leaseRun 'coordinator.lease') # End the synthetic coordinator identity before later operator fixtures.
+    # Legacy pending DMs must not bypass a director that has since registered.
+    $legacyPending = Join-Path $autoRun 'notifications.jsonl'
+    Write-Utf8 $legacyPending '{"key":"dt-build:automatic-director:awaiting:merge:1","status":"pending","message":"To approve, run: obsolete command"}'
+    $pendingProbe = Invoke-TestShell -Command (". '" + $dtJob.Replace("'", "''") + "'; @(Send-DtJobPendingAlerts -RunFolder '" + $autoRun.Replace("'", "''") + "').Count")
+    Assert-True (($pendingProbe.Output -join '').Trim() -eq '0') 'legacy pending boundary DMs are rerouted rather than replayed'
     Assert-True ([IO.Path]::GetFullPath($env:DT_BUILD_STATE_DIR).StartsWith([IO.Path]::GetFullPath($tempRoot), [StringComparison]::OrdinalIgnoreCase)) 'delegate fixtures register in the suite temp registry, never the real one'
     $rf = New-RunFolder 'launch-delegate'
     $state = Join-Path $rf '_build-state.md'
     Write-Utf8 $state "run_status: runnable`nlast_consumed_event_seq: 0`n"
     $registerDelegate = @('register-run', '-RunFolder', $rf, '-RunId', 'launch-delegate', '-BuildStatePath', $state, '-PinnedHost', 'codex', '-Managed')
+    # Seed a distinct live registration, as a named delegate must already be registered.
+    $registryPath = Join-Path $env:DT_BUILD_STATE_DIR 'active-runs.json'
+    $registryData = Get-Content -Raw $registryPath | ConvertFrom-Json
+    $registryData.runs += [pscustomobject]@{run_id='named-live';run_folder=(Join-Path $tempRoot 'named-live');director=[pscustomobject]@{name='launch-session';pid=$PID;pid_start_utc=(Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')}}
+    Write-Utf8 $registryPath ($registryData | ConvertTo-Json -Depth 20)
     Invoke-DtJob ($registerDelegate + @('-Delegate', '  launch-session  ')) | Out-Null
     $delegated = Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json
-    Assert-True ($delegated.delegate.name -ceq 'launch-session' -and $delegated.delegate.set_utc -and ($delegated.delegate.PSObject.Properties.Name -join ',') -ceq 'name,set_utc') 'register-run stores the trimmed delegate with the delegate verb record shape'
+    Assert-True ($delegated.delegate.name -ceq 'launch-session' -and $delegated.delegate.set_utc) 'register-run stores the trimmed delegate'
+    Write-Utf8 (Join-Path $rf 'approvals.json') ($delegated | ConvertTo-Json -Depth 10)
     $savedDelegate = $delegated.delegate | ConvertTo-Json -Compress
     Invoke-DtJob $registerDelegate | Out-Null
     Assert-True (((Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).delegate | ConvertTo-Json -Compress) -ceq $savedDelegate) 'registration without Delegate preserves existing delegation'
     $routine = Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'attempt-budget', '-Message', 'Retry fixture attempt.')
     $pending = (Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).awaiting
-    Assert-True ($routine.alert -eq 'delegated' -and $pending.delegated_to -ceq 'launch-session' -and ([datetime]$pending.escalate_after_utc - [datetime]$pending.since_utc).TotalMinutes -ge 15 -and -not (Test-Path (Join-Path $rf 'notifications.jsonl'))) 'routine launch stop records delegation and defers Danny alert for fifteen minutes'
+    Assert-True ($routine.alert -eq 'delegated' -and $pending.delegated_to -ceq 'launch-session' -and -not (Test-Path (Join-Path $rf 'notifications.jsonl'))) 'live director receives stops without a Danny alert'
     # FS-120: watches see the recorded owner, decision and delivery for the current stop.
     $routineStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
-    Assert-True ($routineStatus.run_status -eq 'awaiting_danny' -and $routineStatus.awaiting.awaiting_owner -ceq 'delegate' -and $routineStatus.awaiting.delegated_to -ceq 'launch-session') 'routine stop status names the delegate owner'
+    Assert-True ($routineStatus.run_status -eq 'awaiting_danny' -and $routineStatus.awaiting.awaiting_owner -ceq 'director' -and $routineStatus.awaiting.delegated_to -ceq 'launch-session') 'routine stop status names the director owner'
     Assert-True ($routineStatus.awaiting.operation -ceq $pending.operation -and $routineStatus.awaiting.since_utc -eq $pending.since_utc -and $routineStatus.awaiting.message -ceq $pending.message -and $routineStatus.awaiting.alerted_danny -eq $false) 'routine status retains stop details and reports no delivered Danny alert'
     $urgent = Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'irreversible-fixture', '-Message', 'Fixture only.')
     $pending = (Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json).awaiting
-    $notifications = @(Get-Content (Join-Path $rf 'notifications.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
-    Assert-True ($urgent.alert -ne 'delegated' -and -not $pending.PSObject.Properties['delegated_to'] -and @($notifications | Where-Object { $_.key -match ':awaiting:irreversible-fixture:' }).Count -eq 1) 'irreversible launch stop immediately attempts Danny alert under the temp router guard'
-    Assert-True ((Test-Path $env:DT_TEST_DM_LOG) -and (Get-Content -Raw $env:DT_TEST_DM_LOG) -match 'irreversible-fixture') 'irreversible fixture alert lands on the fake transport, not a live channel'
+    Assert-True ($urgent.alert -eq 'delegated' -and -not (Test-Path (Join-Path $rf 'notifications.jsonl'))) 'irreversible wording stays with live director'
     $urgentStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
-    Assert-True ($urgentStatus.awaiting.awaiting_owner -ceq 'danny' -and -not $urgentStatus.awaiting.delegated_to -and $urgentStatus.awaiting.operation -ceq 'irreversible-fixture' -and $urgentStatus.awaiting.alerted_danny -eq $true) 'irreversible stop status names Danny and confirms fake transport delivery'
+    Assert-True ($urgentStatus.awaiting.awaiting_owner -ceq 'director' -and -not $urgentStatus.awaiting.alerted_danny) 'irreversible stop status names director'
+    Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'production', '-Message', 'deploy to production; irreversible', '-AlwaysNotify') | Out-Null
+    Assert-True ((Invoke-DtJob @('status', '-RunFolder', $rf)).awaiting.awaiting_owner -ceq 'director') 'AlwaysNotify and production wording route to live director'
+    $dead = Get-Content -Raw (Join-Path $rf 'approvals.json') | ConvertFrom-Json
+    $dead.delegate.pid_start_utc = [DateTime]::UtcNow.AddYears(-1).ToString('o')
+    Write-Utf8 (Join-Path $rf 'approvals.json') ($dead | ConvertTo-Json -Depth 10)
+    Invoke-DtJob @('status', '-RunFolder', $rf) | Out-Null
+    Invoke-DtJob @('status', '-RunFolder', $rf) | Out-Null
+    $pending = $dead.awaiting
+    $notifications = @(Get-Content (Join-Path $rf 'notifications.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($notifications | Where-Object status -eq 'delivered').Count -eq 1) 'director PID reuse escalates once on repeated status passes'
+    $dm = Get-Content -Raw $env:DT_TEST_DM_LOG
+    Assert-True ($dm -match 'director session has closed' -and $dm -match 'Command Center' -and $dm -notmatch 'To approve, run:') 'dead director alert explains where to answer without commands'
     # Delivery must match this boundary's sequence; another stop's DM or a pending row is insufficient.
     $notificationPath = Join-Path $rf 'notifications.jsonl'
     $deliveredLog = Get-Content -Raw $notificationPath
-    $currentKey = "dt-build:launch-delegate:awaiting:irreversible-fixture:$($pending.seq)"
+    $currentKey = "dt-build:launch-delegate:awaiting:production:$($pending.seq)"
     Write-Utf8 $notificationPath (([ordered]@{ key = $currentKey; status = 'pending' } | ConvertTo-Json -Compress) + "`n" + ([ordered]@{ key = "${currentKey}-old"; status = 'delivered' } | ConvertTo-Json -Compress))
+    # Keep the director live while inspecting an undelivered record (status retries absent-director alerts).
+    $dead.delegate.pid_start_utc = $delegated.delegate.pid_start_utc
+    Write-Utf8 (Join-Path $rf 'approvals.json') ($dead | ConvertTo-Json -Depth 10)
     $pendingStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
-    Assert-True ($pendingStatus.awaiting.awaiting_owner -ceq 'danny' -and $pendingStatus.awaiting.alerted_danny -eq $false) 'pending delivery and another boundary delivery do not count as alerting Danny'
+    Assert-True ($pendingStatus.awaiting.awaiting_owner -ceq 'director' -and $pendingStatus.awaiting.alerted_danny -eq $false) 'pending delivery and another boundary delivery do not count as alerting Danny'
     Write-Utf8 $notificationPath $deliveredLog
     Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'manual-review', '-Message', 'Decide whether to retry.', '-AlwaysNotify') | Out-Null
     $forcedStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
-    Assert-True ($forcedStatus.awaiting.awaiting_owner -ceq 'danny' -and $forcedStatus.awaiting.alerted_danny -eq $true) 'AlwaysNotify status reuses persisted routing even for routine wording'
+    Assert-True ($forcedStatus.awaiting.awaiting_owner -ceq 'director' -and $forcedStatus.awaiting.alerted_danny -eq $false) 'AlwaysNotify routes to the director'
     foreach ($invalid in @('blank', 'coordinator', 'job')) {
         $name = if ($invalid -eq 'blank') { '   ' } else { 'forbidden-session' }
         if ($invalid -eq 'coordinator') { $env:DT_BUILD_COORDINATOR_ID = 'fixture' }

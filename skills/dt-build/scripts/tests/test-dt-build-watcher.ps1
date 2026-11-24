@@ -2,6 +2,7 @@ param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$env:DT_BUILD_HEADLESS = '1'
 $script:passed = 0
 
 function Assert-True {
@@ -208,7 +209,7 @@ function Get-Launches {
 function Get-DmCount {
     param([string]$RunId)
     if (-not (Test-Path -LiteralPath $env:DT_TEST_DM_LOG)) { return 0 }
-    return @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains("run $RunId ") }).Count
+    return @(Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains("run $RunId ") -or ([string]$_.content).Contains("Build $RunId ") }).Count
 }
 
 function Get-RunState {
@@ -786,8 +787,8 @@ param([string]$Watcher, [string]$Id)
     Invoke-DtJob @('consume', '-RunFolder', $run.folder, '-Seq', '1') | Out-Null
     $await = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'merge', '-Message', 'Milestone M02 is ready to merge.')
     Assert-True ($await.run_status -eq 'awaiting_danny' -and $await.alert -eq 'sent' -and (Get-DmCount 'approval') -eq 1) 'await-danny sets awaiting_danny and sends one DM'
-    $dm = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('run approval ') } | Select-Object -First 1
-    Assert-True (([string]$dm.content).Contains('/dt-build approve approval merge')) 'the approval DM ends with the copy-paste approve command'
+    $dm = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('Build approval ') } | Select-Object -First 1
+    Assert-True (([string]$dm.content).Contains('Command Center to answer') -and -not ([string]$dm.content).Contains('/dt-build approve')) 'the approval DM explains where to answer without asking for a command'
     $repeat = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'merge', '-Message', 'Milestone M02 is ready to merge.')
     Assert-True ($repeat.alert -eq 'already_sent' -and (Get-DmCount 'approval') -eq 1) 'a repeated await for the same operation sends no second DM'
     $ta = [DateTime]::UtcNow
@@ -815,8 +816,8 @@ param([string]$Watcher, [string]$Id)
     Assert-True ((Get-LaunchCount 'approval') -eq 1) 'approve produces exactly one new launch'
     Assert-True ((Get-RunState $run.state).run_status -ne 'awaiting_danny' -and (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'watcher-repairs.jsonl')) -match 'restored run_status runnable from approval of merge') 'the watcher restores an approval the checkpoint lost and records the repair'
 
-    # ---- scenario 10d: a delegated run routes routine stops away from Danny, escalates late ones once,
-    # always DMs production/Azure/irreversible stops, and digests delegated approvals at finish.
+    # ---- scenario 10d: all stops route to a live director, process death escalates once,
+    # and delegated approvals are digested at finish.
     Use-Scenario 'delegate'
     $run = New-Run -Name 'delegate'
     Invoke-DtJob @('request-continuation', '-RunFolder', $run.folder) | Out-Null
@@ -825,7 +826,15 @@ param([string]$Watcher, [string]$Id)
     try { $refused = Invoke-DtJobExpectFail @('delegate', '-RunFolder', $run.folder, '-Delegate', 'File Sorter session') }
     finally { $env:DT_BUILD_COORDINATOR_ID = $null }
     Assert-True ($refused.exit -ne 0 -and $refused.text -match 'DT_JOB_OPERATOR_ONLY') 'a coordinator cannot set a delegate'
+    $registryPath = Join-Path $env:DT_BUILD_STATE_DIR 'active-runs.json'
+    $registered = Get-Content -Raw $registryPath | ConvertFrom-Json
+    $ownerRun = @($registered.runs | Where-Object run_id -eq 'delegate')[0]
+    $ownerRun | Add-Member -NotePropertyName director -NotePropertyValue ([pscustomobject]@{name='File Sorter session';pid=$PID;pid_start_utc=(Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')}) -Force
+    Write-Utf8 $registryPath ($registered | ConvertTo-Json -Depth 20)
     Invoke-DtJob @('delegate', '-RunFolder', $run.folder, '-Delegate', 'File Sorter session') | Out-Null
+    $directorPath = Join-Path $run.folder 'approvals.json'
+    $directorDoc = Get-Content -Raw $directorPath | ConvertFrom-Json
+    Write-Utf8 $directorPath ($directorDoc | ConvertTo-Json -Depth 10)
     $routine = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'source-repair', '-Message', 'Review the repaired source.')
     $pending = (Get-Content -Raw -LiteralPath (Join-Path $run.folder 'approvals.json') | ConvertFrom-Json).awaiting
     Assert-True ($routine.alert -eq 'delegated' -and (Get-DmCount 'delegate') -eq 0 -and $pending.delegated_to -eq 'File Sorter session') 'a routine stop goes to the delegate with no DM'
@@ -833,15 +842,17 @@ param([string]$Watcher, [string]$Id)
     Assert-True ((Get-DmCount 'delegate') -eq 0) 'no DM while the delegate still has time'
     $approvalsPath = Join-Path $run.folder 'approvals.json'
     $doc = Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json
-    $doc.awaiting.escalate_after_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o')
+    $doc.delegate.pid_start_utc = [DateTime]::UtcNow.AddYears(-1).ToString('o')
     Write-Utf8 $approvalsPath ($doc | ConvertTo-Json -Depth 6)
     Invoke-Tick | Out-Null
     Invoke-Tick | Out-Null
-    $late = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('run delegate ') }
-    Assert-True (@($late).Count -eq 1 -and ([string]@($late)[0].content).Contains('File Sorter session has not approved it')) 'a stop the delegate has not approved in time DMs Danny once'
+    $late = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('Build delegate ') }
+    Assert-True (@($late).Count -eq 1 -and ([string]@($late)[0].content).Contains('director session has closed')) 'a closed director DMs Danny once'
     Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'source-repair') | Out-Null
     $doc = Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json
     Assert-True ($doc.approvals[0].delegated_to -eq 'File Sorter session' -and $doc.delegate.name -eq 'File Sorter session') 'approval records who it was delegated to and the delegate survives'
+    $doc.delegate.pid_start_utc = $directorDoc.delegate.pid_start_utc
+    Write-Utf8 $approvalsPath ($doc | ConvertTo-Json -Depth 10)
     Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'parser-review', '-Message', 'Review the parser.') | Out-Null
     $wrongHold = Invoke-DtJobExpectFail @('hold', '-RunFolder', $run.folder, '-Operation', 'other-op', '-Reason', 'x')
     Assert-True ($wrongHold.exit -ne 0 -and $wrongHold.text -match 'DT_JOB_APPROVE_MISMATCH') 'hold refuses an operation the run is not waiting on'
@@ -865,19 +876,19 @@ param([string]$Watcher, [string]$Id)
     if ($null -ne $savedLease) { Write-Utf8 $leasePath $savedLease } else { Remove-Item -LiteralPath $leasePath -Force }
     $doc = Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json
     Assert-True ($doc.awaiting.held.reason -eq 'waiting on the tooling fix for reviewer file access') 'hold records the reason on the pending stop'
-    $doc.awaiting.escalate_after_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o')
+    $doc.delegate.pid_start_utc = [DateTime]::UtcNow.AddYears(-1).ToString('o')
     Write-Utf8 $approvalsPath ($doc | ConvertTo-Json -Depth 6)
     Invoke-Tick | Out-Null
-    $heldDm = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('before: parser-review') }
-    Assert-True (@($heldDm).Count -eq 1 -and ([string]@($heldDm)[0].content) -match 'File Sorter session is holding it on purpose since .+ ET: waiting on the tooling fix for reviewer file access\. Nothing is needed from you') "a held stop's escalation DM says who holds it and why ($([string]@($heldDm)[0].content))"
+    $heldDm = Get-Content -LiteralPath $env:DT_TEST_DM_LOG | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { ([string]$_.content).Contains('before parser-review:') }
+    Assert-True (@($heldDm).Count -eq 1 -and ([string]@($heldDm)[0].content) -match 'put it on hold: waiting on the tooling fix for reviewer file access') 'closed director alert preserves the hold reason'
     Invoke-DtJob @('hold', '-RunFolder', $run.folder, '-Operation', 'parser-review', '-Clear') | Out-Null
     Assert-True ($null -eq (Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json).awaiting.held) 'hold -Clear removes the reason'
     Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'parser-review') | Out-Null
     $prod = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'release-install', '-Message', 'Install the release on production.')
-    Assert-True ($prod.alert -eq 'sent' -and (Get-DmCount 'delegate') -eq 3) 'a production install stop always DMs Danny'
+    Assert-True ($prod.alert -eq 'sent' -and (Get-DmCount 'delegate') -eq 3) 'production stop DMs when director is gone'
     Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'release-install') | Out-Null
     $forced = Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-Operation', 'vm-snapshot', '-Message', 'Take the snapshot.', '-AlwaysNotify')
-    Assert-True ($forced.alert -eq 'sent' -and (Get-DmCount 'delegate') -eq 4) '-AlwaysNotify DMs Danny despite the delegate'
+    Assert-True ($forced.alert -eq 'sent' -and (Get-DmCount 'delegate') -eq 4) 'AlwaysNotify with a gone director DMs Danny'
     Invoke-DtJob @('approve', '-RunFolder', $run.folder, '-Operation', 'vm-snapshot') | Out-Null
     Invoke-DtJob @('delegate', '-RunFolder', $run.folder, '-Clear') | Out-Null
     Assert-True ($null -eq (Get-Content -Raw -LiteralPath $approvalsPath | ConvertFrom-Json).delegate) 'delegate -Clear removes the delegate'

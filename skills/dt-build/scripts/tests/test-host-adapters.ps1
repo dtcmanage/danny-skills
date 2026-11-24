@@ -77,11 +77,18 @@ try {
             Assert-True ($body.Contains($consume) -and $body.Contains('last_event_seq')) "$name $section tells the coordinator to run $consume"
         }
         Assert-True ($text.Contains('`last_event_seq` and `last_consumed_event_seq`')) "$name says wait and status envelopes carry both seq values"
-        # Every dt-job example with arguments carries the coordinator id, except Danny's approve and resume.
-        Assert-True ($text -match 'Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`') "$name tells the coordinator to pass -CoordinatorId on every dt-job call"
+        # Director watches must not acquire coordinator identity. Every coordinator example still needs it.
+        Assert-True ($text -match 'For coordinator calls, pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`') "$name tells the coordinator to pass -CoordinatorId on every dt-job call"
+        $directorParagraphs = @([regex]::Matches($text, '(?m)^- Director watch:[^\r\n]+'))
+        Assert-True ($directorParagraphs.Count -eq 1) "$name labels exactly one director watch paragraph"
+        $directorParagraph = $directorParagraphs[0]
         $examples = @([regex]::Matches($text, '`(dt-job ([^\s`]+)(?: [^`]*)?)`') | Where-Object { $_.Groups[1].Value -match '^dt-job \S+ ' })
-        Assert-True ($examples.Count -ge 12) "$name has dt-job command examples to check ($($examples.Count))"
-        foreach ($example in $examples) {
+        $directorExamples = @($examples | Where-Object { $_.Index -ge $directorParagraph.Index -and $_.Index -lt ($directorParagraph.Index + $directorParagraph.Length) })
+        Assert-True ($directorExamples.Count -eq 1) "$name has exactly one director command example"
+        Assert-True ($directorExamples[0].Groups[1].Value -ceq 'dt-job status -Json') "$name director watch uses run-level JSON status without -CoordinatorId"
+        $coordinatorExamples = @($examples | Where-Object { $_.Index -lt $directorParagraph.Index -or $_.Index -ge ($directorParagraph.Index + $directorParagraph.Length) })
+        Assert-True ($coordinatorExamples.Count -ge 12) "$name has coordinator command examples to check ($($coordinatorExamples.Count))"
+        foreach ($example in $coordinatorExamples) {
             if (@('approve', 'resume') -contains $example.Groups[2].Value) { continue }
             Assert-True ($example.Groups[1].Value.Contains('-CoordinatorId <id>')) "$name dt-job example carries -CoordinatorId <id>: $($example.Groups[1].Value)"
         }

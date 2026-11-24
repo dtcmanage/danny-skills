@@ -526,7 +526,7 @@ try {
     finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue }
 
     # ---- an interactive coordinator names itself with -CoordinatorId (no env var): same context line,
-    # refusal, and lease renewal, but never the operator-only refusal of approve.
+    # refusal, and lease renewal; approval remains operator-only even without an environment marker.
     $run = New-Run -Name 'interactive-id'
     $iT = Join-Path $fixtures 'claude-interactive-id.jsonl'
     New-ClaudeTranscript -Path $iT -Totals @(100000)
@@ -546,7 +546,7 @@ try {
     Invoke-DtJob @('await-danny', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Operation', 'merge', '-Message', 'test boundary.') | Out-Null
     $iApprove = Invoke-DtJobRaw @('approve', '-RunFolder', $run.folder, '-CoordinatorId', 'ci', '-Operation', 'merge')
     $iState = Get-Content -Raw -LiteralPath $run.state
-    Assert-True ($iApprove.exit -eq 0 -and $iApprove.text -notmatch 'DT_JOB_OPERATOR_ONLY' -and $iState -match '(?m)^run_status: runnable') "approve with only -CoordinatorId (no env var) is not refused ($($iApprove.text))"
+    Assert-True ($iApprove.exit -ne 0 -and $iApprove.text -match 'DT_JOB_OPERATOR_ONLY' -and $iState -match '(?m)^run_status: awaiting_danny') "approve with only -CoordinatorId (no env var) is refused ($($iApprove.text))"
 
     # ---- before a marker, only the 200k ceiling applies (transcript discovered by cwd, host from the lease).
     $run = New-Run -Name 'ceiling'

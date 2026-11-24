@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.59.0
+
+- Route all build stops to the launching director; retake only from the same provider session, exclude coordinator and job callers while preserving operator refusal wording, reject unresolved delegates, and distinguish director watches from coordinator calls.
+
 ## 2.58.1
 
 - Recognize explicit brace and full-date placeholders, expose waiver rules, protect manual regression shards, and expire failed fixtures after seven days.

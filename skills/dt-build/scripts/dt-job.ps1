@@ -96,6 +96,7 @@ param(
 
     [switch]$Evidence,
 
+    # Deprecated: all stops use director routing, including callers passing this switch.
     [switch]$AlwaysNotify,
 
     [string]$TranscriptPath,
@@ -148,8 +149,6 @@ $script:DtJobWaitPollMs = 500
 # stall period is reported stalled at the coordinator's check-ins, and the coordinator decides whether to
 # cancel it.
 $script:DtJobHeartbeatSec = 30
-# A stop delegated to another session DMs Danny if it is still unapproved after this many minutes.
-$script:DtJobDelegateEscalateMin = 15
 $script:DtJobStallSec = 1200
 $script:DtJobRunStatuses = @('runnable', 'awaiting_danny', 'finished')
 $script:DtJobAlertScript = Join-Path $DtJobRepoRoot 'scripts\model-router\send-router-alert.ps1'
@@ -689,6 +688,8 @@ function Start-DtJobRunner {
 function Invoke-DtJobSchedule {
     # Under the run lock: propagate blocked to a fixed point, then launch every eligible queued job in id order.
     param([Parameter(Mandatory)][string]$RunFolder)
+    $entryForAlert = Get-DtJobRegistryEntry -RunFolder $RunFolder
+    if ($entryForAlert) { $null = Send-DtJobDelegateEscalation -RunFolder $RunFolder -RunId $entryForAlert.run_id }
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $changed = $true
         while ($changed) {
@@ -1259,6 +1260,7 @@ function Get-DtJobSnapshot {
 }
 
 function Invoke-DtJobStatus {
+    Update-DtJobReopenedDirector -RunFolder $RunFolder
     Invoke-DtJobSchedule -RunFolder $RunFolder
     if ($JobId) {
         $snap = Get-DtJobSnapshot -RunFolder $RunFolder -Ids @($JobId)
@@ -1282,10 +1284,9 @@ function Invoke-DtJobStatus {
                 if ($null -ne $pending) {
                     $awaiting = [ordered]@{ operation = [string]$pending.operation; seq = $null; since_utc = $null }
                     foreach ($field in @('seq', 'since_utc')) { if ($pending.PSObject.Properties[$field]) { $awaiting[$field] = $pending.$field } }
-                    # Use the stop's persisted routing decision, including -AlwaysNotify, rather than
-                    # reclassifying it from today's delegate or the operation's wording.
-                    $delegatedTo = if ($pending.PSObject.Properties['delegated_to']) { [string]$pending.delegated_to } else { $null }
-                    $awaiting.awaiting_owner = if ($delegatedTo) { 'delegate' } else { 'danny' }
+                    $directorNow = Get-DtJobDirector -RunFolder $RunFolder
+                    $delegatedTo = if ($directorNow) { [string]$directorNow.name } else { $null }
+                    $awaiting.awaiting_owner = if (Test-DtJobDirectorAlive $directorNow) { 'director' } else { 'danny' }
                     $awaiting.delegated_to = $delegatedTo
                     $awaiting.message = if ($pending.PSObject.Properties['message']) { [string]$pending.message } else { $null }
                     if ($pending.PSObject.Properties['host_conflicts']) { $awaiting.host_conflicts = @($pending.host_conflicts) }
@@ -1679,7 +1680,7 @@ function Get-DtJobApprovals {
     if (Test-Path -LiteralPath $path) {
         $parsed = Read-DtJobText -Path $path | ConvertFrom-DtJobJsonText
         $delegateRecord = if ($parsed.PSObject.Properties['delegate']) { $parsed.delegate } else { $null }
-        return [pscustomobject]@{ awaiting = $parsed.awaiting; approvals = @($parsed.approvals | Where-Object { $null -ne $_ }); delegate = $delegateRecord }
+        return [pscustomobject]@{ awaiting = $parsed.awaiting; approvals = @($parsed.approvals | Where-Object { $null -ne $_ }); delegate = $delegateRecord; director_replacements = @(if ($parsed.PSObject.Properties['director_replacements']) { $parsed.director_replacements | Where-Object { $null -ne $_ } }) }
     }
     return [pscustomobject]@{ awaiting = $null; approvals = @(); delegate = $null }
 }
@@ -1687,7 +1688,8 @@ function Get-DtJobApprovals {
 function Save-DtJobApprovals {
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Approvals)
     $delegateRecord = if ($Approvals.PSObject.Properties['delegate']) { $Approvals.delegate } else { $null }
-    $content = [ordered]@{ awaiting = $Approvals.awaiting; approvals = @($Approvals.approvals); delegate = $delegateRecord } | ConvertTo-Json -Depth 5
+    $history = @(if ($Approvals.PSObject.Properties['director_replacements']) { $Approvals.director_replacements | Where-Object { $null -ne $_ } })
+    $content = [ordered]@{ awaiting = $Approvals.awaiting; approvals = @($Approvals.approvals); delegate = $delegateRecord; director_replacements = $history } | ConvertTo-Json -Depth 10
     Write-DtJobAtomic -Path (Get-DtJobPaths -RunFolder $RunFolder).Approvals -Content $content
 }
 
@@ -1716,9 +1718,10 @@ function Add-DtJobNotification {
 
 function Send-DtJobRunAlert {
     # One delivered DM per key per run: a key already delivered from this run folder is never sent again.
-    # With -RetryUntilDelivered a failed send is recorded as pending, and Send-DtJobPendingAlerts retries it.
+    # Every call makes one transport attempt. -RecordPending (or legacy -RetryUntilDelivered)
+    # retains a failed send for a later pass; neither switch loops inside this call.
     # Delivery and cross-process dedupe belong to send-router-alert.ps1.
-    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][string]$Message, [switch]$RetryUntilDelivered)
+    param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][string]$Message, [switch]$RetryUntilDelivered, [switch]$RecordPending)
     $rows = @(Get-DtJobNotifications -RunFolder $RunFolder | Where-Object { [string]$_.key -ceq $Key })
     if (@($rows | Where-Object { Test-DtJobNotificationDelivered $_ }).Count -gt 0) { return 'already_sent' }
     $result = $null
@@ -1728,7 +1731,7 @@ function Send-DtJobRunAlert {
     }
     catch { $result = $null }
     if ($null -eq $result -or -not $result.sent) {
-        if ($RetryUntilDelivered -and $rows.Count -eq 0) {
+        if (($RetryUntilDelivered -or $RecordPending) -and $rows.Count -eq 0) {
             Add-DtJobNotification -RunFolder $RunFolder -Row ([ordered]@{ key = $Key; status = 'pending'; message = $Message; recorded_utc = [DateTime]::UtcNow.ToString('o') })
         }
         return 'failed'
@@ -1745,6 +1748,9 @@ function Send-DtJobPendingAlerts {
     $results = [System.Collections.Generic.List[object]]::new()
     foreach ($row in @($rows | Where-Object { -not (Test-DtJobNotificationDelivered $_) -and $_.status -eq 'pending' })) {
         if ($delivered -ccontains [string]$row.key) { continue }
+        # Re-evaluate boundary alerts through the director route below, including legacy pending
+        # messages that contain commands or were queued before a director was registered.
+        if ([string]$row.key -match '^dt-build:.*:awaiting:') { continue }
         $results.Add([pscustomobject][ordered]@{ key = [string]$row.key; alert = (Send-DtJobRunAlert -RunFolder $RunFolder -Key ([string]$row.key) -Message ([string]$row.message)) })
         $delivered += [string]$row.key
     }
@@ -1968,6 +1974,7 @@ function Invoke-DtJobRegisterRun {
     if (($PinVendor -or $PinModel) -and (-not $PinVendor -or [string]::IsNullOrWhiteSpace($PinModel))) { throw 'DT_JOB_USAGE: register-run pin requires -PinVendor and -PinModel.' }
     if ($PinVendor) { Assert-DtJobOperator -VerbName 'register-run pin' -RunFolder $RunFolder -AllowLiveCoordinator }
     $hasDelegate = $script:DtJobExplicitParams -contains 'Delegate'
+    $director = Get-DtJobLaunchingDirector
     if ($hasDelegate) {
         Assert-DtJobOperator -VerbName 'delegate' -RunFolder $RunFolder
         if ([string]::IsNullOrWhiteSpace($Delegate)) { throw 'DT_JOB_USAGE: delegate requires -Delegate <name> or -Clear.' }
@@ -1980,15 +1987,20 @@ function Invoke-DtJobRegisterRun {
         pinned_host      = $PinnedHost
         managed          = [bool]$Managed
         registered_utc   = [DateTime]::UtcNow.ToString('o')
+        director         = $director
     }
     if ($PinVendor) { $entry.pin = [ordered]@{ vendor = $PinVendor.ToLowerInvariant(); model = $PinModel; set_utc = [DateTime]::UtcNow.ToString('o') } }
     Invoke-DtJobLocked -RunFolder $RunFolder -Action { Invoke-DtJobRegistryLocked -Body {
         $previous = Get-DtJobRunPin -RunFolder $RunFolder
         if (-not $PinVendor -and $null -ne $previous) { $entry.pin = $previous }
         $runs = @(Get-DtJobRegistryRuns | Where-Object { -not (Test-DtPathEqual ([string]$_.run_folder) $root) -and [string]$_.run_id -cne $RunId })
-        if ($hasDelegate) {
-            $approvals = Get-DtJobApprovals -RunFolder $RunFolder
-            $approvals.delegate = [pscustomobject][ordered]@{ name = $Delegate.Trim(); set_utc = [DateTime]::UtcNow.ToString('o') }
+        $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+        $oldEntry = Get-DtJobRegistryEntry -RunFolder $RunFolder
+        if ($oldEntry -and $oldEntry.PSObject.Properties['director'] -and $oldEntry.director) { $entry.director = $oldEntry.director }
+        $replaced = Set-DtJobReopenedDirector -Approvals $approvals -Previous (Get-DtJobDirector -RunFolder $RunFolder) -Director $director
+        if ($replaced) { $entry.director = $director }
+        if ($hasDelegate -or $replaced -or ($null -eq $approvals.delegate -and $null -ne $entry.director)) {
+            $approvals.delegate = if ($hasDelegate) { Resolve-DtJobNamedDirector -Name $Delegate.Trim() -Launcher $director } else { $entry.director }
             Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
         }
         Save-DtJobRegistryRuns -Runs (@($runs) + @([pscustomobject]$entry))
@@ -2094,6 +2106,7 @@ function Get-DtJobHostConflictAlert {
 function Invoke-DtJobAwaitDanny {
     if (-not $Operation -or -not $Message) { throw 'DT_JOB_USAGE: await-danny requires -Operation and -Message.' }
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
+    $director = Get-DtJobDirector -RunFolder $RunFolder
     $awaitSeq = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder
         $pending = $approvals.awaiting
@@ -2110,27 +2123,18 @@ function Invoke-DtJobAwaitDanny {
             if (Test-DtJobHostDisruption -Operation $Operation -Message $Message) {
                 $awaiting.host_conflicts = @(Get-DtJobHostConflicts -RunFolder $ctx.run_folder -RunId $ctx.run_id)
             }
-            # A delegated run routes routine stops to the delegate; Danny is told only if it has not acted
-            # in time, and always for production, install, Azure or irreversible steps.
-            if ($null -ne $approvals.delegate -and -not (Test-DtJobMustNotifyDanny -Operation $Operation -Message $Message -AlwaysNotify:$AlwaysNotify)) {
-                $awaiting.delegated_to = [string]$approvals.delegate.name
-                $awaiting.escalate_after_utc = [DateTime]::UtcNow.AddMinutes((Get-DtJobSettingSec -Name 'DT_BUILD_DELEGATE_ESCALATE_MIN' -Default $script:DtJobDelegateEscalateMin)).ToString('o')
+            # A new boundary assigned after the director closed belongs to Danny; do not
+            # attribute its later approval to the closed director in the approval digest.
+            if (Test-DtJobDirectorAlive $director) {
+                $awaiting.delegated_to = [string]$director.name
             }
             $approvals.awaiting = $awaiting
             Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
             $seq
         }
     }
-    $pendingNow = (Get-DtJobApprovals -RunFolder $RunFolder).awaiting
-    $delegatedTo = if ($null -ne $pendingNow -and $pendingNow.PSObject.Properties['delegated_to']) { [string]$pendingNow.delegated_to } else { $null }
-    if ($delegatedTo) { $alert = 'delegated' }
-    else {
-        $text = "dt-build run $($ctx.run_id) is paused for your approval before: $Operation. $Message To approve, run: /dt-build approve $($ctx.run_id) $Operation"
-        $text += Get-DtJobHostConflictAlert -Awaiting $pendingNow
-        # Every boundary gets its own key (the await event's seq), so a later boundary for the same operation DMs again.
-        $alert = Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:$($ctx.run_id):awaiting:${Operation}:$awaitSeq" -Message $text -RetryUntilDelivered
-    }
-    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ operation = $Operation; alert = $alert; await_seq = $awaitSeq }) -AsJson:$Json
+    $alert = if (Test-DtJobDirectorAlive $director) { 'delegated' } else { Send-DtJobDelegateEscalation -RunFolder $RunFolder -RunId $ctx.run_id }
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ operation = $Operation; alert = $alert; await_seq = $awaitSeq; message = 'Waiting for the director to approve this decision.' }) -AsJson:$Json
 }
 
 function Assert-DtJobOperator {
@@ -2139,6 +2143,7 @@ function Assert-DtJobOperator {
     param([Parameter(Mandatory)][string]$VerbName, [Parameter(Mandatory)][string]$RunFolder, [switch]$AllowLiveCoordinator)
     if ($env:DT_BUILD_COORDINATOR_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is an operator command for the launching session; coordinator $env:DT_BUILD_COORDINATOR_ID cannot run it" }
     if ($env:DT_JOB_ID) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is an operator command for the launching session; it cannot run inside dt-job job $env:DT_JOB_ID" }
+    if (Test-DtJobAutomationCaller) { throw "DT_JOB_OPERATOR_ONLY: $VerbName is an operator command for the launching session; it cannot run from a coordinator or job caller" }
     $callerLease = Get-DtJobLease -RunFolder $RunFolder
     if ($VerbName -in @('approve','resume') -and $null -ne $callerLease -and $callerLease.launched_by -eq 'watcher' -and $callerLease.pid -and
         (Test-DtJobProcessIdentity $callerLease.pid $callerLease.pid_start_utc)) {
@@ -2207,6 +2212,7 @@ function Receive-DtJobQueuedApproval {
 function Invoke-DtJobApprove {
     if (-not $Operation) { throw 'DT_JOB_USAGE: approve requires -Operation.' }
     Assert-DtJobOperator -VerbName 'approve' -RunFolder $RunFolder -AllowLiveCoordinator
+    Update-DtJobReopenedDirector -RunFolder $RunFolder
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     $result = Invoke-DtJobCoordinatorLocked -RunFolder $RunFolder -Action {
       Invoke-DtJobLocked -RunFolder $RunFolder -Action {
@@ -2253,11 +2259,181 @@ function Invoke-DtJobApprove {
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra $result) -AsJson:$Json
 }
 
-function Test-DtJobMustNotifyDanny {
-    # Stops Danny always hears about himself, delegate or not.
-    param([string]$Operation, [string]$Message, [switch]$AlwaysNotify)
-    if ($AlwaysNotify) { return $true }
-    return ("$Operation $Message" -match '(?i)\b(prod|production|install|installs|installation|azure|irreversible)\b')
+function New-DtJobDirector {
+    param([string]$Name, $Identity)
+    $record = [ordered]@{ name = $Name; set_utc = [DateTime]::UtcNow.ToString('o') }
+    if ($null -ne $Identity) {
+        foreach ($field in @('pid', 'pid_start_utc', 'session_id', 'session_name', 'cc_session_id', 'claude_session_id', 'codex_thread_id')) {
+            if ($Identity.PSObject.Properties[$field]) { $record[$field] = $Identity.$field }
+        }
+    }
+    return [pscustomobject]$record
+}
+
+function Get-DtJobProcessArguments {
+    param([int]$ProcessId)
+    try {
+        if ($IsLinux) { return [IO.File]::ReadAllText("/proc/$ProcessId/cmdline").Split([char]0, [StringSplitOptions]::RemoveEmptyEntries) }
+        $line = if ($IsWindows) { (Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction Stop).CommandLine } else { (& ps -o command= -p $ProcessId) -join ' ' }
+        return @([regex]::Matches($line, '"[^"]*"|\S+') | ForEach-Object { $_.Value.Trim('"') })
+    } catch { return @() }
+}
+
+function Test-DtJobCodexHeadless {
+    param([string[]]$Arguments)
+    # Only the first positional argument is a subcommand. Options with values consume the next token.
+    $valueOptions = @('-c','--config','-m','--model','-p','--profile','-s','--sandbox','-a','--ask-for-approval','-C','--cd','--add-dir','--enable','--disable','--local-provider','--remote','--remote-bearer-token')
+    for ($i = 1; $i -lt $Arguments.Count; $i++) {
+        $arg = $Arguments[$i]
+        if ($arg -ceq '--') { $i++; return ($i -lt $Arguments.Count -and $Arguments[$i] -cin @('exec','e')) }
+        if ($arg.StartsWith('-')) {
+            if ($arg -cnotmatch '=' -and $arg -cin $valueOptions) { $i++ }
+            continue
+        }
+        return $arg -cin @('exec','e')
+    }
+    return $false
+}
+
+function Test-DtJobAutomationCaller {
+    if ($CoordinatorId -or $script:DtJobExplicitParams -contains 'CoordinatorId' -or $env:DT_BUILD_COORDINATOR_ID -or $env:DT_JOB_ID) { return $true }
+    # Check live recorded roots as well as script ancestry, even when a child clears DT_*.
+    $ancestor = $PID; $seen = @{}
+    while ($ancestor -gt 1 -and -not $seen.ContainsKey($ancestor)) {
+        $seen[$ancestor] = $true
+        foreach ($arg in @(Get-DtJobProcessArguments -ProcessId $ancestor)) {
+            if ([IO.Path]::GetFileName($arg) -in @('dt-job-runner.ps1','launch-managed-coordinator.ps1')) { return $true }
+        }
+        if ($IsWindows) {
+            $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$ancestor" -ErrorAction SilentlyContinue
+            $ancestor = if ($parent) { [int]$parent.ParentProcessId } else { 0 }
+        } else {
+            $parent = & ps -o ppid= -p $ancestor
+            $ancestor = if ($parent) { [int]([string]$parent).Trim() } else { 0 }
+        }
+    }
+    # A coordinator of another registered run must not acquire authority by inspecting this run.
+    $folders = @(@($RunFolder) + @(Get-DtJobRegistryRuns | ForEach-Object { $_.run_folder }) | Where-Object { $_ } | Sort-Object -Unique)
+    foreach ($folder in $folders) {
+        $lease = Get-DtJobLease -RunFolder $folder
+        if ($lease -and $lease.PSObject.Properties['pid'] -and $lease.pid -and $seen.ContainsKey([int]$lease.pid) -and
+            $lease.PSObject.Properties['pid_start_utc'] -and (Test-DtJobProcessIdentity $lease.pid $lease.pid_start_utc)) { return $true }
+        foreach ($job in (Get-DtJobRecords -RunFolder $folder)) {
+            foreach ($pair in @(@('runner_pid','runner_start_utc'), @('pid','process_start_utc'))) {
+                if ($job.PSObject.Properties[$pair[0]] -and $job.($pair[0]) -and $seen.ContainsKey([int]$job.($pair[0])) -and
+                    $job.PSObject.Properties[$pair[1]] -and (Test-DtJobProcessIdentity $job.($pair[0]) $job.($pair[1]))) { return $true }
+            }
+        }
+    }
+    return $false
+}
+
+function Get-DtJobLaunchingDirector {
+    # Headless launchers must identify themselves; inherited CC ids alone are not liveness.
+    if ($LaunchedBy -ne 'interactive' -or $env:DT_BUILD_HEADLESS -eq '1' -or (Test-DtJobAutomationCaller)) { return $null }
+    $ancestor = $PID
+    $seen = @{}
+    $owner = $null
+    while ($ancestor -gt 1 -and -not $seen.ContainsKey($ancestor)) {
+        $seen[$ancestor] = $true
+        $process = Get-Process -Id $ancestor -ErrorAction SilentlyContinue
+        if ($null -eq $process) { break }
+        if ($process.ProcessName -match '^(claude|codex)(\.exe)?$') {
+            $launchArgs = @(Get-DtJobProcessArguments -ProcessId $ancestor)
+            $headless = if ($process.ProcessName -match '^claude') { @($launchArgs | Where-Object { $_ -in @('-p', '--print') }).Count -gt 0 } else { Test-DtJobCodexHeadless -Arguments $launchArgs }
+            if (-not $headless) {
+                $owner = $process
+                break
+            }
+        }
+        if ($IsWindows) {
+            $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$ancestor" -ErrorAction SilentlyContinue
+            $ancestor = if ($parent) { [int]$parent.ParentProcessId } else { 0 }
+        } else {
+            $parent = & ps -o ppid= -p $ancestor
+            $ancestor = if ($parent) { [int]([string]$parent).Trim() } else { 0 }
+        }
+    }
+    if ($null -eq $owner) { return $null }
+    $providerId = if ($owner.ProcessName -match '^codex') { $env:CODEX_THREAD_ID } else { $env:CLAUDE_CODE_SESSION_ID }
+    $sessionId = $providerId
+    $name = if ($env:CC_SESSION_NAME) { $env:CC_SESSION_NAME } elseif ($sessionId) { $sessionId } else { "$($owner.ProcessName) session $($owner.Id)" }
+    return [pscustomobject][ordered]@{ name = $name; set_utc = [DateTime]::UtcNow.ToString('o'); pid = $owner.Id; pid_start_utc = (Get-DtJobProcessStartUtc -ProcessId $owner.Id); session_id = $sessionId; session_name = $env:CC_SESSION_NAME; cc_session_id = $env:CC_SESSION_ID; claude_session_id = $env:CLAUDE_CODE_SESSION_ID; codex_thread_id = $env:CODEX_THREAD_ID }
+}
+
+function Resolve-DtJobNamedDirector {
+    param([string]$Name, $Launcher)
+    if ($Launcher -and $Name -ceq $Launcher.name -and (Test-DtJobDirectorAlive $Launcher)) { return New-DtJobDirector -Name $Name -Identity $Launcher }
+    # Resolve only a unique recorded identity; names alone cannot prove process ownership.
+    $identities = @(foreach ($run in (Get-DtJobRegistryRuns)) {
+        if ($run.PSObject.Properties['director'] -and $run.director -and $run.director.name -ceq $Name -and (Test-DtJobDirectorAlive $run.director)) { $run.director }
+    })
+    $unique = @($identities | Sort-Object pid, pid_start_utc -Unique)
+    if ($unique.Count -ne 1) { throw "DT_JOB_DELEGATE_UNRESOLVED: '$Name' must resolve to one live registered session; register that session first, then use delegate explicitly." }
+    return New-DtJobDirector -Name $Name -Identity $unique[0]
+}
+
+function Set-DtJobReopenedDirector {
+    # Caller holds the run and registry locks. Unknown liveness is not proof of death.
+    param($Approvals, $Previous, $Director)
+    if ((Test-DtJobAutomationCaller) -or -not $Director -or -not $Previous -or
+        -not $Director.PSObject.Properties['session_id'] -or -not $Previous.PSObject.Properties['session_id'] -or
+        [string]::IsNullOrWhiteSpace($Director.session_id) -or $Director.session_id -cne $Previous.session_id) { return $false }
+    if (-not $Director -or -not $Previous -or -not $Previous.PSObject.Properties['pid'] -or
+        -not $Previous.PSObject.Properties['pid_start_utc'] -or -not $Previous.pid -or -not $Previous.pid_start_utc -or (Test-DtJobDirectorAlive $Previous)) { return $false }
+    $history = @(if ($Approvals.PSObject.Properties['director_replacements']) { $Approvals.director_replacements | Where-Object { $null -ne $_ } })
+    $receipt = [pscustomobject]@{ previous = $Previous; replacement = $Director; replaced_utc = [DateTime]::UtcNow.ToString('o') }
+    $Approvals | Add-Member -NotePropertyName director_replacements -NotePropertyValue (@($history) + @($receipt)) -Force
+    $Approvals.delegate = $Director
+    if ($Approvals.awaiting) {
+        $Approvals.awaiting | Add-Member -NotePropertyName delegated_to -NotePropertyValue $Director.name -Force
+        $Approvals.awaiting | Add-Member -NotePropertyName awaiting_owner -NotePropertyValue 'director' -Force
+    }
+    return $true
+}
+
+function Update-DtJobReopenedDirector {
+    param([string]$RunFolder)
+    $caller = Get-DtJobLaunchingDirector
+    if (-not $caller) { return }
+    Assert-DtJobOperator -VerbName 'director takeover' -RunFolder $RunFolder -AllowLiveCoordinator
+    Invoke-DtJobLocked -RunFolder $RunFolder -Action { Invoke-DtJobRegistryLocked -Body {
+        $approvals = Get-DtJobApprovals -RunFolder $RunFolder
+        if (Set-DtJobReopenedDirector -Approvals $approvals -Previous (Get-DtJobDirector -RunFolder $RunFolder) -Director $caller) {
+            Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+            $runs = @(Get-DtJobRegistryRuns)
+            foreach ($run in $runs) {
+                if (Test-DtPathEqual ([string]$run.run_folder) ((Get-DtJobPaths -RunFolder $RunFolder).Root)) {
+                    $run | Add-Member -NotePropertyName director -NotePropertyValue $caller -Force
+                }
+            }
+            Save-DtJobRegistryRuns -Runs $runs
+        }
+    } }
+}
+
+function Get-DtJobDirector {
+    param([string]$RunFolder)
+    $delegateNow = (Get-DtJobApprovals -RunFolder $RunFolder).delegate
+    if ($delegateNow -and $delegateNow.PSObject.Properties['pid']) { return $delegateNow }
+    $entryNow = Get-DtJobRegistryEntry -RunFolder $RunFolder
+    if ($entryNow -and $entryNow.PSObject.Properties['director'] -and $entryNow.director) {
+        if (-not $delegateNow) { return $entryNow.director }
+        if ($delegateNow.name -ceq $entryNow.director.name) { return New-DtJobDirector -Name $delegateNow.name -Identity $entryNow.director }
+        return $delegateNow
+    }
+    if ($delegateNow) { return $delegateNow }
+    # Legacy interactive leases recorded the launching operator as their holder.
+    $leaseNow = Get-DtJobLease -RunFolder $RunFolder
+    if ($leaseNow -and $leaseNow.launched_by -ne 'watcher' -and $leaseNow.pid -and $leaseNow.PSObject.Properties['pid_start_utc']) {
+        return New-DtJobDirector -Name $(if ($delegateNow) { $delegateNow.name } else { [string]$leaseNow.launched_by }) -Identity $leaseNow
+    }
+    return $null
+}
+
+function Test-DtJobDirectorAlive {
+    param($Director)
+    return ($null -ne $Director -and $Director.PSObject.Properties['pid'] -and $Director.PSObject.Properties['pid_start_utc'] -and (Test-DtJobProcessIdentity $Director.pid $Director.pid_start_utc))
 }
 
 function Invoke-DtJobDelegate {
@@ -2267,15 +2443,14 @@ function Invoke-DtJobDelegate {
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder
-        $approvals.delegate = if ($Clear) { $null } else { [pscustomobject][ordered]@{ name = $Delegate.Trim(); set_utc = [DateTime]::UtcNow.ToString('o') } }
+        $approvals.delegate = if ($Clear) { $null } else { Resolve-DtJobNamedDirector -Name $Delegate.Trim() -Launcher (Get-DtJobLaunchingDirector) }
         Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
     }
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ delegate = $(if ($Clear) { $null } else { $Delegate.Trim() }) }) -AsJson:$Json
 }
 
 function Invoke-DtJobHold {
-    # The delegate says why it is holding a stop on purpose, so the escalation DM tells Danny the stop is
-    # handled rather than forgotten. -Clear removes the reason. The DM still goes out on time.
+    # Preserve the director's hold reason if its process later closes. -Clear removes the reason.
     if (-not $Operation) { throw 'DT_JOB_USAGE: hold requires -Operation.' }
     if (-not $Clear -and [string]::IsNullOrWhiteSpace($Reason)) { throw 'DT_JOB_USAGE: hold requires -Reason "<why>" or -Clear.' }
     Assert-DtJobOperator -VerbName 'hold' -RunFolder $RunFolder -AllowLiveCoordinator
@@ -2294,20 +2469,21 @@ function Invoke-DtJobHold {
 }
 
 function Send-DtJobDelegateEscalation {
-    # A delegated stop the delegate has not approved in time DMs Danny, once.
+    # No timer: only loss or absence of the director escalates, once per boundary.
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$RunId)
     $pending = (Get-DtJobApprovals -RunFolder $RunFolder).awaiting
-    if ($null -eq $pending -or -not $pending.PSObject.Properties['delegated_to'] -or -not $pending.delegated_to) { return $null }
-    if ([DateTime]::UtcNow -lt (ConvertTo-DtJobUtc $pending.escalate_after_utc)) { return $null }
-    $minutes = [int][Math]::Round(([DateTime]::UtcNow - (ConvertTo-DtJobUtc $pending.since_utc)).TotalMinutes)
+    if ($null -eq $pending -or -not $pending.PSObject.Properties['seq']) { return $null }
+    $director = Get-DtJobDirector -RunFolder $RunFolder
+    if (Test-DtJobDirectorAlive $director) { return $null }
     $held = if ($pending.PSObject.Properties['held'] -and $null -ne $pending.held) { $pending.held } else { $null }
-    $text = if ($held) {
-        $heldEt = [TimeZoneInfo]::ConvertTimeFromUtc((ConvertTo-DtJobUtc $held.held_utc), [TimeZoneInfo]::FindSystemTimeZoneById($(if ($IsWindows) { 'Eastern Standard Time' } else { 'America/New_York' }))).ToString('h:mm tt')
-        "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation). $($pending.delegated_to) is holding it on purpose since $heldEt ET: $($held.reason). Nothing is needed from you unless you want to decide it yourself: /dt-build approve $RunId $($pending.operation)"
-    }
-    else { "dt-build run $RunId has waited $minutes min for approval before: $($pending.operation), and $($pending.delegated_to) has not approved it. $($pending.message) To approve, run: /dt-build approve $RunId $($pending.operation)" }
+    $absence = if (-not $director) { 'It has no director session available.' }
+        elseif (-not $director.PSObject.Properties['pid'] -or -not $director.pid -or -not $director.PSObject.Properties['pid_start_utc'] -or -not $director.pid_start_utc) { 'Its approving session could not be checked.' }
+        else { 'Its director session has closed.' }
+    $decision = if ($pending.PSObject.Properties['message']) { [string]$pending.message } else { [string]$pending.operation }
+    $text = "Build $RunId needs a decision before $($pending.operation): $decision $absence Open or reopen the build's session in Command Center to answer."
+    if ($held) { $text += " The director had put it on hold: $($held.reason)." }
     $text += Get-DtJobHostConflictAlert -Awaiting $pending
-    return (Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:${RunId}:awaiting:$($pending.operation):$($pending.seq)" -Message $text -RetryUntilDelivered)
+    return (Send-DtJobRunAlert -RunFolder $RunFolder -Key "dt-build:${RunId}:awaiting:$($pending.operation):$($pending.seq)" -Message $text -RecordPending)
 }
 
 function Get-DtJobOperatorNotes {
@@ -2366,6 +2542,7 @@ function Invoke-DtJobNote {
 
 function Invoke-DtJobResume {
     Assert-DtJobOperator -VerbName 'resume' -RunFolder $RunFolder
+    Update-DtJobReopenedDirector -RunFolder $RunFolder
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $pending = (Get-DtJobApprovals -RunFolder $RunFolder).awaiting

@@ -1,6 +1,6 @@
 # dt-build host adapter: Claude Code
 
-Claude Code coordinators; shared rules: `SKILL.md`. `dt-job`: `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder>`. Pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
+Claude Code coordinators; shared rules: `SKILL.md`. `dt-job`: `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder>`. For coordinator calls, pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
 
 ## Dispatch
 
@@ -26,8 +26,8 @@ Transcript discovery for `mark-bootstrap`: `resume-bootstrap-measurement.md`.
 
 - Managed resumes follow `managed-resume.md`: verified digest above budget, current authority in full, then bootstrap; governing originals in full before actions. New starts do the mandatory CLAUDE.md chain, MEMORY.md and governing reads first. Load other references only at their step.
 - No `_build-state.md` yet? Copy `skills/dt-pipeline/templates/build-state-template.md` (runnable, cursor 0).
-- Register: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested. Interactive launch/monitor sessions pass `-Delegate <own session name>`; headless runs omit it.
-- On taking delegation (registration or `delegate`), immediately arm a persistent run-level watch: `dt-job status` with `-Json` (`run_status`, `awaiting`, `stalled`), surviving turns. When `awaiting.awaiting_owner=danny`, tell Danny the decision in your chat (`operation` and `message`), even if `alerted_danny=true`; `delegated_to` names the delegate.
+- Register: `dt-job register-run -CoordinatorId <id> -BuildStatePath <_build-state.md> -RunId <RUN_ID> -PinnedHost claude`. Add `-Managed` when requested. Directors register without `-CoordinatorId`; optional `-Delegate` requires a live identity.
+- Director watch: record provider session identity; only that session retakes a dead director. Other sessions explicitly `delegate`. Keep a persistent run-level `dt-job status -Json` watch on `run_status`, `awaiting`, `stalled`; re-arm on expiry. When `awaiting_owner=director`, approve within authority. Raise reserved decisions in your chat per `managed-resume.md`; `delegated_to` names the director.
 - Before dispatch: `dt-job mark-bootstrap -CoordinatorId <id> -Host claude`. One id; optionally `-TranscriptPath <transcript>`.
 - An unmanaged interactive coordinator takes the lease after marking: `dt-job lease -Action acquire -CoordinatorId <id> -Host claude`. Each call renews it through long waits; watcher-launched coordinators already hold it.
 - Every `dt-job` call with your id prints a `context:` line. States: `ok` continue; `checkpoint` reach a safe stopping point, then rotate; `rotate` rotate now.
@@ -51,9 +51,9 @@ Transcript discovery for `mark-bootstrap`: `resume-bootstrap-measurement.md`.
 - Before ending each headless turn: `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>` after handling `dt-job status -CoordinatorId <id> -Json`; an unconsumed trigger fails the launch.
 - `DT_BUILD_COORDINATOR_ID` is launcher-only. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
 - Before power-off/reboot stops, name other builds' running jobs and finish times (`dt-job status`).
-- At approval boundaries (merge, push, deploy, prod write, irreversible): `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<one line>"`, then end; add `-AlwaysNotify` for production, Azure or irreversible. Never run `dt-job approve`, `resume`, `delegate` or `hold`; the launching session runs them (`managed-resume.md` § Operator actions).
+- At approval boundaries: `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<decision for the director>"`, then end. All stops route to the director; `-AlwaysNotify` is deprecated and follows the same routing. Never run `dt-job approve`, `resume`, `delegate` or `hold`; the director runs them (`managed-resume.md` § Operator actions).
 - Interactive approve/resume refusal is instruction-only (no env var), a known residual.
-- Operator commands (the launching session runs them): `/dt-build approve <RUN_ID> <operation>` approves; `/dt-build resume <RUN_ID>` re-arms; `/dt-build delegate <RUN_ID> <session>` (`-Clear` undoes) routes routine stops there; a holding delegate runs `hold` (`-Operation <op> -Reason "<why>"`) so the 15-minute DM says why. Use matching `dt-job` verbs. Follow `operator_notes`; operators add them (`note`).
+- Director commands: `/dt-build approve <RUN_ID> <operation>`, `/dt-build resume <RUN_ID>`, or matching `dt-job` verbs; `delegate` overrides routing, `hold` records a reason. Approve within standing authority without asking Danny. Only director process death or absence escalates. Follow `operator_notes`; operators add them (`note`).
 
 ## Evidence
 
