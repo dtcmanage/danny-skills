@@ -111,6 +111,7 @@ when parsing a table containing this optional column.
 
 For direct use, `pytest-lock.py --reason "<text>" -- <command>` or
 `pytest-lock.ps1 -Reason "<text>" <command>` requires the same reason.
+The PowerShell adapter uses the shared test-Python resolver: `DANNY_SKILLS_TEST_PYTHON`, then the host's standard build-test venv (automatically provisioned with uv), then PATH. It prepends the selected interpreter's directory to PATH for child commands; it never installs into system Python.
 Missing or whitespace-only reasons exit 2 with `EXCLUSIVE_REASON_REQUIRED`.
 Waiting diagnostics identify the caller's reason and the holder (including the
 holder's recorded reason). Only opted-in commands delay their execution budget

@@ -25,6 +25,9 @@ if ($forward.Count -eq 0) { throw 'PYTEST_LOCK_USAGE: supply an executable and i
 # All callers use the same Python OS lock, including Git Bash and sandbox children.
 $lockArgs = @('--timeout', [string]$lockWaitSec, '--reason', $reason)
 if ($readyFile) { $lockArgs += @('--ready-file', $readyFile) }
-$python = (Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
-& $python (Join-Path $PSScriptRoot 'pytest-lock.py') @lockArgs -- @forward
+. (Join-Path $PSScriptRoot 'lib/resolve-test-python.ps1')
+$python = Resolve-TestPython
+if ($python.Hint) { [Console]::Error.WriteLine($python.Hint) }
+if (-not $python.Path) { throw 'TEST_PYTHON_MISSING: install uv or set DANNY_SKILLS_TEST_PYTHON.' }
+& $python.Path (Join-Path $PSScriptRoot 'pytest-lock.py') @lockArgs -- @forward
 exit $LASTEXITCODE

@@ -28,11 +28,12 @@ if ($Scope -eq 'gate') {
         }
     }
 }
-$PyName = if ($IsWindows) { 'python' } else { 'python3' }
-$PipCommand = "$PyName -m pip install --user -r `"$RequirementsPath`""
-if ($Scope -eq 'gate') { $PipCommand = "$PyName -m pip install --user $($Requirements -join ' ')" }
+. (Join-Path $PSScriptRoot 'lib/resolve-test-python.ps1')
+$Python = Resolve-TestPython -RequirementsPath $RequirementsPath
+if ($Python.Hint) { Write-Output $Python.Hint }
+Write-Output "Test Python: $($Python.Path) (source: $($Python.Source))"
+$PipCommand = "install uv and rerun to provision the standard venv, or set DANNY_SKILLS_TEST_PYTHON to a prepared interpreter"
 $NpmCommand = "Set-Location -LiteralPath `"$Harness`"; npm ci"
-$Python = Get-Command python, python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 $Node = $null
 $Npm = $null
 if ($Scope -eq 'full') {
@@ -55,7 +56,7 @@ if ($IsWindows) { $GateTools += @{ Name = 'robocopy'; Fix = 'DISM.exe /Online /C
 else { $GateTools += @{ Name = 'rsync'; Fix = (Get-InstallHint '' 'sudo apt install rsync' 'brew install rsync') } }
 
 function Get-MissingItems {
-    if (-not $Python) { "python missing; fix: $(Get-InstallHint 'winget install --exact --id Python.Python.3.14' 'sudo apt install python-is-python3' 'brew install python')" }
+    if (-not $Python.Path) { "python missing; fix: $(Get-InstallHint 'winget install --exact --id Python.Python.3.14' 'sudo apt install python-is-python3' 'brew install python')" }
     foreach ($Tool in $GateTools) {
         if (-not (Get-Command $Tool.Name -CommandType Application -ErrorAction SilentlyContinue)) {
             "$($Tool.Name) missing; fix: $($Tool.Fix)"
@@ -65,42 +66,11 @@ function Get-MissingItems {
         if (-not $Node) { "node missing; fix: $(Get-InstallHint 'winget install --exact --id OpenJS.NodeJS.LTS' 'sudo apt install nodejs' 'brew install node')" }
         if (-not $Npm) { "npm missing; fix: $(Get-InstallHint 'winget install --exact --id OpenJS.NodeJS.LTS' 'sudo apt install npm' 'brew install node')" }
     }
-    if ($Python) {
-        # Keep package names on stdin, so they never appear in process command lines.
-        $Modules = @()
-        $DistributionNames = @()
-        $ModuleMap = @{ 'markdown-it-py' = 'markdown_it' }
-        foreach ($Line in $Requirements) {
-            $Name = ($Line -split '==', 2)[0]
-            $DistributionNames += $Name
-            $Modules += $(if ($ModuleMap.ContainsKey($Name)) { $ModuleMap[$Name] } else { $Name.Replace('-', '_') })
-        }
-        $Probe = @'
-import importlib, json, sys
-from zoneinfo import ZoneInfo
-missing = []
-request = json.load(sys.stdin)
-for name in request['modules']:
-    try:
-        importlib.import_module(name)
-    except Exception:
-        missing.append(name)
-if request['check_zone']:
-    try:
-        ZoneInfo('America/New_York')
-    except Exception:
-        missing.append('America/New_York')
-print(json.dumps(missing))
-'@
-        $Result = @{ modules = $Modules; check_zone = ($Scope -eq 'full') } | ConvertTo-Json -Compress | & $Python.Source -c $Probe 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            "python import probe failed; fix: $PipCommand"
-        } else {
-            $MissingModules = @($Result | ConvertFrom-Json)
-            for ($i = 0; $i -lt $Modules.Count; $i++) {
-                if ($Modules[$i] -in $MissingModules) { "$($DistributionNames[$i]) missing or cannot import; fix: $PipCommand" }
-            }
-            if ('America/New_York' -in $MissingModules) { "ZoneInfo('America/New_York') missing; fix: $PipCommand" }
+    if ($Python.Path) {
+        $Probe = Test-PythonRequirements -Python $Python.Path -RequirementsPath $RequirementsPath -Requirements $Requirements -CheckZone:($Scope -eq 'full')
+        foreach ($Module in $Probe.Missing) {
+            $Name = if ($Module -eq 'markdown_it') { 'markdown-it-py' } else { $Module.Replace('_', '-') }
+            "$Name missing or cannot import; fix: $PipCommand"
         }
     }
     if ($Scope -eq 'full' -and -not (Test-Path -LiteralPath (Join-Path $Harness 'node_modules') -PathType Container)) {
@@ -147,11 +117,7 @@ try {
 
 $Missing = @(Get-MissingItems)
 if ($Fix -and $Missing.Count) {
-    if ($Python -and @($Missing | Where-Object { $_ -like '*pip install*' }).Count) {
-        if ($Scope -eq 'gate') { & $Python.Source -m pip install --user @Requirements }
-        else { & $Python.Source -m pip install --user -r $RequirementsPath }
-        if ($LASTEXITCODE -ne 0) { Write-Output "Dependency install failed; fix: $PipCommand"; exit 1 }
-    }
+    # Python provisioning is automatic in the resolver and never targets system Python.
     if ($Scope -eq 'full' -and $Node -and $Npm -and -not (Test-Path -LiteralPath (Join-Path $Harness 'node_modules') -PathType Container)) {
         Push-Location -LiteralPath $Harness
         try {

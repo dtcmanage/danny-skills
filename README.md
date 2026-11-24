@@ -178,8 +178,9 @@ Install Python, Node.js (with npm), and PowerShell 7, then run from the repo roo
 pwsh -NoProfile -File scripts/test-preflight.ps1 -Fix
 ```
 
-This installs the pinned Python packages in `requirements-test.txt` and runs `npm ci`
-in the UI benchmark harness. The gate checks only its own needs (`-Scope gate`); `-Fix` in the default full scope prepares a machine for every suite.
+Tests automatically prefer `~/.local/share/build-test-venv` on Linux/macOS or `%LOCALAPPDATA%\build-test-venv` on Windows. With `uv` on PATH, the resolver creates a missing venv and adds `requirements-test.txt` packages when its import probe fails; it never recreates an existing venv or removes shared packages. Set `DANNY_SKILLS_TEST_PYTHON` to an executable interpreter to override selection. Without uv, it reports a hint and uses the available interpreter without installing into system Python. Preflight prepends the selected interpreter's directory to PATH for subsequent child processes; invoke it in the gate's PowerShell process to preserve that environment.
+
+`-Fix` also runs `npm ci` in the UI benchmark harness. The gate checks only its own needs (`-Scope gate`); the default full scope checks every dependency.
 Missing dependencies produce a fix command and exit immediately.
 For clones outside the workspace tree, set `DANNY_BROWSER_SMOKE_DIR` to an installed browser-smoke directory with `node_modules/playwright` and Playwright Chromium. The engine prepends that `node_modules` directory to the renderer child's `NODE_PATH`, preserving existing entries. The renderer then uses its normal Playwright require before falling back to browser-smoke in workspace parents; the task bank stays unchanged.
 

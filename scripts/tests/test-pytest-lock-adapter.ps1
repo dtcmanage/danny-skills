@@ -1,11 +1,11 @@
-# Windows PowerShell-only argv fixtures. python is shadowed by a checked .ps1
+# Cross-platform argv fixtures. Python is replaced by a checked .ps1
 # shim in the child PATH. No Python, pytest or lock/guard driver is started.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-if (-not $IsWindows) { throw 'This fixture checks Windows PowerShell command resolution.' }
 $adapter = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../pytest-lock.ps1'))
-$pwsh = (Get-Command pwsh -CommandType Application).Source
-$fixture = Join-Path ([IO.Path]::GetTempPath()) ('fs58-adapter-' + [guid]::NewGuid().ToString('N'))
+$pwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
+$fixture = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) ('.test-adapter-' + [guid]::NewGuid().ToString('N'))
+$savedOverride = $env:DANNY_SKILLS_TEST_PYTHON
 $savedPath = $env:PATH
 $savedCapture = $env:FS58_ARGV_CAPTURE
 $savedExit = $env:FS58_CHILD_EXIT
@@ -19,7 +19,9 @@ function Read-Argv {
 }
 try {
     New-Item -ItemType Directory -Path $fixture | Out-Null
-    $shim = Join-Path $fixture 'python.ps1'
+    $shim = Join-Path $fixture 'override.ps1'
+    $pathShim = Join-Path $fixture 'python.ps1'
+    'exit 94' | Set-Content -LiteralPath $pathShim
     [IO.File]::WriteAllText($shim, @'
 param()
 [IO.File]::WriteAllText($env:FS58_ARGV_CAPTURE, (ConvertTo-Json -InputObject @($args) -Depth 8))
@@ -27,12 +29,13 @@ if (@($args | Where-Object { $_ -is [array] }).Count) { exit 1 }
 exit ([int]$env:FS58_CHILD_EXIT)
 '@)
     $env:PATH = $fixture + [IO.Path]::PathSeparator + $savedPath
+    $env:DANNY_SKILLS_TEST_PYTHON = $shim
     $env:FS58_ARGV_CAPTURE = Join-Path $fixture 'argv.json'
     $env:FS58_CHILD_EXIT = '0'
-    Assert-True ((Get-Command python).Source -eq $shim) 'python resolves to the PowerShell shim'
+    Assert-True ((Get-Command python).Source -eq $pathShim) 'PATH has a competing Python shim'
     # Confirm resolution in a new interpreter before invoking the product script.
     $resolvedChild = & $pwsh -NoProfile -Command '(Get-Command python).Source'
-    Assert-True ($LASTEXITCODE -eq 0 -and $resolvedChild -eq $shim) 'child also resolves python to the shim'
+    Assert-True ($LASTEXITCODE -eq 0 -and $resolvedChild -eq $pathShim) 'child PATH has the competing shim; override must win'
 
     # Retain the original CommandWithArgs wrapper verbatim. An array expression
     # is one argument; the product adapter must normalize it before option parsing.
@@ -79,10 +82,11 @@ exit ([int]$env:FS58_CHILD_EXIT)
     Write-Output "SUMMARY: $passed passed; no Python started"
 } finally {
     $env:PATH = $savedPath
+    $env:DANNY_SKILLS_TEST_PYTHON = $savedOverride
     $env:FS58_ARGV_CAPTURE = $savedCapture
     $env:FS58_CHILD_EXIT = $savedExit
     $resolved = [IO.Path]::GetFullPath($fixture)
-    if (-not $resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()), [StringComparison]::OrdinalIgnoreCase)) {
+    if (-not $resolved.StartsWith([IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot))), [StringComparison]::OrdinalIgnoreCase)) {
         throw 'fixture cleanup escaped temp directory'
     }
     Remove-Item -LiteralPath $resolved -Recurse -Force

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.54.1
+
+- Resolve test Python from the host standard venv or explicit override, with automatic additive uv provisioning and inherited child PATH.
+
 ## 2.54.0
 
 - Orchestration on the Linux host: launch watch (await-coordinator-start, watch-run-state), lane health only by -Preflight, launching session runs resume/approve, watcher relaunches any context-rotation continuation with a starting lease state and finds re-parented survivors by DT_BUILD_COORDINATOR_ID, live-bug fast lane, required plain status_line, gate scope base defined.

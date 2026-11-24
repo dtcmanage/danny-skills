@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.4.1 (2026-11-24): Use the shared standard test venv resolver in test preflight and the danny-skills gate, preserving venv PATH for child suites.
+
 - 0.4.0 (2026-11-22): Release-time severity triage at ship time: only critical findings block or re-gate; non-critical ones ship as Known issues via scripts/release-triage.ps1. New -KnownIssuesPath puts the run's known issues in the summary (missing file fails at preflight-known-issues before any mutation); the release summary lists them.
 
 - 0.3.6 (2026-11-22): Ships from Linux: browser-smoke harness resolved from the workspace root, timeout kill and live-process scan without taskkill/CIM, portable dt-build registry dir.
