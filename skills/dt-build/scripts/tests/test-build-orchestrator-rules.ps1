@@ -54,6 +54,9 @@ KEEP-VERIFY
     Assert-True ($text -notmatch 'WORKSPACE-MAP') 'skips the workspace directory map'
     $s = $text.IndexOf('STATION-RULE'); $r = $text.IndexOf('REPO-RULE')
     Assert-True ($s -gt 0 -and $r -gt $s) 'includes the scoped chain outermost first'
+    $firstHash = (Get-FileHash -LiteralPath $out).Hash
+    & pwsh -NoProfile -File $script -WorkDir $repo -OutPath $out -ConfigDir $root | Out-Null
+    Assert-True ((Get-FileHash -LiteralPath $out).Hash -eq $firstHash) 'unchanged rules regenerate byte-identically'
 
     # A rule edited in the source shows up on the next generation: nothing to sync.
     Add-Content -LiteralPath (Join-Path $root 'CLAUDE.md') -Value "`n- NEW-RULE-AFTER-EDIT"

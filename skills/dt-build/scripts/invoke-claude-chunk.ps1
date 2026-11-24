@@ -391,6 +391,27 @@ try {
     $args += $outputInvocation.Arguments
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
+    # Generate for the worker's actual tree, never the coordinator's cwd. Keep the existing
+    # job-specific tool list, MCP flags and model selection in both context modes.
+    $workerRulesPath = "$OutputPath.instructions.md"
+    $workerLean = $false
+    if (-not $Preflight -and $env:DT_BUILD_FULL_CONTEXT -ne '1') {
+        $built = & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'build-orchestrator-rules.ps1') -WorkDir $projectRoot -OutPath $workerRulesPath 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $startInfo.Environment['CLAUDE_CODE_DISABLE_CLAUDE_MDS'] = '1'
+            $args += @('--append-system-prompt-file', $workerRulesPath, '--disable-slash-commands')
+            $workerLean = $true
+        }
+        else {
+            # Missing canonical rules must restore normal instruction loading, including
+            # when this wrapper was itself started by a lean Claude coordinator.
+            $startInfo.Environment.Remove('CLAUDE_CODE_DISABLE_CLAUDE_MDS') | Out-Null
+            [Console]::Error.WriteLine("lean worker start skipped: $($built -join ' ')")
+        }
+    }
+    else { $startInfo.Environment.Remove('CLAUDE_CODE_DISABLE_CLAUDE_MDS') | Out-Null }
+    # --tools is variadic. End options before the prompt (supplied on stdin here).
+    $args += '--'
     # Claude Code strips its sign-in token from tool shells; restore it on the child only (never logged).
     $null = Set-ClaudeHeadlessAuth -StartInfo $startInfo
     $cliExtension = [System.IO.Path]::GetExtension($claudeCli).ToLowerInvariant()
@@ -655,6 +676,8 @@ try {
         disclosure_line     = $disclosureLine
         permission_mode     = $permissionMode
         tools               = $toolList
+        lean_context        = $workerLean
+        instructions_path   = $(if ($workerLean -and -not $temporaryOutput) { $workerRulesPath } else { $null })
         mcp_servers         = 'none (--strict-mcp-config)'
         attempt             = $Attempt
         claude_cli_version  = $cliVersion
@@ -727,6 +750,6 @@ finally {
     if ($outputInvocation) { $outputInvocation.Dispose() }
     if ($proc) { $proc.Dispose() }
     if ($temporaryOutput) {
-        Remove-Item -LiteralPath $OutputPath, "$OutputPath.stream.log" -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $OutputPath, "$OutputPath.stream.log", "$OutputPath.instructions.md" -Force -ErrorAction SilentlyContinue
     }
 }

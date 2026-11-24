@@ -1182,6 +1182,8 @@ try {
     $readRecord = { $raw = & pwsh -NoProfile -File $resumeReader -RunFolder $resumeRun.folder -RunId $resumeRun.run_id -BuildStatePath $resumeRun.state -CoordinatorId 'successor'; if ($LASTEXITCODE -ne 0) { throw 'resume reader failed' }; ($raw -join "`n") | ConvertFrom-Json }
     Assert-True ($null -eq (& $readRecord).kill_handoff) 'no handoff yields a null kill_handoff'
     $record = & $readRecord
+    $compactRecord = @(& pwsh -NoProfile -File $resumeReader -RunFolder $resumeRun.folder -RunId $resumeRun.run_id -BuildStatePath $resumeRun.state -CoordinatorId 'successor')
+    Assert-True ($compactRecord.Count -eq 1 -and ($compactRecord[0] | ConvertFrom-Json).registration.run_id -eq $resumeRun.run_id) 'resume state emits one compact JSON line with verified registration'
     Assert-True ($record.worktrees.recorded.Count -eq 2 -and @($record.worktrees.recorded | Where-Object { $_.path -eq $expectedTree -and $_.branch -eq 'feat/x' }).Count -eq 1 -and $record.worktrees.live_since_run_start -is [array] -and $record.worktrees.live_since_run_start.Count -eq 0) 'resume record includes recorded worktrees and an empty live array without a launch'
     Add-Line (Join-Path $resumeRun.folder 'launches.jsonl') ([ordered]@{ type = 'launch'; coordinator_id = 'successor'; launched_utc = [DateTime]::UtcNow.AddMinutes(-1).ToString('o') })
     Assert-True ((& $readRecord).worktrees.live_since_run_start -is [array]) 'resume live discovery in a real git repo returns an array'
@@ -1209,6 +1211,7 @@ try {
     $snippet = $snippetText | ConvertFrom-Json
     Assert-True ($snippet.hooks.PreToolUse[0].hooks[0].command -match '__DT_BUILD_HOOKS_DIR__/coordinator-pretooluse\.ps1' -and $snippet.hooks.PostToolUse[0].hooks[0].command -match '__DT_BUILD_HOOKS_DIR__/coordinator-posttooluse\.ps1' -and -not $snippetText.Contains('CLAUDE_PLUGIN_ROOT')) 'the settings snippet names both hooks through the absolute-path placeholder'
     $launcherText = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'launch-managed-coordinator.ps1')
+    Assert-True ($launcherText.Contains('single bootstrap entry read') -and $launcherText.Contains('read-coordinator-rulebook.ps1') -and -not $launcherText.Contains('Read and follow $resumeGuide')) 'launcher enters through rulebook alone and forbids concatenated state dumps'
     Assert-True ($launcherText.Contains('claude -p --strict-mcp-config --mcp-config') -and $launcherText.Contains('--settings') -and $launcherText.Contains('--permission-mode bypassPermissions') -and $launcherText.Contains('__DT_BUILD_HOOKS_DIR__')) 'managed Claude coordinators launch with no MCP servers, the hooks settings copy, and bypass'
     $codexChunk = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'invoke-codex-chunk.ps1')
     Assert-True ($launcherText.Contains('codex --ask-for-approval never exec') -and $launcherText.Contains('default_permissions=":danger-full-access"') -and $codexChunk.Contains("'--ask-for-approval', 'never'") -and $codexChunk.Contains('default_permissions=":danger-full-access"')) 'managed Codex coordinators use the permission flags of invoke-codex-chunk.ps1'

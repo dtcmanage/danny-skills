@@ -1,11 +1,7 @@
 {
-  "target_tokens": 50000,
+  "target_tokens": 24000,
+  "budget_scope": "coordinator-added reads; host overhead measured separately from first-turn usage",
   "measured_components": [
-    {
-      "source": "Native runtime, root CLAUDE.md, tools/catalog and framing",
-      "tokens": 18000,
-      "measurement": "reserve; first observed input 28397 less first required-read outputs 11097 = 17300"
-    },
     {
       "source": "Checkpoint, run records, complete approvals and operative boundary sources",
       "tokens": 6000,
@@ -22,14 +18,10 @@
       "measurement": "reserve; measured hook block below 150 o200k_base tokens"
     }
   ],
-  "repo_reads": [
-    "skills/dt-build/references/managed-resume.md",
-    "references/deterministic-reference-policy.md",
-    "references/conventions.md"
-  ],
+  "repo_reads": [],
   "rendered_reads": [
     {
-      "source": "Coordinator rulebook (adapter + selected SKILL.md sections)",
+      "source": "Single bootstrap entry (resume contract, shared policies, adapter and execution sections)",
       "command": [
         "pwsh",
         "-NoProfile",

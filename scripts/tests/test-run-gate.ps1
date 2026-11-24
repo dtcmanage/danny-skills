@@ -69,7 +69,7 @@ function Get-GateSteps {
  @(
  @{Name='failure-one';Skill='*';Command="Write-Output 'first stdout'; [Console]::Error.WriteLine('first stderr'); exit 3"}
  @{Name='failure-two';Skill='*';Command="Write-Output 'second stdout'; throw 'second failure'"}
- @{Name='success';Skill='*';Command="Write-Output 'completed after failures'; exit 0"}
+ @{Name='success';Skill='*';Command='Write-Output ''completed after failures''; Write-Output (''startup profile: '' + $env:DOTNET_MultiCoreJitMinNumCpus + ''/'' + $env:COMPlus_MultiCoreJitMinNumCpus); exit 0'}
  )
 }
 '@
@@ -77,14 +77,33 @@ function Get-GateSteps {
     [IO.File]::WriteAllText((Join-Path $fixture 'scripts/run-gate.ps1'),$source)
     Copy-Item (Join-Path $PSScriptRoot '../lib/resolve-test-python.ps1') (Join-Path $fixture 'scripts/lib/')
     Copy-Item (Join-Path $originalRepo 'requirements-test.txt') $fixture
+    $startupDir = Join-Path $fixture 'skills/dt-build/scripts'
+    New-Item -ItemType Directory -Path $startupDir -Force | Out-Null
+    Copy-Item (Join-Path $originalRepo 'skills/dt-build/scripts/powershell-startup.ps1') $startupDir
     $logs = Join-Path $fixture 'logs'
-    $output = @(& pwsh -NoProfile -File (Join-Path $fixture 'scripts/run-gate.ps1') -Full -ThrottleLimit 2 -LogDirectory $logs 2>&1) -join "`n"
-    Assert-Gate ($LASTEXITCODE -eq 1) 'any failed step makes the scheduler fail'
+    $startupEnvironment = @{}
+    foreach ($name in @('DOTNET_MultiCoreJitMinNumCpus', 'COMPlus_MultiCoreJitMinNumCpus', 'XDG_CACHE_HOME')) {
+        $startupEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
+    }
+    try {
+        # The gate must protect its own children, even when the caller has not
+        # opted out. A disposable Unix cache keeps that control launch isolated.
+        $env:DOTNET_MultiCoreJitMinNumCpus = '1'
+        $env:COMPlus_MultiCoreJitMinNumCpus = '1'
+        if (-not $IsWindows) { $env:XDG_CACHE_HOME = Join-Path $fixture 'startup-cache' }
+        $output = @(& pwsh -NoProfile -File (Join-Path $fixture 'scripts/run-gate.ps1') -Full -ThrottleLimit 2 -LogDirectory $logs 2>&1) -join "`n"
+        $schedulerExit = $LASTEXITCODE
+    }
+    finally {
+        foreach ($name in $startupEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $startupEnvironment[$name]) }
+    }
+    Assert-Gate ($schedulerExit -eq 1) 'any failed step makes the scheduler fail'
     Assert-Gate ($output.Contains('FAILED: failure-one') -and $output.Contains('FAILED: failure-two')) 'all failures are named'
     Assert-Gate ($output.Contains('first stdout') -and $output.Contains('first stderr') -and $output.Contains('second failure')) 'tails retain both streams from every failure'
     $timings = Get-Content -Raw (Join-Path $logs 'timings.json') | ConvertFrom-Json
     Assert-Gate ($timings.steps.Count -eq 3 -and @($timings.steps | Where-Object name -eq 'success')[0].exit_code -eq 0) 'scheduler continues after failures and records all durations'
     Assert-Gate ((Get-Content -Raw (Join-Path $logs 'success.log')).Contains('completed after failures')) 'successful output remains available'
+    Assert-Gate ((Get-Content -Raw (Join-Path $logs 'success.log')).Contains('startup profile: 65535/65535')) 'gate launch boundary protects a real child without an inherited opt-out'
 }
 finally { $repo = $originalRepo; Remove-Item -LiteralPath $fixture -Recurse -Force }
 Write-Output "PASS: gate runner ($passed assertions)"

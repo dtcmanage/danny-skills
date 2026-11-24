@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.57.0
+  version: 2.58.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -93,6 +93,8 @@ Harness terms: `claude-host` is a Claude Code orchestrator; `codex-host` is any 
 ## Context discipline
 
 These rules are enforced by scripts both hosts must call; the adapter gives each host's exact commands.
+
+- **Claude startup:** `references/managed-resume.md`.
 
 - **Decide throughput.** Read `references/hardware-parallelism.md`. At intake, after state creation,
   run `<skill>/scripts/measure-build-host.ps1 -RunFolder <folder> [-Kind <kind>]`; it records logical

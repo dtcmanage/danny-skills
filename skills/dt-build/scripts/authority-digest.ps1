@@ -120,9 +120,9 @@ function Get-AuthorityCandidates {
             $occupied.Add(@{ start = $g.Index; end = $g.Index + $g.Length })
             $literal = $g.Value
             if ($pattern.StartsWith('"')) { $literal = ('"' + $literal + '"') | ConvertFrom-Json }
-            if ($literal -match '^[a-z]+://' -or $literal -match 'authority-digest\.(md|json)$') { continue }
+            if ($literal -match '^[a-z]+://' -or $literal -match '(?:^|[/\\])authority-digest\.(md|json)$') { continue }
             $expanded = @($literal)
-            if ($literal -match '^(.*)\{([^{}]+)\}(.*)$') {
+            if ($literal -match '^(.*)\{([^{}]*,[^{}]*)\}(.*)$') {
                 $prefix = $Matches[1]; $suffix = $Matches[3]
                 $expanded = @($Matches[2] -split ',' | ForEach-Object { $prefix + $_.Trim() + $suffix })
             }
@@ -232,7 +232,11 @@ function Get-AuthorityInventory {
         if ($script:AuthorityEnumeratedPaths.Count -and $path -ne $checkpoint) { continue }
         $candidates = if ($path -eq $checkpoint) { $checkpointCandidates } else { @(Get-AuthorityCandidates $text $aliases) }
         foreach ($candidate in $candidates) {
-            if ($candidate.literal -match '[*?<>]|^~|(?i)(?<![a-z])(?:YYYY|MM|DD)(?![a-z])') {
+            # Only explicit template syntax or uppercase, delimited date tokens are placeholders.
+            # Digits and letters belong to ordinary path segments (including hexadecimal IDs).
+            # Do not infer a template from lowercase words, unpaired brackets or embedded tokens.
+            if ($candidate.literal -match '[*?]|^~[/\\]|<[A-Za-z][A-Za-z0-9_-]*>' -or
+                $candidate.literal -cmatch '\{(?:YYYY|MM|DD|YYYY-MM-DD)\}|(?<![\p{L}\p{N}\p{M}])(?:YYYY|MM|DD)(?![\p{L}\p{N}\p{M}])') {
                 $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false })
                 continue
             }

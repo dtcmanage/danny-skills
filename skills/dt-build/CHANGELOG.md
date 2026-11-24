@@ -1,5 +1,11 @@
 # dt-build — CHANGELOG
 
+## 2.58.0
+
+- Start Claude workers with generated live rules and skills disabled; add managed digest preference and a single-entry coordinator bootstrap with a 24k added-token read-plan budget.
+- Protect headless PowerShell children and the ship gate from concurrent .NET startup-profile crashes; retain failed assertion output and fixture artifacts.
+- Keep missing originals required when path IDs contain date-token letters; recognize explicit templates without stripping single braces or ignoring digest filename suffixes.
+
 ## 2.57.0
 
 - Acceptance gates find stale references to moved or deleted paths across languages (whole-token, history and design docs excluded, milestone base), failed gates keep full output in logs with the failing command, and worker briefs loop on their own verification, take network/SSH needs from the gate commands and read live git facts.

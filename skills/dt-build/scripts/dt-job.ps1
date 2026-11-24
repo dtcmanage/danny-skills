@@ -119,6 +119,8 @@ $DtJobRepoRoot = Split-Path -Parent (Split-Path -Parent $DtJobSkillRoot)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'powershell-startup.ps1')
+Disable-DtPowerShellStartupProfile
 
 $script:DtJobStatuses = @('queued', 'running', 'succeeded', 'failed', 'timeout', 'orphaned', 'cancelled', 'blocked')
 $script:DtJobActive = @('queued', 'running')

@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.2.8 dt-build 2.58.0: lean Claude workers, verified digest preference, compact state and single-entry coordinator startup; protect headless PowerShell children and the ship gate from shared startup-profile crashes.",
       "1.2.7 dt-build 2.57.0: moved-path stale-reference gate, failed gates keep their output, worker briefs loop until green with network needs from the gate commands.",
       "1.2.6 dt-build 2.56.0: refresh runtime status, guard worktree writers, track descendant activity, and support planned rebase CAS.",
       "1.2.5 dt-roadmap 1.5.0: milestone dependencies derived from declared write surfaces and provided/consumed interfaces; unjustified waits flagged, undeclared overlaps rejected.",

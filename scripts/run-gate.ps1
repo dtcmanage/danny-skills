@@ -10,6 +10,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+. (Join-Path $repo 'skills/dt-build/scripts/powershell-startup.ps1')
+Disable-DtPowerShellStartupProfile
 
 function Get-GateSteps {
     # One catalog owns execution and selection. Always-run steps are the cheap policy gate.

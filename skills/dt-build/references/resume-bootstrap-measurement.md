@@ -1,5 +1,48 @@
 # Managed resume bootstrap measurement (October 11, 2026)
 
+## Lean workers and single-entry resume (November 24, 2026, 8:00 AM ET)
+
+The live headless comparison ran from the `danny-skills-lean-workers` worktree using
+the current Claude mechanical roster model, `claude-haiku-4-5-20251001`, low effort,
+identical six-tool lists and strict MCP configuration. JSON `usage.input_tokens +
+cache_creation_input_tokens + cache_read_input_tokens` fell from **34,882 to 21,635**
+for the same one-turn rule question: **13,247 fewer tokens (38.0%)**. Both answers
+correctly named US Eastern and Skill Creation from the loaded rules. A separate
+lean launch exercised Bash, Read, Edit, Write, Glob and Grep with no permission
+denials. Actual wrapper launches in full/lean modes also passed the same question.
+The saved login was used without an OAuth environment variable. These are worker
+measurements; different projects and models have different startup costs.
+
+Historical coordinator `a5b936f6-8700-4a1c-8e52-ee984843119c` measures **99,290 baseline,
+56,441 host overhead and 42,849 coordinator-added tokens** with
+`<skill>/scripts/measure-resume-bootstrap.py --transcript <transcript> --diagnostic`.
+This resolves the observer's rounded 43–47k estimate against the actual marker.
+
+The old source read plan measures **40,262** including an 18,000 native-runtime
+reserve: **22,262 coordinator-added** after removing that same reserve. The revised
+fixture measures **18,497 coordinator-added**: **3,765 fewer (16.9%)** on the same
+source-token basis. It includes a 12,347-token rendered entry, the unchanged
+6,000-token authorization reserve and 150-token bridge reserve. The new **24,000**
+read-plan assertion leaves 5,503 tokens (29.8%) of margin. Host overhead is now
+explicitly excluded from this fixture; it is still separately measured on live
+transcripts, and the runtime marker's existing 50,000-added-token alert is unchanged.
+
+The launcher reads only the rulebook command first. The renderer emits selected
+resume sections and shared policies once, keeping the complete authority-read
+contract verbatim and deferring checkpoint-writing, launch-watch and rollover
+procedures until needed. State JSON is compact without dropping approvals or notes.
+Managed resumes prefer the existing verified digest even for small sets, while
+every mandatory current original and action-time full read remains required.
+This avoids preloading roadmap implementation text and replaying persisted output.
+The 18,497 count is a reproducible read-plan estimate, **not a new live coordinator
+baseline**; the next actual managed resume must still be measured. No live run
+artifacts were changed for this task.
+
+Regression coverage checks worker instructions and ProjectPath, tools by job type,
+skills disabled, option termination, full-context opt-out, inherited-environment
+fallback, deterministic generation, complete authority coverage under digest
+preference, one-line verified state, and the single-entry budget.
+
 ## Lean bridge follow-up (October 11, 2026)
 
 Measured before implementation against the recent 1:32 AM ET coordinator log

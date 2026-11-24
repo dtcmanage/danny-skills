@@ -47,6 +47,10 @@ try {
     $verified = Invoke-Fixture 'verify-authority-digest.ps1'
     $result = $verified.text | ConvertFrom-Json
     Assert-True ($result.mode -eq 'originals' -and $result.verified) 'small authority set retains full-original bootstrap'
+    $preferred = (Invoke-Fixture 'verify-authority-digest.ps1' @('-PreferDigest')).text | ConvertFrom-Json
+    Assert-True ($preferred.mode -eq 'digest' -and $preferred.verified -and ($preferred.mandatory_paths -join '|') -eq ($result.mandatory_paths -join '|')) 'managed digest preference keeps every mandatory authorization read'
+    $readPreferred = Invoke-Fixture 'read-authority-digest.ps1' @('-PreferDigest')
+    Assert-True ($readPreferred.code -eq 0 -and $readPreferred.text.Contains('# Authority digest')) 'preferred digest reader verifies and emits full navigation digest'
     $manifest = Get-Content (Join-Path $root 'authority-digest.json') -Raw | ConvertFrom-Json
     Assert-True (@($manifest.originals).Count -eq 5 -and @($manifest.originals | Where-Object { $_.path -eq $approval }).Count -eq 1 -and @($manifest.originals | Where-Object { $_.path -eq (Join-Path $root 'approvals/r3b3.md') }).Count -eq 1) 'recursive boundary references, bare relative approval paths and complete approvals are covered once'
     Assert-True ($result.mandatory_paths -contains $current -and $result.mandatory_paths -contains $approval -and $result.mandatory_paths -contains $checkpoint) 'current boundary, approvals and checkpoint always remain full reads'
@@ -320,6 +324,29 @@ try {
     try { Resolve-AuthorityLiteral 'A/record.md' $liveCheckpoint $liveRoot $cyclicAliases | Out-Null } catch { $cycleFailed = $_.Exception.Message.Contains('AUTHORITY_ALIAS_CYCLE') }
     Assert-True $cycleFailed 'cyclic alias definitions fail closed without an unbounded resolver loop'
     # FS-111: prose locators are diagnostics; a genuinely named missing original still stops.
+    # Fixed names, independent of the fixture GUID: embedded date letters must never waive authority.
+    $tokenRoot = Join-Path $root 'placeholder-regressions'
+    New-Item -ItemType Directory -Path $tokenRoot | Out-Null
+    $tokenCheckpoint = Join-Path $tokenRoot '_build-state.md'
+    foreach ($segment in @('123dd456', '123DD456', '123mm456', '123MM456', '123yyyy456', '123YYYY456', 'ordinaryword', 'dd', 'mm', 'yyyy', 'xDDx', 'éDDé', '文MM文', '123{DDx}456', 'unpaired<date', 'unpaired>date')) {
+        $missingPath = Join-Path $tokenRoot "$segment/original.md"
+        Write-Text $tokenCheckpoint ('Read original: `' + $missingPath + '`')
+        $failure = ''
+        try { Get-AuthorityInventory $tokenRoot $tokenCheckpoint | Out-Null } catch { $failure = $_.Exception.Message }
+        Assert-True ($failure.StartsWith('AUTHORITY_MISSING:') -and $failure.Contains($missingPath)) "ordinary or ambiguous path fails closed: $segment"
+        Assert-True (@($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $missingPath -and $_.required }).Count -eq 1) "missing original remains required: $segment"
+    }
+    foreach ($template in @('YYYY/MM/DD/original.md', 'YYYY-MM-DD/original.md', '<date>/original.md', '{DD}/original.md', '{YYYY}/{MM}/{DD}/original.md', '{YYYY-MM-DD}/original.md', 'raw/<machine>/<tool>/<session_id>.jsonl', 'digests/<machine>/<workstation>/<YYYY-MM-DD>_<session_id>.md', '~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl', 'sessions/*.json')) {
+        $templatePath = Join-Path $tokenRoot $template
+        Write-Text $tokenCheckpoint ('Example: `' + $templatePath + '`')
+        $inventory = @(Get-AuthorityInventory $tokenRoot $tokenCheckpoint)
+        Assert-True ($inventory.Count -eq 0 -and @($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $templatePath -and -not $_.required -and $_.reason -eq 'non_authority_reference' }).Count -eq 1) "explicit template remains recognized: $template"
+    }
+    $missingPath = Join-Path $tokenRoot 'not-authority-digest.md'
+    Write-Text $tokenCheckpoint ('Read original: `' + $missingPath + '`')
+    $failure = ''
+    try { Get-AuthorityInventory $tokenRoot $tokenCheckpoint | Out-Null } catch { $failure = $_.Exception.Message }
+    Assert-True ($failure.StartsWith('AUTHORITY_MISSING:') -and $failure.Contains($missingPath)) 'digest filename suffix does not waive an ordinary original'
     $proseRoot = Join-Path $root 'prose-tokens'
     New-Item -ItemType Directory -Path $proseRoot | Out-Null
     $proseCheckpoint = Join-Path $proseRoot '_build-state.md'

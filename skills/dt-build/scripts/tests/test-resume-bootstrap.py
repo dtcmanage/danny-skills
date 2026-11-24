@@ -15,6 +15,16 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 class BootstrapTests(unittest.TestCase):
+    def test_single_entry_added_budget(self) -> None:
+        manifest = Path(__file__).parent / 'fixtures' / 'resume-bootstrap-budget.json'
+        plan = json.loads(manifest.read_text())
+        self.assertEqual(plan['target_tokens'], 24000)
+        self.assertIn('coordinator-added', plan['budget_scope'])
+        self.assertEqual(plan['repo_reads'], [])
+        self.assertEqual(len(plan['rendered_reads']), 1)
+        self.assertIn('read-coordinator-rulebook.ps1', ' '.join(plan['rendered_reads'][0]['command']))
+        self.assertTrue(any(item['tokens'] >= 6000 and 'approvals' in item['source'] for item in plan['measured_components']))
+
     def test_both_hosts(self) -> None:
         for host in ('claude', 'codex'):
             with self.subTest(host=host):

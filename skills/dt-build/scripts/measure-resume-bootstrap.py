@@ -2,7 +2,7 @@
 
 o200k_base is a reproducible text-token proxy; transcript input_tokens is the actual
 model measurement. Install the pinned dependency in requirements-bootstrap.txt.
-No run files are modified. The budget includes runtime overhead and safety reads.
+No run files are modified. The manifest declares its budget scope and safety reserves.
 """
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ def measure_plan(manifest_path: Path, repo_root: Path, canonical_root: Path | No
                            "measurement": "current rendered rulebook, o200k_base"})
     total = sum(item["tokens"] for item in components)
     return {"components": components, "total_tokens": total, "target_tokens": manifest["target_tokens"],
+            "budget_scope": manifest.get("budget_scope", "total read plan including declared runtime reserves"),
             "pass": total < manifest["target_tokens"], "kind": "resume read-plan budget; not a live model baseline"}
 
 

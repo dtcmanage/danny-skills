@@ -1,9 +1,9 @@
 #Requires -Version 7.0
-param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath)
+param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [switch]$PreferDigest)
 . (Join-Path $PSScriptRoot 'authority-digest.ps1')
 # Verified full read through a script: digest reads are not evidence slices and must not be
 # blocked by a prior context-wall or repeat-read entry. Hard context limits still require handoff.
-$verification = & (Join-Path $PSScriptRoot 'verify-authority-digest.ps1') -RunFolder $RunFolder -BuildStatePath $BuildStatePath | ConvertFrom-Json
+$verification = & (Join-Path $PSScriptRoot 'verify-authority-digest.ps1') -RunFolder $RunFolder -BuildStatePath $BuildStatePath -PreferDigest:$PreferDigest | ConvertFrom-Json
 $manifestPath = Join-Path $RunFolder 'authority-digest.json'
 $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
 $manifestHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($manifestBytes)).ToLowerInvariant()

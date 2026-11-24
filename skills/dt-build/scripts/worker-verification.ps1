@@ -1,4 +1,7 @@
 # Shared wrapper checks; approvals remain owned by dt-job.
+. (Join-Path $PSScriptRoot 'powershell-startup.ps1')
+Disable-DtPowerShellStartupProfile
+
 function Assert-WorkerAttemptApproval {
     param([int]$RequestedAttempt, [string]$ApprovalName, [string]$ApprovalRunFolder)
     if ($RequestedAttempt -le 2) { return }

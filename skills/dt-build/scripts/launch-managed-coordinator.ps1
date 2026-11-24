@@ -25,21 +25,23 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'powershell-startup.ps1')
+Disable-DtPowerShellStartupProfile
 
 $dtJob = Join-Path $PSScriptRoot 'dt-job.ps1'
 $runRoot = [System.IO.Path]::GetFullPath($RunFolder)
 $skillRoot = Split-Path -Parent $PSScriptRoot
 $resolvedSkillRoot = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
 if ($resolvedSkillRoot) { $skillRoot = $resolvedSkillRoot.FullName }
-$resumeGuide = Join-Path $skillRoot 'references/managed-resume.md'
 # Use the dedicated resume entry, not a skill invocation that reloads the entire intake skill.
 # Only the headless Codex coordinator opts out of eager canonical reads; authority reads remain mandatory.
 $prompt = @"
 Resume existing managed build $RunId as coordinator $CoordinatorId on $CoordinatorHost.
 Run folder: $runRoot
 Checkpoint: $BuildStatePath
-Read and follow $resumeGuide as your entry contract, plus the canonical context bridge$(if ($CoordinatorHost -eq 'claude') { ' (for this Claude coordinator: the build coordinator instructions in your system prompt, generated at launch from the live CLAUDE.md chain; do not reread those CLAUDE.md files)' }).
-For a lean bridge, read the compact coordinator rulebook via scripts/read-coordinator-rulebook.ps1 -CoordinatorHost $CoordinatorHost; canonical policy is deferred until its action is triggered.
+Your single bootstrap entry read is: pwsh -NoProfile -File "$PSScriptRoot/read-coordinator-rulebook.ps1" -CoordinatorHost $CoordinatorHost
+Run that command alone, then follow its ordered resume contract. It includes the resume guide and shared policies; do not cat them or combine the command with state dumps. If a tool persists output, read only its unseen remainder, never replay the entire output file.
+Follow the canonical context bridge$(if ($CoordinatorHost -eq 'claude') { ' (for this Claude coordinator: the build coordinator instructions in your system prompt, generated at launch from the live CLAUDE.md chain; do not reread those CLAUDE.md files)' }). Canonical policy deferred by a lean bridge still loads when its action is triggered.
 Complete required authorization reads, then mark-bootstrap immediately, and continue the checkpoint's next action.
 Do not repeat intake or preload implementation/close-out references. Never run dt-job resume or approve.
 That rule binds you only: the launching session runs resume, approve and relaunch, so never ask Danny to type a command; raise only genuine decisions with dt-job await-danny.

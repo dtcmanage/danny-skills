@@ -1,5 +1,8 @@
 # A fresh interpreter per call without starting another OS process. Real process/CLI tests
 # continue to use pwsh. Never pool runspaces: functions, globals and modules must not leak.
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'powershell-startup.ps1')
+Disable-DtPowerShellStartupProfile
+
 if (-not ('DtTestShellHost' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;

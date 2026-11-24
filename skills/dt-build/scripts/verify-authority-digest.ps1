@@ -1,5 +1,5 @@
 #Requires -Version 7.0
-param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [string]$DigestDirectory)
+param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [string]$DigestDirectory, [switch]$PreferDigest)
 . (Join-Path $PSScriptRoot 'authority-digest.ps1')
 $destination = if ($DigestDirectory) { $DigestDirectory } else { $RunFolder }
 $jsonPath = Join-Path $destination 'authority-digest.json'
@@ -38,7 +38,7 @@ $total = $checkpointChars
 if ($records.Count) { $total += [long]($records | Measure-Object chars -Sum).Sum }
 $bootstrapChars = [IO.File]::ReadAllText($mdPath).Length + $checkpointChars
 foreach ($record in $records) { if ($record.path -in $mandatory) { $bootstrapChars += $record.chars } }
-$useDigest = $total -gt $script:AuthorityReadBudgetChars -or (Test-Path -LiteralPath (Join-Path $RunFolder 'context-wall.json'))
+$useDigest = $PreferDigest -or $total -gt $script:AuthorityReadBudgetChars -or (Test-Path -LiteralPath (Join-Path $RunFolder 'context-wall.json'))
 if ($useDigest -and $bootstrapChars -gt $script:AuthorityReadCeilingChars) { throw "AUTHORITY_BOOTSTRAP_BUDGET: digest plus current authority is $bootstrapChars chars, above the $script:AuthorityReadCeilingChars-character hard ceiling (target $script:AuthorityReadBudgetChars). Operator: consolidate or supersede old stop records, then rebuild and verify; never omit mandatory current authority." }
 $budgetState = if ($useDigest -and $bootstrapChars -gt $script:AuthorityReadBudgetChars) { 'over_target' } else { 'within_target' }
 $mandatoryBytes = (Get-Item -LiteralPath $BuildStatePath).Length

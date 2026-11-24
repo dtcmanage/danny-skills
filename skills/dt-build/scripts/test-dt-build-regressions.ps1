@@ -12,7 +12,10 @@ if ($Shard -eq 0 -and -not $Serial) {
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
-    if (-not $Condition) { throw "ASSERT_FAIL: $Message" }
+    if (-not $Condition) {
+        [Console]::Error.WriteLine("ASSERT_FAIL: $Message")
+        throw "ASSERT_FAIL: $Message"
+    }
     $script:passed++
 }
 
@@ -28,6 +31,9 @@ $skillRoot = Split-Path -Parent $scriptDir
 $resolvedSkillRoot = (Get-Item -LiteralPath $skillRoot).ResolveLinkTarget($true)
 if ($resolvedSkillRoot) { $skillRoot = $resolvedSkillRoot.FullName }
 $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
+. (Join-Path $repoRoot 'scripts/lib/resolve-test-python.ps1')
+$testPython = (Resolve-TestPython).Path
+if (-not $testPython) { throw 'Test Python unavailable' }
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-build-regressions-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 $originalFakeCliRoot = $env:DT_ROUTER_TEST_FAKE_CLI_ROOT
@@ -51,8 +57,12 @@ $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
     if ($Shard -in @(0,1)) {
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-powershell-startup.ps1')
+        Assert-True ($LASTEXITCODE -eq 0) 'headless children bypass the shared runtime startup profile'
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-gates-briefs.ps1')
         Assert-True ($LASTEXITCODE -eq 0) 'moved paths, full failure diagnostics and worker brief regressions pass'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-authority-digest.ps1')
+        Assert-True ($LASTEXITCODE -eq 0) 'authority digest preference and full authorization coverage regressions pass'
     }
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-boundary-ledger.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'boundary ledger bootstrap regressions pass'
@@ -90,29 +100,49 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     Push-Location $tempRoot
     try { $rulebook = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -CoordinatorHost codex) -join "`n" }
     finally { Pop-Location }
-    Assert-True ($rulebook.Contains("<skill> = $skillRoot") -and $rulebook.Contains("<danny-skills> = $repoRoot")) 'rendered resume rulebook supplies resolved roots from outside the repo'
+    Assert-True ($rulebook.Contains("<skill> = $skillRoot") -and $rulebook.Contains("<danny-skills> = $repoRoot")) "rendered resume rulebook supplies resolved roots from outside the repo; exit=$LASTEXITCODE; observed=$rulebook"
     Assert-True ($LASTEXITCODE -eq 0 -and $rulebook.Contains('## Model routing') -and $rulebook.Contains('## Context discipline') -and $rulebook.Contains('6. Execute milestones') -and $rulebook.Contains('7. Guardrails:')) 'rulebook contains all resume execution sections'
     Assert-True (-not $rulebook.Contains('1. Intake in one question') -and -not $rulebook.Contains('## Usage telemetry') -and $rulebook.Contains('grants no permission')) 'rulebook omits intake and retains the authority boundary'
-    # The resume budget counts the runtime/native floor, all safety reads, and current repo text.
+    foreach ($source in @((Join-Path $repoRoot 'references/deterministic-reference-policy.md'), (Join-Path $repoRoot 'references/conventions.md'))) {
+        $body = [IO.File]::ReadAllText($source).Replace("`r`n", "`n").Trim()
+        Assert-True ($rulebook.Contains($body) -and $rulebook.IndexOf($body) -eq $rulebook.LastIndexOf($body)) "single entry renders complete $source exactly once"
+    }
+    $resumeText = [IO.File]::ReadAllText((Join-Path $skillRoot 'references/managed-resume.md')).Replace("`r`n", "`n")
+    $authorityStart = $resumeText.IndexOf('## Authority read contract')
+    $authorityEnd = $resumeText.IndexOf('## Worker authority scope')
+    Assert-True ($rulebook.Contains($resumeText.Substring($authorityStart, $authorityEnd - $authorityStart).Trim())) 'single entry retains complete authorization contract verbatim'
+    $liveBugStart = $resumeText.IndexOf('## Live-bug fast lane')
+    Assert-True ($rulebook.Contains($resumeText.Substring($liveBugStart, $authorityStart - $liveBugStart).Trim())) 'single entry retains the live-bug fast lane verbatim'
+    Assert-True (-not $rulebook.Contains('## Lane health') -and -not $rulebook.Contains('## Launch watch') -and $rulebook.Contains('lane-health diagnosis')) 'lane health remains deferred and launch watch belongs to the launching session'
+    Assert-True ($rulebook.Contains('## Before marking bootstrap') -and -not $rulebook.Contains('## Authority roll-forward') -and -not $rulebook.Contains('## Operator recovery')) 'single entry defers procedures outside bootstrap'
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-build-orchestrator-rules.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'worker/coordinator instruction generation regressions pass'
+    # Coordinator-added budget: all safety reads and current repo text, host overhead measured separately.
     $measureBootstrap = Join-Path $scriptDir 'measure-resume-bootstrap.py'
     $bootstrapManifest = Join-Path $scriptDir 'tests/fixtures/resume-bootstrap-budget.json'
     $measureArgs = @($measureBootstrap, '--manifest', $bootstrapManifest, '--repo-root', $repoRoot)
-    if (Test-Path -LiteralPath 'D:\Claude\CLAUDE.md') { $measureArgs += @('--canonical-root', 'D:\Claude') }
-    & python @measureArgs *> (Join-Path $tempRoot 'resume-bootstrap-budget.json')
-    Assert-True ($LASTEXITCODE -eq 0) 'measured resume bootstrap read plan stays below 50,000 tokens'
+    $canonicalRoots = @($env:CLAUDE_CONFIG_DIR, $(if ($IsWindows) { 'D:\Claude' } else { '/home/danny/Claude' }))
+    foreach ($canonicalRoot in $canonicalRoots) {
+        if ($canonicalRoot -and (Test-Path -LiteralPath (Join-Path $canonicalRoot 'CLAUDE.md'))) {
+            $measureArgs += @('--canonical-root', $canonicalRoot)
+            break
+        }
+    }
+    & $testPython @measureArgs *> (Join-Path $tempRoot 'resume-bootstrap-budget.json')
+    Assert-True ($LASTEXITCODE -eq 0) 'measured resume bootstrap read plan stays below 24,000 added tokens'
     $budget = Get-Content -Raw (Join-Path $tempRoot 'resume-bootstrap-budget.json') | ConvertFrom-Json
-    Assert-True ($budget.total_tokens -lt 50000 -and $budget.pass) "resume budget includes native context and authorization reserve ($($budget.total_tokens))"
+    Assert-True ($budget.target_tokens -eq 24000 -and $budget.total_tokens -lt 24000 -and $budget.pass) "resume budget includes single entry and complete authorization reserve ($($budget.total_tokens))"
     # Actual model input size is a separate gate; a large observed marker must fail.
     foreach ($tokens in @(49999, 50000, 109770)) {
         $rollout = Join-Path $tempRoot "bootstrap-$tokens.jsonl"
         $usageRow = [ordered]@{ type = 'event_msg'; payload = [ordered]@{ type = 'token_count'; info = [ordered]@{} } }
         $markRow = [ordered]@{ type = 'event_msg'; payload = [ordered]@{ type = 'item_completed'; item = [ordered]@{ type = 'CommandExecution'; command = @('pwsh', '-Verb mark-bootstrap'); aggregated_output = ('{"baseline_tokens":' + $tokens + ',"newly_marked":true}') } } }
         Write-Utf8 $rollout (($usageRow | ConvertTo-Json -Compress -Depth 8) + "`n" + ($markRow | ConvertTo-Json -Compress -Depth 8) + "`n")
-        & python $measureBootstrap --transcript $rollout *> (Join-Path $tempRoot "bootstrap-check-$tokens.json")
+        & $testPython $measureBootstrap --transcript $rollout *> (Join-Path $tempRoot "bootstrap-check-$tokens.json")
         Assert-True ($LASTEXITCODE -eq $(if ($tokens -lt 50000) { 0 } else { 1 })) "actual resume bootstrap $tokens uses the 50,000 token gate"
     }
 
-    & python (Join-Path $scriptDir 'tests/test-resume-bootstrap.py')
+    & $testPython (Join-Path $scriptDir 'tests/test-resume-bootstrap.py')
     Assert-True ($LASTEXITCODE -eq 0) 'Claude and Codex observed bootstrap fixtures pass'
 
     # A managed resume reads existing authority without re-registering or changing the cursor.
@@ -654,7 +684,7 @@ rationale: Framework limitation accepted with visible evidence.
     $verifyPrompt = Join-Path $tempRoot 'verify-attempt-3.md'
     Write-Utf8 $verifyPrompt "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 3`nfixture"
     $denied = (& pwsh -NoProfile -File (Join-Path $scriptDir 'verify-codex-prompt.ps1') -PromptPath $verifyPrompt -Json 2>&1) -join ' '
-    Assert-True ($denied -match 'attempt 3 outside the automatic budget') 'prompt verify rejects attempt 3 without a recorded approval'
+    Assert-True ($denied -match 'attempt 3 outside the automatic budget') "prompt verify rejects attempt 3 without a recorded approval; exit=$LASTEXITCODE; observed=$denied"
     $allowed = (& pwsh -NoProfile -File (Join-Path $scriptDir 'verify-codex-prompt.ps1') -PromptPath $verifyPrompt -ApprovalOperation 'retry-original' -RunFolder $verifyRun -Json 2>&1) -join ' '
     Assert-True ($allowed -notmatch 'identity: attempt') 'prompt verify accepts attempt 3 with a recorded approval'
 
@@ -970,6 +1000,7 @@ if ($env:DT_FAKE_SETTINGS_RECEIPT) {
 
 if ($env:DT_FAKE_SELECTION_RELEASE) { while (-not (Test-Path -LiteralPath $env:DT_FAKE_SELECTION_RELEASE)) { Start-Sleep -Milliseconds 100 } }
 if ($env:DT_FAKE_CLAUDE_ARGS) { [System.IO.File]::WriteAllText($env:DT_FAKE_CLAUDE_ARGS, ($args -join '|')) }
+if ($env:DT_FAKE_LEAN_RECEIPT) { [IO.File]::WriteAllText($env:DT_FAKE_LEAN_RECEIPT, [string]$env:CLAUDE_CODE_DISABLE_CLAUDE_MDS) }
 if ($env:DT_FAKE_LOG_DIR_RECEIPT) { [IO.File]::WriteAllText($env:DT_FAKE_LOG_DIR_RECEIPT, [string]$env:DT_BUILD_LOG_DIR) }
 $receivedPrompt=[Console]::In.ReadToEnd()
 if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
@@ -1159,8 +1190,8 @@ Write-Envelope $report
     try {
         $env:DT_FAKE_UNICODE_PROMPT = $hardwarePromptCapture
         $hardwareOutput = Join-Path $tempRoot 'claude-adhoc-hardware.md'
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $hardwareOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'hardware worker rule fixture' -AdHoc -MaxFixRounds 5 -Json *> $null
-        Assert-True ($LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('pytest-xdist -n <budget>')) 'ad-hoc Claude workers receive the shared hardware rule'
+        $hardwareObserved = (& pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $hardwareOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'hardware worker rule fixture' -AdHoc -MaxFixRounds 5 -Json 2>&1) -join "`n"
+        Assert-True ($LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('pytest-xdist -n <budget>')) "ad-hoc Claude workers receive the shared hardware rule; exit=$LASTEXITCODE; observed=$hardwareObserved"
         Assert-True ([IO.File]::ReadAllText($hardwarePromptCapture).Contains('Allow at most 5 fix rounds')) 'ad-hoc Claude receives custom fix-round budget'
         Assert-True ([IO.File]::ReadAllText($hardwarePromptCapture).Contains('until green') -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('network/SSH') -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('git symbolic-ref')) 'ad-hoc Claude receives repair, environment and live facts'
         $hardwareProvenance = Get-Content -Raw "$hardwareOutput.provenance.json" | ConvertFrom-Json
@@ -1215,7 +1246,13 @@ Write-Envelope $report
     # Slim-session contract: no MCP servers, no Agent tool (blocks nested agents),
     # and -ReadOnly drops the file-writing tools for verifier/review chunks.
     $claudeArgsLog = Join-Path $tempRoot 'claude-args.txt'
+    $leanOriginalConfig = $env:CLAUDE_CONFIG_DIR
+    try {
+    $env:CLAUDE_CONFIG_DIR = $tempRoot
+    Write-Utf8 (Join-Path $env:CLAUDE_CONFIG_DIR 'CLAUDE.md') "# Worker fixture`n## Rules`nWORKER-STANDING-RULE`n## Memory System`nMEMORY-ONLY"
+    Write-Utf8 (Join-Path $workingTree 'CLAUDE.md') '# Worker tree rules: ACTUAL-WORKER-TREE-RULE'
     $env:DT_FAKE_CLAUDE_ARGS = $claudeArgsLog
+    $env:DT_FAKE_LEAN_RECEIPT = Join-Path $tempRoot 'worker-lean-env.txt'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-args-build.md') `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
@@ -1223,11 +1260,35 @@ Write-Envelope $report
     Assert-True ($buildArgs -match '--strict-mcp-config') "Claude wrapper did not disable MCP servers"
     Assert-True ($buildArgs -match '--tools\|Bash,Read,Edit,Write,Glob,Grep(\||$)') "Claude wrapper build tool list drifted"
     Assert-True ($buildArgs -notmatch 'Agent') "Claude wrapper exposed the Agent tool to a chunk"
+    Assert-True ($buildArgs -match '--disable-slash-commands' -and $buildArgs -match '--append-system-prompt-file' -and $buildArgs.Trim().EndsWith('|--')) 'Claude builder receives generated instructions, skills off and option terminator'
+    $workerInstructions = Get-Content -Raw -LiteralPath (Join-Path $tempRoot 'claude-args-build.md.instructions.md')
+    Assert-True ($workerInstructions.Contains('standing rules') -and $workerInstructions.Contains('Memory System, Routing Map')) 'worker instructions use conservative generator defaults'
+    Assert-True ($workerInstructions.Contains('WORKER-STANDING-RULE') -and -not $workerInstructions.Contains('MEMORY-ONLY') -and [IO.File]::ReadAllText($env:DT_FAKE_LEAN_RECEIPT) -eq '1') 'worker gets live canonical rules with automatic CLAUDE.md loading disabled'
+    Assert-True ($workerInstructions.Contains('ACTUAL-WORKER-TREE-RULE')) 'worker generation uses ProjectPath instead of the wrapper cwd'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-args-verify.md') `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     $verifyArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
     Assert-True ($verifyArgs -match '--tools\|Bash,Read,Glob,Grep(\||$)') "Claude wrapper -ReadOnly still exposed write tools"
+    Assert-True ($verifyArgs -match '--disable-slash-commands' -and $verifyArgs.Trim().EndsWith('|--')) 'read-only reviewer starts lean too'
+    $savedFullContext = $env:DT_BUILD_FULL_CONTEXT; $savedDisableMds = $env:CLAUDE_CODE_DISABLE_CLAUDE_MDS
+    $savedRulesConfig = $env:CLAUDE_CONFIG_DIR
+    $env:DT_FAKE_LEAN_RECEIPT = Join-Path $tempRoot 'worker-lean-env.txt'
+    try {
+        $env:DT_BUILD_FULL_CONTEXT = '1'; $env:CLAUDE_CODE_DISABLE_CLAUDE_MDS = '1'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-full.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'full context opt out fixture' -Json *> $null
+        $fullArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
+        Assert-True ($LASTEXITCODE -eq 0 -and $fullArgs -notmatch '--append-system-prompt-file|--disable-slash-commands' -and $fullArgs -match '--strict-mcp-config' -and $fullArgs -match '--tools\|Bash,Read,Glob,Grep') 'full context opt out preserves MCP, model and read-only tools'
+        Assert-True ([IO.File]::ReadAllText($env:DT_FAKE_LEAN_RECEIPT) -eq '') 'full context opt out clears inherited disable-CLAUDE.md setting on child'
+        $env:DT_BUILD_FULL_CONTEXT = $null; $env:CLAUDE_CONFIG_DIR = Join-Path $tempRoot 'missing-rule-root'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-rules-fallback.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'missing rules fallback fixture' -Json *> $null
+        $fallbackArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
+        Assert-True ($LASTEXITCODE -eq 0 -and $fallbackArgs -notmatch '--append-system-prompt-file|--disable-slash-commands' -and [IO.File]::ReadAllText($env:DT_FAKE_LEAN_RECEIPT) -eq '') 'missing root restores normal loading even under a lean parent'
+    } finally {
+        $env:DT_BUILD_FULL_CONTEXT = $savedFullContext; $env:CLAUDE_CODE_DISABLE_CLAUDE_MDS = $savedDisableMds
+        $env:CLAUDE_CONFIG_DIR = $savedRulesConfig
+        Remove-Item Env:DT_FAKE_LEAN_RECEIPT -ErrorAction SilentlyContinue
+    }
     $lowClaudeOutput = Join-Path $tempRoot 'claude-effort-low.md'
     $logReceipt = Join-Path $tempRoot 'claude-log-dir.txt'; $env:DT_FAKE_LOG_DIR_RECEIPT = $logReceipt
     $savedJobDir = $env:DT_JOB_DIR; $env:DT_JOB_DIR = Join-Path $tempRoot 'log-run/jobs/j-0042'
@@ -1243,11 +1304,14 @@ Write-Envelope $report
     $missingEffortLog = Join-Path $tempRoot 'claude-missing-effort.log'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $lowClaudeOutput -ClaudeCliPath $fakeClaude -SelectionReason 'effort argument fixture' -Json *> $missingEffortLog
     Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw -LiteralPath $missingEffortLog) -match '-Effort' -and @(Get-Content -LiteralPath $missingEffortLog).Count -eq 1) 'Claude missing -Effort fails closed with one line'
-    Remove-Item Env:DT_FAKE_CLAUDE_ARGS -ErrorAction SilentlyContinue
+    } finally { $env:CLAUDE_CONFIG_DIR = $leanOriginalConfig }
 
     $env:DT_FAKE_CLAUDE_MODE = 'preflight'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) 'Claude preflight works without -Effort'
+    $preflightArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
+    Assert-True ($preflightArgs -notmatch '--append-system-prompt-file|--disable-slash-commands' -and -not (Test-Path -LiteralPath (Join-Path $tempRoot 'claude-preflight.md.instructions.md'))) 'preflight skips lean rules generation and flags'
+    Remove-Item Env:DT_FAKE_CLAUDE_ARGS -ErrorAction SilentlyContinue
     $env:DT_FAKE_CLAUDE_MODE = 'stamped-preflight'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-stamped-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) 'timestamp-prefixed Claude OK fails preflight'
@@ -1483,12 +1547,17 @@ $script:RouterDiagnosisHttp = {
             Remove-Item Env:DT_FAKE_SELECTION_RELEASE -ErrorAction SilentlyContinue
         }
         $waitRaw = & pwsh -NoProfile -File $dtJobScript wait -RunFolder $selectionRun -JobId $startJob.job_id -All -TimeoutSec 30 -Json
-        Assert-True ($LASTEXITCODE -eq 0) "$lane selection fixture finishes"
+        Assert-True ($LASTEXITCODE -eq 0) "$lane selection fixture finishes; exit=$LASTEXITCODE; observed=$($waitRaw -join ' ')"
     }
 
     }
     Write-Output 'PASS: dt-build regression suite'
     Write-Output "SUMMARY: $script:passed passed"
+}
+catch {
+    [Console]::Error.WriteLine("Regression failure artifacts: $tempRoot")
+    $tempRoot = '' # Retain the fixture tree for diagnosis.
+    throw
 }
 finally {
     $env:DT_BUILD_STATE_DIR = $originalBuildStateDir
@@ -1503,7 +1572,7 @@ finally {
     $env:DT_MODEL_ROUTER_STATE = $originalRouterState
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $originalAlertTransport
     Remove-Item Env:DT_FAKE_CODEX_MODE -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    if ($tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 exit 0
