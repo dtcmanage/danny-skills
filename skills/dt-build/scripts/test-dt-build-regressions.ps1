@@ -1,5 +1,10 @@
 param([ValidateRange(0,3)][int]$Shard = 0, [switch]$Serial)
 
+. (Join-Path $PSScriptRoot 'powershell-startup.ps1')
+Disable-DtPowerShellStartupProfile
+. (Join-Path $PSScriptRoot 'regression-fixtures.ps1')
+Remove-StaleDtRegressionFixtures -TempDirectory ([IO.Path]::GetTempPath())
+
 foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -57,6 +62,8 @@ $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 
 try {
     if ($Shard -in @(0,1)) {
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-regression-fixtures.ps1')
+        Assert-True ($LASTEXITCODE -eq 0) 'stale regression fixtures expire without removing recent failures'
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-powershell-startup.ps1')
         Assert-True ($LASTEXITCODE -eq 0) 'headless children bypass the shared runtime startup profile'
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-gates-briefs.ps1')

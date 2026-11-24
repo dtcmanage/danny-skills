@@ -232,12 +232,18 @@ function Get-AuthorityInventory {
         if ($script:AuthorityEnumeratedPaths.Count -and $path -ne $checkpoint) { continue }
         $candidates = if ($path -eq $checkpoint) { $checkpointCandidates } else { @(Get-AuthorityCandidates $text $aliases) }
         foreach ($candidate in $candidates) {
-            # Only explicit template syntax or uppercase, delimited date tokens are placeholders.
-            # Digits and letters belong to ordinary path segments (including hexadecimal IDs).
-            # Do not infer a template from lowercase words, unpaired brackets or embedded tokens.
-            if ($candidate.literal -match '[*?]|^~[/\\]|<[A-Za-z][A-Za-z0-9_-]*>' -or
-                $candidate.literal -cmatch '\{(?:YYYY|MM|DD|YYYY-MM-DD)\}|(?<![\p{L}\p{N}\p{M}])(?:YYYY|MM|DD)(?![\p{L}\p{N}\p{M}])') {
-                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false })
+            # Keep each waiver explicit and visible in the coordinator's digest read.
+            $waiverRule = switch -Regex -CaseSensitive ($candidate.literal) {
+                '[*]' { 'wildcard_star'; break }
+                '[?]' { 'wildcard_question'; break }
+                '^~[/\\]' { 'home_template'; break }
+                '<[A-Za-z][A-Za-z0-9_-]*>' { 'angle_name'; break }
+                '\{[A-Za-z_][A-Za-z0-9_-]*\}' { 'brace_name'; break }
+                '(?:^|[/\\])(?:yyyy-mm-dd|yyyy/mm/dd|YYYYMMDD|yyyymmdd)(?=$|[/\\]|\.[^/\\]+$)' { 'full_date_template'; break }
+                '(?<![\p{L}\p{N}\p{M}])(?:YYYY|MM|DD)(?![\p{L}\p{N}\p{M}])' { 'uppercase_date_token'; break }
+            }
+            if ($waiverRule) {
+                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false; waiver_rule = $waiverRule })
                 continue
             }
             $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases
@@ -352,7 +358,7 @@ function Get-AuthorityMarkdownBody {
             $lines += "D${d}:" + ($members -join ',')
         }
         $lines += @('', '## Diagnostics', 'Unresolved candidates:')
-        foreach ($item in $script:AuthorityDiagnostics) { $lines += "- $($item.reason): ``$($item.candidate)``" }
+        foreach ($item in $script:AuthorityDiagnostics) { $lines += "- $($item.reason)$(if ($item.PSObject.Properties['waiver_rule']) { ' [waiver: ' + $item.waiver_rule + ']' }): ``$($item.candidate)``" }
         if (-not $script:AuthorityDiagnostics.Count) { $lines += '- none' }
         return ($lines -join "`n") + "`n"
     }
@@ -366,7 +372,7 @@ function Get-AuthorityMarkdownBody {
     # original. A small per-record allowance avoids another 99-source bootstrap wall.
     $overhead = (($lines -join "`n") + "`n").Length + (($prefixes -join "`n") + "`n").Length
     $diagnosticLines = @('', '## Diagnostics', 'Unresolved candidates (required originals fail closed):')
-    foreach ($item in $script:AuthorityDiagnostics) { $diagnosticLines += "- $($item.reason): ``$($item.candidate)``" }
+    foreach ($item in $script:AuthorityDiagnostics) { $diagnosticLines += "- $($item.reason)$(if ($item.PSObject.Properties['waiver_rule']) { ' [waiver: ' + $item.waiver_rule + ']' }): ``$($item.candidate)``" }
     if (-not $script:AuthorityDiagnostics.Count) { $diagnosticLines += '- none' }
     $overhead += (($diagnosticLines -join "`n") + "`n").Length
     $overhead += (Get-AuthorityBudgetHeader -OverTarget $true).Length

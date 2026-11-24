@@ -328,7 +328,7 @@ try {
     $tokenRoot = Join-Path $root 'placeholder-regressions'
     New-Item -ItemType Directory -Path $tokenRoot | Out-Null
     $tokenCheckpoint = Join-Path $tokenRoot '_build-state.md'
-    foreach ($segment in @('123dd456', '123DD456', '123mm456', '123MM456', '123yyyy456', '123YYYY456', 'ordinaryword', 'dd', 'mm', 'yyyy', 'xDDx', 'éDDé', '文MM文', '123{DDx}456', 'unpaired<date', 'unpaired>date')) {
+    foreach ($segment in @('123dd456', '123DD456', '123mm456', '123MM456', '123yyyy456', '123YYYY456', 'ordinaryword', 'dd', 'mm', 'yyyy', 'xDDx', 'éDDé', '文MM文', '123{456}789', 'prefixyyyy-mm-ddsuffix', 'prefixyyyymmddsuffix', 'prefixYYYYMMDDsuffix', 'unpaired<date', 'unpaired>date')) {
         $missingPath = Join-Path $tokenRoot "$segment/original.md"
         Write-Text $tokenCheckpoint ('Read original: `' + $missingPath + '`')
         $failure = ''
@@ -336,11 +336,28 @@ try {
         Assert-True ($failure.StartsWith('AUTHORITY_MISSING:') -and $failure.Contains($missingPath)) "ordinary or ambiguous path fails closed: $segment"
         Assert-True (@($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $missingPath -and $_.required }).Count -eq 1) "missing original remains required: $segment"
     }
-    foreach ($template in @('YYYY/MM/DD/original.md', 'YYYY-MM-DD/original.md', '<date>/original.md', '{DD}/original.md', '{YYYY}/{MM}/{DD}/original.md', '{YYYY-MM-DD}/original.md', 'raw/<machine>/<tool>/<session_id>.jsonl', 'digests/<machine>/<workstation>/<YYYY-MM-DD>_<session_id>.md', '~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl', 'sessions/*.json')) {
+    foreach ($template in @('YYYY/MM/DD/original.md', 'YYYY-MM-DD/original.md', '<date>/original.md', '{DD}/original.md', '{YYYY}/{MM}/{DD}/original.md', '{YYYY-MM-DD}/original.md', 'raw/<machine>/<tool>/<session_id>.jsonl', 'digests/<machine>/<workstation>/<YYYY-MM-DD>_<session_id>.md', '~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl', 'sessions/*.json', '{date}/original.md', '{session_id}.md', '{_session-id}/original.md', 'yyyy-mm-dd/original.md', 'logs/yyyy-mm-dd.md', 'yyyy/mm/dd/original.md', 'logs/yyyy/mm/dd.md', 'YYYYMMDD/original.md', 'YYYYMMDD.md', 'yyyymmdd/original.md', 'yyyymmdd.md')) {
         $templatePath = Join-Path $tokenRoot $template
         Write-Text $tokenCheckpoint ('Example: `' + $templatePath + '`')
         $inventory = @(Get-AuthorityInventory $tokenRoot $tokenCheckpoint)
         Assert-True ($inventory.Count -eq 0 -and @($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $templatePath -and -not $_.required -and $_.reason -eq 'non_authority_reference' }).Count -eq 1) "explicit template remains recognized: $template"
+    }
+    foreach ($waiver in @(
+        @{ path = 'IDs/AB-DD-01/original.md'; rule = 'uppercase_date_token' },
+        @{ path = 'docs/MM/spec.md'; rule = 'uppercase_date_token' },
+        @{ path = 'docs/YYYY/spec.md'; rule = 'uppercase_date_token' },
+        @{ path = '<word>/original.md'; rule = 'angle_name' },
+        @{ path = 'docs/*.md'; rule = 'wildcard_star' },
+        @{ path = 'docs/?.md'; rule = 'wildcard_question' },
+        @{ path = '{session_id}.md'; rule = 'brace_name' },
+        @{ path = 'logs/yyyy-mm-dd.md'; rule = 'full_date_template' }
+    )) {
+        Write-Text $tokenCheckpoint ('Example: `' + $waiver.path + '`')
+        $builtWaiver = & pwsh -NoProfile -File (Join-Path $scripts 'build-authority-digest.ps1') -RunFolder $tokenRoot -BuildStatePath $tokenCheckpoint 2>&1
+        Assert-True ($LASTEXITCODE -eq 0) "waived path builds: $($waiver.path)"
+        $readWaiver = & pwsh -NoProfile -File (Join-Path $scripts 'read-authority-digest.ps1') -RunFolder $tokenRoot -BuildStatePath $tokenCheckpoint 2>&1
+        $readText = $readWaiver -join "`n"
+        Assert-True ($LASTEXITCODE -eq 0 -and $readText.Contains('[waiver: ' + $waiver.rule + ']: `' + $waiver.path + '`')) "coordinator read names waived path and rule: $($waiver.path)"
     }
     $missingPath = Join-Path $tokenRoot 'not-authority-digest.md'
     Write-Text $tokenCheckpoint ('Read original: `' + $missingPath + '`')

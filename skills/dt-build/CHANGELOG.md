@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.58.1
+
+- Recognize explicit brace and full-date placeholders, expose waiver rules, protect manual regression shards, and expire failed fixtures after seven days.
+
 ## 2.58.0
 
 - Start Claude workers with generated live rules and skills disabled; add managed digest preference and a single-entry coordinator bootstrap with a 24k added-token read-plan budget.
