@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.2.3 dt-build 2.55.0: lean Claude coordinator start; instructions regenerated from the live CLAUDE.md chain at every launch, skills off, run-chosen tools (60.5k -> 21.5k startup tokens).",
       "1.2.2 dt-build 2.54.1, dt-ship 0.4.1: test dependencies come from the host's standard build-test venv, found and topped up automatically, so gates and pytest serialization run from a plain shell; version policy owners updated.",
       "1.2.1 git-merge-feature 1.2.8: merge a branch that has no worktree in a temporary worktree, so a dirty primary tree no longer blocks dt-ship.",
       "1.2.0 dt-build 2.54.0, dt-pipeline 0.2.2: launches are watched until the coordinator works or its exit is reported; lane health is decided only by preflight and never skips a required review; the launching session runs resume and approve; the watcher relaunches context rotations whoever launched them and finds re-parented survivors on Linux; live-bug fast lane; required plain status_line in the build state; scoped gate base defined.",

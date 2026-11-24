@@ -38,7 +38,7 @@ $prompt = @"
 Resume existing managed build $RunId as coordinator $CoordinatorId on $CoordinatorHost.
 Run folder: $runRoot
 Checkpoint: $BuildStatePath
-Read and follow $resumeGuide as your entry contract, plus the canonical context bridge.
+Read and follow $resumeGuide as your entry contract, plus the canonical context bridge$(if ($CoordinatorHost -eq 'claude') { ' (for this Claude coordinator: the build coordinator instructions in your system prompt, generated at launch from the live CLAUDE.md chain; do not reread those CLAUDE.md files)' }).
 For a lean bridge, read the compact coordinator rulebook via scripts/read-coordinator-rulebook.ps1 -CoordinatorHost $CoordinatorHost; canonical policy is deferred until its action is triggered.
 Complete required authorization reads, then mark-bootstrap immediately, and continue the checkpoint's next action.
 Do not repeat intake or preload implementation/close-out references. Never run dt-job resume or approve.
@@ -91,7 +91,36 @@ else {
     $snippet = [System.IO.File]::ReadAllText((Join-Path $hooksDir 'settings-snippet.json'))
     [System.IO.File]::WriteAllText($mcpConfig, '{ "mcpServers": {} }', [System.Text.UTF8Encoding]::new($false))
     [System.IO.File]::WriteAllText($settings, $snippet.Replace('__DT_BUILD_HOOKS_DIR__', $hooksDir), [System.Text.UTF8Encoding]::new($false))
-    $lines.Add("& claude -p --strict-mcp-config --mcp-config $(ConvertTo-SingleQuoted $mcpConfig) --settings $(ConvertTo-SingleQuoted $settings) --permission-mode bypassPermissions $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
+    # Lean start (measured 2026-11-24: 58k -> 18k host tokens before the coordinator's own reads). Claude
+    # Code's CLAUDE.md loading is off and the coordinator gets the build coordinator instructions instead,
+    # regenerated from the live CLAUDE.md chain at every launch so they never drift. Skills are off and the
+    # tool list comes from the run folder's coordinator-tools.txt (one comma- or line-separated list; the
+    # director edits it, and the next coordinator launch picks it up). Hooks still run, so the context
+    # guard is unaffected. DT_BUILD_FULL_CONTEXT=1 restores Claude Code's normal loading for a run.
+    # '--' ends the options: --tools takes several values and would otherwise swallow the prompt.
+    $leanArgs = ''
+    if ($env:DT_BUILD_FULL_CONTEXT -ne '1') {
+        # One file per run, overwritten at each launch: generation is deterministic, so unchanged rules give
+        # identical bytes; the log records a short hash so a mid-run rule change is visible.
+        $rulesPath = Join-Path $runRoot 'coordinator-instructions.md'
+        $built = & pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'build-orchestrator-rules.ps1') -WorkDir $workDir -OutPath $rulesPath 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $toolsFile = Join-Path $runRoot 'coordinator-tools.txt'
+            if (-not (Test-Path -LiteralPath $toolsFile)) {
+                [System.IO.File]::WriteAllText($toolsFile, "Bash,Read,Edit,Write`n", [System.Text.UTF8Encoding]::new($false))
+            }
+            $tools = (([System.IO.File]::ReadAllText($toolsFile) -split '[,\s]+') | Where-Object { $_ }) -join ','
+            if (-not $tools) { $tools = 'Bash,Read,Edit,Write' }
+            $lines.Add("`$env:CLAUDE_CODE_DISABLE_CLAUDE_MDS = '1'")
+            $leanArgs = "--append-system-prompt-file $(ConvertTo-SingleQuoted $rulesPath) --disable-slash-commands --tools $(ConvertTo-SingleQuoted $tools) "
+            $rulesHash = (Get-FileHash -LiteralPath $rulesPath -Algorithm SHA256).Hash.Substring(0, 12).ToLowerInvariant()
+            [System.IO.File]::AppendAllText($log, "lean start: instructions $rulesPath (sha256 $rulesHash); tools $tools`n", [System.Text.UTF8Encoding]::new($false))
+        }
+        else {
+            [System.IO.File]::AppendAllText($log, "lean start skipped (normal CLAUDE.md loading): $($built -join ' ')`n", [System.Text.UTF8Encoding]::new($false))
+        }
+    }
+    $lines.Add("& claude -p --strict-mcp-config --mcp-config $(ConvertTo-SingleQuoted $mcpConfig) --settings $(ConvertTo-SingleQuoted $settings) --permission-mode bypassPermissions $leanArgs-- $(ConvertTo-SingleQuoted $prompt) *>> $(ConvertTo-SingleQuoted $log)")
 }
 $lines.Add('$coordinatorExit = $LASTEXITCODE')
 $lines.Add("`$capacityText = [IO.File]::ReadAllText($(ConvertTo-SingleQuoted $log))")

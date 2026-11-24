@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.55.0
+
+- Lean Claude coordinator start: CLAUDE.md loading off, build coordinator instructions regenerated from the live CLAUDE.md chain at every launch (build-orchestrator-rules.ps1; no drift), skills off, tools from the run's coordinator-tools.txt; measured 60.5k -> 21.5k startup tokens, hooks unchanged; DT_BUILD_FULL_CONTEXT=1 opts out.
+
 ## 2.54.1
 
 - Resolve test Python from the host standard venv or explicit override, with automatic additive uv provisioning and inherited child PATH.
