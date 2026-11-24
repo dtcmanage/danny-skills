@@ -48,6 +48,10 @@ $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-ctx-tests-{0}" -f (
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
 $savedEnv = @{}
+$savedEnv['DT_BUILD_HEADLESS'] = $env:DT_BUILD_HEADLESS
+# Coordinator leases remain real fixtures; registration must not discover the
+# interactive test runner's live director through its process ancestry.
+$env:DT_BUILD_HEADLESS = '1'
 foreach ($name in @('CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID')) {
     $savedEnv[$name] = [System.Environment]::GetEnvironmentVariable($name)
     Remove-Item "Env:$name" -ErrorAction SilentlyContinue

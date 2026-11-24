@@ -2,7 +2,7 @@ param(
     [switch]$GeneratorDifferentialOnly,
     [string]$GeneratorPath,
     [string]$HeadMeasurementPath,
-    [ValidateRange(0, 2)][int]$Shard = 0,
+    [ValidateRange(0, 6)][int]$Shard = 0,
     [switch]$Serial
 )
 
@@ -13,36 +13,44 @@ $script:passed = 0
 $script:failed = 0
 . (Join-Path $PSScriptRoot 'test-shell.ps1')
 
-# Two independent fixture groups, each in its own process/environment and GUID temp root.
-# Keep the public suite complete by default; the gate accounts for its two worker slots.
+# Six independent groups: generator, guards/pins, scheduling, helpers, directors, evidence/exits.
+# Each has its own process/environment and GUID temp root; the gate reserves six slots.
 if ($Shard -eq 0 -and -not $GeneratorDifferentialOnly -and -not $Serial) {
     $logs = Join-Path ([IO.Path]::GetTempPath()) ('dt-job-shards-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $logs | Out-Null
     $workers = @()
     $wall = [Diagnostics.Stopwatch]::StartNew()
     try {
-        foreach ($part in 1,2) {
+        foreach ($part in 1..6) {
             $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Shard $part"
             if ($GeneratorPath) { $command += " -GeneratorPath '" + $GeneratorPath.Replace("'", "''") + "'" }
             if ($HeadMeasurementPath) { $command += " -HeadMeasurementPath '" + $HeadMeasurementPath.Replace("'", "''") + "'" }
             $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
             $out = Join-Path $logs "$part.log"; $err = Join-Path $logs "$part.stderr.log"
             $process = Start-Process (Join-Path $PSHOME 'pwsh') -ArgumentList @('-NoProfile','-EncodedCommand',$encoded) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
-            $workers += @{ Process=$process; Out=$out; Err=$err }
+            $workers += @{ Process=$process; Out=$out; Err=$err; Part=$part; Timer=[Diagnostics.Stopwatch]::StartNew(); Seconds=$null }
         }
-        while (@($workers | Where-Object { -not $_.Process.HasExited }).Count) { Start-Sleep -Milliseconds 50 }
+        do {
+            $active = 0
+            foreach ($worker in $workers) {
+                if (-not $worker.Process.HasExited) { $active++; continue }
+                if ($null -eq $worker.Seconds) { $worker.Seconds = [Math]::Round($worker.Timer.Elapsed.TotalSeconds,3) }
+            }
+            if ($active) { Start-Sleep -Milliseconds 50 }
+        } while ($active)
         $totalPassed = 0; $totalFailed = 0; $exitCode = 0
         foreach ($worker in $workers) {
             $worker.Process.WaitForExit()
             $output = Get-Content -LiteralPath $worker.Out
             $output | Write-Output
             Get-Content -LiteralPath $worker.Err | Write-Output
+            Write-Output "Shard $($worker.Part): $($worker.Seconds)s; exit $($worker.Process.ExitCode)"
             foreach ($line in $output) {
                 if ($line -match '^SUMMARY: (\d+) passed, (\d+) failed$') { $totalPassed += [int]$Matches[1]; $totalFailed += [int]$Matches[2] }
             }
             if ($worker.Process.ExitCode -ne 0) { $exitCode = 1 }
         }
-        Write-Output "SUMMARY: $totalPassed passed, $totalFailed failed; two shards, $([Math]::Round($wall.Elapsed.TotalSeconds,2))s; logs $logs"
+        Write-Output "SUMMARY: $totalPassed passed, $totalFailed failed; six shards, $([Math]::Round($wall.Elapsed.TotalSeconds,2))s; logs $logs"
     }
     finally {
         foreach ($worker in $workers) {
@@ -617,7 +625,7 @@ try {
     # The generator's real-job smoke cases run before the main fixture setup too.
     $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'registry'
     $env:DT_MODEL_ROUTER_STATE = Join-Path $tempRoot 'router-state'
-    if ($Shard -ne 2) { Test-GeneratorDifferential }
+    if ($Shard -in @(0,1)) { Test-GeneratorDifferential }
     if($GeneratorDifferentialOnly){
         Write-Output "SUMMARY: $script:passed passed, $script:failed failed"
         if($script:failed){exit 1}; exit 0
@@ -642,7 +650,7 @@ return [pscustomobject]@{ id = 'fake' }
     New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_STATE -Force | Out-Null
     Assert-True ([IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE).StartsWith([IO.Path]::GetFullPath($tempRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'router state stays under the suite temp directory'
     Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
-    if ($Shard -ne 2) {
+    if ($Shard -in @(0,2)) {
     # FS-101: fixtures opt into temp storage explicitly; raw calls exercise the default guard.
     foreach ($verb in @('start', 'register-run', 'lease', 'note')) {
         $newTemp = Join-Path $tempRoot "refused-$verb"
@@ -909,6 +917,8 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
     Assert-True ($LASTEXITCODE -eq 0 -and $fallbackPath -eq $directPath) 'a missing ResolveLinkTarget falls back to the unresolved path without throwing'
     [IO.Directory]::Delete($junctionLink); $junctionLink = $null
 
+    }
+    if ($Shard -in @(0,6)) {
     # Start and succeed with the command evaluated directly by the runner.
     $rf = New-RunFolder 'succeed'
     $release = Join-Path $rf "release's.txt"
@@ -1265,7 +1275,7 @@ exit 0
 
     # Operator notes: added and cleared by operators only, shown in every status and wait.
     }
-    if ($Shard -ne 1) {
+    if ($Shard -in @(0,4)) {
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-approval-wait.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'blocking approval process fixtures pass'
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-runtime-fixes.ps1')
@@ -1273,6 +1283,8 @@ exit 0
     # Separate process keeps regression doubles out of the integration fixtures.
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-runner-process-identity.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'fast-exit child retains identity and exit result under held ledger lock'
+    }
+    if ($Shard -in @(0,3)) {
     $rf = New-RunFolder 'notes'
     $n1 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'Dispatch the repair worker first.')
     $n2 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'R3b3 split review is authorized; see approvals/r3b3.md.')
@@ -1675,6 +1687,8 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     $lastSeq = [int](@($parsed | Where-Object { $_.job_id -ne $job2.job_id -and $after.Count -ge 1 -and [int]$_.seq -lt $after[0] } | ForEach-Object { [int]$_.seq } | Measure-Object -Maximum).Maximum)
     Assert-True ($after.Count -ge 1 -and $after[0] -eq $lastSeq + 1 -and (($after -join ',') -eq (($lastSeq + 1)..($lastSeq + $after.Count) -join ','))) "events continue at the next seq ($lastSeq -> $($after -join ','))"
 
+    }
+    if ($Shard -in @(0,5)) {
     # FS-133: host-disruptive stops name other registered builds, using only fake alerts.
     & {
         . $dtJob

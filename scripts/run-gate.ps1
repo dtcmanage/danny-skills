@@ -2,7 +2,7 @@
 param(
     [string]$BaseRef = 'auto',
     [switch]$Full,
-    [ValidateRange(1, 6)][int]$ThrottleLimit = 6,
+    [ValidateRange(1, 16)][int]$ThrottleLimit = 16,
     [switch]$List,
     [string]$LogDirectory
 )
@@ -15,10 +15,13 @@ Disable-DtPowerShellStartupProfile
 
 function Get-GateSteps {
     # One catalog owns execution and selection. Always-run steps are the cheap policy gate.
+    # On the 40-thread host, sixteen slots admit both six-worker suites, the
+    # context guard and three other steps. Blocking fixture children leave CPU
+    # headroom; cheap steps finish alongside the slow suites instead of after them.
     @(
-        @{ Name='dt-job'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-dt-job.ps1'; Slots=2 }
+        @{ Name='dt-job'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-dt-job.ps1'; Slots=6 }
         @{ Name='context-guard'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-context-guard.ps1' }
-        @{ Name='build-regressions'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/test-dt-build-regressions.ps1'; Slots=3 }
+        @{ Name='build-regressions'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/test-dt-build-regressions.ps1'; Slots=6 }
         @{ Name='versioning-tests'; Skill=''; Command='& ./scripts/test-versioning-policy.ps1' }
         @{ Name='review'; Skill='dt-review'; Command='& ./skills/dt-review/tests/run-tests.ps1' }
         @{ Name='host-adapters'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-host-adapters.ps1' }

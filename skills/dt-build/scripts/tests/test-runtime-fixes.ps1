@@ -3,13 +3,15 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $scripts = Split-Path -Parent $PSScriptRoot
 $job = Join-Path $scripts 'dt-job.ps1'
+. (Join-Path $PSScriptRoot 'test-shell.ps1')
 $root = Join-Path ([IO.Path]::GetTempPath()) ('runtime-fixes-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 $failed = 0; $passed = 0
 function Check($ok, $message) { if ($ok) { $script:passed++ } else { $script:failed++; Write-Output "ASSERT_FAIL: $message" } }
 function JobCall([string[]]$arguments) {
-    $raw = & pwsh -NoProfile -File $job @arguments -AllowTempRunFolder -Json 2>$null
-    if ($LASTEXITCODE) { throw "job command failed: $arguments $raw" }
+    $result = Invoke-TestShell -File $job -Arguments ($arguments + @('-AllowTempRunFolder','-Json'))
+    $raw = $result.Output
+    if ($result.ExitCode) { throw "job command failed: $arguments $raw $($result.ErrorText)" }
     return ($raw -join "`n" | ConvertFrom-Json)
 }
 function WaitDone($run, $id) {
@@ -84,7 +86,21 @@ try {
     Push-Location $sub
     try { $h = JobCall @('start','-RunFolder',$run,'-Writes','-Command',"1..20 | ForEach-Object { [IO.File]::WriteAllText('$touch', [string]`$_); Start-Sleep 1 }") } finally { Pop-Location }
     $reader = JobCall @('start','-RunFolder',$run2,'-WorkingTree',$tree,'-ReadOnly','-Command','Start-Sleep 30')
-    Start-Sleep -Seconds 5
+    # Observe real heartbeat readiness and idle age. Process startup under load
+    # can consume most of a fixed sleep before the read-only heartbeat exists.
+    $heartbeatDeadline = [DateTime]::UtcNow.AddSeconds(60)
+    do {
+        $writerHeartbeat = Join-Path $run "jobs/$($h.job_id)/heartbeat.json"
+        $readerHeartbeat = Join-Path $run2 "jobs/$($reader.job_id)/heartbeat.json"
+        $ready = $false
+        if ((Test-Path $writerHeartbeat) -and (Test-Path $readerHeartbeat)) {
+            $observedWriter = Get-Content -Raw $writerHeartbeat | ConvertFrom-Json
+            $observedReader = Get-Content -Raw $readerHeartbeat | ConvertFrom-Json
+            $ready = $observedWriter.file_changes -gt 0 -and
+                ([DateTime]::UtcNow - [DateTime]$observedReader.last_activity_utc).TotalSeconds -ge 3
+        }
+        if (-not $ready) { Start-Sleep -Milliseconds 100 }
+    } while (-not $ready -and [DateTime]::UtcNow -lt $heartbeatDeadline)
     $beat = Get-Content -Raw (Join-Path $run "jobs/$($h.job_id)/heartbeat.json") | ConvertFrom-Json
     Check ($beat.file_changes -gt 0 -and ([DateTime]::UtcNow - [DateTime]$beat.last_activity_utc).TotalSeconds -lt 4) "sibling worktree writes refresh heartbeat from nested launch directory ($($beat | ConvertTo-Json -Compress); $(Get-Content -Raw (Join-Path $run ('jobs/' + $h.job_id + '.json'))))"
     $readerBeat = Get-Content -Raw (Join-Path $run2 "jobs/$($reader.job_id)/heartbeat.json") | ConvertFrom-Json

@@ -1,4 +1,4 @@
-param([ValidateRange(0,3)][int]$Shard = 0, [switch]$Serial)
+param([ValidateRange(0,6)][int]$Shard = 0, [switch]$Serial)
 
 . (Join-Path $PSScriptRoot 'powershell-startup.ps1')
 Disable-DtPowerShellStartupProfile
@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 $script:passed = 0
 . (Join-Path $PSScriptRoot 'tests/test-shell.ps1')
 if ($Shard -eq 0 -and -not $Serial) {
-    Invoke-TestShards -Script $PSCommandPath -Count 3
+    Invoke-TestShards -Script $PSCommandPath -Count 6
     exit $LASTEXITCODE
 }
 
@@ -59,9 +59,13 @@ $originalClaudeCredentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS
 $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = Join-Path $tempRoot 'missing-claude-credentials.json'
 $originalRouterState = $env:DT_MODEL_ROUTER_STATE
 $originalAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
+$originalHeadless = $env:DT_BUILD_HEADLESS
+# These fixtures own their registries and never borrow a live session's director.
+$env:DT_BUILD_HEADLESS = '1'
 
 try {
-    if ($Shard -in @(0,1)) {
+    # Independent helper suites run once, outside the wrapper fixture shards.
+    if ($Shard -in @(0,5)) {
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-regression-fixtures.ps1')
         Assert-True ($LASTEXITCODE -eq 0) 'stale regression fixtures expire without removing recent failures'
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-powershell-startup.ps1')
@@ -71,6 +75,7 @@ try {
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-authority-digest.ps1')
         Assert-True ($LASTEXITCODE -eq 0) 'authority digest preference and full authorization coverage regressions pass'
     }
+    if ($Shard -in @(0,4)) {
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-boundary-ledger.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'boundary ledger bootstrap regressions pass'
     if ($IsWindows) {
@@ -105,7 +110,7 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-review-inputs.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'review input snapshot and path identity regressions pass'
     Push-Location $tempRoot
-    try { $rulebook = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -CoordinatorHost codex) -join "`n" }
+    try { $rulebook = (Invoke-TestPwsh -Script (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -CoordinatorHost codex) -join "`n" }
     finally { Pop-Location }
     Assert-True ($rulebook.Contains("<skill> = $skillRoot") -and $rulebook.Contains("<danny-skills> = $repoRoot")) "rendered resume rulebook supplies resolved roots from outside the repo; exit=$LASTEXITCODE; observed=$rulebook"
     Assert-True ($LASTEXITCODE -eq 0 -and $rulebook.Length -le 20000 -and $rulebook.Contains('20,000') -and $rulebook.Contains('read-coordinator-state.ps1')) 'entry is bounded and orders compact state before marker'
@@ -119,11 +124,13 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     $authorityEnd = $resumeText.IndexOf('## Worker authority scope')
     Assert-True ($rulebook.Contains($resumeText.Substring($authorityStart, $authorityEnd - $authorityStart).Trim())) 'entry retains complete authorization contract verbatim'
     foreach ($section in @('execution','routing','context','guardrails','adapter','worker-briefs','checkpoint','lane-health','worker-authority','roll-forward','local-work','operator-actions','fast-lane','shared','authority')) {
-        $sectionText = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -Section $section) -join "`n"
+        $sectionText = (Invoke-TestPwsh -Script (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -Section $section) -join "`n"
         Assert-True ($LASTEXITCODE -eq 0 -and $sectionText.Length -gt 300) "on-demand section $section resolves from authoritative source"
     }
     Assert-True (-not $rulebook.Contains('## Lane health') -and -not $rulebook.Contains('## Launch watch') -and $rulebook.Contains('lane-health diagnosis')) 'lane diagnosis and launch watch are deferred'
     Assert-True ($rulebook.Contains('## Before marking bootstrap') -and -not $rulebook.Contains('## Authority roll-forward') -and -not $rulebook.Contains('## Operator recovery')) 'entry defers procedures outside bootstrap'
+    # This suite deliberately leaves a failing native LASTEXITCODE after its last
+    # negative case. Its contract is pwsh -File's implicit successful exit.
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-build-orchestrator-rules.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'worker/coordinator instruction generation regressions pass'
     # Coordinator-added budget: all safety reads and current repo text, host overhead measured separately.
@@ -164,29 +171,29 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
         $resumeState = Join-Path $tempRoot '_build-state.md'
         $oldCheckpoint = "status: IN_PROGRESS`nrun_status: runnable`nlast_consumed_event_seq: 7`nBoundary: source only; no deploy.`n" + ('history ' * 1200)
         Write-Utf8 $resumeState $oldCheckpoint
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'dt-job.ps1') register-run -RunFolder $resumeFolder -BuildStatePath $resumeState -RunId resume-fixture -PinnedHost codex -Managed -Json *> $null
+        Invoke-TestPwsh -Script (Join-Path $scriptDir 'dt-job.ps1') register-run -RunFolder $resumeFolder -BuildStatePath $resumeState -RunId resume-fixture -PinnedHost codex -Managed -Json *> $null
         Assert-True ($LASTEXITCODE -eq 0) 'resume fixture registration succeeds'
         Write-Utf8 (Join-Path $resumeFolder 'coordinator.lease') '{"coordinator_id":"fixture","host":"codex","launched_by":"watcher","released_utc":null}'
         Write-Utf8 (Join-Path $resumeFolder 'approvals.json') '{"awaiting":null,"approvals":[{"operation":"source-only","approved_by":"danny"}]}'
         $recordScript = Join-Path $scriptDir 'read-resume-record.ps1'
-        $record = & pwsh -NoProfile -File $recordScript -RunFolder $resumeFolder -RunId resume-fixture -BuildStatePath $resumeState -CoordinatorId fixture
+        $record = Invoke-TestPwsh -Script $recordScript -RunFolder $resumeFolder -RunId resume-fixture -BuildStatePath $resumeState -CoordinatorId fixture
         Assert-True ($LASTEXITCODE -eq 0) 'existing managed record is readable without intake'
         $record = ($record -join "`n") | ConvertFrom-Json
         Assert-True ($record.state.last_consumed_event_seq -eq 7 -and $record.approvals.approvals[0].operation -eq 'source-only' -and (Get-Content -Raw $resumeState) -ceq $oldCheckpoint) 'resume preserves cursor/checkpoint and exposes complete approvals'
-        & pwsh -NoProfile -File $recordScript -RunFolder $resumeFolder -RunId wrong-run -BuildStatePath $resumeState -CoordinatorId fixture *> $null
+        Invoke-TestPwsh -Script $recordScript -RunFolder $resumeFolder -RunId wrong-run -BuildStatePath $resumeState -CoordinatorId fixture *> $null
         Assert-True ($LASTEXITCODE -ne 0) 'resume rejects mismatched run identity'
-        & pwsh -NoProfile -File $recordScript -RunFolder $resumeFolder -RunId resume-fixture -BuildStatePath $resumeState -CoordinatorId intruder *> $null
+        Invoke-TestPwsh -Script $recordScript -RunFolder $resumeFolder -RunId resume-fixture -BuildStatePath $resumeState -CoordinatorId intruder *> $null
         Assert-True ($LASTEXITCODE -ne 0) 'resume rejects a different coordinator holder'
         $candidate = Join-Path $tempRoot 'checkpoint-candidate.md'
         Write-Utf8 $candidate "status: IN_PROGRESS`nrun_status: finished`nlast_consumed_event_seq: 0`nstatus_line: M04 is waiting for its review job to finish; next, merge M04 and start M05.`nBoundary: source only; no deploy.`nHistory: checkpoint-history/`n"
         $writer = Join-Path $scriptDir 'write-resume-checkpoint.ps1'
-        $written = & pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate
+        $written = Invoke-TestPwsh -Script $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate
         Assert-True ($LASTEXITCODE -eq 0) 'lean checkpoint rewrite succeeds for an oversized legacy checkpoint'
         $written = ($written -join "`n") | ConvertFrom-Json
         $next = Get-Content -Raw $resumeState
         Assert-True ($next -match 'run_status: runnable' -and $next -match 'last_consumed_event_seq: 7' -and $next.Contains('source only; no deploy.') -and (Get-Content -Raw $written.history) -ceq $oldCheckpoint) 'writer archives old history and preserves the latest owned fields and candidate boundary'
         Write-Utf8 $candidate ($next + ('x' * 8192))
-        & pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate *> $null
+        Invoke-TestPwsh -Script $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate *> $null
         Assert-True ($LASTEXITCODE -ne 0 -and (Get-Content -Raw $resumeState) -ceq $next) 'oversized candidate fails without changing the checkpoint'
         # status_line: required, plain English, at most 200 characters, and outside the 8 KiB count.
         $statusCases = [ordered]@{
@@ -199,14 +206,14 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
         }
         foreach ($case in $statusCases.GetEnumerator()) {
             Write-Utf8 $candidate $case.Value
-            $refusal = (& pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate 2>&1) -join ' '
+            $refusal = (Invoke-TestPwsh -Script $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate 2>&1) -join ' '
             Assert-True ($LASTEXITCODE -ne 0 -and $refusal -match 'DT_CHECKPOINT_STATUS_LINE' -and (Get-Content -Raw $resumeState) -ceq $next) "a $($case.Key) status_line is refused without changing the checkpoint ($refusal)"
         }
         $plain = 'status_line: M09 is building the export page in job j-0359; the native-app patch waits for the M09 merge, about 40 minutes; next, review M09 at commit 3f9c2ab1 per design/roadmap.md.'
         $body = "run_status: runnable`nlast_consumed_event_seq: 0`n$plain`nBoundary: source only.`n"
         $body += 'x' * (8192 - [Text.Encoding]::UTF8.GetByteCount($body) + [Text.Encoding]::UTF8.GetByteCount("$plain`n"))
         Write-Utf8 $candidate $body
-        & pwsh -NoProfile -File $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate *> $null
+        Invoke-TestPwsh -Script $writer -RunFolder $resumeFolder -BuildStatePath $resumeState -ContentPath $candidate *> $null
         Assert-True ($LASTEXITCODE -eq 0 -and [Text.Encoding]::UTF8.GetByteCount((Get-Content -Raw $resumeState)) -gt 8192 -and (Get-Content -Raw $resumeState).Contains($plain)) 'a plain status_line passes and does not count toward the 8 KiB cap'
         $template = Get-Content -Raw -LiteralPath (Join-Path $skillRoot '../dt-pipeline/templates/build-state-template.md')
         Assert-True ($template -match '(?m)^status_line: __STATUS_LINE__$' -and $template.Contains('at most 200 characters') -and $template.Contains('build-decision-log.md')) 'the build-state template carries the required status_line field'
@@ -219,11 +226,11 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     Write-Utf8 (Join-Path $downgradeDir 'worker.stream.log') 'for now we defer this until later'
     Write-Utf8 (Join-Path $downgradeDir 'report.md') 'All required behavior is implemented.'
     foreach ($path in @($downgradeDir, (Join-Path $downgradeDir 'worker.stream.log'))) {
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'check-downgrade-language.ps1') -Path $path -Recurse -Json *> (Join-Path $tempRoot 'downgrade-stream.json')
+        Invoke-TestPwsh -Script (Join-Path $scriptDir 'check-downgrade-language.ps1') -Path $path -Recurse -Json *> (Join-Path $tempRoot 'downgrade-stream.json')
         Assert-True ($LASTEXITCODE -eq 0) 'downgrade scan skips stream logs in directory and direct-file inputs'
     }
     Write-Utf8 (Join-Path $downgradeDir 'report.md') 'for now we defer this until later'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'check-downgrade-language.ps1') -Path $downgradeDir -Recurse -Json *> (Join-Path $tempRoot 'downgrade-report.json')
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'check-downgrade-language.ps1') -Path $downgradeDir -Recurse -Json *> (Join-Path $tempRoot 'downgrade-report.json')
     Assert-True ($LASTEXITCODE -eq 1) 'downgrade scan still rejects ordinary report language'
 
     # Both orchestrator retry passages must consume diagnosis before escalation.
@@ -325,6 +332,7 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     Assert-True ($null -ne $helperFunction -and $null -ne $inlineFunction) "artifact extractor function was not found in both scripts"
     Assert-True ($helperFunction.Extent.Text -ceq $inlineFunction.Extent.Text) "shared and inline artifact extractor function bodies drifted"
 
+    }
     # Model router state is isolated: a temp state folder, a fresh catalog-check stamp (no
     # network), and a fake alert transport (no real alert can be sent).
     $routerState = Join-Path $tempRoot 'router-state'
@@ -481,6 +489,7 @@ gantt
 "@
     Write-Utf8 -Path $roadmap -Content $coveredRoadmap
 
+    if ($Shard -in @(0,6)) {
     # Multi-check load-bearing evidence must include the first check rather than
     # only the last row, and common production/cutover wording must classify.
     $loadJson = & pwsh -NoProfile -File (Join-Path $scriptDir 'identify-load-bearing.ps1') -RoadmapPath $roadmap -Json
@@ -698,6 +707,7 @@ rationale: Framework limitation accepted with visible evidence.
     $allowed = (& pwsh -NoProfile -File (Join-Path $scriptDir 'verify-codex-prompt.ps1') -PromptPath $verifyPrompt -ApprovalOperation 'retry-original' -RunFolder $verifyRun -Json 2>&1) -join ' '
     Assert-True ($allowed -notmatch 'identity: attempt') 'prompt verify accepts attempt 3 with a recorded approval'
 
+    }
     # Wrapper validates report shape, redacts retained output, and preserves
     # failure provenance even when a child never reads stdin.
     $fixtureCodexHome = Join-Path $tempRoot 'codex-home'
@@ -1076,7 +1086,7 @@ Write-Envelope $report
         # The fake reaches its settings receipt about 4 s after the wrapper starts on SNOWWHITE
         # (measured 2026-11-16), so 3 s timed out first. The timeout fixture sleeps 30 s, so 10 s
         # still exercises the timeout path.
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $failureOutput -ClaudeCliPath $fakeClaude -Model 'claude-sonnet-5' -Effort low -SelectionReason 'settings cleanup fixture' -SingleDispatch -TimeoutMs 10000 -Json *> $null
+        Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $failureOutput -ClaudeCliPath $fakeClaude -Model 'claude-sonnet-5' -Effort low -SelectionReason 'settings cleanup fixture' -SingleDispatch -TimeoutMs 10000 -Json *> $null
         Assert-True ($LASTEXITCODE -ne 0) "Claude chunk rejects $failureMode"
         Assert-True (Test-Path -LiteralPath $env:DT_FAKE_SETTINGS_RECEIPT) "Claude chunk $failureMode received settings"
         $settingsFile = [IO.File]::ReadAllText($env:DT_FAKE_SETTINGS_RECEIPT)
@@ -1169,6 +1179,8 @@ Write-Envelope $report
             if ($pinCase -eq 'reason') { $pinArgs.SelectionReason = 'fixture reason' }
             $pinOutput = Join-Path $tempRoot "claude-run-pin-$pinCase.md"
             $env:DT_FAKE_CLAUDE_MODE = 'success'
+            # Keep hashtable splatting at the real CLI boundary: Invoke-TestPwsh
+            # intentionally accepts only flat argv, not PowerShell parameter maps.
             & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $pinOutput -ClaudeCliPath $fakeClaude -Category routine-coding -Effort medium @pinArgs -Json *> $null
             $pinExit = $LASTEXITCODE
             $pinProv = Get-Content -Raw -LiteralPath "$pinOutput.provenance.json" | ConvertFrom-Json
@@ -1183,15 +1195,15 @@ Write-Envelope $report
         } finally { $env:DT_BUILD_RUN_PIN_VENDOR = $savedPinVendor; $env:DT_BUILD_RUN_PIN_MODEL = $savedPinModel }
     }
     $claudeMissingReason = Join-Path $tempRoot 'claude-wrapper-missing-reason.md'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMissingReason `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper allowed a substantive dispatch without -SelectionReason"
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeMissingReason `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason "line one`nline two" -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper allowed a multiline -SelectionReason"
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $claudeOutput `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) "mock Claude success path failed"
@@ -1200,7 +1212,7 @@ Write-Envelope $report
     try {
         $env:DT_FAKE_UNICODE_PROMPT = $hardwarePromptCapture
         $hardwareOutput = Join-Path $tempRoot 'claude-adhoc-hardware.md'
-        $hardwareObserved = (& pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $hardwareOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'hardware worker rule fixture' -AdHoc -MaxFixRounds 5 -Json 2>&1) -join "`n"
+        $hardwareObserved = (Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $hardwareOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'hardware worker rule fixture' -AdHoc -MaxFixRounds 5 -Json 2>&1) -join "`n"
         Assert-True ($LASTEXITCODE -eq 0 -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('pytest-xdist -n <budget>')) "ad-hoc Claude workers receive the shared hardware rule; exit=$LASTEXITCODE; observed=$hardwareObserved"
         Assert-True ([IO.File]::ReadAllText($hardwarePromptCapture).Contains('Allow at most 5 fix rounds')) 'ad-hoc Claude receives custom fix-round budget'
         Assert-True ([IO.File]::ReadAllText($hardwarePromptCapture).Contains('until green') -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('network/SSH') -and [IO.File]::ReadAllText($hardwarePromptCapture).Contains('git symbolic-ref')) 'ad-hoc Claude receives repair, environment and live facts'
@@ -1216,7 +1228,7 @@ Write-Envelope $report
     Assert-True ($null -eq $claudeV3Prov.report_version_warning) 'Claude v3 report carries no version warning'
 
     $tierOutput = Join-Path $tempRoot 'claude-tier-normalization.md'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $tierOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort low -Difficulty HARD -DifficultyReason 'interacting constraints' -SelectionReason 'tier fixture' -Json *> $null
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $tierOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort low -Difficulty HARD -DifficultyReason 'interacting constraints' -SelectionReason 'tier fixture' -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) 'Claude uppercase difficulty accepted'
     $tierProv = Get-Content -Raw -LiteralPath "$tierOutput.provenance.json" | ConvertFrom-Json
     Assert-True ($tierProv.difficulty -ceq 'hard' -and $tierProv.difficulty_reason -eq 'interacting constraints') 'Claude provenance normalizes uppercase difficulty'
@@ -1244,7 +1256,7 @@ Write-Envelope $report
     foreach ($badMode in @('wrongmodel', 'rawtext')) {
         $env:DT_FAKE_CLAUDE_MODE = $badMode
         $badOut = Join-Path $tempRoot "claude-wrapper-$badMode.md"
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+        Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
             -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $badOut `
             -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
         Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper accepted $badMode output"
@@ -1263,7 +1275,7 @@ Write-Envelope $report
     Write-Utf8 (Join-Path $workingTree 'CLAUDE.md') '# Worker tree rules: ACTUAL-WORKER-TREE-RULE'
     $env:DT_FAKE_CLAUDE_ARGS = $claudeArgsLog
     $env:DT_FAKE_LEAN_RECEIPT = Join-Path $tempRoot 'worker-lean-env.txt'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-args-build.md') `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -SelectionReason 'ordinary fixture implementation logic' -Attempt 1 -Json *> $null
     $buildArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
@@ -1275,7 +1287,7 @@ Write-Envelope $report
     Assert-True ($workerInstructions.Contains('standing rules') -and $workerInstructions.Contains('Memory System, Routing Map')) 'worker instructions use conservative generator defaults'
     Assert-True ($workerInstructions.Contains('WORKER-STANDING-RULE') -and -not $workerInstructions.Contains('MEMORY-ONLY') -and [IO.File]::ReadAllText($env:DT_FAKE_LEAN_RECEIPT) -eq '1') 'worker gets live canonical rules with automatic CLAUDE.md loading disabled'
     Assert-True ($workerInstructions.Contains('ACTUAL-WORKER-TREE-RULE')) 'worker generation uses ProjectPath instead of the wrapper cwd'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') `
         -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-args-verify.md') `
         -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'ordinary fixture verification logic' -Attempt 1 -Json *> $null
     $verifyArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
@@ -1286,12 +1298,12 @@ Write-Envelope $report
     $env:DT_FAKE_LEAN_RECEIPT = Join-Path $tempRoot 'worker-lean-env.txt'
     try {
         $env:DT_BUILD_FULL_CONTEXT = '1'; $env:CLAUDE_CODE_DISABLE_CLAUDE_MDS = '1'
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-full.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'full context opt out fixture' -Json *> $null
+        Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-full.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'full context opt out fixture' -Json *> $null
         $fullArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
         Assert-True ($LASTEXITCODE -eq 0 -and $fullArgs -notmatch '--append-system-prompt-file|--disable-slash-commands' -and $fullArgs -match '--strict-mcp-config' -and $fullArgs -match '--tools\|Bash,Read,Glob,Grep') 'full context opt out preserves MCP, model and read-only tools'
         Assert-True ([IO.File]::ReadAllText($env:DT_FAKE_LEAN_RECEIPT) -eq '') 'full context opt out clears inherited disable-CLAUDE.md setting on child'
         $env:DT_BUILD_FULL_CONTEXT = $null; $env:CLAUDE_CONFIG_DIR = Join-Path $tempRoot 'missing-rule-root'
-        & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-rules-fallback.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'missing rules fallback fixture' -Json *> $null
+        Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath (Join-Path $tempRoot 'claude-rules-fallback.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Tier standard -Effort medium -ReadOnly -SelectionReason 'missing rules fallback fixture' -Json *> $null
         $fallbackArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
         Assert-True ($LASTEXITCODE -eq 0 -and $fallbackArgs -notmatch '--append-system-prompt-file|--disable-slash-commands' -and [IO.File]::ReadAllText($env:DT_FAKE_LEAN_RECEIPT) -eq '') 'missing root restores normal loading even under a lean parent'
     } finally {
@@ -1317,17 +1329,17 @@ Write-Envelope $report
     } finally { $env:CLAUDE_CONFIG_DIR = $leanOriginalConfig }
 
     $env:DT_FAKE_CLAUDE_MODE = 'preflight'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
     Assert-True ($LASTEXITCODE -eq 0) 'Claude preflight works without -Effort'
     $preflightArgs = Get-Content -Raw -LiteralPath $claudeArgsLog
     Assert-True ($preflightArgs -notmatch '--append-system-prompt-file|--disable-slash-commands' -and -not (Test-Path -LiteralPath (Join-Path $tempRoot 'claude-preflight.md.instructions.md'))) 'preflight skips lean rules generation and flags'
     Remove-Item Env:DT_FAKE_CLAUDE_ARGS -ErrorAction SilentlyContinue
     $env:DT_FAKE_CLAUDE_MODE = 'stamped-preflight'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-stamped-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'claude-stamped-preflight.md') -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Preflight -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0) 'timestamp-prefixed Claude OK fails preflight'
     $env:DT_FAKE_CLAUDE_MODE = 'stamped-report'
     $stampedOutput = Join-Path $tempRoot 'claude-stamped-report.md'
-    & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $stampedOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'stamped report regression' -Json *> $null
+    Invoke-TestPwsh -Script (Join-Path $scriptDir 'invoke-claude-chunk.ps1') -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $stampedOutput -ClaudeCliPath $fakeClaude -Model claude-sonnet-5 -Category routine-coding -Effort medium -SelectionReason 'stamped report regression' -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0 -and [string]::IsNullOrEmpty([IO.File]::ReadAllText($stampedOutput))) 'timestamp-prefixed Claude structured report fails without retaining a stripped answer'
     $env:DT_FAKE_CLAUDE_MODE = 'success'
 
@@ -1581,6 +1593,7 @@ finally {
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $originalClaudeCredentials
     $env:DT_MODEL_ROUTER_STATE = $originalRouterState
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $originalAlertTransport
+    $env:DT_BUILD_HEADLESS = $originalHeadless
     Remove-Item Env:DT_FAKE_CODEX_MODE -ErrorAction SilentlyContinue
     if ($tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }

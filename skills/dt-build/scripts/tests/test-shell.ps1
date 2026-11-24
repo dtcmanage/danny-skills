@@ -136,13 +136,21 @@ function Invoke-TestShards {
             $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
             $out = Join-Path $logs "$part.log"; $err = Join-Path $logs "$part.stderr.log"
             $process = Start-Process (Join-Path $PSHOME 'pwsh') -ArgumentList @('-NoProfile','-EncodedCommand',$encoded) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
-            $workers += @{ Process=$process; Out=$out; Err=$err }
+            $workers += @{ Process=$process; Out=$out; Err=$err; Part=$part; Timer=[Diagnostics.Stopwatch]::StartNew(); Seconds=$null }
         }
-        while (@($workers | Where-Object { -not $_.Process.HasExited }).Count) { Start-Sleep -Milliseconds 50 }
+        do {
+            $active = 0
+            foreach ($worker in $workers) {
+                if (-not $worker.Process.HasExited) { $active++; continue }
+                if ($null -eq $worker.Seconds) { $worker.Seconds = [Math]::Round($worker.Timer.Elapsed.TotalSeconds,3) }
+            }
+            if ($active) { Start-Sleep -Milliseconds 50 }
+        } while ($active)
         foreach ($worker in $workers) {
             $worker.Process.WaitForExit()
             Get-Content -LiteralPath $worker.Out | Write-Output
             Get-Content -LiteralPath $worker.Err | Write-Output
+            Write-Output "Shard $($worker.Part): $($worker.Seconds)s; exit $($worker.Process.ExitCode)"
             if ($worker.Process.ExitCode -ne 0) { $code = 1 }
         }
         Write-Output "Shard logs: $logs"

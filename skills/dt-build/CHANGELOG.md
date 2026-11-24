@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.61.3
+
+- Restore bounded ship-gate time with independent fixture shards, single-run bootstrap checks and fresh runspaces for pure test calls.
+
 ## 2.61.2
 
 - Repair long-run state digests: preserve complete coordinator authority, reverify multipart ownership and discovery, and retain bounded history.

@@ -7,6 +7,15 @@ function Assert-Gate([bool]$Condition, [string]$Message) {
     $script:passed++
 }
 $all = @(Get-GateSteps)
+foreach ($suite in @(
+    @{Name='dt-job';Path='skills/dt-build/scripts/tests/test-dt-job.ps1'},
+    @{Name='build-regressions';Path='skills/dt-build/scripts/test-dt-build-regressions.ps1'}
+)) {
+    $source = [IO.File]::ReadAllText((Join-Path $repo $suite.Path))
+    $range = [regex]::Match($source, 'ValidateRange\(0,\s*(\d+)\)\]\[int\]\$Shard')
+    $step = @($all | Where-Object Name -eq $suite.Name)[0]
+    Assert-Gate ($range.Success -and $step.Slots -eq [int]$range.Groups[1].Value) "$($suite.Name) slot weight matches all independent shard workers"
+}
 $cheap = @($all | Where-Object Skill -eq '*')
 $build = @(Select-GateSteps -ChangedPaths @('skills/dt-build/scripts/a.ps1'))
 Assert-Gate ($build.Count -eq $cheap.Count + 4) 'dt-build selects its four suites and every cheap check'
