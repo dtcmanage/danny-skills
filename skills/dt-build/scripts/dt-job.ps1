@@ -423,18 +423,23 @@ function Remove-DtJobKeyLocks {
 }
 
 function Get-DtJobProcessStartUtc {
-    param([int]$ProcessId)
+    param([int]$ProcessId, [System.Diagnostics.Process]$Process)
+    $ownsProcess = $null -eq $Process
     try {
-        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        if ($ownsProcess) { $Process = Get-Process -Id $ProcessId -ErrorAction Stop }
+        $ProcessId = $Process.Id
         if ($IsLinux) {
             # An exited child its parent has not reaped stays a zombie with the same PID and start time;
             # it is dead (a crashed coordinator must not block its relaunch). State follows the last ')'.
             $stat = [IO.File]::ReadAllText("/proc/$ProcessId/stat")
             if ($stat.Substring($stat.LastIndexOf(')') + 1).TrimStart().StartsWith('Z')) { return $null }
         }
-        return $process.StartTime.ToUniversalTime().ToString('o')
+        $startTime = $Process.StartTime
+        if ($null -eq $startTime) { return $null }
+        return $startTime.ToUniversalTime().ToString('o')
     }
     catch { return $null }
+    finally { if ($ownsProcess -and $null -ne $Process) { $Process.Dispose() } }
 }
 
 function ConvertTo-DtJobUtc {

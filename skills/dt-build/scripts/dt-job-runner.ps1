@@ -279,6 +279,9 @@ try {
     $stderrFile = [System.IO.File]::Open((Join-Path $jobDir 'stderr.log'), [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
     try {
         $process = [System.Diagnostics.Process]::Start($psi)
+        # Linux may lose StartTime as soon as the child exits. Capture before any ledger wait;
+        # null means unavailable, never a reason to replace the child's real exit result.
+        $processStartUtc = Get-DtJobProcessStartUtc -Process $process
         $copyOut = $process.StandardOutput.BaseStream.CopyToAsync($stdoutFile)
         $copyErr = $process.StandardError.BaseStream.CopyToAsync($stderrFile)
 
@@ -286,7 +289,7 @@ try {
             $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId
             if ($null -eq $record -or $record.status -ne 'running') { return $false }
             $record.pid = $process.Id
-            $record.process_start_utc = $process.StartTime.ToUniversalTime().ToString('o')
+            $record.process_start_utc = $processStartUtc
             $record.last_progress = [DateTime]::UtcNow.ToString('o')
             Save-DtJobRecord -RunFolder $RunFolder -Record $record
             Add-DtJobEvent -RunFolder $RunFolder -JobId $JobId -Type 'process_started' -Status 'running'

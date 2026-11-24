@@ -544,5 +544,7 @@
   "scripts/tests/test-claude-headless-auth.ps1": {"consumers": [], "summary_token": "claude headless auth"},
   "scripts/release-triage.ps1": {"consumers": ["dt-build", "dt-ship"], "summary_token": "release triage"},
   "scripts/release-triage-lib.ps1": {"consumers": ["dt-build", "dt-ship"], "summary_token": "release triage"},
-  "scripts/tests/test-release-triage.ps1": {"consumers": [], "summary_token": "release triage"}
+  "scripts/tests/test-release-triage.ps1": {"consumers": [], "summary_token": "release triage"},
+  "scripts/run-gate.ps1": {"consumers": [], "summary_token": "ship gate"},
+  "scripts/tests/test-run-gate.ps1": {"consumers": [], "summary_token": "ship gate"}
 }

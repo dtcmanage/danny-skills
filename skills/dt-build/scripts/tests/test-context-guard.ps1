@@ -3,6 +3,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
+. (Join-Path $PSScriptRoot 'test-shell.ps1')
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -34,6 +35,7 @@ $watcher = Join-Path $scriptDir 'dt-build-watcher.ps1'
 $preHook = Join-Path $skillDir 'hooks\coordinator-pretooluse.ps1'
 $postHook = Join-Path $skillDir 'hooks\coordinator-posttooluse.ps1'
 $templatePath = Join-Path $repoRoot 'skills\dt-pipeline\templates\build-state-template.md'
+$buildStateTemplate = [IO.File]::ReadAllText($templatePath)
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dt-ctx-tests-{0}" -f ([guid]::NewGuid().ToString('N')))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
@@ -121,14 +123,16 @@ function New-CodexRollout {
 
 function Invoke-Guard {
     param([string]$TranscriptHost, [string]$Path)
-    $raw = & pwsh -NoProfile -File $guard -Host $TranscriptHost -TranscriptPath $Path -Json
+    $result = Invoke-TestShell -File $guard -Arguments @('-Host', $TranscriptHost, '-TranscriptPath', $Path, '-Json')
+    $raw = $result.Output; $LASTEXITCODE = $result.ExitCode
     if ($LASTEXITCODE -ne 0) { throw "context-guard exited $LASTEXITCODE" }
     return (($raw -join "`n") | ConvertFrom-Json)
 }
 
 function Invoke-DtJob {
     param([string[]]$Arguments)
-    $raw = & pwsh -NoProfile -File $dtJob @Arguments -Json
+    $result = Invoke-TestShell -File $dtJob -Arguments ($Arguments + '-Json')
+    $raw = $result.Output; $LASTEXITCODE = $result.ExitCode
     if ($LASTEXITCODE -ne 0) { throw "dt-job $($Arguments -join ' ') exited $LASTEXITCODE : $($raw -join ' ')" }
     return (($raw -join "`n") | ConvertFrom-Json)
 }
@@ -136,7 +140,8 @@ function Invoke-DtJob {
 function Invoke-DtJobRaw {
     param([string[]]$Arguments, [switch]$Text)
     $extra = @(if (-not $Text) { '-Json' })
-    $raw = & pwsh -NoProfile -File $dtJob @Arguments @extra 2>&1
+    $result = Invoke-TestShell -File $dtJob -Arguments ($Arguments + $extra)
+    $raw = @($result.Output); if ($result.ErrorText) { $raw += $result.ErrorText }; $LASTEXITCODE = $result.ExitCode
     $code = $LASTEXITCODE
     # pwsh's concise error view colours and wraps a thrown message to the console width (narrow on Linux),
     # so strip ANSI codes and rejoin wrapped '|' continuation lines before matching message text.
@@ -147,7 +152,7 @@ function Invoke-DtJobRaw {
 
 function New-BuildState {
     param([string]$Path)
-    $text = (Get-Content -Raw -LiteralPath $templatePath).Replace('__RUN_STATUS__', 'runnable').Replace('__LAST_CONSUMED_EVENT_SEQ__', '0').Replace('__UPDATED_UTC__', '2026-10-10T00:00:00Z')
+    $text = $buildStateTemplate.Replace('__RUN_STATUS__', 'runnable').Replace('__LAST_CONSUMED_EVENT_SEQ__', '0').Replace('__UPDATED_UTC__', '2026-10-10T00:00:00Z')
     Write-Utf8 -Path $Path -Content $text
 }
 
@@ -203,7 +208,8 @@ function Test-Alive {
 }
 
 function Invoke-Tick {
-    $raw = & pwsh -NoProfile -File $watcher
+    $result = Invoke-TestShell -File $watcher
+    $raw = $result.Output; $LASTEXITCODE = $result.ExitCode
     $code = $LASTEXITCODE
     $results = @($raw | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
     if ($code -ne 0) { throw "watcher exited $code : $($raw -join ' | ')" }
@@ -213,7 +219,8 @@ function Invoke-Tick {
 function Invoke-Hook {
     param([string]$Hook, [hashtable]$HookInput)
     $json = $HookInput | ConvertTo-Json -Depth 6 -Compress
-    $raw = $json | & pwsh -NoProfile -File $Hook
+    $result = Invoke-TestShell -File $Hook -Stdin $json
+    $raw = $result.Output
     $text = (@($raw) | Where-Object { $_ }) -join "`n"
     if (-not $text) { return $null }
     return ($text | ConvertFrom-Json)

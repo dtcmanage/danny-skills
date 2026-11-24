@@ -1,13 +1,56 @@
 param(
     [switch]$GeneratorDifferentialOnly,
     [string]$GeneratorPath,
-    [string]$HeadMeasurementPath
+    [string]$HeadMeasurementPath,
+    [ValidateRange(0, 2)][int]$Shard = 0,
+    [switch]$Serial
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
 $script:failed = 0
+. (Join-Path $PSScriptRoot 'test-shell.ps1')
+
+# Two independent fixture groups, each in its own process/environment and GUID temp root.
+# Keep the public suite complete by default; the gate accounts for its two worker slots.
+if ($Shard -eq 0 -and -not $GeneratorDifferentialOnly -and -not $Serial) {
+    $logs = Join-Path ([IO.Path]::GetTempPath()) ('dt-job-shards-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $logs | Out-Null
+    $workers = @()
+    $wall = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        foreach ($part in 1,2) {
+            $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Shard $part"
+            if ($GeneratorPath) { $command += " -GeneratorPath '" + $GeneratorPath.Replace("'", "''") + "'" }
+            if ($HeadMeasurementPath) { $command += " -HeadMeasurementPath '" + $HeadMeasurementPath.Replace("'", "''") + "'" }
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+            $out = Join-Path $logs "$part.log"; $err = Join-Path $logs "$part.stderr.log"
+            $process = Start-Process (Join-Path $PSHOME 'pwsh') -ArgumentList @('-NoProfile','-EncodedCommand',$encoded) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+            $workers += @{ Process=$process; Out=$out; Err=$err }
+        }
+        while (@($workers | Where-Object { -not $_.Process.HasExited }).Count) { Start-Sleep -Milliseconds 50 }
+        $totalPassed = 0; $totalFailed = 0; $exitCode = 0
+        foreach ($worker in $workers) {
+            $worker.Process.WaitForExit()
+            $output = Get-Content -LiteralPath $worker.Out
+            $output | Write-Output
+            Get-Content -LiteralPath $worker.Err | Write-Output
+            foreach ($line in $output) {
+                if ($line -match '^SUMMARY: (\d+) passed, (\d+) failed$') { $totalPassed += [int]$Matches[1]; $totalFailed += [int]$Matches[2] }
+            }
+            if ($worker.Process.ExitCode -ne 0) { $exitCode = 1 }
+        }
+        Write-Output "SUMMARY: $totalPassed passed, $totalFailed failed; two shards, $([Math]::Round($wall.Elapsed.TotalSeconds,2))s; logs $logs"
+    }
+    finally {
+        foreach ($worker in $workers) {
+            if (-not $worker.Process.HasExited) { $worker.Process.Kill($true); $worker.Process.WaitForExit() }
+            $worker.Process.Dispose()
+        }
+    }
+    exit $exitCode
+}
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -49,7 +92,8 @@ function New-RunFolder {
 
 function Invoke-DtJob {
     param([string[]]$Arguments)
-    $raw = & pwsh -NoProfile -File $dtJob @Arguments -AllowTempRunFolder -Json
+    $result = Invoke-TestShell -File $dtJob -Arguments ($Arguments + @('-AllowTempRunFolder', '-Json'))
+    $raw = $result.Output; $LASTEXITCODE = $result.ExitCode
     if ($LASTEXITCODE -ne 0) { throw "dt-job $($Arguments -join ' ') exited $LASTEXITCODE" }
     return (($raw -join "`n") | ConvertFrom-Json)
 }
@@ -79,6 +123,12 @@ function Wait-JobState {
         $record = Get-JobRecord -RunFolder $RunFolder -JobId $JobId
         if (& $Until $record) { return $record }
         Start-Sleep -Milliseconds 250
+    }
+    # Preserve the record and runner diagnostics in the suite log before fixture cleanup.
+    Get-JobRecord -RunFolder $RunFolder -JobId $JobId | ConvertTo-Json -Depth 12 | Write-Host
+    foreach ($file in @('runner.log','runner-stderr.log','stdout.log','stderr.log','spec.json')) {
+        $path = Join-Path $RunFolder "jobs/$JobId/$file"
+        if (Test-Path -LiteralPath $path) { Write-Host "DIAGNOSTIC: $path"; Get-Content -LiteralPath $path -Tail 40 | Write-Host }
     }
     throw "TIMEOUT waiting on $JobId in $RunFolder (status $((Get-JobRecord -RunFolder $RunFolder -JobId $JobId).status))"
 }
@@ -438,14 +488,16 @@ strict-unset-exact-exit|0|1|Set-StrictMode -Version Latest; Write-Output x; exit
         $path=Join-Path $tempRoot 'differential.ps1'
         Write-Utf8 $path $headScript
         $launch=if($isScript){$command}else{$path}
-        if ($isScript) { $null=& pwsh -NoProfile -NonInteractive -File $launch 2>&1 }
-        else { $null=& pwsh -NoProfile -NonInteractive -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($headScript))) 2>&1 }
-        $headCode=$LASTEXITCODE
+        # ScriptPath and unset-variable exit status exercise the executable's CLI policy.
+        # The other generated programs end in an explicit exit, handled by the isolated host.
+        if ($isScript) { $null = & pwsh -NoProfile -NonInteractive -File $launch 2>&1; $headCode = $LASTEXITCODE }
+        elseif ($name -eq 'strict-unset-exact-exit') { $null = & pwsh -NoProfile -NonInteractive -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($headScript))) 2>&1; $headCode = $LASTEXITCODE }
+        else { $headCode = (Invoke-TestShell -Command $headScript).ExitCode }
         Assert-True ($headCode -eq $pinnedHead[$name]) "HEAD pin: $name measured=$headCode pinned=$($pinnedHead[$name])"
         Write-Utf8 $path $currentScript
-        if ($isScript) { $null=& pwsh -NoProfile -NonInteractive -File $launch 2>&1 }
-        else { $null=& pwsh -NoProfile -NonInteractive -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($currentScript))) 2>&1 }
-        $currentCode=$LASTEXITCODE
+        if ($isScript) { $null = & pwsh -NoProfile -NonInteractive -File $launch 2>&1; $currentCode = $LASTEXITCODE }
+        elseif ($name -eq 'strict-unset-exact-exit') { $null = & pwsh -NoProfile -NonInteractive -EncodedCommand ([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($currentScript))) 2>&1; $currentCode = $LASTEXITCODE }
+        else { $currentCode = (Invoke-TestShell -Command $currentScript).ExitCode }
         $expected=if($readerExpected.ContainsKey($name)){$readerExpected[$name]}else{$pinnedHead[$name]}
         Assert-True ($currentCode -eq $expected) "differential: $name HEAD=$headCode current=$currentCode expected=$expected"
         if(-not $isScript -and -not $readerExpected.ContainsKey($name)) {
@@ -561,7 +613,10 @@ $savedAlertTransport = $env:DT_MODEL_ROUTER_ALERT_TRANSPORT
 $savedDmLog = $env:DT_TEST_DM_LOG
 try {
     Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID, Env:DT_JOB_DIR -ErrorAction SilentlyContinue
-    Test-GeneratorDifferential
+    # The generator's real-job smoke cases run before the main fixture setup too.
+    $env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'registry'
+    $env:DT_MODEL_ROUTER_STATE = Join-Path $tempRoot 'router-state'
+    if ($Shard -ne 2) { Test-GeneratorDifferential }
     if($GeneratorDifferentialOnly){
         Write-Output "SUMMARY: $script:passed passed, $script:failed failed"
         if($script:failed){exit 1}; exit 0
@@ -586,10 +641,11 @@ return [pscustomobject]@{ id = 'fake' }
     New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_STATE -Force | Out-Null
     Assert-True ([IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE).StartsWith([IO.Path]::GetFullPath($tempRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'router state stays under the suite temp directory'
     Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
+    if ($Shard -ne 2) {
     # FS-101: fixtures opt into temp storage explicitly; raw calls exercise the default guard.
     foreach ($verb in @('start', 'register-run', 'lease', 'note')) {
         $newTemp = Join-Path $tempRoot "refused-$verb"
-        $raw = & pwsh -NoProfile -File $dtJob $verb -RunFolder $newTemp -Command "'unused'" 2>&1
+        $raw = Invoke-TestPwsh -Script $dtJob $verb -RunFolder $newTemp -Command "'unused'" 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_TEMP_RUN_FOLDER' -and ($raw -join ' ') -match '\.dt-build/adhoc/') "$verb refuses a new temp run and names durable default"
         Assert-True (-not (Test-Path -LiteralPath $newTemp)) "$verb refusal creates no folder"
     }
@@ -622,7 +678,7 @@ $results | ConvertTo-Json -Compress
     }
     $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $tempRun -Evidence -Message 'Fixture evidence recorded.' -Json 2>$warningPath
     Assert-True ($LASTEXITCODE -eq 0 -and -not (Get-Content -Raw $warningPath)) 'evidence notes work in existing temp run'
-    $raw = & pwsh -NoProfile -File $readEvidence -RunFolder $tempRun -JobId $tempJob.job_id -File spec -Lines 1-10
+    $raw = Invoke-TestPwsh -Script $readEvidence -RunFolder $tempRun -JobId $tempJob.job_id -File spec -Lines 1-10
     Assert-True ($LASTEXITCODE -eq 0 -and ($raw -join ' ') -match 'temp fixture') 'evidence reads work in existing temp run'
     $copiedRun = Join-Path $tempRoot 'copied-run'
     Copy-Item -LiteralPath $tempRun -Destination $copiedRun -Recurse
@@ -630,7 +686,7 @@ $results | ConvertTo-Json -Compress
     Assert-True ($sourceRoot.StartsWith([IO.Path]::GetFullPath($tempRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'migration source stays within isolated fixtures'
     Rename-Item -LiteralPath $sourceRoot -NewName 'old-temp-unavailable'
     foreach ($file in @('stdout', 'stderr', 'summary', 'spec')) {
-        $raw = & pwsh -NoProfile -File $readEvidence -RunFolder $copiedRun -JobId $tempJob.job_id -File $file -Lines 1-10 -Json
+        $raw = Invoke-TestPwsh -Script $readEvidence -RunFolder $copiedRun -JobId $tempJob.job_id -File $file -Lines 1-10 -Json
         $read = ($raw -join "`n") | ConvertFrom-Json
         Assert-True ($LASTEXITCODE -eq 0 -and $read.path.StartsWith([IO.Path]::GetFullPath($copiedRun), [StringComparison]::OrdinalIgnoreCase)) "$file evidence follows a copied run when the original path is unavailable"
     }
@@ -704,13 +760,13 @@ $results | ConvertTo-Json -Compress
     $missingJob = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', "Write-Output '-PromptPath fake -OutputPath fake'; Write-Output done -OutputPathSuffix untouched")
     $null = Wait-JobTerminal $relaunchRun $missingJob.job_id
     foreach ($name in @('PromptPath', 'OutputPath')) {
-        $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $relaunchRun -FromJob $missingJob.job_id "-$name" replacement -AllowTempRunFolder 2>&1
+        $raw = Invoke-TestPwsh -Script $dtJob start -RunFolder $relaunchRun -FromJob $missingJob.job_id "-$name" replacement -AllowTempRunFolder 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_FROMJOB_NO_ARG') "$name override refuses absent exact argument including quoted decoys"
     }
     $releaseRetry = Join-Path $tempRoot 'release-retry'
     $heldRetry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-Command', (New-HeldJobCommand $releaseRetry))
     $null = Wait-JobState $relaunchRun $heldRetry.job_id -Until { param($r) $r.status -eq 'running' -and $r.pid }
-    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $relaunchRun -FromJob $heldRetry.job_id -AllowTempRunFolder 2>&1
+    $raw = Invoke-TestPwsh -Script $dtJob start -RunFolder $relaunchRun -FromJob $heldRetry.job_id -AllowTempRunFolder 2>&1
     Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_FROMJOB_RUNNING') 'FromJob refuses a live running job'
     $null = Invoke-DtJob @('cancel', '-RunFolder', $relaunchRun, '-JobId', $heldRetry.job_id)
     $retry = Invoke-DtJob @('start', '-RunFolder', $relaunchRun, '-FromJob', $heldRetry.job_id, '-Command', "'override command'")
@@ -752,11 +808,11 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
     $pinState = Join-Path $pinRun '_build-state.md'
     Write-Utf8 $pinState "updated_utc: fixture`nrun_status: runnable`nlast_consumed_event_seq: 0`n"
     $registrationArgs = @('register-run', '-RunFolder', $pinRun, '-RunId', 'pin-run', '-BuildStatePath', $pinState, '-PinnedHost', 'codex', '-Managed')
-    $raw = & pwsh -NoProfile -File $dtJob pin -RunFolder $pinRun -Vendor codex -Model fixture *> $null
+    $raw = Invoke-TestPwsh -Script $dtJob pin -RunFolder $pinRun -Vendor codex -Model fixture *> $null
     Assert-True ($LASTEXITCODE -ne 0) 'pin refuses an unregistered run'
     $null = Invoke-DtJob $registrationArgs
     foreach ($missing in @(@('-Vendor', 'codex'), @('-Model', 'fixture'))) {
-        $raw = & pwsh -NoProfile -File $dtJob pin -RunFolder $pinRun @missing 2>&1
+        $raw = Invoke-TestPwsh -Script $dtJob pin -RunFolder $pinRun @missing 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_USAGE') 'pin requires both vendor and model'
     }
     $pinned = Invoke-DtJob @('pin', '-RunFolder', $pinRun, '-Vendor', 'codex', '-Model', 'gpt-fixture')
@@ -766,11 +822,11 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
     foreach ($identity in @('DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID')) {
         try {
             [Environment]::SetEnvironmentVariable($identity, 'fixture')
-            $raw = & pwsh -NoProfile -File $dtJob pin -RunFolder $pinRun -Clear 2>&1
+            $raw = Invoke-TestPwsh -Script $dtJob pin -RunFolder $pinRun -Clear 2>&1
             Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_OPERATOR_ONLY') "$identity cannot clear a pin"
         } finally { [Environment]::SetEnvironmentVariable($identity, $null) }
     }
-    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $pinRun -Kind worker -Vendor claude -Command "'refused'" 2>&1
+    $raw = Invoke-TestPwsh -Script $dtJob start -RunFolder $pinRun -Kind worker -Vendor claude -Command "'refused'" 2>&1
     # PowerShell's error view colors and wraps the message to the console width; match the plain text.
     $plain = (($raw -join ' ') -replace '\x1b\[[0-9;]*m', '' -replace '\s+\|\s+', ' ' -replace '\s+', ' ')
     Assert-True ($LASTEXITCODE -ne 0 -and $plain -match 'DT_JOB_PIN_VENDOR: run is pinned to codex \(gpt-fixture\); worker vendor claude refused') 'worker vendor mismatch refused before job creation'
@@ -873,16 +929,16 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
     $jobDir = Join-Path $rf "jobs/$($start.job_id)"
     $expectedPaths = [ordered]@{ summary = $evidenceRecord.summary_path; stdout = $evidenceRecord.output_path; stderr = $evidenceRecord.stderr_path; spec = (Join-Path $jobDir 'spec.json') }
     foreach ($name in $expectedPaths.Keys) {
-        $actual = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -JobId $start.job_id -File $name -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
+        $actual = (Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -JobId $start.job_id -File $name -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
         $expectedLines = @(Get-Content -LiteralPath $expectedPaths[$name] -TotalCount 3)
         Assert-True ($actual.path -eq $expectedPaths[$name] -and @($actual.lines).Count -eq $expectedLines.Count) "$name resolves the recorded job evidence path"
         for ($i = 0; $i -lt $expectedLines.Count; $i++) {
             Assert-True ($actual.lines[$i] -eq "$($i + 1): $($expectedLines[$i])") "$name reads the expected evidence line"
         }
     }
-    $defaultRead = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -JobId $start.job_id -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
+    $defaultRead = (Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -JobId $start.job_id -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
     Assert-True ($defaultRead.path -eq $evidenceRecord.summary_path -and (@($defaultRead.warnings) -join ' ') -match 'repeat_read') 'JobId defaults to summary and shares repeat-read tracking'
-    $jobGrep = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -JobId $start.job_id -File stdout -Grep '^ok$' -Context 1 -Json) -join "`n" | ConvertFrom-Json
+    $jobGrep = (Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -JobId $start.job_id -File stdout -Grep '^ok$' -Context 1 -Json) -join "`n" | ConvertFrom-Json
     Assert-True (@($jobGrep.lines) -contains '1: ok') 'JobId supports grep and context'
     foreach ($missingPath in @((Join-Path $jobDir 'result.json'), (Join-Path $rf "jobs/$($start.job_id).xml"))) {
         $miss = Get-EvidenceError @{ RunFolder = $rf; Path = $missingPath; Lines = '1-3' }
@@ -960,7 +1016,7 @@ exit 0
             Assert-True (@($summary.blockers).Count -eq 0) 'PASS report has no invented blocker'
             foreach ($name in @('report', 'provenance')) {
                 $expectedPath = if ($name -eq 'report') { $report } else { "$report.provenance.json" }
-                $actual = (& pwsh -NoProfile -File $readEvidence -RunFolder $workerRun -JobId $worker.job_id -File $name -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
+                $actual = (Invoke-TestPwsh -Script $readEvidence -RunFolder $workerRun -JobId $worker.job_id -File $name -Lines '1-3' -Json) -join "`n" | ConvertFrom-Json
                 $expectedLines = @(Get-Content -LiteralPath $expectedPath -TotalCount 3)
                 Assert-True ($actual.path -eq $expectedPath -and @($actual.lines).Count -eq $expectedLines.Count) "$name resolves the worker wrapper artifact"
                 for ($i = 0; $i -lt $expectedLines.Count; $i++) {
@@ -982,7 +1038,7 @@ exit 0
         }
         $row = @($runSummary.jobs | Where-Object job_id -eq $worker.job_id)[0]
         Assert-True ($row.report_verdict -eq $summary.report_verdict -and $row.failure_category -eq $summary.failure_category) "$case run status carries report outcome"
-        $waitText = & pwsh -NoProfile -File $dtJob wait -RunFolder $workerRun -JobId $worker.job_id -All -TimeoutSec 1
+        $waitText = Invoke-TestPwsh -Script $dtJob wait -RunFolder $workerRun -JobId $worker.job_id -All -TimeoutSec 1
         Assert-True (($waitText -join "`n") -match $(if ($case -eq 'missing') { 'evidence=' } else { "verdict=$reportVerdict" })) "$case terminal check-in text carries available verdict"
     }
     # Probe parser and corrupt-artifact cases without spawning another process for each.
@@ -1047,12 +1103,12 @@ exit 0
         'PWSH -COMMAND "Write-Output $(1 + 2)"'
     )
     foreach ($commandText in $refusedCommands) {
-        $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $rf -Command $commandText -AllowTempRunFolder -Json 2>&1
+        $raw = Invoke-TestPwsh -Script $dtJob start -RunFolder $rf -Command $commandText -AllowTempRunFolder -Json 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_NESTED_EXPANSION') "refuses unsafe nested expansion: $commandText"
         Assert-True (-not (Test-Path (Join-Path $rf 'jobs/j-0001.json'))) 'refusal queues no job'
     }
     Assert-True (($raw -join ' ') -match 'single-quote' -and ($raw -join ' ') -match '-File <script>') 'refusal suggests safe alternatives'
-    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $rf -Command $unsafeCommand -AllowTempRunFolder -Json 2>&1
+    $raw = Invoke-TestPwsh -Script $dtJob start -RunFolder $rf -Command $unsafeCommand -AllowTempRunFolder -Json 2>&1
     Assert-True (($raw -join ' ') -match '\$LASTEXITCODE') 'j-0148 refusal names the expanded variable'
     $safeScript = Join-Path $rf 'safe.ps1'
     Write-Utf8 $safeScript 'exit 0'
@@ -1070,7 +1126,7 @@ exit 0
     }
     $sourceJob = $job
     $beforeCount = @(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json').Count
-    $raw = & pwsh -NoProfile -File $dtJob start -RunFolder $rf -FromJob $sourceJob.job_id -Command $unsafeCommand -AllowTempRunFolder -Json 2>&1
+    $raw = Invoke-TestPwsh -Script $dtJob start -RunFolder $rf -FromJob $sourceJob.job_id -Command $unsafeCommand -AllowTempRunFolder -Json 2>&1
     Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_NESTED_EXPANSION') 'FromJob validates an overridden command'
     # Simulate an unsafe legacy spec; neither relaunch path may queue it unchanged.
     $legacySpecPath = Join-Path $rf "jobs/$($sourceJob.job_id)/spec.json"
@@ -1082,7 +1138,7 @@ exit 0
     $legacyRecord.status = 'cancelled'
     Write-Utf8 $legacyRecordPath ($legacyRecord | ConvertTo-Json -Depth 8)
     foreach ($relaunch in @(@('start', '-FromJob'), @('requeue', '-JobId'))) {
-        $raw = & pwsh -NoProfile -File $dtJob $relaunch[0] -RunFolder $rf $relaunch[1] $sourceJob.job_id -AllowTempRunFolder -Json 2>&1
+        $raw = Invoke-TestPwsh -Script $dtJob $relaunch[0] -RunFolder $rf $relaunch[1] $sourceJob.job_id -AllowTempRunFolder -Json 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_NESTED_EXPANSION') "$($relaunch[0]) rejects an unsafe stored command"
     }
     Assert-True (@(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json').Count -eq $beforeCount) 'relaunch refusals queue no additional jobs'
@@ -1194,7 +1250,7 @@ exit 0
         Assert-True ($status.activity -match 'STALLED') "status shows a running job's activity ($($status.activity))"
         $runStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
         Assert-True (@($runStatus.stalled) -contains $quiet.job_id -and @($runStatus.stalled) -notcontains $busy.job_id) "run status names stalled jobs up front ($(@($runStatus.stalled) -join ','))"
-        $text = & pwsh -NoProfile -File $DtJob wait -RunFolder $rf -JobId $busy.job_id -Any -TimeoutSec 1
+        $text = Invoke-TestPwsh -Script $DtJob wait -RunFolder $rf -JobId $busy.job_id -Any -TimeoutSec 1
         Assert-True ((@($text) -join "`n") -match "$($busy.job_id) running \d+ min, last activity") "text check-in lists progress ($(@($text) -join ' | '))"
         Write-Utf8 $quietRelease 'release'
         $doneQuiet = Wait-JobTerminal -RunFolder $rf -JobId $quiet.job_id -TimeoutSec 30
@@ -1205,6 +1261,11 @@ exit 0
     finally { Remove-Item Env:DT_JOB_HEARTBEAT_SEC, Env:DT_JOB_STALL_SEC -ErrorAction SilentlyContinue }
 
     # Operator notes: added and cleared by operators only, shown in every status and wait.
+    }
+    if ($Shard -ne 1) {
+    # Separate process keeps regression doubles out of the integration fixtures.
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-runner-process-identity.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'fast-exit child retains identity and exit result under held ledger lock'
     $rf = New-RunFolder 'notes'
     $n1 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'Dispatch the repair worker first.')
     $n2 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Message', 'R3b3 split review is authorized; see approvals/r3b3.md.')
@@ -1214,30 +1275,30 @@ exit 0
     $e2 = Invoke-DtJob @('note', '-RunFolder', $rf, '-Evidence', '-Message', ('x' * 2000))
     Assert-True ($e1.evidence_notes[0].id -eq 'e-001' -and $e2.evidence_notes[1].id -eq 'e-002' -and $e2.evidence_notes[1].text.Length -eq 2000) 'evidence notes use separate sequential ids, allow whole-word nonmatches and accept the cap'
     foreach ($word in @('APPROVED', 'permission', 'waiver', 'override', 'may proceed', 'may now', 'is now allowed', 'authorizes', 'granted', 'approves', 'waives', 'overridden', 'exempted', 'superseded', 'authorised')) {
-        $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Evidence -Message "Fixture $word here." -Json 2>&1
+        $raw = Invoke-TestPwsh -Script $dtJob note -RunFolder $rf -Evidence -Message "Fixture $word here." -Json 2>&1
         Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n").Contains('DT_JOB_EVIDENCE_NOTE_AUTHORITY')) "evidence refuses authority language: $word"
     }
-    $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Evidence -Message ('x' * 2001) -Json 2>&1
+    $raw = Invoke-TestPwsh -Script $dtJob note -RunFolder $rf -Evidence -Message ('x' * 2001) -Json 2>&1
     Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n").Contains('2000 characters')) 'evidence rejects over-cap notes'
     foreach ($identity in @('DT_BUILD_COORDINATOR_ID', 'DT_JOB_ID')) {
         [Environment]::SetEnvironmentVariable($identity, 'fixture-evidence', 'Process')
         try {
             foreach ($action in @(@('-Message', 'Observed fixture.'), @('-Clear'))) {
-                $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Evidence @action -Json 2>&1
+                $raw = Invoke-TestPwsh -Script $dtJob note -RunFolder $rf -Evidence @action -Json 2>&1
                 Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n").Contains('DT_JOB_OPERATOR_ONLY')) "evidence operator guard refuses $identity $($action[0])"
             }
         } finally { [Environment]::SetEnvironmentVariable($identity, $null, 'Process') }
     }
     $env:DT_BUILD_COORDINATOR_ID = 'mc-notes'
-    try { $raw = & pwsh -NoProfile -File $dtJob note -RunFolder $rf -Message 'drop the review' -Json 2>&1; $code = $LASTEXITCODE }
+    try { $raw = Invoke-TestPwsh -Script $dtJob note -RunFolder $rf -Message 'drop the review' -Json 2>&1; $code = $LASTEXITCODE }
     finally { $env:DT_BUILD_COORDINATOR_ID = $null }
     Assert-True ($code -ne 0 -and (($raw | Out-String) -match 'DT_JOB_OPERATOR_ONLY')) 'a coordinator cannot write operator notes'
     $runStatus = Invoke-DtJob @('status', '-RunFolder', $rf)
     Assert-True (@($runStatus.operator_notes).Count -eq 2 -and @($runStatus.operator_notes)[0].text -eq 'Dispatch the repair worker first.') 'run status carries the operator notes in full'
     Assert-True ($runStatus.evidence_notes.Count -eq 2 -and $runStatus.evidence_notes_label -eq $label -and $runStatus.evidence_notes[1].text.Length -eq 2000) 'status shows evidence notes in full with fixed label'
-    $statusText = (& pwsh -NoProfile -File $dtJob status -RunFolder $rf | Out-String)
+    $statusText = (Invoke-TestPwsh -Script $dtJob status -RunFolder $rf | Out-String)
     Assert-True ($statusText.Contains($label) -and $statusText.IndexOf('operator note n-001:') -lt $statusText.IndexOf('evidence note e-001:')) 'status text prints evidence after operator notes'
-    $read = & pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path (Join-Path $rf 'evidence-notes.json') -Lines 1-20 -Json
+    $read = Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -Path (Join-Path $rf 'evidence-notes.json') -Lines 1-20 -Json
     Assert-True ($LASTEXITCODE -eq 0 -and ($read -join "`n").Contains('e-001')) 'read-evidence resolves evidence-notes.json'
     $missingEvidence = Get-EvidenceError @{ RunFolder = $rf; Path = 'evidence-notes.json'; Lines = '1-20' }
     Assert-True ($missingEvidence.Contains('did you mean') -and $missingEvidence.Contains((Join-Path $rf 'evidence-notes.json'))) 'bare evidence filename suggests the run-folder path like operator notes'
@@ -1248,7 +1309,7 @@ exit 0
     $w = Invoke-DtJob @('wait', '-RunFolder', $rf, '-JobId', $noteJob.job_id, '-Any', '-TimeoutSec', '1')
     Assert-True (@($w.operator_notes).Count -eq 2) 'every wait check-in carries the operator notes'
     Assert-True ($w.evidence_notes.Count -eq 2 -and $w.evidence_notes_label -eq $label) 'wait carries evidence notes and fixed label'
-    $text = & pwsh -NoProfile -File $dtJob wait -RunFolder $rf -JobId $noteJob.job_id -Any -TimeoutSec 1
+    $text = Invoke-TestPwsh -Script $dtJob wait -RunFolder $rf -JobId $noteJob.job_id -Any -TimeoutSec 1
     Assert-True ((@($text) -join "`n") -match 'operator note n-001: Dispatch the repair worker first\.' -and @($text)[-1] -match '^wait_timeout') "text check-ins list notes and keep wait_timeout last ($(@($text) -join ' | '))"
     Write-Utf8 $release 'release'
     Assert-True (($text -join "`n").Contains($label) -and ($text -join "`n").Contains('evidence note e-001:')) 'wait text prints labeled evidence notes'
@@ -1301,10 +1362,10 @@ exit 0
     Assert-True ($unchanged.status -eq 'blocked' -and (Get-JobRecord $rf $unchanged.job_id).depends_on[0] -eq $b.job_id) 'omitted dependency override preserves the original chain'
     $restartedTail = Invoke-DtJob @('requeue', '-RunFolder', $rf, '-JobId', $c.job_id, '-DependsOn', $requeued.job_id)
     Assert-True ((Wait-JobTerminal $rf $restartedTail.job_id).status -eq 'succeeded') 'a multi-level chain restarts against new predecessor IDs'
-    $raw = & pwsh -NoProfile -File $dtJob requeue -RunFolder $rf -JobId $okA.job_id -Json 2>&1
+    $raw = Invoke-TestPwsh -Script $dtJob requeue -RunFolder $rf -JobId $okA.job_id -Json 2>&1
     Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join "`n") -match 'DT_JOB_REQUEUE_STATE') 'requeue rejects a succeeded job'
     $countBefore = @(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json').Count
-    & pwsh -NoProfile -File $dtJob requeue -RunFolder $rf -JobId $b.job_id -DependsOn j-9999 -Json *> $null
+    Invoke-TestPwsh -Script $dtJob requeue -RunFolder $rf -JobId $b.job_id -DependsOn j-9999 -Json *> $null
     Assert-True ($LASTEXITCODE -ne 0 -and @(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json').Count -eq $countBefore) 'unknown dependency fails without allocating a job'
     $heldRelease = Join-Path $rf 'requeue-held.txt'
     $held = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', (New-HeldJobCommand $heldRelease))
@@ -1402,7 +1463,7 @@ Start-Sleep 300
             Assert-True ($LASTEXITCODE -eq 0 -and "$deadCount" -eq '0' -and (Test-ProcessGone $deadRecord.pid) -and (Test-ProcessGone $deadRecord.runner_pid)) 'Stop-DtJobProcesses returns an empty array for dead pids'
         }
         finally {
-            if ($treeJob) { & pwsh -NoProfile -File $dtJob cancel -RunFolder $rf -JobId $treeJob.job_id -Json | Out-Null }
+            if ($treeJob) { Invoke-TestPwsh -Script $dtJob cancel -RunFolder $rf -JobId $treeJob.job_id -Json | Out-Null }
             Get-CimInstance Win32_Process -Filter "Name = 'PING.EXE' OR Name = 'pwsh.exe'" | Where-Object { $_.CommandLine -like "*$pingMarker*" -or $_.CommandLine -like "*$directMarker*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
         }
     } else { Write-Output 'SKIP: FS-96 Windows process tree cancellation and dead-pid regressions' }
@@ -1458,7 +1519,7 @@ Start-Sleep 300
     $rf = New-RunFolder 'envelope'
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "1..3000 | ForEach-Object { 'y' * 300 }; 'z' * 5000")
     Wait-JobTerminal -RunFolder $rf -JobId $job.job_id | Out-Null
-    $raw = (& pwsh -NoProfile -File $dtJob status -RunFolder $rf -JobId $job.job_id -Json) -join "`n"
+    $raw = (Invoke-TestPwsh -Script $dtJob status -RunFolder $rf -JobId $job.job_id -Json) -join "`n"
     $envelope = $raw | ConvertFrom-Json
     Assert-True ([System.Text.Encoding]::UTF8.GetByteCount($raw) -le 8192) "envelope within 8 KB ($([System.Text.Encoding]::UTF8.GetByteCount($raw)) bytes)"
     Assert-True ($envelope.truncated -eq $true) 'envelope marks truncation'
@@ -1469,7 +1530,7 @@ Start-Sleep 300
     Assert-True ($summary.status -eq 'succeeded') 'runner wrote the bounded summary'
     $job = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', "1..3000 | ForEach-Object { 'y' * 300 }; 1..200 | ForEach-Object { [Console]::Error.WriteLine('e' * 600) }; exit 1")
     Wait-JobTerminal -RunFolder $rf -JobId $job.job_id | Out-Null
-    $raw = (& pwsh -NoProfile -File $dtJob status -RunFolder $rf -JobId $job.job_id -Json) -join "`n"
+    $raw = (Invoke-TestPwsh -Script $dtJob status -RunFolder $rf -JobId $job.job_id -Json) -join "`n"
     $envelope = $raw | ConvertFrom-Json
     Assert-True ([System.Text.Encoding]::UTF8.GetByteCount($raw) -le 8192) "failed envelope with stderr within 8 KB ($([System.Text.Encoding]::UTF8.GetByteCount($raw)) bytes)"
     Assert-True (@($envelope.stderr_excerpt).Count -ge 1 -and (@($envelope.stderr_excerpt | Where-Object { $_.Length -gt 400 })).Count -eq 0) 'stderr tail present and line-capped'
@@ -1487,19 +1548,19 @@ Start-Sleep 300
     for ($i = 1; $i -le 5000; $i++) { $lines.Add(('line {0} ' -f $i) + ('x' * 100)) }
     $lines[9] = 'LONG ' + ('q' * 1000)
     Write-Utf8 $evidenceFile (($lines -join "`n") + "`n")
-    $raw = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '1-5000' -Json) -join "`n"
+    $raw = (Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '1-5000' -Json) -join "`n"
     $read = $raw | ConvertFrom-Json
     Assert-True ([System.Text.Encoding]::UTF8.GetByteCount($raw) -le 16384) "read-evidence reply within 16 KB ($([System.Text.Encoding]::UTF8.GetByteCount($raw)) bytes)"
     Assert-True ($read.truncated -eq $true -and $read.evidence_path -eq $evidenceFile) 'read-evidence marks truncation with the evidence path'
     Assert-True ((@($read.lines | Where-Object { $_.Length -gt 400 })).Count -eq 0) 'read-evidence lines within 400 characters'
-    $grep = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Grep '^LONG' -Context 1 -Json) -join "`n" | ConvertFrom-Json
+    $grep = (Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -Path $evidenceFile -Grep '^LONG' -Context 1 -Json) -join "`n" | ConvertFrom-Json
     Assert-True (@($grep.lines).Count -eq 3 -and $grep.lines[1].StartsWith('10: LONG') -and $grep.truncated) 'grep with context returns the hit and neighbours, line-capped'
-    $first = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '20-22' -Json) -join "`n" | ConvertFrom-Json
+    $first = (Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '20-22' -Json) -join "`n" | ConvertFrom-Json
     Assert-True (@($first.warnings).Count -eq 0 -and @($first.lines).Count -eq 3) 'first read of a range has no warning'
-    $second = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '20-22' -Json) -join "`n" | ConvertFrom-Json
+    $second = (Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '20-22' -Json) -join "`n" | ConvertFrom-Json
     Assert-True ((@($second.warnings) -join ' ') -match 'repeat_read') 'repeat read of an unchanged range warns'
     Add-Content -LiteralPath $evidenceFile -Value 'appended'
-    $third = (& pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '20-22' -Json) -join "`n" | ConvertFrom-Json
+    $third = (Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '20-22' -Json) -join "`n" | ConvertFrom-Json
     Assert-True (@($third.warnings).Count -eq 0) 'read after the file changed is not a repeat'
     $log = @(Get-Content -LiteralPath (Join-Path $rf 'jobs/reads.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True ($log.Count -eq 5) "reads.jsonl has one entry per call ($($log.Count))"
@@ -1507,8 +1568,8 @@ Start-Sleep 300
     Assert-True ($log[1].selector.mode -eq 'grep' -and $log[1].selector.pattern -eq '^LONG' -and $log[3].repeat_read -eq $true) 'read log records pattern and repeat flag'
     # Text mode: the warning and the truncation marker count against the 16 KB cap.
     $rf = New-RunFolder 'evidence-text'
-    & pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '1-5000' | Out-Null
-    $text = @(& pwsh -NoProfile -File $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '1-5000')
+    Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '1-5000' | Out-Null
+    $text = @(Invoke-TestPwsh -Script $readEvidence -RunFolder $rf -Path $evidenceFile -Lines '1-5000')
     $textBytes = ($text | ForEach-Object { [System.Text.Encoding]::UTF8.GetByteCount($_) + [Environment]::NewLine.Length } | Measure-Object -Sum).Sum
     Assert-True ($textBytes -le 16384) "text-mode read with warning and marker within 16 KB ($textBytes bytes)"
     Assert-True ($text[0].StartsWith('WARNING repeat_read') -and $text[-1].StartsWith('[truncated: true')) 'text-mode read shows the warning and the truncation marker'
@@ -1706,7 +1767,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
         if ($invalid -eq 'coordinator') { $env:DT_BUILD_COORDINATOR_ID = 'fixture' }
         if ($invalid -eq 'job') { $env:DT_JOB_ID = 'fixture' }
         try {
-            $raw = & pwsh -NoProfile -File $dtJob @registerDelegate -Delegate $name -AllowTempRunFolder -Json 2>&1
+            $raw = Invoke-TestPwsh -Script $dtJob @registerDelegate -Delegate $name -AllowTempRunFolder -Json 2>&1
             Assert-True ($LASTEXITCODE -ne 0 -and ($raw -join ' ') -match 'DT_JOB_(USAGE|OPERATOR_ONLY)') "register-run rejects $invalid delegate assignment"
         } finally { Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue }
     }
@@ -1734,7 +1795,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
         if ($refusal -eq 'job') { $env:DT_JOB_ID = 'fixture-job' }
         if ($refusal -eq 'wrong-state') { Write-Utf8 $state "run_status: runnable`nlast_consumed_event_seq: 0`nupdated_utc: fixture`n" }
         try {
-            $raw = & pwsh -NoProfile -File $dtJob approve -RunFolder $rf -Operation $op -Json 2>&1
+            $raw = Invoke-TestPwsh -Script $dtJob approve -RunFolder $rf -Operation $op -Json 2>&1
             Assert-True ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $queuePath)) "$refusal preserves refusal without queuing"
         } finally {
             Remove-Item Env:DT_BUILD_COORDINATOR_ID,Env:DT_JOB_ID -ErrorAction SilentlyContinue
@@ -1777,7 +1838,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     Invoke-DtJob @('await-danny', '-RunFolder', $rf, '-Operation', 'timestamp-text', '-Message', 'fixture only') | Out-Null
     Invoke-DtJob @('approve', '-RunFolder', $rf, '-Operation', 'timestamp-text') | Out-Null
     Assert-True ((Get-Content -LiteralPath $pendingPath -Raw).Contains('"' + $zeroStamp + '"')) 'approval rewrites preserve stored timestamp text exactly'
-    $wrongRepeat = & pwsh -NoProfile -File $dtJob approve -RunFolder $rf -Operation fixture-review -Json 2>&1
+    $wrongRepeat = Invoke-TestPwsh -Script $dtJob approve -RunFolder $rf -Operation fixture-review -Json 2>&1
     Assert-True ($LASTEXITCODE -ne 0 -and ($wrongRepeat -join ' ') -match 'DT_JOB_NOT_AWAITING') 'older operation is not accepted as a repeated latest approval'
 
     # FS-58: exercise the real unwrapped runner with a PS pytest stand-in,
@@ -1816,6 +1877,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     Invoke-DtJob @('cancel','-RunFolder',$rf,'-JobId',$wrapped.job_id) | Out-Null
     Invoke-DtJob @('cancel','-RunFolder',$rf,'-JobId',$held.job_id) | Out-Null
 
+    }
     if ($script:failed -gt 0) { $exitCode = 1 } else { Write-Output 'PASS: dt-job suite' }
 }
 catch {

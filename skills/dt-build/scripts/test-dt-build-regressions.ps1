@@ -1,9 +1,14 @@
-param()
+param([ValidateRange(0,3)][int]$Shard = 0, [switch]$Serial)
 
 foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
+. (Join-Path $PSScriptRoot 'tests/test-shell.ps1')
+if ($Shard -eq 0 -and -not $Serial) {
+    Invoke-TestShards -Script $PSCommandPath -Count 3
+    exit $LASTEXITCODE
+}
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -32,6 +37,8 @@ $originalLeanBootstrap = $env:DT_BUILD_LEAN_BOOTSTRAP
 $originalJobId = $env:DT_JOB_ID
 $originalJobDir = $env:DT_JOB_DIR
 $originalCoordinatorId = $env:DT_BUILD_COORDINATOR_ID
+$originalBuildStateDir = $env:DT_BUILD_STATE_DIR
+$env:DT_BUILD_STATE_DIR = Join-Path $tempRoot 'registry'
 # Direct-wrapper timeout fixtures and operator commands need a standalone caller.
 Remove-Item Env:DT_JOB_ID, Env:DT_JOB_DIR, Env:DT_BUILD_COORDINATOR_ID -ErrorAction SilentlyContinue
 # Isolate from this machine's live Codex session usage until a test sets its own fixture home.
@@ -713,6 +720,7 @@ if($env:DT_FAKE_UNICODE_TEXT){
 '@
     $wrapperPrompt = Join-Path $tempRoot 'wrapper-prompt.md'
     Write-Utf8 -Path $wrapperPrompt -Content "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nfixture"
+    if ($Shard -in @(0,1)) {
     $wrapperOutput = Join-Path $tempRoot 'wrapper-output.md'
     $wrapper = Join-Path $scriptDir 'invoke-codex-chunk.ps1'
     $savedPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR; $savedPinModel = $env:DT_BUILD_RUN_PIN_MODEL
@@ -938,6 +946,7 @@ if($env:DT_FAKE_UNICODE_TEXT){
         -ProjectPath $workingTree -Preflight -Attempt 3 *> $null
     Assert-True ($LASTEXITCODE -ne 0) "Claude wrapper accepted automatic attempt 3"
 
+    }
     $fakeClaude = Join-Path $tempRoot 'fake-claude.ps1'
     Write-Utf8 -Path $fakeClaude -Content @'
 if ($args -contains '--version') { Write-Output 'claude-cli fixture'; exit 0 }
@@ -1002,6 +1011,7 @@ if ($env:DT_FAKE_CHANGE_TREE) {
 Write-Envelope $report
 '@
 
+    if ($Shard -in @(0,2)) {
     # These fake runs fail on purpose, and failure diagnosis then reads the live status page.
     # An empty vendor-status.json in the state folder stops diagnosis before any fetch, so a
     # real vendor incident cannot block the fake Claude lane (it did during Anthropic's
@@ -1232,6 +1242,8 @@ Write-Envelope $report
 
     # Peers rely on inherited console defaults, just like installed PS1 shims.
     # Check the actual prompt received, retained final message and stderr on both lanes.
+    }
+    if ($Shard -in @(0,3)) {
     $unicode = [char]0xA7 + ' snow ' + [char]0x96EA + ' emoji ' + [char]::ConvertFromUtf32(0x1F600) + ' Tibetan ' + [char]0x0F56 + [char]0x0F7C + [char]0x0F51 + [char]0x0F0B + ' quote \" backslash \\'
     $unicodePrompt=Join-Path $tempRoot 'unicode-prompt.md'
     $unicodePromptText="RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`n"+$unicode+"`nline two`ttab"
@@ -1456,10 +1468,12 @@ $script:RouterDiagnosisHttp = {
         Assert-True ($LASTEXITCODE -eq 0) "$lane selection fixture finishes"
     }
 
+    }
     Write-Output 'PASS: dt-build regression suite'
     Write-Output "SUMMARY: $script:passed passed"
 }
 finally {
+    $env:DT_BUILD_STATE_DIR = $originalBuildStateDir
     $env:DT_ROUTER_TEST_FAKE_CLI_ROOT = $originalFakeCliRoot
     $env:DT_BUILD_LEAN_BOOTSTRAP = $originalLeanBootstrap
     $env:DT_JOB_ID = $originalJobId

@@ -1,5 +1,10 @@
 # dt-build — CHANGELOG
 
+## 2.55.1
+
+- Speed up the job and context suites with isolated interpreters and bounded job shards; isolate early generator fixture state.
+- Capture child process identity before ledger contention, safely record unavailable identity after exit, and preserve the real child result; regress fast exit under a held ledger lock.
+
 ## 2.55.0
 
 - Lean Claude coordinator start: CLAUDE.md loading off, build coordinator instructions regenerated from the live CLAUDE.md chain at every launch (build-orchestrator-rules.ps1; no drift), skills off, tools from the run's coordinator-tools.txt; measured 60.5k -> 21.5k startup tokens, hooks unchanged; DT_BUILD_FULL_CONTEXT=1 opts out.
