@@ -10,7 +10,7 @@ Single canonical schema for the Phase-6 roadmap contract consumed by Phase-7 dt-
 ## Version header
 
 ```yaml
-producer_current_version: 1.1.0
+producer_current_version: 1.2.0
 schema_version: 1
 ```
 
@@ -74,6 +74,26 @@ in dt-build's `references/fidelity-gates.md`; the producer preserves this table 
 - Contains one mermaid `gantt` block.
 
 ## Validation expectations
+
+New roadmaps carry `dependency_analysis: 1` and `## Milestone Surfaces`, with columns
+`milestone-id`, `write-surface`, `provides`, `consumes`, `design-source`. Every milestone needs one row;
+empty sets use `-`, entries use semicolons. Paths are case-sensitive repo-relative globs supporting
+`*`, `?` and whole-segment `**` (zero or more segments), without brackets, braces or parent traversal.
+Interfaces are exact case-sensitive names (`module:`, `api:`, `schema:`, `config:`); consumption of
+an interface provided by another milestone creates a directed edge. Interfaces with no local provider
+refer to existing baseline/external contracts, documented in `design-source`.
+
+The pure `dependency-analysis.ps1` helper intersects glob languages, including new files; it never
+enumerates only existing paths. Overlapping writers must have a dependency path in either direction
+and the later writer must declare `serial: <cause>`. Consumption paths must reach their provider.
+The producer computes these edges, records `## Dependency Causes`, and removes declared edges with no
+direct consumption/overlap cause, reporting `DEPENDENCY_UNJUSTIFIED` warnings. For write collisions it
+prefers consumption direction, then authored direction, then stable ID order. Unrelated rows stay
+independent regardless of their position. Cycles fail validation. Legacy roadmaps lacking both marker
+and surfaces remain readable with `DEPENDENCY_LEGACY`; new builds regenerate them.
+
+Named failures: `DEPENDENCY_SURFACE_MISSING`, `DEPENDENCY_SURFACE_INVALID`,
+`DEPENDENCY_CONSUMPTION_UNDECLARED`, `DEPENDENCY_OVERLAP_UNDECLARED`, `DEPENDENCY_OVERLAP_NOT_SERIAL`.
 
 New producers carry `## Throughput and hardware` verbatim from the design and append `execution` and
 `test-execution` to Milestones and Chunks. Dependencies identify concurrent DAG branches; execution names

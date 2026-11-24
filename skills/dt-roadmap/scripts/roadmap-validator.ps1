@@ -113,6 +113,7 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 
 . (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1')
 . (Join-Path $scriptDir 'design-coverage.ps1')
+. (Join-Path $scriptDir 'dependency-analysis.ps1')
 
 if ([string]::IsNullOrWhiteSpace($SchemaPath)) {
     $SchemaPath = Join-Path $skillRoot 'references\roadmap-schema.md'
@@ -375,6 +376,23 @@ if ($coverageLegacy) {
     }
 }
 
+$dependencyAnalysis = $null
+if ($roadmapRaw -match '(?m)^dependency_analysis:' -or $roadmapRaw -match '(?m)^## Milestone Surfaces\s*$') {
+    $surfaces = Read-MilestoneSurfaces $roadmapRaw
+    $dependencyAnalysis = Get-MilestoneDependencyAnalysis @($milestones) $surfaces
+    foreach ($item in $dependencyAnalysis.errors) { $errors.Add($item) }
+    foreach ($item in $dependencyAnalysis.warnings) { $warnings.Add($item) }
+    foreach ($edge in $dependencyAnalysis.edges) {
+        if (-not $edge.overlap) { continue }
+        $row = @($milestones | Where-Object { $_.id -eq $edge.milestone })[0]
+        if (-not $row.PSObject.Properties['execution'] -or $row.execution -notmatch '^serial:\s*\S') {
+            $errors.Add("DEPENDENCY_OVERLAP_NOT_SERIAL: $($edge.milestone) needs serial: <cause>; $($edge.cause)")
+        }
+    }
+} else {
+    $warnings.Add('DEPENDENCY_LEGACY: no declared surfaces/interfaces; regenerate before a new build.')
+}
+
 $result = [pscustomobject]@{
     roadmap_path = (Resolve-Path -LiteralPath $RoadmapPath).Path
     schema_path = (Resolve-Path -LiteralPath $SchemaPath).Path
@@ -386,6 +404,7 @@ $result = [pscustomobject]@{
     pass = ($errors.Count -eq 0)
     errors = @($errors)
     warnings = @($warnings)
+    dependency_analysis = $dependencyAnalysis
 }
 
 if (-not $result.pass) {
@@ -400,5 +419,6 @@ if ($Json) {
     $result | ConvertTo-Json -Depth 6
 }
 else {
+    foreach ($warning in $warnings) { Write-Warning $warning }
     Write-Output ("PASS: roadmap schema validated ({0} milestones, {1} chunks, {2} verification checks)" -f $result.milestone_count, $result.chunk_count, $result.verification_item_count)
 }

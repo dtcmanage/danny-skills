@@ -14,6 +14,12 @@ try {
 1. Alpha. Build isolated alpha worktree.
 2. Beta. Build isolated beta worktree.
 3. Integrate. Accept both on integration branch.
+## Milestone Surfaces
+| milestone-id | write-surface | provides | consumes | design-source |
+| --- | --- | --- | --- | --- |
+| M01 | alpha/** | module:alpha | - | Implementation Sequence 1 |
+| M02 | beta/** | module:beta | - | Implementation Sequence 2 |
+| M03 | integration/** | - | module:alpha; module:beta | Implementation Sequence 3 |
 ## Throughput and hardware
 Host: measured 32 logical processors, 63 GiB RAM, CIM, 2026-10-17; 2 GiB per job.
 | Step | Host | Parallel method or serial reason | Dependencies / isolation | RAM per job |

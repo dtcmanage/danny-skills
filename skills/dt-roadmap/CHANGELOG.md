@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.5.0
+
+- Derive milestone dependencies from declared file/glob overlap and provided/consumed interfaces; validate unexplained prerequisites and missing serialization.
+
 ## 1.4.3
 
 - Shared script update: runnable-command recognizer accepts python3/bash/sh/uv/make (dt-roadmap); claude headless auth comment wording (dt-review).

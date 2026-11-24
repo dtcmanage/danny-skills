@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.4.3
+  version: 1.5.0
   changelog: "Full changelog relocated to skills/dt-roadmap/CHANGELOG.md (newest first)."
 ---
 
@@ -75,6 +75,16 @@ The producer does NOT infer test paths, assign milestones to gates by prose matc
 
 ## Procedure
 
+Before generation, author `## Milestone Surfaces` in the design: columns `milestone-id`,
+`write-surface`, `provides`, `consumes`, `design-source` (design heading/requirement). Cover every
+milestone, including shared lock/config/test files and moved files at both paths. Separate entries
+with semicolons; use `-` for empty sets. Write surfaces are case-sensitive repo-relative paths/globs
+(`/`, `*`, `?`, whole-segment `**`); other glob syntax is rejected. Interfaces use exact stable names
+such as `module:slots`, `api:POST /release`, `schema:Slot`, `config:slot_lock`. Document existing
+external interfaces in design-source. The producer computes dependencies from consumption and write
+overlap, removes unsupported declared edges with `DEPENDENCY_UNJUSTIFIED` warnings and names serial
+overlap causes. Consumption sets direction; otherwise use authored direction, then stable ID order.
+
 1. Intake in one question:
 - Input design path.
 - Output folder (default: same folder as input design).
@@ -100,6 +110,8 @@ The producer does NOT infer test paths, assign milestones to gates by prose matc
 
 4. Validate contract before export:
 - Run `<skill>/scripts/roadmap-validator.ps1 -RoadmapPath <roadmap.md>`.
+- Resolve dependency warnings against the design; missing surfaces, undeclared consumption/overlap,
+  cycles and non-serial overlaps are errors. Review `Dependency Causes` before export.
 - Do not continue on validator errors.
 
 5. Emit milestone exports:

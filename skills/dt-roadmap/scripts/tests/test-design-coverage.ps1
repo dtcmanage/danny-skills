@@ -14,6 +14,10 @@ try {
     $sequence = @'
 ## Implementation Sequence
 1. Build client.
+## Milestone Surfaces
+| milestone-id | write-surface | provides | consumes | design-source |
+| --- | --- | --- | --- | --- |
+| M01 | client/** | - | - | Implementation Sequence 1 |
 ## Throughput and hardware
 Measured test host; isolated roots.
 | milestone-id | dependencies | execution | test-execution |
@@ -124,6 +128,11 @@ Measured test host; isolated roots.
 | --- | --- | --- | --- |
 | M01 | - | parallel | parallel: isolated fixture process |
 | M02 | M01 | serial: shared fixture state | serial: shared fixture state |
+## Milestone Surfaces
+| milestone-id | write-surface | provides | consumes | design-source |
+| --- | --- | --- | --- | --- |
+| M01 | fixture/** | - | - | Phase 1 |
+| M02 | fixture/** | - | - | Phase 2 |
 ## Validation Gates
 - M01: `pwsh -NoProfile -Command 'exit 0'`
 - M02: `pwsh -NoProfile -Command 'exit 0'`

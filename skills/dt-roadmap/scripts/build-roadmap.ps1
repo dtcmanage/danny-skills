@@ -31,6 +31,7 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 . (Join-Path $repoRoot 'scripts\visualize\mermaid-wrap.ps1')
 . (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1')
 . (Join-Path $scriptDir 'design-coverage.ps1')
+. (Join-Path $scriptDir 'dependency-analysis.ps1')
 
 function Escape-Html {
     param([string]$Text)
@@ -498,13 +499,27 @@ $milestonesAugmented = foreach ($m in $milestones) {
     [pscustomobject]@{
         id = $m.id
         name = $m.name
-        dependencies = if ($decision -and $decision['dependencies']) { $decision['dependencies'] } elseif ($m.id -eq 'M01') { '-' } else { ('M{0:D2}' -f ([int]$m.id.Substring(1) - 1)) }
+        dependencies = if ($decision -and $decision['dependencies']) { $decision['dependencies'] } else { '-' }
         execution = if ($decision) { $decision['execution'] } else { 'UNRESOLVED' }
         test_execution = if ($decision) { $decision['test-execution'] } else { 'UNRESOLVED' }
         verification_mode = $verificationMode
         commands = $cmds
     }
 }
+
+$surfaces = Read-MilestoneSurfaces $redacted
+$dependencyAnalysis = Get-MilestoneDependencyAnalysis @($milestonesAugmented) $surfaces
+foreach ($warning in $dependencyAnalysis.warnings) { $throughputWarnings.Add($warning) }
+foreach ($errorText in $dependencyAnalysis.errors) { $throughputWarnings.Add($errorText) }
+foreach ($m in $milestonesAugmented) {
+    $deps = @($dependencyAnalysis.dependencies[$m.id])
+    $m.dependencies = if ($deps.Count) { $deps -join ',' } else { '-' }
+    $causes = @($dependencyAnalysis.edges | Where-Object { $_.milestone -eq $m.id -and $_.overlap } | ForEach-Object { $_.cause })
+    if ($causes.Count) { $m.execution = 'serial: ' + (($causes | Sort-Object -Unique) -join '; ') }
+}
+$surfaceSection = Get-SectionBody -Text $redacted -Headers @('Milestone Surfaces')
+$surfaceBody = if ($surfaceSection) { $surfaceSection.Body.Trim() } else { 'UNRESOLVED: declare every milestone write surface, provides, consumes and design-source.' }
+$dependencyCauses = @($dependencyAnalysis.edges | ForEach-Object { "| $($_.milestone) | $($_.prerequisite) | $($_.cause) |" }) -join "`n"
 
 # Track milestones with no commands so we can surface the gap in the producer
 # output (validator will hard-fail VERIFICATION_NAMES_NO_RUNNABLE on these).
@@ -578,6 +593,25 @@ if ($throughputWarnings.Count) {
     $gapNote += "`n- " + ($throughputWarnings -join "`n- ") + "`n"
 }
 $throughputBody = if ($throughput) { $throughput.Body.Trim() } else { 'UNRESOLVED: measure hosts and decide throughput before dispatch.' }
+# Keep the carried throughput table consistent with the computed milestone DAG.
+$throughputHeaders = @()
+$throughputBody = (($throughputBody -split '\r?\n' | ForEach-Object {
+    $line = $_
+    if ($line -notmatch '^\s*\|') { $throughputHeaders = @(); $line; return }
+    $cells = @($line.Trim().Trim('|').Split('|') | ForEach-Object { $_.Trim() })
+    if ($cells -contains 'milestone-id') { $throughputHeaders = $cells; $line; return }
+    if ($throughputHeaders -contains 'dependencies' -and $cells[0] -match '^M\d+$') {
+        $midIndex = [array]::IndexOf($throughputHeaders, 'milestone-id')
+        $match = @($milestonesAugmented | Where-Object { $_.id -eq $cells[$midIndex] })
+        if ($match.Count -eq 1) {
+            $cells[[array]::IndexOf($throughputHeaders, 'dependencies')] = $match[0].dependencies
+            $executionIndex = [array]::IndexOf($throughputHeaders, 'execution')
+            if ($executionIndex -ge 0) { $cells[$executionIndex] = $match[0].execution }
+            $line = '| ' + ($cells -join ' | ') + ' |'
+        }
+    }
+    $line
+}) -join "`n")
 
 $coverage = New-DesignCoverage ([IO.Path]::GetFullPath($DesignPath))
 $apiContracts = Get-CoverageSection $redacted 'External API Contracts'
@@ -585,6 +619,7 @@ $apiSection = if ($apiContracts) { "## External API Contracts`n`n$apiContracts`n
 $roadmap = @"
 ---
 schema_version: 1
+dependency_analysis: 1
 source_artifact: $DesignPath
 coverage_design: $($coverage.origin)
 coverage_build: $($coverage.build)
@@ -609,6 +644,16 @@ $apiSection
 | id | name | dependencies | chunks | verification-mode | baseline-floor | acceptance-checks | decision-basis | execution | test-execution |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
 $($milestoneRows -join "`n")
+
+## Milestone Surfaces
+
+$surfaceBody
+
+## Dependency Causes
+
+| milestone-id | prerequisite | cause |
+| :-- | :-- | :-- |
+$dependencyCauses
 
 ## Chunks
 
