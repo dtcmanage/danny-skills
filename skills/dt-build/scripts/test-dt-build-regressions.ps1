@@ -108,20 +108,22 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     try { $rulebook = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -CoordinatorHost codex) -join "`n" }
     finally { Pop-Location }
     Assert-True ($rulebook.Contains("<skill> = $skillRoot") -and $rulebook.Contains("<danny-skills> = $repoRoot")) "rendered resume rulebook supplies resolved roots from outside the repo; exit=$LASTEXITCODE; observed=$rulebook"
-    Assert-True ($LASTEXITCODE -eq 0 -and $rulebook.Contains('## Model routing') -and $rulebook.Contains('## Context discipline') -and $rulebook.Contains('6. Execute milestones') -and $rulebook.Contains('7. Guardrails:')) 'rulebook contains all resume execution sections'
-    Assert-True (-not $rulebook.Contains('1. Intake in one question') -and -not $rulebook.Contains('## Usage telemetry') -and $rulebook.Contains('grants no permission')) 'rulebook omits intake and retains the authority boundary'
-    foreach ($source in @((Join-Path $repoRoot 'references/deterministic-reference-policy.md'), (Join-Path $repoRoot 'references/conventions.md'))) {
+    Assert-True ($LASTEXITCODE -eq 0 -and $rulebook.Length -le 20000 -and $rulebook.Contains('20,000') -and $rulebook.Contains('read-coordinator-state.ps1')) 'entry is bounded and orders compact state before marker'
+    Assert-True (-not $rulebook.Contains('6. Execute milestones') -and -not $rulebook.Contains('## Model routing') -and -not $rulebook.Contains('## Usage telemetry') -and $rulebook.Contains('grants no permission')) 'entry defers execution and retains authority boundary'
+    foreach ($source in @((Join-Path $repoRoot 'references/deterministic-reference-policy.md'))) {
         $body = [IO.File]::ReadAllText($source).Replace("`r`n", "`n").Trim()
         Assert-True ($rulebook.Contains($body) -and $rulebook.IndexOf($body) -eq $rulebook.LastIndexOf($body)) "single entry renders complete $source exactly once"
     }
     $resumeText = [IO.File]::ReadAllText((Join-Path $skillRoot 'references/managed-resume.md')).Replace("`r`n", "`n")
     $authorityStart = $resumeText.IndexOf('## Authority read contract')
     $authorityEnd = $resumeText.IndexOf('## Worker authority scope')
-    Assert-True ($rulebook.Contains($resumeText.Substring($authorityStart, $authorityEnd - $authorityStart).Trim())) 'single entry retains complete authorization contract verbatim'
-    $liveBugStart = $resumeText.IndexOf('## Live-bug fast lane')
-    Assert-True ($rulebook.Contains($resumeText.Substring($liveBugStart, $authorityStart - $liveBugStart).Trim())) 'single entry retains the live-bug fast lane verbatim'
-    Assert-True (-not $rulebook.Contains('## Lane health') -and -not $rulebook.Contains('## Launch watch') -and $rulebook.Contains('lane-health diagnosis')) 'lane health remains deferred and launch watch belongs to the launching session'
-    Assert-True ($rulebook.Contains('## Before marking bootstrap') -and -not $rulebook.Contains('## Authority roll-forward') -and -not $rulebook.Contains('## Operator recovery')) 'single entry defers procedures outside bootstrap'
+    Assert-True ($rulebook.Contains($resumeText.Substring($authorityStart, $authorityEnd - $authorityStart).Trim())) 'entry retains complete authorization contract verbatim'
+    foreach ($section in @('execution','routing','context','guardrails','adapter','worker-briefs','checkpoint','lane-health','worker-authority','roll-forward','local-work','operator-actions','fast-lane','shared','authority')) {
+        $sectionText = (& pwsh -NoProfile -File (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -Section $section) -join "`n"
+        Assert-True ($LASTEXITCODE -eq 0 -and $sectionText.Length -gt 300) "on-demand section $section resolves from authoritative source"
+    }
+    Assert-True (-not $rulebook.Contains('## Lane health') -and -not $rulebook.Contains('## Launch watch') -and $rulebook.Contains('lane-health diagnosis')) 'lane diagnosis and launch watch are deferred'
+    Assert-True ($rulebook.Contains('## Before marking bootstrap') -and -not $rulebook.Contains('## Authority roll-forward') -and -not $rulebook.Contains('## Operator recovery')) 'entry defers procedures outside bootstrap'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-build-orchestrator-rules.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'worker/coordinator instruction generation regressions pass'
     # Coordinator-added budget: all safety reads and current repo text, host overhead measured separately.
@@ -136,9 +138,10 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
         }
     }
     & $testPython @measureArgs *> (Join-Path $tempRoot 'resume-bootstrap-budget.json')
-    Assert-True ($LASTEXITCODE -eq 0) 'measured resume bootstrap read plan stays below 24,000 added tokens'
+    Assert-True ($LASTEXITCODE -eq 0) 'measured resume bootstrap read plan stays below 20,000 added tokens'
     $budget = Get-Content -Raw (Join-Path $tempRoot 'resume-bootstrap-budget.json') | ConvertFrom-Json
-    Assert-True ($budget.target_tokens -eq 24000 -and $budget.total_tokens -lt 24000 -and $budget.pass) "resume budget includes single entry and complete authorization reserve ($($budget.total_tokens))"
+    Assert-True ($budget.target_tokens -eq 20000 -and $budget.total_tokens -lt 20000 -and $budget.pass) "resume budget includes single entry and complete authorization reserve ($($budget.total_tokens))"
+    Assert-True ($budget.components[0].observed_tokens -gt 0 -and $budget.components[0].observed_tokens -le $budget.components[0].tokens -and $budget.components[0].observed_chars -gt 22000) 'actual multipart state digest is measured within its reserve'
     # Actual model input size is a separate gate; a large observed marker must fail.
     foreach ($tokens in @(49999, 50000, 109770)) {
         $rollout = Join-Path $tempRoot "bootstrap-$tokens.jsonl"

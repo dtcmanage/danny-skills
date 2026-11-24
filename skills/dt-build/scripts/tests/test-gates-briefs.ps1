@@ -179,7 +179,7 @@ exit $r.exit_code
             if (-not $ReadOnly) { Assert ($promptText.Contains("- $repairRule`n")) "K $lane repair rule is a bullet" }
         }
     }
-    $book = (& pwsh -NoProfile -File (Join-Path $scripts 'read-coordinator-rulebook.ps1')) -join "`n"
+    $book = (& pwsh -NoProfile -File (Join-Path $scripts 'read-coordinator-rulebook.ps1') -Section worker-briefs) -join "`n"
     Assert ($book.Contains('git symbolic-ref') -and $book.Contains('blanket offline') -and $book.Contains('until green')) 'resume coordinator receives brief requirements'
     'PASS: gates and briefs'
 } finally { Remove-Item -LiteralPath $root -Recurse -Force }

@@ -1,6 +1,7 @@
 #Requires -Version 7.0
-param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [switch]$DryRun, [string]$OutputDirectory)
+param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [switch]$DryRun, [string]$OutputDirectory, [Parameter(DontShow)][switch]$LegacyArtifactKinds)
 . (Join-Path $PSScriptRoot 'authority-digest.ps1')
+$script:AuthorityLegacyArtifactKinds = [bool]$LegacyArtifactKinds
 function Get-AuthorityPhysicalDirectory([string]$Path) {
     $full = [IO.Path]::GetFullPath($Path)
     $parent = Split-Path -Parent $full
@@ -36,4 +37,4 @@ $manifest = [ordered]@{ schema_version = 1; producer = 'deterministic'; checkpoi
 [IO.File]::WriteAllText($jsonPath, ($manifest | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
 # Publish the pin last. A partially written pair never verifies.
 [IO.File]::WriteAllText("$jsonPath.sha256", (Get-AuthorityHash $jsonPath), [Text.UTF8Encoding]::new($false))
-& (Join-Path $PSScriptRoot 'verify-authority-digest.ps1') -RunFolder $RunFolder -BuildStatePath $BuildStatePath -DigestDirectory $destination
+& (Join-Path $PSScriptRoot 'verify-authority-digest.ps1') -RunFolder $RunFolder -BuildStatePath $BuildStatePath -DigestDirectory $destination -LegacyArtifactKinds:$LegacyArtifactKinds

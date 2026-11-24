@@ -1,5 +1,74 @@
 # Managed resume bootstrap measurement (October 11, 2026)
 
+## Lean coordinator entry (November 24, 2026)
+
+The coordinator bootstrap now reads the generated system instructions, the bounded
+entry, the state digest, then marks bootstrap. `read-coordinator-rulebook.ps1`
+defaults to `-Section entry`; its named sections retain execution, adapter,
+routing, worker-brief, checkpoint and recovery rules for their action triggers.
+The entry retains the complete authority-read contract and deterministic policy,
+plus bootstrap path conventions and the always-visible approval-stop wait rule.
+Full shared conventions load before authoring.
+Canonical git/model-routing/build-process references load before actual git work,
+dispatch, or new-build/close-out work respectively; reading existing state does
+not preload them.
+
+The ae9da31 rendered entry measured **57,045 characters / 12,710 o200k_base
+tokens**. The revised entry measures **17,805 characters / 3,684 tokens**,
+below its enforced **20,000-character** ceiling (tool display ceiling: 30,000).
+The budget fixture is **16,334 / 20,000 tokens**, including a 10,000-token state
+and mandatory-original reserve, 2,500 for tool/reasoning/fallback overhead and
+150 for the bridge. The previous plan was 18,860 / 24,000 with only a 6,000-token
+state reserve. The state reserve is now checked against actual isolated fixture
+output, including the read plan and every numbered part: **26,954 characters /
+5,846 tokens** in the integration-fix run. Temporary locator lengths can slightly change
+the fixture count. Any state output above its reserve fails the budget test.
+These proxy plans are distinct from actual model measurements.
+
+Replayed onto dt-build 2.60.0's coordinator waiting behavior, the trimmed entry
+had omitted the stop rule. Restoring it adds 538 characters / 127 tokens while
+keeping all other entry reads unchanged. Stops use `await-danny -WaitMinutes 7.5
+-CallStartedUtc ...` with tool timeout `600000`; approval continues in the same
+coordinator, every other result checkpoints and ends. The blocking-approval
+fixture's prior failure was its two rendered-rulebook assertions; its 67 process
+checks passed, including same-PID continuation and the watcher/lease behavior.
+
+`read-coordinator-state.ps1` verifies registration, watcher lease and runnable
+state, emits the complete checkpoint/run records/approvals/notes, exact current
+milestone rows, verified authority index and every mandatory original. Legacy
+artifact locators (`roadmap_path`, `design_path`, `plan_path`) stay pinned and
+indexed without being mistaken for the newest stop boundary. Lifecycle plans,
+inherited artifacts, boundary references and explicit full-read directives remain
+mandatory; action-time full reads are
+unchanged. Existing manifests migrate only after full legacy verification, with
+identical source hashes/coverage and checkpoint authority; changed sources fail
+closed. A closed boundary naming an artifact outside its enumerated set also
+fails, requiring corrected enumeration or complete full-read fallback.
+Current milestone IDs match the roadmap's first column exactly; missing,
+duplicate or ambiguous rows fail the read. Lifecycle records, checkpoint and
+roadmap are rechecked after collection. Large legitimate authority sets use
+numbered output parts requiring `-ExpectSha` from the initial plan; a changed
+snapshot fails with no partial output and requires restarting the complete read;
+no source is clipped to meet a token target.
+
+Before the independent review fixes, a live Opus 5.5 probe using the launcher's lean flags and tools, against an isolated
+copy of the real phone-look run, measured **20,164 first-turn tokens, 35,333 at
+bootstrap, and 15,169 coordinator-added tokens**. The only pre-marker commands
+were entry and state digest, followed by the marker; no jobs were dispatched.
+The final probe also exercised migration from a fully pinned legacy manifest;
+the copied job-event ledger SHA-256 stayed unchanged.
+The first exploratory probe measured 24,906 added tokens and exposed the design
+artifact fallback; that repair is included. All evidence and per-section counts
+are retained in the feature worktree's `.dt-build/lean-entry/` directory. That
+15,169-token result is historical, not a new live measurement of the review fixes.
+Round 2 remeasures generated entry and full fixture state without launching a
+nested model agent, as required by the fix-round instructions.
+
+This is a bootstrap-only probe, not a claim that every run fits 20,000 tokens.
+Explicitly required large originals still load, even when they exceed the target.
+The runtime marker's existing 50,000-token alert remains unchanged; the tightened
+20,000-token fixture and explicit observed-transcript check enforce this change.
+
 ## Lean workers and single-entry resume (November 24, 2026, 8:00 AM ET)
 
 The live headless comparison ran from the `danny-skills-lean-workers` worktree using

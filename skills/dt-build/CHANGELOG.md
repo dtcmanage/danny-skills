@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.61.0
+
+- Add bounded bootstrap entry sections and a verified compact coordinator state digest; defer implementation and canonical policies until their actions, preserve full mandatory authority, and enforce a 20k read-plan budget.
+
 ## 2.60.0
 
 - Keep a coordinator alive through a bounded director approval wait with lease renewal, immediate guarded approvals, decline and hold wakeups, and unchanged timeout relaunch recovery. Verify coordinator liveness throughout the wait, count startup and lock time in the caller budget, and retain overridden declines in approval receipts.

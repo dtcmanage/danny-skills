@@ -10,6 +10,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import tiktoken
@@ -19,6 +20,13 @@ def measure_plan(manifest_path: Path, repo_root: Path, canonical_root: Path | No
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     encoder = tiktoken.get_encoding("o200k_base")
     components = list(manifest["measured_components"])
+    for fixture in manifest.get("state_fixture_reads", []):
+        output = subprocess.run([sys.executable, str(repo_root / fixture["script"])], cwd=repo_root,
+                                check=True, capture_output=True, text=True).stdout
+        component = next(c for c in components if c["source"] == fixture["reserve_source"])
+        component["observed_tokens"] = len(encoder.encode(output))
+        component["observed_chars"] = len(output)
+        component["measurement"] = "live isolated state fixture, all parts measured against reserve, o200k_base"
     if canonical_root:
         for component in components:
             if "sha256" in component:
@@ -31,12 +39,33 @@ def measure_plan(manifest_path: Path, repo_root: Path, canonical_root: Path | No
         components.append({"source": relative, "tokens": tokens, "measurement": "current file, o200k_base"})
     for item in manifest.get("rendered_reads", []):
         output = subprocess.run(item["command"], cwd=repo_root, check=True, capture_output=True, text=True).stdout
+        sections = []
+        # Ignore Markdown-looking comments inside fenced code when attributing sections.
+        starts = []
+        fence = None
+        offset = 0
+        for line in output.splitlines(keepends=True):
+            marker = re.match(r"^\s*(```+|~~~+)", line)
+            if marker:
+                fence = None if fence == marker[1][0] else marker[1][0]
+            elif fence is None and re.match(r"^#{1,3} .+$", line.rstrip()):
+                starts.append((offset, line.rstrip()))
+            offset += len(line)
+        for index, (start, title) in enumerate(starts):
+            end = starts[index + 1][0] if index + 1 < len(starts) else len(output)
+            body = output[start:end]
+            sections.append({"section": title, "chars": len(body), "tokens": len(encoder.encode(body))})
         components.append({"source": item["source"], "tokens": len(encoder.encode(output)),
-                           "measurement": "current rendered rulebook, o200k_base"})
+                           "chars": len(output), "sections": sections,
+                           "max_chars": item.get("max_chars"),
+                           "measurement": "current rendered output, o200k_base"})
     total = sum(item["tokens"] for item in components)
     return {"components": components, "total_tokens": total, "target_tokens": manifest["target_tokens"],
             "budget_scope": manifest.get("budget_scope", "total read plan including declared runtime reserves"),
-            "pass": total < manifest["target_tokens"], "kind": "resume read-plan budget; not a live model baseline"}
+            "pass": total < manifest["target_tokens"] and all(
+                (c.get("max_chars") is None or c["chars"] <= c["max_chars"]) and
+                c.get("observed_tokens", 0) <= c["tokens"] for c in components),
+            "kind": "resume read-plan budget; not a live model baseline"}
 
 
 def measure_transcript(transcript_path: Path) -> dict[str, object]:

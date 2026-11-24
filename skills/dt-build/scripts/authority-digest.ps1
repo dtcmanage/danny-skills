@@ -4,6 +4,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:AuthorityReadBudgetChars = 32000
 $script:AuthorityReadCeilingChars = 96000
+# Used only to verify a pre-2.60 pinned manifest before a classification-only migration.
+$script:AuthorityLegacyArtifactKinds = $false
 
 # Evidence-only files: named in authority text but never authority. authority-history.jsonl is the
 # rollover's append-only audit log, and the provenance sidecar, consolidations file and clause ledger are
@@ -179,6 +181,7 @@ function Get-AuthorityInventory {
     $script:AuthorityCurrentBoundary = $null
     $script:AuthorityEnumeratedPaths = @()
     $script:AuthorityCheckpointFullReads = @()
+    $script:AuthorityArtifactPaths = @()
     $checkpointText = [IO.File]::ReadAllText($checkpoint)
     $aliases = Get-AuthorityAliases $checkpointText
     # Paths named only in rotating state sections (progress, next step, evidence) are not authority.
@@ -216,7 +219,19 @@ function Get-AuthorityInventory {
         $text = [Text.Encoding]::UTF8.GetString($originalBytes).TrimStart([char]0xFEFF)
         if ($path -eq $checkpoint) { $text = $checkpointAuthorityText }
         $leaf = Split-Path -Leaf $path
-        $kind = if ($path -eq $checkpoint) { 'checkpoint' } elseif ($leaf -match 'approval' -or $path -match '[/\\]approvals[/\\]') { 'approval' } elseif ($leaf -match 'operator-notes') { 'operator_notes' } else { 'boundary' }
+        # An implementation artifact locator is navigation, not a legacy stop boundary. Keep it pinned
+        # and indexed, and retain explicit full-read directives/current structured boundaries.
+        $isImplementation = $false
+        foreach ($artifactLocator in [regex]::Matches($checkpointAuthorityText, '(?m)^(?:roadmap|design|plan)_path:\s*(.+)$')) {
+            $locator = $artifactLocator.Groups[1].Value.Trim().Trim('`', '"', "'")
+            if (-not [IO.Path]::IsPathFullyQualified($locator)) { $locator = Join-Path (Split-Path -Parent $checkpoint) $locator }
+            $locator = [IO.Path]::GetFullPath($locator)
+            if ($locator -notin $script:AuthorityArtifactPaths) { $script:AuthorityArtifactPaths += $locator }
+            if ($locator -eq $path) { $isImplementation = $true }
+        }
+        # Explicit inherited sources and lifecycle plans can never become deferred artifacts.
+        if ($path -in $script:AuthorityEnumeratedPaths -or $leaf -eq 'build-plan.md') { $isImplementation = $false }
+        $kind = if ($path -eq $checkpoint) { 'checkpoint' } elseif ($leaf -match 'approval' -or $path -match '[/\\]approvals[/\\]') { 'approval' } elseif ($leaf -match 'operator-notes') { 'operator_notes' } elseif ($isImplementation -and -not $script:AuthorityLegacyArtifactKinds) { 'implementation' } else { 'boundary' }
         # Quote an index of operative lines, never generate or infer an approval. Full originals
         # govern every dependent action; the index intentionally cannot confer authority.
         $lines = @($text -split '\r?\n' | Where-Object { $_ -match '(?i)approv|authoriz|scope|restrict|boundary|must|never|only|do not|no (?:push|merge|deploy|production)|allowed|prohibit' })
@@ -227,9 +242,21 @@ function Get-AuthorityInventory {
         if ($path -ne $checkpoint) {
             $records.Add([pscustomobject][ordered]@{ path = $path; sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($originalBytes)).ToLowerInvariant(); bytes = $originalBytes.Length; chars = $text.Length; kind = $kind; extract = $extract })
         }
-        # An enumerated authority set is closed: evidence named within those originals
-        # does not replace or expand its explicit source list. Legacy graphs recurse.
-        if ($script:AuthorityEnumeratedPaths.Count -and $path -ne $checkpoint) { continue }
+        # An enumerated set is closed. A boundary naming a deferred artifact outside
+        # that set is inconsistent, not permission to silently omit its scope.
+        if ($script:AuthorityEnumeratedPaths.Count -and $path -ne $checkpoint) {
+            if (-not $script:AuthorityLegacyArtifactKinds -and $kind -in @('boundary', 'approval', 'operator_notes')) {
+                foreach ($candidate in @(Get-AuthorityCandidates $text $aliases)) {
+                    $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases
+                    if ($resolved -notin $script:AuthorityArtifactPaths) { continue }
+                    if ($resolved -notin $script:AuthorityEnumeratedPaths -and (Split-Path -Leaf $resolved) -notin $script:AuthorityRunRootNames) {
+                        throw "AUTHORITY_ARTIFACT_UNENUMERATED: $path names required artifact $resolved; correct the source enumeration or use complete full-read fallback"
+                    }
+                    $script:AuthorityCheckpointFullReads += $resolved
+                }
+            }
+            continue
+        }
         $candidates = if ($path -eq $checkpoint) { $checkpointCandidates } else { @(Get-AuthorityCandidates $text $aliases) }
         foreach ($candidate in $candidates) {
             # Keep each waiver explicit and visible in the coordinator's digest read.
@@ -256,6 +283,18 @@ function Get-AuthorityInventory {
                 continue
             }
             $required = $true
+            # A boundary's reference to an artifact carries scope even on a separate line.
+            # A checkpoint locator alone is navigation; any other authority reference is a full read.
+            $sourceLine = ($text.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($text.Substring($candidate.index) -split '\r?\n')[0]
+            if (-not $script:AuthorityLegacyArtifactKinds -and $resolved -in $script:AuthorityArtifactPaths -and
+                (($kind -in @('boundary', 'approval', 'operator_notes') -and -not $isImplementation) -or
+                 ($path -eq $checkpoint -and $sourceLine -notmatch '^(?:roadmap|design|plan)_path:'))) {
+                $script:AuthorityCheckpointFullReads += $resolved
+            }
+            if ($path -eq $checkpoint -and -not $script:AuthorityLegacyArtifactKinds) {
+                $directive = ($text.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($text.Substring($candidate.index) -split '\r?\n')[0]
+                if ($directive -match '(?i)before\s*bootstrap.*read|read.*before\s*bootstrap|IN FULL|current.*(?:boundary|restrictions)|governing.*(?:authority|original)') { $script:AuthorityCheckpointFullReads += $resolved }
+            }
             if ($script:AuthorityEnumeratedPaths.Count) {
                 # Only paths explicitly required before bootstrap supplement the enumeration.
                 $line = ($text.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($text.Substring($candidate.index) -split '\r?\n')[0]
@@ -277,6 +316,16 @@ function Get-AuthorityInventory {
         }
     }
     if ($missing.Count) { throw "AUTHORITY_MISSING: $($missing -join '; ')" }
+    # Enumeration is closed, so inspect references within its boundaries without expanding it.
+    foreach ($record in $records) {
+        if ($record.kind -ne 'implementation') { continue }
+        foreach ($boundaryRecord in @($records | Where-Object kind -eq 'boundary')) {
+            foreach ($candidate in @(Get-AuthorityCandidates ([IO.File]::ReadAllText($boundaryRecord.path)) $aliases)) {
+                $resolved = Resolve-AuthorityLiteral $candidate.literal $boundaryRecord.path $root $aliases
+                if ($resolved -eq $record.path) { $script:AuthorityCheckpointFullReads += $record.path }
+            }
+        }
+    }
     return @($records | Sort-Object path)
 }
 
@@ -287,6 +336,7 @@ function Get-AuthorityMandatoryPaths {
     foreach ($record in $Records) {
         if (($script:AuthorityEnumeratedPaths.Count -eq 0 -and $record.kind -in @('approval', 'operator_notes')) -or
             $record.path -in $script:AuthorityCheckpointFullReads -or
+            ($record.path -in $script:AuthorityEnumeratedPaths -and $record.path -in $script:AuthorityArtifactPaths) -or
             (Split-Path -Leaf $record.path) -in @('approvals.json', 'operator-notes.json', 'build-state.md', 'build-plan.md')) { $paths.Add($record.path) }
     }
     # The current boundary is the last boundary pointer in checkpoint order. All checkpoint

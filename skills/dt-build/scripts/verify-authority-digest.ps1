@@ -1,6 +1,7 @@
 #Requires -Version 7.0
-param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [string]$DigestDirectory, [switch]$PreferDigest)
+param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)][string]$BuildStatePath, [string]$DigestDirectory, [switch]$PreferDigest, [Parameter(DontShow)][switch]$LegacyArtifactKinds)
 . (Join-Path $PSScriptRoot 'authority-digest.ps1')
+$script:AuthorityLegacyArtifactKinds = [bool]$LegacyArtifactKinds
 $destination = if ($DigestDirectory) { $DigestDirectory } else { $RunFolder }
 $jsonPath = Join-Path $destination 'authority-digest.json'
 $mdPath = Join-Path $destination 'authority-digest.md'

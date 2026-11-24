@@ -1,0 +1,516 @@
+{
+  "measured_date_et": "2026-11-24",
+  "base_commit": "ae9da31d944b93df34df7bbc3d60d6a84b546120",
+  "skill_version": "2.60.0",
+  "plugin_version": "1.2.11",
+  "before_read_plan": {
+    "components": [
+      {
+        "source": "Checkpoint, run records, complete approvals and operative boundary sources",
+        "tokens": 6000,
+        "measurement": "reserved read budget; 8 KiB checkpoint plus run and safety records; no authorization omission allowed"
+      },
+      {
+        "source": "Contracts and glossary reference packs",
+        "tokens": 0,
+        "measurement": "lazy after mark-bootstrap; original authorization sources remain before marker"
+      },
+      {
+        "source": "Lean bridge manifest",
+        "tokens": 150,
+        "measurement": "reserve; measured hook block below 150 o200k_base tokens"
+      },
+      {
+        "source": "ae9da31 entry, saved before edits",
+        "tokens": 12710,
+        "chars": 57045,
+        "sections": [
+          {
+            "section": "# Managed coordinator resume",
+            "chars": 924,
+            "tokens": 186
+          },
+          {
+            "section": "## Before marking bootstrap",
+            "chars": 4023,
+            "tokens": 830
+          },
+          {
+            "section": "## Carry on",
+            "chars": 2847,
+            "tokens": 553
+          },
+          {
+            "section": "## Local work never stops",
+            "chars": 1916,
+            "tokens": 417
+          },
+          {
+            "section": "## Operator actions belong to the launching session",
+            "chars": 3067,
+            "tokens": 638
+          },
+          {
+            "section": "## Live-bug fast lane",
+            "chars": 102,
+            "tokens": 26
+          },
+          {
+            "section": "## Authority read contract",
+            "chars": 8487,
+            "tokens": 1659
+          },
+          {
+            "section": "# Deterministic and Referencing Policy",
+            "chars": 216,
+            "tokens": 42
+          },
+          {
+            "section": "## Deterministic Execution Contract",
+            "chars": 651,
+            "tokens": 128
+          },
+          {
+            "section": "## Reference Loading Contract",
+            "chars": 679,
+            "tokens": 130
+          },
+          {
+            "section": "## Versioning Contract",
+            "chars": 343,
+            "tokens": 62
+          },
+          {
+            "section": "## Conflict Handling",
+            "chars": 269,
+            "tokens": 44
+          },
+          {
+            "section": "# danny-skills Conventions",
+            "chars": 284,
+            "tokens": 64
+          },
+          {
+            "section": "## Path resolution \u2014 SKILL.md-anchored, never `pwd`",
+            "chars": 317,
+            "tokens": 72
+          },
+          {
+            "section": "### The junction reparse trap",
+            "chars": 2197,
+            "tokens": 568
+          },
+          {
+            "section": "## Frontmatter fields",
+            "chars": 1544,
+            "tokens": 388
+          },
+          {
+            "section": "## Local file paths in output",
+            "chars": 1545,
+            "tokens": 364
+          },
+          {
+            "section": "## The `_log.md` friction-note convention",
+            "chars": 892,
+            "tokens": 215
+          },
+          {
+            "section": "# dt-build host adapter: Codex",
+            "chars": 326,
+            "tokens": 95
+          },
+          {
+            "section": "## Dispatch",
+            "chars": 979,
+            "tokens": 263
+          },
+          {
+            "section": "## Waiting and completion",
+            "chars": 1209,
+            "tokens": 307
+          },
+          {
+            "section": "## Bootstrap and context",
+            "chars": 2203,
+            "tokens": 519
+          },
+          {
+            "section": "## Hooks",
+            "chars": 573,
+            "tokens": 127
+          },
+          {
+            "section": "## Managed mode and relaunch",
+            "chars": 1963,
+            "tokens": 466
+          },
+          {
+            "section": "## Evidence",
+            "chars": 1353,
+            "tokens": 294
+          },
+          {
+            "section": "## Model routing",
+            "chars": 5047,
+            "tokens": 1206
+          },
+          {
+            "section": "## Context discipline",
+            "chars": 12841,
+            "tokens": 2981
+          }
+        ],
+        "max_chars": null,
+        "measurement": "current rendered output, o200k_base"
+      }
+    ],
+    "total_tokens": 18860,
+    "target_tokens": 24000,
+    "budget_scope": "total read plan including declared runtime reserves",
+    "pass": true,
+    "kind": "resume read-plan budget; not a live model baseline"
+  },
+  "after_read_plan": {
+    "components": [
+      {
+        "source": "Checkpoint, run records, complete approvals and operative boundary sources",
+        "tokens": 10000,
+        "measurement": "live isolated state fixture, all parts measured against reserve, o200k_base",
+        "observed_tokens": 5846,
+        "observed_chars": 26954
+      },
+      {
+        "source": "Contracts and glossary reference packs",
+        "tokens": 0,
+        "measurement": "lazy after mark-bootstrap; original authorization sources remain before marker"
+      },
+      {
+        "source": "Lean bridge manifest",
+        "tokens": 150,
+        "measurement": "reserve; measured hook block below 150 o200k_base tokens"
+      },
+      {
+        "source": "Tool calls, reasoning and mandatory-read fallback margin",
+        "tokens": 2500,
+        "measurement": "coordinator-added runtime reserve; host overhead excluded"
+      },
+      {
+        "source": "Lean bootstrap entry; execution and adapter loaded after marker",
+        "tokens": 3684,
+        "chars": 17805,
+        "sections": [
+          {
+            "section": "# Managed coordinator resume",
+            "chars": 293,
+            "tokens": 61
+          },
+          {
+            "section": "## Before marking bootstrap",
+            "chars": 2211,
+            "tokens": 454
+          },
+          {
+            "section": "## At approval stops",
+            "chars": 538,
+            "tokens": 127
+          },
+          {
+            "section": "## Authority read contract",
+            "chars": 8202,
+            "tokens": 1609
+          },
+          {
+            "section": "# Deterministic and Referencing Policy",
+            "chars": 216,
+            "tokens": 42
+          },
+          {
+            "section": "## Deterministic Execution Contract",
+            "chars": 651,
+            "tokens": 128
+          },
+          {
+            "section": "## Reference Loading Contract",
+            "chars": 679,
+            "tokens": 130
+          },
+          {
+            "section": "## Versioning Contract",
+            "chars": 343,
+            "tokens": 62
+          },
+          {
+            "section": "## Conflict Handling",
+            "chars": 268,
+            "tokens": 44
+          },
+          {
+            "section": "## Path resolution \u2014 SKILL.md-anchored, never `pwd`",
+            "chars": 317,
+            "tokens": 72
+          },
+          {
+            "section": "### The junction reparse trap",
+            "chars": 3806,
+            "tokens": 875
+          }
+        ],
+        "max_chars": 20000,
+        "measurement": "current rendered output, o200k_base"
+      }
+    ],
+    "total_tokens": 16334,
+    "target_tokens": 20000,
+    "budget_scope": "coordinator-added reads; host overhead measured separately from first-turn usage",
+    "pass": true,
+    "kind": "resume read-plan budget; not a live model baseline"
+  },
+  "section_sizes": [
+    {
+      "section": "entry",
+      "chars": 17805,
+      "tokens": 3684
+    },
+    {
+      "section": "execution",
+      "chars": 10426,
+      "tokens": 2408
+    },
+    {
+      "section": "routing",
+      "chars": 5329,
+      "tokens": 1286
+    },
+    {
+      "section": "context",
+      "chars": 3551,
+      "tokens": 820
+    },
+    {
+      "section": "guardrails",
+      "chars": 1137,
+      "tokens": 268
+    },
+    {
+      "section": "adapter",
+      "chars": 7923,
+      "tokens": 1969
+    },
+    {
+      "section": "worker-briefs",
+      "chars": 1212,
+      "tokens": 256
+    },
+    {
+      "section": "checkpoint",
+      "chars": 3392,
+      "tokens": 711
+    },
+    {
+      "section": "lane-health",
+      "chars": 1456,
+      "tokens": 367
+    },
+    {
+      "section": "worker-authority",
+      "chars": 2015,
+      "tokens": 428
+    },
+    {
+      "section": "roll-forward",
+      "chars": 6890,
+      "tokens": 1543
+    },
+    {
+      "section": "local-work",
+      "chars": 2201,
+      "tokens": 498
+    },
+    {
+      "section": "operator-actions",
+      "chars": 3358,
+      "tokens": 719
+    },
+    {
+      "section": "fast-lane",
+      "chars": 386,
+      "tokens": 108
+    },
+    {
+      "section": "shared",
+      "chars": 9218,
+      "tokens": 2157
+    },
+    {
+      "section": "authority",
+      "chars": 8486,
+      "tokens": 1689
+    }
+  ],
+  "probe": {
+    "model": "claude-opus-5-5",
+    "session_id": "33c04dfd-8843-4330-9c25-df2329d111d5",
+    "commands": [
+      {
+        "command": "pwsh -NoProfile -File \"/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills-lean-entry/skills/dt-build/scripts/read-coordinator-rulebook.ps1\" -CoordinatorHost claude",
+        "text_tokens": 3524
+      },
+      {
+        "command": "pwsh -NoProfile -File \"/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills-lean-entry/skills/dt-build/scripts/read-coordinator-state.ps1\" -RunFolder \"/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills-lean-entry/.dt-build/lean-entry/probe/run\" -RunId lean-entry-probe -BuildStatePath \"/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills-lean-entry/.dt-build/lean-entry/probe/planning/_build-state.md\" -CoordinatorId lean-entry-probe",
+        "text_tokens": 5561
+      }
+    ],
+    "command_output_text_tokens": 9085,
+    "actual_input_tokens_before_marker": 35333,
+    "baseline_tokens": 35333,
+    "host_overhead_tokens": 20164,
+    "coordinator_added_tokens": 15169,
+    "bootstrap_measurement": "baseline minus first-turn host overhead",
+    "note": "Full baseline still controls context-guard limits; command outputs use o200k_base.",
+    "target_tokens": 20000,
+    "pass": true,
+    "job_events_sha256_before": "ded5a79b9273f8592626c8b116fa42146eb966c692a4e7e877f08f44e9415acd",
+    "job_events_sha256_after": "ded5a79b9273f8592626c8b116fa42146eb966c692a4e7e877f08f44e9415acd",
+    "job_events_unchanged": true,
+    "legacy_manifest_migration": true
+  },
+  "historical_coordinators": [
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124130413-cd2e88",
+      "baseline_tokens": 69019,
+      "host_overhead_tokens": 22520,
+      "coordinator_added_tokens": 46499
+    },
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124133058-47933f",
+      "baseline_tokens": 68459,
+      "host_overhead_tokens": 20128,
+      "coordinator_added_tokens": 48331
+    },
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124142758-688370",
+      "baseline_tokens": 70998,
+      "host_overhead_tokens": 20788,
+      "coordinator_added_tokens": 50210
+    },
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124144406-0abf57",
+      "baseline_tokens": 72587,
+      "host_overhead_tokens": 21085,
+      "coordinator_added_tokens": 51502
+    },
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124151246-6857fe",
+      "baseline_tokens": 70663,
+      "host_overhead_tokens": 20886,
+      "coordinator_added_tokens": 49777
+    },
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124154106-b24c86",
+      "baseline_tokens": 67067,
+      "host_overhead_tokens": 21542,
+      "coordinator_added_tokens": 45525
+    },
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124162007-8badfc",
+      "baseline_tokens": 68250,
+      "host_overhead_tokens": 21780,
+      "coordinator_added_tokens": 46470
+    },
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124165900-11d930",
+      "baseline_tokens": 70729,
+      "host_overhead_tokens": 21954,
+      "coordinator_added_tokens": 48775
+    },
+    {
+      "run": "desktop-look",
+      "coordinator": "mc-20261124175016-92ea29",
+      "baseline_tokens": 67878,
+      "host_overhead_tokens": 21973,
+      "coordinator_added_tokens": 45905
+    },
+    {
+      "run": "phone-look",
+      "coordinator": "mc-20261124143405-f86d6b",
+      "baseline_tokens": 65287,
+      "host_overhead_tokens": 21037,
+      "coordinator_added_tokens": 44250
+    },
+    {
+      "run": "phone-look",
+      "coordinator": "mc-20261124150035-da60dc",
+      "baseline_tokens": 75905,
+      "host_overhead_tokens": 21427,
+      "coordinator_added_tokens": 54478
+    },
+    {
+      "run": "phone-look",
+      "coordinator": "mc-20261124154911-708730",
+      "baseline_tokens": 64238,
+      "host_overhead_tokens": 21565,
+      "coordinator_added_tokens": 42673
+    },
+    {
+      "run": "phone-look",
+      "coordinator": "mc-20261124161407-9ce280",
+      "baseline_tokens": 64901,
+      "host_overhead_tokens": 21816,
+      "coordinator_added_tokens": 43085
+    },
+    {
+      "run": "trusted-devices",
+      "coordinator": "mc-20261124125805-01934c",
+      "baseline_tokens": 60594,
+      "host_overhead_tokens": 23346,
+      "coordinator_added_tokens": 37248
+    },
+    {
+      "run": "trusted-devices",
+      "coordinator": "mc-20261124140307-a6a075",
+      "baseline_tokens": 57187,
+      "host_overhead_tokens": 20772,
+      "coordinator_added_tokens": 36415
+    },
+    {
+      "run": "trusted-devices",
+      "coordinator": "mc-20261124152457-31552a",
+      "baseline_tokens": 51181,
+      "host_overhead_tokens": 21050,
+      "coordinator_added_tokens": 30131
+    },
+    {
+      "run": "trusted-devices",
+      "coordinator": "mc-20261124155926-e2fc6c",
+      "baseline_tokens": 54223,
+      "host_overhead_tokens": 21614,
+      "coordinator_added_tokens": 32609
+    },
+    {
+      "run": "trusted-devices",
+      "coordinator": "mc-20261124163014-12bcef",
+      "baseline_tokens": 54394,
+      "host_overhead_tokens": 21955,
+      "coordinator_added_tokens": 32439
+    }
+  ],
+  "review_round2": {
+    "state_measurement": "real isolated fixture; every numbered part included; reserve enforced",
+    "historical_live_probe_note": "probe fields predate review fixes; no nested model agent launched in round 2"
+  },
+  "integration_fix": {
+    "base_commit": "f12d22af75d2b1325bb9b809d089e9726704992c",
+    "skill_version": "2.61.0",
+    "plugin_version": "1.2.12",
+    "measurement": "Re-rendered after restoring always-loaded approval-stop rule; prior probe remains historical, no new live model probe."
+  }
+}

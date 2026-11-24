@@ -40,10 +40,12 @@ Resume existing managed build $RunId as coordinator $CoordinatorId on $Coordinat
 Run folder: $runRoot
 Checkpoint: $BuildStatePath
 Your single bootstrap entry read is: pwsh -NoProfile -File "$PSScriptRoot/read-coordinator-rulebook.ps1" -CoordinatorHost $CoordinatorHost
-Run that command alone, then follow its ordered resume contract. It includes the resume guide and shared policies; do not cat them or combine the command with state dumps. If a tool persists output, read only its unseen remainder, never replay the entire output file.
+Run that command alone. Next run: pwsh -NoProfile -File "$PSScriptRoot/read-coordinator-state.ps1" -RunFolder "$runRoot" -RunId "$RunId" -BuildStatePath "$BuildStatePath" -CoordinatorId "$CoordinatorId"
+Read its complete output, including all mandatory authorization originals (all parts if requested). Do not cat build-state, roadmap, design or canonical policy docs during bootstrap unless the authority contract explicitly requires that original.
 Follow the canonical context bridge$(if ($CoordinatorHost -eq 'claude') { ' (for this Claude coordinator: the build coordinator instructions in your system prompt, generated at launch from the live CLAUDE.md chain; do not reread those CLAUDE.md files)' }). Canonical policy deferred by a lean bridge still loads when its action is triggered.
-Complete required authorization reads, then mark-bootstrap immediately, and continue the checkpoint's next action.
-Do not repeat intake or preload implementation/close-out references. Never run dt-job resume or approve.
+Complete required authorization reads, then mark-bootstrap immediately with: pwsh -NoProfile -File "$dtJob" -Verb mark-bootstrap -RunFolder "$runRoot" -CoordinatorId "$CoordinatorId" -Host $CoordinatorHost -Json
+Only after the marker load on-demand sections for the checkpoint's next action. The bootstrap order is system instructions, entry, state digest, mark-bootstrap. Target at most 20,000 coordinator-added input tokens.
+Do not repeat intake or preload implementation/close-out references. Never run dt-job resume, approve, delegate or hold.
 That rule binds you only: the launching session runs resume, approve and relaunch, so never ask Danny to type a command; raise only genuine decisions with dt-job await-danny.
 At a stop, use await-danny -WaitMinutes 7.5 -CallStartedUtc <UTC captured before pwsh launch> -Json with tool timeout 600000. A live director can approve while this call blocks and renews your lease: on decision=approved read its receipt and continue in this SAME coordinator. Otherwise checkpoint and end; never re-wait the boundary. Never self-approve.
 "@

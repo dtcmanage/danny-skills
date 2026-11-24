@@ -1,11 +1,11 @@
 {
-  "target_tokens": 24000,
+  "target_tokens": 20000,
   "budget_scope": "coordinator-added reads; host overhead measured separately from first-turn usage",
   "measured_components": [
     {
       "source": "Checkpoint, run records, complete approvals and operative boundary sources",
-      "tokens": 6000,
-      "measurement": "reserved read budget; 8 KiB checkpoint plus run and safety records; no authorization omission allowed"
+      "tokens": 10000,
+      "measurement": "reserve for complete state digest and mandatory authority originals; oversized authority never omitted"
     },
     {
       "source": "Contracts and glossary reference packs",
@@ -16,12 +16,17 @@
       "source": "Lean bridge manifest",
       "tokens": 150,
       "measurement": "reserve; measured hook block below 150 o200k_base tokens"
+    },
+    {
+      "source": "Tool calls, reasoning and mandatory-read fallback margin",
+      "tokens": 2500,
+      "measurement": "coordinator-added runtime reserve; host overhead excluded"
     }
   ],
   "repo_reads": [],
   "rendered_reads": [
     {
-      "source": "Single bootstrap entry (resume contract, shared policies, adapter and execution sections)",
+      "source": "Lean bootstrap entry; execution and adapter loaded after marker",
       "command": [
         "pwsh",
         "-NoProfile",
@@ -29,7 +34,14 @@
         "skills/dt-build/scripts/read-coordinator-rulebook.ps1",
         "-CoordinatorHost",
         "codex"
-      ]
+      ],
+      "max_chars": 20000
+    }
+  ],
+  "state_fixture_reads": [
+    {
+      "script": "skills/dt-build/scripts/tests/render-state-budget.py",
+      "reserve_source": "Checkpoint, run records, complete approvals and operative boundary sources"
     }
   ]
 }
