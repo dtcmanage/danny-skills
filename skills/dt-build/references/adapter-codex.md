@@ -53,8 +53,8 @@ Transcript discovery for `mark-bootstrap`: `resume-bootstrap-measurement.md`.
 - Before ending each headless turn: `dt-job consume -CoordinatorId <id> -Seq <last_event_seq>` after handling `dt-job status -CoordinatorId <id> -Json`; an unconsumed trigger fails the launch.
 - `DT_BUILD_COORDINATOR_ID` is launcher-only. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
 - Before power-off/reboot stops, name other builds' running jobs and finish times (`dt-job status`).
-- At approval boundaries: `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<decision for the director>"`, then end. All stops route to the director; `-AlwaysNotify` is deprecated and follows the same routing. Never run `dt-job approve`, `resume`, `delegate` or `hold`; the director runs them (`managed-resume.md` § Operator actions).
-- Director commands: `/dt-build approve <RUN_ID> <operation>`, `/dt-build resume <RUN_ID>`, or matching `dt-job` verbs; `delegate` overrides routing, `hold` records a reason. Approve within standing authority without asking Danny. Only director process death or absence escalates. Follow `operator_notes`; operators add them (`note`).
+- At approval boundaries: `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<decision>" -WaitMinutes 7.5 -CallStartedUtc <call-start-utc> -Json`, foreground tool timeout `600000`. For live directors, block with lease renewal. On `decision=approved`, read the receipt and continue in this SAME coordinator; otherwise checkpoint/end. Never re-wait or self-approve. No director returns immediately; `-AlwaysNotify` follows routing.
+- Director commands: `/dt-build approve <RUN_ID> <operation>`, `/dt-build resume <RUN_ID>`. Approve promptly within authority. `approve -Decline`/`hold -Reason "<why>"` wake without approval; escalate in your chat. Follow `operator_notes`; details: `managed-resume.md`.
 
 ## Evidence
 

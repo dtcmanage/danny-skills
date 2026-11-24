@@ -86,6 +86,15 @@ param(
 
     [string]$Operation,
 
+    # One blocking tool call stays below Claude Code's ten-minute limit. Zero keeps legacy close-out.
+    [ValidateRange(0, 7.5)]
+    [double]$WaitMinutes = 7.5,
+
+    # Capture in the calling shell before starting pwsh, so startup and lock waits count.
+    [DateTime]$CallStartedUtc = ([Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime()),
+
+    [switch]$Decline,
+
     [string]$Message,
 
     [string]$Delegate,
@@ -310,6 +319,9 @@ function Invoke-DtJobLocked {
     if ($script:DtJobLockDepth -eq 0) {
         New-Item -ItemType Directory -Path $paths.Locks -Force | Out-Null
         $deadline = [DateTime]::UtcNow.AddSeconds($LockTimeoutSec)
+        if ($Verb -eq 'await-danny') {
+            $deadline = [DateTime]::new([Math]::Min($deadline.Ticks, $CallStartedUtc.ToUniversalTime().AddMinutes(7.75).Ticks), [DateTimeKind]::Utc)
+        }
         while ($true) {
             try {
                 $script:DtJobLockStream = [System.IO.File]::Open($paths.RunLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
@@ -2107,13 +2119,14 @@ function Invoke-DtJobAwaitDanny {
     if (-not $Operation -or -not $Message) { throw 'DT_JOB_USAGE: await-danny requires -Operation and -Message.' }
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
     $director = Get-DtJobDirector -RunFolder $RunFolder
-    $awaitSeq = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+    $waiter = $null
+    $boundary = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder
         $pending = $approvals.awaiting
         $state = Get-DtJobRunState -BuildStatePath $ctx.build_state_path
         if ($null -ne $pending -and [string]$pending.operation -ceq $Operation -and $pending.PSObject.Properties['seq'] -and $state.run_status -eq 'awaiting_danny') {
             # The same boundary asked again keeps its event, so its DM key (and its one DM) stay the same.
-            [int64]$pending.seq
+            $seq = [int64]$pending.seq
         }
         else {
             Set-DtJobRunState -BuildStatePath $ctx.build_state_path -RunStatus 'awaiting_danny'
@@ -2128,13 +2141,99 @@ function Invoke-DtJobAwaitDanny {
             if (Test-DtJobDirectorAlive $director) {
                 $awaiting.delegated_to = [string]$director.name
             }
-            $approvals.awaiting = $awaiting
+            $approvals.awaiting = [pscustomobject]$awaiting
             Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
-            $seq
+        }
+        $w = $null
+        $lease = Get-DtJobLease -RunFolder $RunFolder
+        if ($WaitMinutes -gt 0 -and $script:DtJobCoordinator -and $lease -and
+            $lease.coordinator_id -ceq $script:DtJobCoordinator -and
+            -not ($lease.PSObject.Properties['released_utc'] -and $lease.released_utc) -and
+            -not (Test-DtJobLeaseHolderGone $lease) -and
+            (Test-DtJobDirectorAlive $director)) {
+            $pending = $approvals.awaiting
+            # Repeated calls cannot reset the boundary's total blocking budget.
+            if (-not $pending.PSObject.Properties['wait_until_utc']) {
+                $pending | Add-Member -NotePropertyName wait_until_utc -NotePropertyValue ($CallStartedUtc.ToUniversalTime().AddMinutes($WaitMinutes).ToString('o'))
+            }
+            $w = [pscustomobject]@{ coordinator_id = $script:DtJobCoordinator; pid = $PID;
+                pid_start_utc = Get-DtJobProcessStartUtc -ProcessId $PID;
+                lease_pid = $lease.pid; lease_start_utc = $lease.pid_start_utc;
+                until_utc = $pending.wait_until_utc }
+            $pending | Add-Member -NotePropertyName waiter -NotePropertyValue $w -Force
+            Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+        }
+        [pscustomobject]@{ seq = $seq; waiter = $w }
+    }
+    $awaitSeq = $boundary.seq
+    $alert = if (Test-DtJobDirectorAlive $director) { 'delegated' } else { Send-DtJobDelegateEscalation -RunFolder $RunFolder -RunId $ctx.run_id }
+    $waiter = $boundary.waiter
+    $decision = if ($waiter) { Wait-DtJobApproval -Context $ctx -AwaitSeq $awaitSeq -Waiter $waiter } else { 'unanswered' }
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ operation = $Operation; alert = $alert; await_seq = $awaitSeq; decision = $decision; message = $(if ($decision -eq 'approved') { 'Approved; continue in this coordinator.' } else { 'End this coordinator; the boundary remains stopped.' }) }) -AsJson:$Json
+}
+
+function Test-DtJobApprovalWaiter {
+    param($Pending, $Lease)
+    if (-not $Pending -or -not $Lease -or -not $Pending.PSObject.Properties['waiter']) { return $false }
+    $w = $Pending.waiter
+    return ($w -and $w.coordinator_id -ceq $Lease.coordinator_id -and
+        $w.lease_pid -eq $Lease.pid -and (Test-DtJobSameInstant $w.lease_start_utc $Lease.pid_start_utc) -and
+        -not ($Lease.PSObject.Properties['released_utc'] -and $Lease.released_utc) -and
+        -not (Test-DtJobLeaseHolderGone $Lease) -and
+        (ConvertTo-DtJobUtc $w.until_utc) -gt [DateTime]::UtcNow -and
+        (Test-DtJobProcessIdentity $w.pid $w.pid_start_utc))
+}
+
+function Wait-DtJobApproval {
+    param($Context, [long]$AwaitSeq, $Waiter)
+    # Never hold either lock while sleeping. Approval and timeout arbitrate under the run lock.
+    $renewAt = [DateTime]::MinValue
+    try {
+        while ($true) {
+            $poll = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+                $tick = @{ renew_at = $renewAt }
+                $a = Get-DtJobApprovals -RunFolder $RunFolder
+                $receipt = @($a.approvals | Where-Object { $_.PSObject.Properties['await_seq'] -and $_.await_seq -eq $AwaitSeq -and $_.operation -ceq $Operation })
+                if ($receipt.Count) { return 'approved' }
+                $p = $a.awaiting
+                if (-not $p -or $p.seq -ne $AwaitSeq -or $p.operation -cne $Operation) { return 'superseded' }
+                if ($p.PSObject.Properties['declined'] -and $p.declined) { return 'declined' }
+                if ($p.PSObject.Properties['held'] -and $p.held) { return 'held' }
+                if ([DateTime]::UtcNow -ge (ConvertTo-DtJobUtc $Waiter.until_utc) -or
+                    -not (Test-DtJobDirectorAlive (Get-DtJobDirector -RunFolder $RunFolder))) { return 'unanswered' }
+                $lease = Get-DtJobLease -RunFolder $RunFolder
+                if (-not (Test-DtJobApprovalWaiter -Pending $p -Lease $lease)) { return 'unanswered' }
+                if ([DateTime]::UtcNow -ge $renewAt) {
+                    $null = Update-DtJobLeaseIfHolder -RunFolder $RunFolder -CoordinatorId $Waiter.coordinator_id
+                    $tick.renew_at = [DateTime]::UtcNow.AddSeconds([Math]::Min(30, [Math]::Max(0.1, (Get-DtJobLeaseTtl $lease) / 3)))
+                }
+                return $tick
+            }
+            if ($poll -is [string]) { return $poll }
+            $renewAt = $poll.renew_at
+            Start-Sleep -Milliseconds $script:DtJobWaitPollMs
         }
     }
-    $alert = if (Test-DtJobDirectorAlive $director) { 'delegated' } else { Send-DtJobDelegateEscalation -RunFolder $RunFolder -RunId $ctx.run_id }
-    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ operation = $Operation; alert = $alert; await_seq = $awaitSeq; message = 'Waiting for the director to approve this decision.' }) -AsJson:$Json
+    catch {
+        if ($_.Exception.Message -notlike 'DT_JOB_LOCK_TIMEOUT:*') { throw }
+        return 'unanswered'
+    }
+    finally {
+      try {
+        Invoke-DtJobLocked -RunFolder $RunFolder -Action {
+            $a = Get-DtJobApprovals -RunFolder $RunFolder
+            $p = $a.awaiting
+            if ($p -and $p.PSObject.Properties['waiter'] -and $p.waiter.pid -eq $PID -and
+                (Test-DtJobSameInstant $p.waiter.pid_start_utc $Waiter.pid_start_utc)) {
+                $p.PSObject.Properties.Remove('waiter')
+                Save-DtJobApprovals -RunFolder $RunFolder -Approvals $a
+            }
+        }
+      } catch {
+        # A stale waiter is ineligible after its deadline; do not exceed the call budget for cleanup.
+        if ($_.Exception.Message -notlike 'DT_JOB_LOCK_TIMEOUT:*') { throw }
+      }
+    }
 }
 
 function Assert-DtJobOperator {
@@ -2173,13 +2272,13 @@ function Assert-DtJobOperator {
 }
 
 function Complete-DtJobApproval {
-    param($Context, $Approvals, $Receipt)
+    param($Context, $Approvals, $Receipt, [switch]$Waiting)
     $Receipt | Add-Member -NotePropertyName approved_utc -NotePropertyValue ([DateTime]::UtcNow.ToString('o')) -Force
     $Approvals.approvals = @($Approvals.approvals) + @($Receipt)
     $Approvals.awaiting = $null
     Save-DtJobApprovals -RunFolder $Context.run_folder -Approvals $Approvals
     Set-DtJobRunState -BuildStatePath $Context.build_state_path -RunStatus 'runnable'
-    Add-DtJobEvent -RunFolder $Context.run_folder -JobId 'run' -Type 'continuation_requested' -Status 'runnable' -Reason "approved $($Receipt.operation)"
+    Add-DtJobEvent -RunFolder $Context.run_folder -JobId 'run' -Type $(if ($Waiting) { 'approval_applied' } else { 'continuation_requested' }) -Status 'runnable' -Reason "approved $($Receipt.operation)"
 }
 
 function Receive-DtJobQueuedApproval {
@@ -2238,7 +2337,18 @@ function Invoke-DtJobApprove {
         $receipt = [pscustomobject][ordered]@{ operation = $Operation; await_seq = $approvals.awaiting.seq; run_id = $ctx.run_id; build_state_path = $ctx.build_state_path; requested_by = [Environment]::UserName; requested_pid = $PID; requested_utc = [DateTime]::UtcNow.ToString('o'); delegated_to = $delegatedTo }
         # FS-124: keep the approver's reason (the chosen option of a multi-option stop) on the record.
         if (-not [string]::IsNullOrWhiteSpace($Reason)) { $receipt | Add-Member -NotePropertyName reason -NotePropertyValue $Reason.Trim() }
-        if ($live) {
+        if ($Decline) {
+            $approvals.awaiting | Add-Member -NotePropertyName declined -NotePropertyValue $receipt -Force
+            Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+            return @{ declined = $Operation }
+        }
+        if ($approvals.awaiting.PSObject.Properties['declined'] -and $approvals.awaiting.declined) {
+            $receipt | Add-Member -NotePropertyName overruled_decline -NotePropertyValue $approvals.awaiting.declined
+            $approvals.awaiting.PSObject.Properties.Remove('declined')
+            Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
+        }
+        $waiting = Test-DtJobApprovalWaiter -Pending $approvals.awaiting -Lease $lease
+        if ($live -and -not $waiting) {
             if (Test-Path -LiteralPath $queuePath) {
                 $q = Read-DtJobText -Path $queuePath | ConvertFrom-DtJobJsonText
                 if ($q.status -eq 'queued' -and $q.operation -ceq $receipt.operation -and $q.await_seq -eq $receipt.await_seq -and $q.coordinator_id -ceq $lease.coordinator_id -and (Test-DtJobSameInstant $q.coordinator_start_utc $lease.pid_start_utc)) {
@@ -2252,7 +2362,7 @@ function Invoke-DtJobApprove {
             Write-DtJobAtomic -Path $queuePath -Content ($receipt | ConvertTo-Json -Depth 6)
             return @{ approval_queued = $Operation; message = "approval queued; applies when coordinator $($lease.pid) exits" }
         }
-        Complete-DtJobApproval -Context $ctx -Approvals $approvals -Receipt $receipt
+        Complete-DtJobApproval -Context $ctx -Approvals $approvals -Receipt $receipt -Waiting:$waiting
         return @{ approved = $Operation }
       }
     }

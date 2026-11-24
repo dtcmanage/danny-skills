@@ -1266,6 +1266,8 @@ exit 0
     # Operator notes: added and cleared by operators only, shown in every status and wait.
     }
     if ($Shard -ne 1) {
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-approval-wait.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'blocking approval process fixtures pass'
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-runtime-fixes.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'runtime lifecycle, worktree, heartbeat and rebase fixes'
     # Separate process keeps regression doubles out of the integration fixtures.

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.60.0
+
+- Keep a coordinator alive through a bounded director approval wait with lease renewal, immediate guarded approvals, decline and hold wakeups, and unchanged timeout relaunch recovery. Verify coordinator liveness throughout the wait, count startup and lock time in the caller budget, and retain overridden declines in approval receipts.
+
 ## 2.59.0
 
 - Route all build stops to the launching director; retake only from the same provider session, exclude coordinator and job callers while preserving operator refusal wording, reject unresolved delegates, and distinguish director watches from coordinator calls.

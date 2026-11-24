@@ -45,6 +45,7 @@ Follow the canonical context bridge$(if ($CoordinatorHost -eq 'claude') { ' (for
 Complete required authorization reads, then mark-bootstrap immediately, and continue the checkpoint's next action.
 Do not repeat intake or preload implementation/close-out references. Never run dt-job resume or approve.
 That rule binds you only: the launching session runs resume, approve and relaunch, so never ask Danny to type a command; raise only genuine decisions with dt-job await-danny.
+At a stop, use await-danny -WaitMinutes 7.5 -CallStartedUtc <UTC captured before pwsh launch> -Json with tool timeout 600000. A live director can approve while this call blocks and renews your lease: on decision=approved read its receipt and continue in this SAME coordinator. Otherwise checkpoint and end; never re-wait the boundary. Never self-approve.
 "@
 $log = Join-Path $runRoot "coordinator-$CoordinatorId.log"
 $workDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($BuildStatePath))
