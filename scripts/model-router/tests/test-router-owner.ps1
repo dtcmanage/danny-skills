@@ -48,12 +48,12 @@ try {
     $units = Join-Path $temp 'units'
     function systemctl { throw 'Unexpected systemctl in fixture' }
     $plan = @(Register-RouterSchedules -UnitDir $units)
-    Check ($plan.Count -eq 3 -and -not (Test-Path $units)) 'dry run writes nothing'
+    Check ($plan.Count -eq 4 -and -not (Test-Path $units)) 'dry run writes nothing'
     $result = @(Register-RouterSchedules -Apply -UnitDir $units -NoSystemctl)
-    Check (@(Get-ChildItem $units).Count -eq 6) 'writes six unit files'
-    $calendars = @('Mon *-*-* 07:00:00 America/New_York','*-*-* 01:00:00 America/New_York','*-*-* 13:00:00 America/New_York')
+    Check (@(Get-ChildItem $units).Count -eq 8) 'writes eight unit files'
+    $calendars = @('Mon *-*-* 07:00:00 America/New_York','*-*-* 01:00:00 America/New_York','*-*-* 13:00:00 America/New_York','*-*-* *:23:00 America/New_York')
     $main = Get-RouterMainCheckout
-    for ($i=0; $i -lt 3; $i++) {
+    for ($i=0; $i -lt 4; $i++) {
         $item = $result[$i]
         $timer = Get-Content $item.timer_path -Raw
         $service = Get-Content $item.service_path -Raw
@@ -61,6 +61,7 @@ try {
         Check ($service.Contains('Type=oneshot') -and $service.Contains('/usr/bin/env pwsh -NoProfile -NonInteractive -File "' + $main) -and -not $service.Contains('danny-skills-router-linux-owner/')) "$($item.name) primary checkout execution"
         Check ($service.Contains('Environment=CLAUDE_CONFIG_DIR=/home/danny/Claude') -and $service.Contains('EnvironmentFile=-/home/danny/.config/command-center-v2/secrets.env') -and $service.Contains('Environment=POWERSHELL_TELEMETRY_OPTOUT=1')) "$($item.name) environment"
         Check ($service.Contains('-CheckOnly') -eq ($i -eq 2)) "$($item.name) arguments"
+        Check ($service.Contains('TimeoutStartSec=120s') -eq ($i -eq 3) -and ($i -ne 3 -or $service.Contains('refresh-claude-usage.ps1'))) "$($item.name) refresh script and hard limit"
     }
     foreach ($platform in @('Windows','MacOS')) {
         Set-Item Function:Get-RouterPlatform -Value ({ $platform }.GetNewClosure())

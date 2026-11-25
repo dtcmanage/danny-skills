@@ -448,6 +448,7 @@
   "scripts/model-router/tests/test-proposal-items.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/cost-report.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/register-router-schedules.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/refresh-claude-usage.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/resolve-model.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/router-platform.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},
   "scripts/model-router/publish-roster.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},

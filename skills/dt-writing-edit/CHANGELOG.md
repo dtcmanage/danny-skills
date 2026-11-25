@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.3.43 (2026-11-25): Shared script update: model router reads Claude usage from inference rate-limit headers when the token lacks profile scope, plus an hourly refresh timer.
+
 - 0.3.42 (2026-11-23): Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.
 
 - 0.3.41 (2026-11-22): sha256sum for the original-untouched hash; bash script-call block; backticked absolute paths in output.

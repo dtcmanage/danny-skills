@@ -12,7 +12,9 @@ function Register-RouterSchedules {
         $tasks = @(
             [pscustomobject]@{ name='ModelRouterWeeklyCostReport'; unit='model-router-weekly-cost-report'; script='cost-report.ps1'; arguments=@(); calendar='Mon *-*-* 07:00:00 America/New_York' },
             [pscustomobject]@{ name='ModelRouterCadence'; unit='model-router-cadence'; script='run-router-cadence.ps1'; arguments=@(); calendar='*-*-* 01:00:00 America/New_York' },
-            [pscustomobject]@{ name='ModelRouterCadenceCheck'; unit='model-router-cadence-check'; script='run-router-cadence.ps1'; arguments=@('-CheckOnly'); calendar='*-*-* 13:00:00 America/New_York' }
+            [pscustomobject]@{ name='ModelRouterCadenceCheck'; unit='model-router-cadence-check'; script='run-router-cadence.ps1'; arguments=@('-CheckOnly'); calendar='*-*-* 13:00:00 America/New_York' },
+            # Hourly at :23 keeps Command Center's Claude usage (stale after 6 hours) and the 5-hour session figure current.
+            [pscustomobject]@{ name='ModelRouterClaudeUsage'; unit='model-router-claude-usage'; script='refresh-claude-usage.ps1'; arguments=@(); calendar='*-*-* *:23:00 America/New_York'; timeout='120s' }
         )
         foreach ($item in $tasks) {
             $item.script = Join-Path $main ('scripts/model-router/' + $item.script)
@@ -31,6 +33,7 @@ Environment=CLAUDE_CONFIG_DIR=/home/danny/Claude
 Environment=CODEX_HOME=/home/danny/.codex
 EnvironmentFile=-/home/danny/.config/command-center-v2/secrets.env
 Environment=POWERSHELL_TELEMETRY_OPTOUT=1
+$(if ($item.PSObject.Properties['timeout']) { "TimeoutStartSec=$($item.timeout)" })
 "@
             $timer = @"
 [Unit]

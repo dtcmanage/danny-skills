@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.62.2
+
+- Shared script update: model router reads Claude usage from inference rate-limit headers when the token lacks profile scope, plus an hourly refresh timer.
+
 ## 2.62.1
 
 - Preserve stall episodes through periodic chatter and brief CPU/file bursts; retain real counters, normalize volatile IDs, safely sample noisy UTF-8 output, bound line history, and credit jittered test output, with two-hour fixtures and buffered live capture.

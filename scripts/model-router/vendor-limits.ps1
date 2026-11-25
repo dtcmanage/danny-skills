@@ -45,14 +45,56 @@ if (-not (Get-Variable RouterDiagnosisClock -Scope Script -ErrorAction SilentlyC
     $script:RouterDiagnosisClock = { [datetimeoffset]::UtcNow }
 }
 
+# Claude usage sources. A token with user:profile scope reads the usage endpoint (the one /usage
+# uses). An inference-only token (claude setup-token, CT202 since 2026-11-24) cannot, so the router
+# sends a one-token Haiku request and reads the anthropic-ratelimit-unified-{5h,7d}-* response headers
+# Claude Code itself reads. Both are converted to the usage endpoint's shape (percent 0-100, ISO reset).
+$script:RouterClaudeProbeModel = 'claude-haiku-5-5'
+function ConvertFrom-RouterClaudeRateLimitHeaders {
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Headers)
+    $get = { param($Name) foreach ($key in $Headers.Keys) { if ([string]$key -ieq $Name) { return [string](@($Headers[$key])[0]) } }; return $null }
+    $result = [ordered]@{ source = 'inference-headers' }
+    foreach ($pair in @(@('seven_day','7d'), @('five_hour','5h'))) {
+        $util = & $get "anthropic-ratelimit-unified-$($pair[1])-utilization"
+        $reset = & $get "anthropic-ratelimit-unified-$($pair[1])-reset"
+        if ([string]::IsNullOrWhiteSpace($util) -and [string]::IsNullOrWhiteSpace($reset)) { continue }
+        $window = [ordered]@{ utilization = $null; resets_at = $null }
+        if (-not [string]::IsNullOrWhiteSpace($util)) {
+            $fraction = [double]::Parse($util, [Globalization.CultureInfo]::InvariantCulture)
+            $window.utilization = [Math]::Round($fraction * 100.0, 4)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($reset)) {
+            $window.resets_at = [datetimeoffset]::FromUnixTimeSeconds([long][double]::Parse($reset, [Globalization.CultureInfo]::InvariantCulture)).ToString('o')
+        }
+        $result[$pair[0]] = [pscustomobject]$window
+    }
+    return [pscustomobject]$result
+}
+if (-not (Get-Variable -Name RouterClaudeHeaderProbe -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:RouterClaudeHeaderProbe = {
+        param([string]$Token)
+        $body = @{ model = $script:RouterClaudeProbeModel; max_tokens = 1
+            system = @(@{ type = 'text'; text = "You are Claude Code, Anthropic's official CLI for Claude." })
+            messages = @(@{ role = 'user'; content = 'ok' }) } | ConvertTo-Json -Depth 5 -Compress
+        $response = Invoke-WebRequest -Uri 'https://api.anthropic.com/v1/messages' -Method Post -TimeoutSec 20 -SkipHttpErrorCheck -ContentType 'application/json' -Body $body -Headers @{
+            Authorization = "Bearer $Token"; 'anthropic-version' = '2023-06-01'
+            'anthropic-beta' = 'oauth-2025-04-20,claude-code-20250219'; 'x-app' = 'cli'; 'User-Agent' = 'claude-cli/model-router (external, cli)'
+        }
+        # A 429 at the limit still carries the headers; the reading is valid either way.
+        if ([int]$response.StatusCode -ne 200 -and [int]$response.StatusCode -ne 429) { throw "CLAUDE_PROBE_HTTP_$([int]$response.StatusCode)" }
+        return ConvertFrom-RouterClaudeRateLimitHeaders -Headers $response.Headers
+    }
+}
 if (-not (Get-Variable -Name RouterClaudeUsageFetcher -Scope Script -ErrorAction SilentlyContinue)) {
     $script:RouterClaudeUsageFetcher = {
-        param([string]$Token)
+        param([string]$Token, [string[]]$Scopes)
+        if (@($Scopes) -notcontains 'user:profile') { return & $script:RouterClaudeHeaderProbe $Token }
         Invoke-RestMethod -Uri 'https://api.anthropic.com/api/oauth/usage' -Method Get -TimeoutSec 5 -Headers @{
             Authorization="Bearer $Token"; 'anthropic-beta'='oauth-2025-04-20'
         }
     }
 }
+$script:RouterClaudeUsageSources = @('oauth-usage', 'inference-headers')
 
 function Get-RouterCachedWeeklyUsage {
     param([ValidateSet('codex','claude')][string]$Vendor)
@@ -60,7 +102,7 @@ function Get-RouterCachedWeeklyUsage {
     if ($Vendor -eq 'codex') { return Get-RouterCodexUsage -Weekly }
     try {
         $reading = Read-RouterJsonObject -Path (Join-Path (Get-RouterStatePath) 'claude-usage.json')
-        if (-not $reading -or $reading.source -cne 'oauth-usage' -or
+        if (-not $reading -or $script:RouterClaudeUsageSources -cnotcontains [string]$reading.source -or
             $reading.credential_locator_identity -cne (Get-RouterClaudeCredentialIdentity) -or
             $null -eq $reading.used_percent -or -not [double]::IsFinite([double]$reading.used_percent)) { return $null }
         $null = [datetimeoffset]$reading.observed_at_utc
@@ -88,7 +130,7 @@ function Get-RouterClaudeUsage {
                     observed_at_utc=([datetimeoffset]$cached.observed_at_utc).ToUniversalTime().ToString('o')
                     session_percent=$(if ($cached.PSObject.Properties['session_percent'] -and $null -ne $cached.session_percent) { [double]$cached.session_percent } else { $null })
                     session_resets_at_utc=$(if ($cached.PSObject.Properties['session_resets_at_utc'] -and $null -ne $cached.session_resets_at_utc) { ([datetimeoffset]$cached.session_resets_at_utc).ToUniversalTime().ToString('o') } else { $null })
-                    source='oauth-usage'
+                    source=$(if ($cached.PSObject.Properties['source'] -and $script:RouterClaudeUsageSources -ccontains [string]$cached.source) { [string]$cached.source } else { 'oauth-usage' })
                     credential_locator_identity=$identity
                 }
                 if (-not [double]::IsFinite($cached.used_percent)) { throw 'CLAUDE_CACHE_PERCENT' }
@@ -106,7 +148,8 @@ function Get-RouterClaudeUsage {
             }
             return $null
         }
-        $response = & $script:RouterClaudeUsageFetcher ([string]$credential.token)
+        $scopes = @(if ($credential.PSObject.Properties['scopes']) { $credential.scopes })
+        $response = & $script:RouterClaudeUsageFetcher ([string]$credential.token) $scopes
         if ($null -eq $response -or -not $response.PSObject.Properties['seven_day'] -or $null -eq $response.seven_day -or
             -not $response.seven_day.PSObject.Properties['utilization'] -or $null -eq $response.seven_day.utilization -or
             -not $response.seven_day.PSObject.Properties['resets_at']) { throw 'CLAUDE_USAGE_SHAPE' }
@@ -123,7 +166,7 @@ function Get-RouterClaudeUsage {
                 $sessionReset = ([datetimeoffset]$response.five_hour.resets_at).ToUniversalTime().ToString('o')
             }
         }
-        $reading = [pscustomobject]@{ used_percent=$used; resets_at_utc=$reset.ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o'); session_percent=$session; session_resets_at_utc=$sessionReset; source='oauth-usage'; credential_locator_identity=$identity }
+        $reading = [pscustomobject]@{ used_percent=$used; resets_at_utc=$reset.ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o'); session_percent=$session; session_resets_at_utc=$sessionReset; source=$(if ($response.PSObject.Properties['source'] -and $script:RouterClaudeUsageSources -ccontains [string]$response.source) { [string]$response.source } else { 'oauth-usage' }); credential_locator_identity=$identity }
         Write-RouterJsonAtomic -Path $path -Value $reading
         if ($reset -le [datetimeoffset]::UtcNow) { $reading.used_percent = 0.0 }
         return $reading

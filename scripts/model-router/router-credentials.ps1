@@ -35,7 +35,10 @@ function ConvertTo-RouterOAuthSource {
         if ([datetimeoffset]::FromUnixTimeMilliseconds([long]$oauth.expiresAt) -le [datetimeoffset]::UtcNow) {
             return [pscustomobject]@{ status='expired'; token=$null }
         }
-        return [pscustomobject]@{ status='available'; token=[string]$oauth.accessToken }
+        # Scopes decide the usage source: user:profile reads the usage endpoint; an inference-only
+        # token (claude setup-token) reads the rate-limit headers of a minimal inference call.
+        $scopes = @(if ($oauth.PSObject.Properties['scopes'] -and $null -ne $oauth.scopes) { @($oauth.scopes | ForEach-Object { [string]$_ }) })
+        return [pscustomobject]@{ status='available'; token=[string]$oauth.accessToken; scopes=$scopes }
     } catch { return [pscustomobject]@{ status='invalid'; token=$null } }
 }
 
@@ -59,15 +62,17 @@ function Get-RouterClaudeCredential {
         } catch { $native = [pscustomobject]@{ status='unavailable'; token=$null } }
     }
     $status = $file.status; $source = 'file'; $token = $file.token
+    $scopes = if ($file.PSObject.Properties['scopes']) { $file.scopes } else { @() }
     if ($file.status -eq 'available' -and $native.status -eq 'available' -and $file.token -cne $native.token) {
         $status='source-disagreement'; $source='none'; $token=$null
     } elseif ($file.status -ne 'available' -and $native.status -eq 'available') {
         $status='available'; $source='keychain'; $token=$native.token
+        $scopes = if ($native.PSObject.Properties['scopes']) { $native.scopes } else { @() }
     } elseif ($file.status -ne 'available') {
         $source='none'
         # Preserve a verified native expiry so the quota reader can retain a
         # same-locator observed ceiling until reset, without using an old token.
         if ($file.status -eq 'missing' -and $native.status -eq 'expired') { $status='expired' }
     }
-    [pscustomobject]@{ status=$status; source=$source; file_status=$file.status; keychain_status=$native.status; token=$token }
+    [pscustomobject]@{ status=$status; source=$source; file_status=$file.status; keychain_status=$native.status; token=$token; scopes=$(if ($null -ne $token) { @($scopes) } else { @() }) }
 }

@@ -2,6 +2,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../vendor-limits.ps1')
 . (Join-Path $PSScriptRoot '../resolve-model.ps1')
+$script:defaultClaudeFetcher = $script:RouterClaudeUsageFetcher
+$script:defaultClaudeProbe = $script:RouterClaudeHeaderProbe
 $script:passed = 0
 function Assert-True { param([object]$Condition,[string]$Name) if (-not [bool]$Condition) { throw "FAIL: $Name" }; $script:passed++; Write-Output "PASS: $Name" }
 $priorState = $env:DT_MODEL_ROUTER_STATE
@@ -316,6 +318,33 @@ try {
     Remove-Item -LiteralPath (Get-RouterCodexLiveReadingPath)
     Assert-True ((Get-RouterCodexUsage -SessionsRoot $liveSessions).used_percent -eq 98 -and @(Get-Content -LiteralPath $probeLog).Count -eq 2) 'fixture sessions without a live command never probe the real account'
     $env:FAKE_CODEX_LIMITS_LOG = $null; $env:FAKE_CODEX_LIMITS_PERCENT = $null
+    # Inference-only tokens (claude setup-token) read the rate-limit headers of a one-token call.
+    $headers = [ordered]@{ 'Anthropic-Ratelimit-Unified-7d-Utilization'='0.84'; 'anthropic-ratelimit-unified-7d-reset'='1795888800'; 'anthropic-ratelimit-unified-representative-claim'='seven_day' }
+    $parsed = ConvertFrom-RouterClaudeRateLimitHeaders -Headers $headers
+    Assert-True ($parsed.source -ceq 'inference-headers' -and $parsed.seven_day.utilization -eq 84 -and ([datetimeoffset]$parsed.seven_day.resets_at).ToUnixTimeSeconds() -eq 1795888800 -and -not $parsed.PSObject.Properties['five_hour']) 'rate-limit headers convert fraction to percent, unix reset to ISO, absent 5h stays absent'
+    $headers['anthropic-ratelimit-unified-5h-utilization'] = @('0.125'); $headers['anthropic-ratelimit-unified-5h-reset'] = '1795640400'
+    $parsed = ConvertFrom-RouterClaudeRateLimitHeaders -Headers $headers
+    Assert-True ($parsed.five_hour.utilization -eq 12.5 -and ([datetimeoffset]$parsed.five_hour.resets_at).ToUnixTimeSeconds() -eq 1795640400) '5-hour headers (array values) become the session window'
+    $script:RouterClaudeUsageFetcher = $script:defaultClaudeFetcher
+    $script:probeCalls = 0; $script:endpointCalls = 0
+    $script:RouterClaudeHeaderProbe = { param($Token) $script:probeCalls++; ConvertFrom-RouterClaudeRateLimitHeaders -Headers @{ 'anthropic-ratelimit-unified-7d-utilization'='0.84'; 'anthropic-ratelimit-unified-7d-reset'=[string][datetimeoffset]::UtcNow.AddDays(3).ToUnixTimeSeconds() } }
+    function Invoke-RestMethod { $script:endpointCalls++; [pscustomobject]@{ seven_day=[pscustomobject]@{ utilization=40; resets_at=[datetimeoffset]::UtcNow.AddDays(3).ToString('o') }; five_hour=[pscustomobject]@{ utilization=5; resets_at=[datetimeoffset]::UtcNow.AddHours(1).ToString('o') } } }
+    try {
+        $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $credentialsPath
+        Write-RouterJsonAtomic -Path $credentialsPath -Value ([pscustomobject]@{ claudeAiOauth=[pscustomobject]@{ accessToken='fixture-token-never-cache'; expiresAt=[datetimeoffset]::UtcNow.AddHours(1).ToUnixTimeMilliseconds(); scopes=@('user:inference') } })
+        Remove-Item -LiteralPath $cachePath -Force -ErrorAction SilentlyContinue
+        $usage = Get-RouterClaudeUsage
+        Assert-True ($script:probeCalls -eq 1 -and $script:endpointCalls -eq 0 -and $usage.used_percent -eq 84 -and $usage.source -ceq 'inference-headers' -and $null -eq $usage.session_percent) 'inference-only token reads the header probe, never the usage endpoint'
+        $again = Get-RouterClaudeUsage
+        $weekly = Get-RouterCachedWeeklyUsage -Vendor claude
+        Assert-True ($script:probeCalls -eq 1 -and $again.source -ceq 'inference-headers' -and $weekly.used_percent -eq 84) 'header-probe reading is a valid cache for both readers'
+        Write-RouterJsonAtomic -Path $credentialsPath -Value ([pscustomobject]@{ claudeAiOauth=[pscustomobject]@{ accessToken='fixture-token-never-cache'; expiresAt=[datetimeoffset]::UtcNow.AddHours(1).ToUnixTimeMilliseconds(); scopes=@('user:inference','user:profile') } })
+        Remove-Item -LiteralPath $cachePath -Force
+        $usage = Get-RouterClaudeUsage
+        Assert-True ($script:probeCalls -eq 1 -and $script:endpointCalls -eq 1 -and $usage.used_percent -eq 40 -and $usage.session_percent -eq 5 -and $usage.source -ceq 'oauth-usage') 'profile-scope token keeps the usage endpoint'
+    } finally { Remove-Item Function:\Invoke-RestMethod -ErrorAction SilentlyContinue; $script:RouterClaudeHeaderProbe = $script:defaultClaudeProbe; $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials }
+    $refreshOut = & pwsh -NoProfile -Command "`$env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS='$(Join-Path $temp 'missing-credentials.json')'; & '$(Join-Path $PSScriptRoot '../refresh-claude-usage.ps1')' -Json; exit `$LASTEXITCODE" 2>&1
+    Assert-True ($LASTEXITCODE -eq 1 -and (($refreshOut | Select-Object -Last 1) | ConvertFrom-Json).fresh -eq $false) 'timed refresh exits 1 when it gets no fresh reading'
     Assert-True ((Format-RouterUsageText -Usage ([pscustomobject]@{ used_percent=98 })) -ceq '98% used / 2% left' -and
         (Format-RouterUsageText -Usage ([pscustomobject]@{ used_percent=104.25 })) -ceq '104.3% used / 0% left' -and
         $null -eq (Format-RouterUsageText -Usage $null)) 'usage text reads used and left, never negative'

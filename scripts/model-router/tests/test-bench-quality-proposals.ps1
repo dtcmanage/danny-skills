@@ -173,7 +173,7 @@ try {
     $filled=Invoke-RouterBench -Job fast -Candidate $roster.jobs.fast.first -Incumbent $roster.jobs.fast.first -StateDir $catalogState -NoAlerts -Limits {param($v) @{blocked=$false;used_percent=10}} -CliInvoker {param($r) @{status='ok';answer='ok'}} -Outcome {param($r)}
     Assert ($filled.spend.point_limit -eq 5 -and $filled.spend.call_limit -eq 1000 -and $filled.spend.reading_stale_hours -eq 6) 'Runner with a persisted judge catalog reports the shipped spend thresholds'
 
-    $usageFiles=@(Get-ChildItem -LiteralPath $root -Recurse -Filter 'claude-usage.json' | Where-Object { (Get-Content $_.FullName -Raw | ConvertFrom-Json).source -ceq 'oauth-usage' })
+    $usageFiles=@(Get-ChildItem -LiteralPath $root -Recurse -Filter 'claude-usage.json' | Where-Object { (Get-Content $_.FullName -Raw | ConvertFrom-Json).source -cin @('oauth-usage','inference-headers') })
     Assert ($usageFiles.Count -eq 0) 'Synthetic tests must never write live OAuth usage'
     Write-Output "SUMMARY: $script:checks passed; 0 failed"
 } finally {

@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.43 (2026-11-25): Shared script update: model router reads Claude usage from inference rate-limit headers when the token lacks profile scope, plus an hourly refresh timer.
+
 - 0.2.42 (2026-11-23): Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.
 
 - 0.2.41 (2026-11-22): Linux workspace paths for style profiles, samples, voice principles and save location; backticked absolute paths in output.

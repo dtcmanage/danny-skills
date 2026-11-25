@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.3.43 (2026-11-25): Shared script update: model router reads Claude usage from inference rate-limit headers when the token lacks profile scope, plus an hourly refresh timer.
+
 - 0.3.42 (2026-11-23): Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.
 
 - 0.3.41 (2026-11-22): Runs on Linux, macOS or Windows; prompting guide resolved from ~/.codex; reports saved images as backticked absolute paths.

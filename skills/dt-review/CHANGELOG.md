@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.18.9 (2026-11-25): Shared script update: model router reads Claude usage from inference rate-limit headers when the token lacks profile scope, plus an hourly refresh timer.
+
 - 1.18.8 (2026-11-23): Shared script update: runnable-command recognizer accepts python3/bash/sh/uv/make (dt-roadmap); claude headless auth comment wording (dt-review).
 
 - 1.18.7 (2026-11-23): Linux session-host fixes (2026-11-23): see plugin 1.1.3.
