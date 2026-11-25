@@ -4,6 +4,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $scripts = Split-Path -Parent $PSScriptRoot
 $runner = Get-Content -LiteralPath (Join-Path $scripts 'dt-job-runner.ps1') -Raw
+# The extracted execution block uses the production asynchronous copy helper.
+$tokens = $null; $errors = $null
+$runnerAst = [Management.Automation.Language.Parser]::ParseInput($runner,[ref]$tokens,[ref]$errors)
+$copyType = $runnerAst.Find({ param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Add-Type' },$true)
+if (-not $copyType) { throw 'Runner output-copy helper not found' }
+. ([scriptblock]::Create($copyType.Extent.Text))
 $start = $runner.IndexOf('        $process = [System.Diagnostics.Process]::Start($psi)')
 $endToken = '        Complete-DtJobRun @outcome'
 $end = $runner.IndexOf($endToken, $start) + $endToken.Length

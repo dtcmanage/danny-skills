@@ -56,6 +56,202 @@ function Test-AlertDelivered([string]$Rf, [string]$Key) {
     return @((Get-DtJobNotifications $Rf) | Where-Object { $_.key -ceq $Key -and (Test-DtJobNotificationDelivered $_) }).Count -gt 0
 }
 try {
+    # Advance the production sampler's clock through two hours, without sleeping.
+    # The same confirmed clock is then consumed by the real watcher/director path.
+    $origin = [DateTime]::UtcNow.AddMinutes(-120)
+    foreach ($scenario in @('chatter', 'flapping', 'fast-retry', 'request-ids', 'wait-attempt', 'heartbeat', 'download-progress', 'rows-progress', 'tests', 'jittered-tests', 'poll-progress', 'shard-progress', 'iteration-progress', 'percent-progress', 'cpu', 'files')) {
+        $progress = New-DtJobProgress -Now $origin
+        $everStalled = $false; $dueMinute = $null
+        $nextReport = 0; $reportIndex = 0; $fastPhase = 0
+        $fastPath = Join-Path $tempRoot 'fast-retry.log'
+        if ($scenario -eq 'fast-retry') { [IO.File]::WriteAllText($fastPath, '') }
+        for ($sec=0; $sec -le 7200; $sec+=30) {
+            $now = $origin.AddSeconds($sec)
+            $lines = @()
+            if ($scenario -eq 'wait-attempt') {
+                # Six lines emitted every five seconds between runner samples.
+                $lines = @(0..5 | ForEach-Object { "waiting for db (attempt $($sec/5 + $_))" })
+            }
+            if ($scenario -eq 'heartbeat') { $lines=@("heartbeat alive #$($sec/30) epoch=$(1764000000 + $sec)") }
+            if ($scenario -eq 'download-progress') { $lines=@("downloaded $(123456789 + $sec) bytes") }
+            if ($scenario -eq 'rows-progress') { $lines=@("rows=$(10485760 + $sec)") }
+            if ($scenario -eq 'chatter' -and $sec % 900 -eq 0) { $lines=@("$($now.ToString('o')) still waiting... polling=$sec") }
+            if ($scenario -eq 'tests' -and $sec % 60 -eq 0) { $lines=@("tests/case_$sec passed") }
+            if ($scenario -eq 'fast-retry') {
+                # 50 identical UTF-8 lines/sec, with a different cut on each tick.
+                $line = "connection refused, retrying: service unavailable é`n"
+                $length = $line.Length * 1500 + $sec % 7
+                [IO.File]::AppendAllText($fastPath, ($line * 1502).Substring($fastPhase, $length))
+                $fastPhase = ($fastPhase + $length) % $line.Length
+                $lines = @(Read-DtJobProgressOutput $progress @($fastPath))
+            }
+            if ($scenario -eq 'request-ids' -and $sec % 900 -eq 0) {
+                $lines=@("retry req=$([guid]::NewGuid()) trace=$($sec.ToString('x8')) pid=$sec port=$(1000+$sec) after $sec`ms")
+            }
+            if ($scenario -eq 'jittered-tests' -and $sec -ge $nextReport) {
+                $lines=@("tests/jitter_$reportIndex passed")
+                $nextReport += @(61,89,73,90,67,82)[$reportIndex % 6]; $reportIndex++
+            }
+            if ($scenario -eq 'poll-progress') { $lines=@("polling job: $sec/20000 complete") }
+            if ($scenario -eq 'shard-progress') { $lines=@("retrying shard $sec of 20000") }
+            if ($scenario -eq 'iteration-progress') { $lines=@("iteration $sec/20000") }
+            if ($scenario -eq 'percent-progress') { $lines=@("polling $($sec/100)% complete") }
+            $burst = $scenario -eq 'flapping' -and $sec % 1800 -eq 0
+            $last = Update-DtJobProgress -Progress $progress -Now $now -CpuActive ($scenario -eq 'cpu' -or $burst) -FileActive ($scenario -eq 'files' -or $burst) -Lines $lines
+            $idle = ($now - $last).TotalSeconds
+            if ($idle -ge 1200) { $everStalled=$true }
+            if ($idle -ge 2400 -and $null -eq $dueMinute) { $dueMinute=$sec/60 }
+        }
+        if ($scenario -in @('chatter','flapping','fast-retry','request-ids','wait-attempt','heartbeat')) {
+            Assert-True ($everStalled -and $dueMinute -le 120 -and $last -eq $origin) "$scenario escalates by two hours without resetting first stall"
+            $entry = New-Fixture "progress-$scenario"
+            $rf = $entry.run_folder
+            @{ last_activity_utc=$last.ToString('o'); cpu_seconds=68; file_changes=0 } | ConvertTo-Json | Set-Content (Join-Path $rf 'jobs/j-0001/heartbeat.json')
+            Update-DtJobStalls $rf
+            $episode = Get-DtJobStall $rf 'j-0001'
+            $episode.ack_count=1
+            $episode.ack=[pscustomobject]@{until_utc=[DateTime]::UtcNow.AddDays(1).ToString('o')}
+            Save-DtJobStall $rf 'j-0001' $episode
+            $null = Invoke-WatcherRunTick -Entry $entry
+            $stall = Get-DtJobStall $rf 'j-0001'
+            $seq = (Get-DtJobApprovals $rf).awaiting.seq
+            $null = Invoke-WatcherRunTick -Entry $entry
+            Assert-True ($null -ne $stall.stop_seq -and $seq -eq (Get-DtJobApprovals $rf).awaiting.seq) "$scenario reaches director exactly once"
+            Assert-True ($stall.first_stalled_utc -and (Get-DtJobRecord $rf 'j-0001').status -eq 'running') "$scenario preserves first stall and never kills"
+            Assert-True ($stall.ack_count -eq 1 -and $stall.first_stalled_utc -eq $episode.first_stalled_utc) "$scenario preserves acknowledgement and caps its deadline despite chatter"
+        } else {
+            Assert-True (-not $everStalled -and $null -eq $dueMinute) "steady $scenario progress stays clean for two hours"
+        }
+    }
+    $progress = New-DtJobProgress -Now $origin
+    $null = Test-DtJobNovelOutput $progress @('2026-11-24T10:00:00Z still waiting... retrying=1 (15 seconds)') $origin
+    Assert-True (-not (Test-DtJobNovelOutput $progress @('2026-11-24T10:15:00Z still waiting... retrying=2 (30 seconds)') $origin.AddMinutes(15))) 'timestamps and retry counters do not disguise repeat output'
+    foreach ($pair in @(
+        @('retry #4821', 'retry #4822'),
+        @('attempt 37 failed', 'attempt 38 failed'),
+        @('reconnecting, try 12', 'reconnecting, try 13'),
+        @('waiting 3 jobs remaining', 'waiting 2 jobs remaining'),
+        @('waiting 3 left', 'waiting 2 left'),
+        @('waiting 1 req=12345678-1234-1234-1234-123456789abc after 5s', 'waiting 2 req=abcdefab-abcd-abcd-abcd-abcdefabcdef after 250ms'),
+        @('retrying 1 req=9f3c1234 pid=12 port=80', 'retrying 2 req=0xabcdef12 pid=34 port=8080'),
+        @('polling 1 after 5s', 'polling 2 after 250ms'),
+        @('retry pid=1234567 port=80', 'retry pid=12345678 port=8080')
+    )) {
+        $p = New-DtJobProgress $origin
+        $null = Test-DtJobNovelOutput $p @($pair[0]) $origin
+        Assert-True (-not (Test-DtJobNovelOutput $p @($pair[1]) $origin.AddMinutes(15))) 'volatile IDs, retry numbers and short durations normalize as repeats'
+    }
+    foreach ($word in @('retry','retrying','attempt','try','waiting','wait','polling','poll','reconnect','reconnecting','backoff')) {
+        $p = New-DtJobProgress $origin
+        $null = Test-DtJobNovelOutput $p @("4821 failures: $word for db (cycle 37)") $origin
+        Assert-True (-not (Test-DtJobNovelOutput $p @("4822 failures: $word for db (cycle 38)") $origin.AddSeconds(30))) "all numbers repeat with wait/retry word anywhere: $word"
+    }
+    foreach ($template in @('polling job: {0}/2000 complete','retrying shard {0} of 40','iteration {0}/2000','count: {0} of 2000','polling {0}%','waiting {0}/2000','iteration {0}/200000000','waiting {0} of 40 remaining','waiting {0}/40 left','downloaded {0} bytes','rows={0}')) {
+        $p = New-DtJobProgress $origin
+        $null = Test-DtJobNovelOutput $p @(($template -f 7)) $origin
+        Assert-True (Test-DtJobNovelOutput $p @(($template -f 8)) $origin.AddSeconds(30)) "changing progress survives normalization: $template"
+        Assert-True (-not (Test-DtJobNovelOutput $p @(($template -f 8)) $origin.AddSeconds(60))) "unchanged progress remains repeat: $template"
+    }
+    # Run the actual helper initializer twice; reuse must not compile again.
+    $runnerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $scriptDir 'dt-job-runner.ps1'), [ref]$null, [ref]$null)
+    $copyInit = $runnerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (-not ('DtJobOutputCopy' -as [type]))")
+    }, $true)
+    & ([scriptblock]::Create($copyInit.Extent.Text))
+    & {
+        function Add-Type { throw 'output helper compiled twice' }
+        & ([scriptblock]::Create($copyInit.Extent.Text))
+    }
+    $source = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes(('live output é' * 10000)))
+    $destination = [IO.MemoryStream]::new()
+    try {
+        [DtJobOutputCopy]::CopyAsync($source, $destination).GetAwaiter().GetResult()
+        Assert-True ([Convert]::ToBase64String($source.ToArray()) -eq [Convert]::ToBase64String($destination.ToArray())) 'cached output helper preserves multi-chunk bytes'
+    } finally { $source.Dispose(); $destination.Dispose() }
+    $p = New-DtJobProgress $origin
+    $null = Test-DtJobNovelOutput $p @('oldest item','keep item') $origin
+    for ($i=0; $i -lt 9998; $i++) { $null = Test-DtJobNovelOutput $p @("unique item $i") $origin }
+    $null = Test-DtJobNovelOutput $p @('keep item','overflow item') $origin.AddMinutes(1)
+    Assert-True ($p.seen.Count -eq 10000) 'seen lines capped at 10000'
+    Assert-True (-not (Test-DtJobNovelOutput $p @('keep item') $origin.AddMinutes(2))) 'recently repeated line retained at capacity'
+    Assert-True (Test-DtJobNovelOutput $p @('oldest item') $origin.AddMinutes(2)) 'oldest line evicted first'
+    $null = Test-DtJobNovelOutput $p @() $origin.AddMinutes(123)
+    Assert-True ($p.seen.Count -eq 0) 'oldest-prefix expiration clears stale history'
+    $p = New-DtJobProgress $origin -WindowSec 10
+    $null = Update-DtJobProgress $p $origin $false $false @('fresh output')
+    Assert-True ($p.novel_until -eq $origin.AddSeconds(3)) 'shortened recovery windows retain proportional output credit'
+    $entry = New-Fixture 'sustained-recovery'
+    $rf = $entry.run_folder
+    Update-DtJobStalls $rf
+    $old = Get-DtJobStall $rf 'j-0001'
+    for ($sec=0; $sec -le 360; $sec+=30) {
+        $last = Update-DtJobProgress $progress ([DateTime]::UtcNow.AddSeconds($sec - 360)) $true $false @()
+    }
+    @{ last_activity_utc=$last.ToString('o'); cpu_seconds=68; file_changes=0 } | ConvertTo-Json | Set-Content (Join-Path $rf 'jobs/j-0001/heartbeat.json')
+    Update-DtJobStalls $rf
+    Assert-True ($null -eq (Get-DtJobStall $rf 'j-0001')) 'sustained recovery clears existing episode'
+    Set-Beat $rf 15
+    Update-DtJobStalls $rf
+    Assert-True ((Get-DtJobStall $rf 'j-0001').event_seq -gt $old.event_seq) 'stall after real recovery starts a new episode'
+
+    $outputProgress = New-DtJobProgress -Now $origin
+    $outputPath = Join-Path $tempRoot 'progress-output.log'
+    [IO.File]::WriteAllText($outputPath, 'still wai')
+    Assert-True (@(Read-DtJobProgressOutput $outputProgress @($outputPath)).Count -eq 0) 'partial line waits for completion'
+    [IO.File]::AppendAllText($outputPath, "ting...`n")
+    Assert-True ((@(Read-DtJobProgressOutput $outputProgress @($outputPath)) -join '') -eq 'still waiting...') 'incremental reader completes line once'
+    Assert-True (@(Read-DtJobProgressOutput $outputProgress @($outputPath)).Count -eq 0) 'unchanged output is not reread'
+    $utf8 = [Text.Encoding]::UTF8.GetBytes("é🙂 finished`n")
+    foreach ($split in 1..5) {
+        $p = New-DtJobProgress $origin
+        [IO.File]::WriteAllBytes($outputPath, $utf8[0..($split-1)])
+        $null = @(Read-DtJobProgressOutput $p @($outputPath))
+        $append = [IO.File]::Open($outputPath, 'Append', 'Write', 'ReadWrite')
+        try { $append.Write($utf8, $split, $utf8.Length-$split) } finally { $append.Dispose() }
+        Assert-True ((@(Read-DtJobProgressOutput $p @($outputPath)) -join '') -ceq 'é🙂 finished') "UTF-8 character survives read boundary $split"
+    }
+    foreach ($cut in 0..5) {
+        $p = New-DtJobProgress $origin
+        # Newest 64 KiB starts at each byte of the multibyte prefix.
+        $tail = [Text.Encoding]::UTF8.GetBytes(("é🙂 discarded`n") + ("repeat`n" * 10))
+        $bytes = [byte[]]::new(65536 + 20)
+        [Array]::Copy($tail, $cut, $bytes, 20, $tail.Length-$cut)
+        # Padding is an unterminated final line, never emitted.
+        [IO.File]::WriteAllBytes($outputPath, $bytes)
+        $readLines = @(Read-DtJobProgressOutput $p @($outputPath))
+        Assert-True ($readLines.Count -eq 10 -and @($readLines | Where-Object { $_ -cne 'repeat' }).Count -eq 0) "jump discards incomplete UTF-8 line at byte $cut"
+    }
+    $p = New-DtJobProgress $origin
+    $bytes = [Text.Encoding]::UTF8.GetBytes("🙂" + ('a' * 65534) + "`n")
+    [IO.File]::WriteAllBytes($outputPath, $bytes[0..2])
+    $null = @(Read-DtJobProgressOutput $p @($outputPath))
+    $append = [IO.File]::Open($outputPath, 'Append', 'Write', 'ReadWrite')
+    try { $append.Write($bytes, 3, $bytes.Length - 3) } finally { $append.Dispose() }
+    Assert-True ((@(Read-DtJobProgressOutput $p @($outputPath)) -join '') -ceq ("🙂" + ('a' * 65534))) 'full read accommodates pending UTF-8 surrogate pair'
+    $p = New-DtJobProgress $origin
+    [IO.File]::WriteAllText($outputPath, ('x' * 70000) + "`rcomplete`r")
+    Assert-True ((@(Read-DtJobProgressOutput $p @($outputPath)) -join '') -ceq 'complete') 'jump recognizes CR-only line endings'
+    $p = New-DtJobProgress $origin
+    [IO.File]::WriteAllText($outputPath, ('x' * 70000))
+    Assert-True (@(Read-DtJobProgressOutput $p @($outputPath)).Count -eq 0) 'jump without newline emits nothing'
+    [IO.File]::AppendAllText($outputPath, "discarded`ncomplete`n")
+    Assert-True ((@(Read-DtJobProgressOutput $p @($outputPath)) -join '') -ceq 'complete') 'discard continues until next newline'
+
+    $entry = New-Fixture 'runner-output'
+    $rf = $entry.run_folder
+    $job = Read-Reply @('start','-RunFolder',$rf,'-Command',"Write-Output 'test_alpha passed'; Start-Sleep 60")
+    try {
+        $limit = [DateTime]::UtcNow.AddSeconds(15)
+        $lines = @()
+        do {
+            $liveRecord = Get-DtJobRecord $rf $job.job_id
+            $lines = @(Read-DtJobProgressOutput $outputProgress @($liveRecord.output_path))
+            if ($lines.Count) { break }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $limit)
+        Assert-True (($lines -join '') -eq 'test_alpha passed' -and $liveRecord.status -eq 'running') 'real runner exposes small progress lines before job exit'
+    } finally { $null = Read-Reply @('cancel','-RunFolder',$rf,'-JobId',$job.job_id) }
+
     Assert-True ($script:DtJobStallSec -eq 1200 -and $script:DtJobHeartbeatSec -eq 30) 'production stall and heartbeat defaults unchanged'
     Assert-True (-not (Test-DtJobCpuActivity -Cpu 68 -LastCpu 67 -ElapsedSec 30)) 'low CPU loop is not activity'
     Assert-True (Test-DtJobCpuActivity -Cpu 72 -LastCpu 68 -ElapsedSec 30) 'sustained CPU is activity'

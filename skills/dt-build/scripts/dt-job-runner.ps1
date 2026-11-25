@@ -173,7 +173,7 @@ function Get-DtJobTreeMemoryGB {
 
 function Wait-DtJobProcess {
     # Waits for the job without a time limit unless the job has one, and every heartbeat records whether
-    # it showed any sign of life: CPU in its process tree, output, or file changes in its working
+    # it made sustained progress: CPU in its process tree, novel output, or file changes in its working
     # directory outside the run folder. Returns $false only when a job time limit ran out.
     param([Parameter(Mandatory)]$Process, [int]$TimeoutSec, [Parameter(Mandatory)][string]$WorkDir, [Parameter(Mandatory)][System.IO.Stream[]]$Outputs, [string]$AdmissionReady, [bool]$Writes = $false)
     $heartbeatSec = Get-DtJobSettingSec -Name 'DT_JOB_HEARTBEAT_SEC' -Default $script:DtJobHeartbeatSec
@@ -193,7 +193,11 @@ function Wait-DtJobProcess {
     $started = [DateTime]::UtcNow
     $executionStarted = if ($AdmissionReady) { $null } else { $started }
     $lastActivity = $started
-    $lastCpu = $null; $lastBytes = [long]-1; $fileChanges = 0; $newFiles = 0
+    # Scale with a deliberately shortened stall period (including fast fixtures),
+    # keeping recovery shorter than detection; production defaults to five minutes.
+    $windowSec = [Math]::Min(300, [Math]::Max(1, (Get-DtJobSettingSec -Name 'DT_JOB_STALL_SEC' -Default $script:DtJobStallSec) / 4))
+    $progress = New-DtJobProgress -Now $started -WindowSec $windowSec
+    $lastCpu = $null; $fileChanges = 0; $newFiles = 0
     $lastSample = $started
     $nextBeat = $started
     $nextMemorySample = $started
@@ -220,15 +224,13 @@ function Wait-DtJobProcess {
             if ($now -ge $nextBeat) {
                 $cpu = try { Get-DtJobTreeCpuSeconds -RootPid $Process.Id } catch { $null }
                 $bytes = [long]0; foreach ($s in $Outputs) { try { $bytes += $s.Position } catch { } }
-                # Sampling a sleeping loop consumes tiny amounts of CPU; that is not progress.
-                # Require sustained work (10% of one core by default), scaled to elapsed sample time.
-                $active = $newFiles -gt 0 -or ($lastBytes -ge 0 -and $bytes -ne $lastBytes) -or (Test-DtJobCpuActivity -Cpu $cpu -LastCpu $lastCpu -ElapsedSec ($now - $lastSample).TotalSeconds)
-                if ($active) { $lastActivity = $now }
+                $cpuActive = Test-DtJobCpuActivity -Cpu $cpu -LastCpu $lastCpu -ElapsedSec ($now - $lastSample).TotalSeconds
+                $lines = @(Read-DtJobProgressOutput -Progress $progress -Paths @($Outputs | ForEach-Object { $_.Name }))
+                $lastActivity = Update-DtJobProgress -Progress $progress -Now $now -CpuActive $cpuActive -FileActive ($newFiles -gt 0) -Lines $lines
                 $fileChanges += $newFiles; $newFiles = 0
                 if ($null -ne $cpu) { $lastCpu = $cpu }
-                $lastBytes = $bytes
                 $lastSample = $now
-                $beat = [ordered]@{ sampled_utc = $now.ToString('o'); last_activity_utc = $lastActivity.ToString('o'); cpu_seconds = $(if ($null -ne $cpu) { [int]$cpu } else { $null }); output_bytes = $bytes; file_changes = $fileChanges }
+                $beat = [ordered]@{ sampled_utc = $now.ToString('o'); last_activity_utc = $lastActivity.ToString('o'); progress_policy = 'sustained'; cpu_seconds = $(if ($null -ne $cpu) { [int]$cpu } else { $null }); output_bytes = $bytes; file_changes = $fileChanges }
                 try { Write-DtJobAtomic -Path $beatPath -Content ($beat | ConvertTo-Json -Compress) } catch { }
                 $nextBeat = $now.AddSeconds($heartbeatSec)
             }
@@ -314,15 +316,33 @@ try {
     }
     if (-not $proceed) { exit 0 }
 
-    $stdoutFile = [System.IO.File]::Open((Join-Path $jobDir 'stdout.log'), [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
-    $stderrFile = [System.IO.File]::Open((Join-Path $jobDir 'stderr.log'), [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    # Flush each received chunk on its copying task, never concurrently with a
+    # write. Small live lines remain visible; noisy output uses 64 KiB chunks.
+    if (-not ('DtJobOutputCopy' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.IO;
+using System.Threading.Tasks;
+public static class DtJobOutputCopy {
+    public static async Task CopyAsync(Stream source, Stream destination) {
+        var buffer = new byte[65536];
+        int count;
+        while ((count = await source.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) != 0) {
+            await destination.WriteAsync(buffer, 0, count).ConfigureAwait(false);
+            await destination.FlushAsync().ConfigureAwait(false);
+        }
+    }
+}
+'@
+    }
+    $stdoutFile = [System.IO.FileStream]::new((Join-Path $jobDir 'stdout.log'), [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite, 4096, [System.IO.FileOptions]::Asynchronous)
+    $stderrFile = [System.IO.FileStream]::new((Join-Path $jobDir 'stderr.log'), [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite, 4096, [System.IO.FileOptions]::Asynchronous)
     try {
         $process = [System.Diagnostics.Process]::Start($psi)
         # Linux may lose StartTime as soon as the child exits. Capture before any ledger wait;
         # null means unavailable, never a reason to replace the child's real exit result.
         $processStartUtc = Get-DtJobProcessStartUtc -Process $process
-        $copyOut = $process.StandardOutput.BaseStream.CopyToAsync($stdoutFile)
-        $copyErr = $process.StandardError.BaseStream.CopyToAsync($stderrFile)
+        $copyOut = [DtJobOutputCopy]::CopyAsync($process.StandardOutput.BaseStream, $stdoutFile)
+        $copyErr = [DtJobOutputCopy]::CopyAsync($process.StandardError.BaseStream, $stderrFile)
 
         $stillOurs = Invoke-DtJobLocked -RunFolder $RunFolder -Action {
             $record = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId

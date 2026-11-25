@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.62.1
+
+- Preserve stall episodes through periodic chatter and brief CPU/file bursts; retain real counters, normalize volatile IDs, safely sample noisy UTF-8 output, bound line history, and credit jittered test output, with two-hour fixtures and buffered live capture.
+
 ## 2.62.0
 
 - Persist stall episodes, interrupt waits with activity facts, accept expiring stall acknowledgements, and independently escalate overdue jobs through the director with deduplicated fallback; stabilize check-in and resume-contract fixtures.

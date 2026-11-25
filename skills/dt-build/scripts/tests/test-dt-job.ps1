@@ -720,9 +720,11 @@ $results | ConvertTo-Json -Compress
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$parseErrors)
         $waitFunction = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Wait-DtJobProcess' }, $true)
         . ([scriptblock]::Create($waitFunction.Extent.Text))
+        . (Join-Path $scriptDir 'dt-job-stalls.ps1')
         function Get-DtJobSettingSec { param($Name, $Default) return $Default }
         function Get-DtJobTreeMemoryGB { param($RootPid) throw 'fixture sampler unavailable' }
         $script:DtJobHeartbeatSec = 30
+        $script:DtJobStallSec = 1200
         $script:peakMemoryGB = $null; $script:memorySamplingFailed = $false
         $jobDir = $memoryRun; $paths = [pscustomobject]@{ Root = $memoryRun }; $JobId = 'sample-failure'
         $fake = [pscustomobject]@{ HasExited = $false; Id = $PID }
@@ -1250,7 +1252,7 @@ exit 0
         Push-Location $rf
         try {
         $quiet = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', ((New-HeldJobCommand $quietRelease) + ' # invoke-codex-chunk.ps1'), '-TimeoutSec', '5')
-        $busyCommand = (New-HeldJobCommand $busyRelease).Replace('Start-Sleep -Milliseconds 100', "Write-Output 'step'; Start-Sleep -Milliseconds 100")
+        $busyCommand = '$step=0; ' + (New-HeldJobCommand $busyRelease).Replace('Start-Sleep -Milliseconds 100', '$step++; Write-Output "tests/case_$step passed"; Start-Sleep -Milliseconds 100')
         $busy = Invoke-DtJob @('start', '-RunFolder', $rf, '-Command', ($busyCommand + ' # invoke-codex-chunk.ps1'))
         } finally { Pop-Location }
         # Synchronize on observed heartbeats, not process-start wall time: under load

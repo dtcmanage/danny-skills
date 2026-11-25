@@ -1793,8 +1793,8 @@ function Get-DtJobSettingSec {
 }
 
 function Get-DtJobActivity {
-    # A running job's progress from its runner's heartbeat: minutes running, seconds since its last sign
-    # of life (CPU, output or file changes in its working directory), and whether that makes it stalled.
+    # The runner advances last_activity_utc only after sustained progress, preserving
+    # stall age across isolated CPU/file bursts and repeated output.
     param([Parameter(Mandatory)][string]$RunFolder, [Parameter(Mandatory)]$Record)
     $now = [DateTime]::UtcNow
     $started = if ($Record.started) { ConvertTo-DtJobUtc $Record.started } else { $now }
@@ -1813,7 +1813,7 @@ function Get-DtJobActivity {
     if ($null -ne $beat) { $line += " (cpu $cpu s, $files file changes)" } else { $line += ' (no heartbeat yet)' }
     if ($stalled) {
         $since = [TimeZoneInfo]::ConvertTimeBySystemTimeZoneId($lastActive, 'America/New_York').ToString('h:mm tt')
-        $line = "$($Record.job_id) stalled $([int][Math]::Floor($idleSec / 60)) min, no output or CPU activity since $since ET"
+        $line = "$($Record.job_id) stalled $([int][Math]::Floor($idleSec / 60)) min, no sustained progress since $since ET"
     }
     if ($expected -gt 0 -and ($now - $started).TotalSeconds -gt $expected) { $line += "; past its expected $([int][Math]::Ceiling($expected / 60)) min" }
     $outcome = Get-DtJobWorkerOutcome -RunFolder $RunFolder -Record $Record

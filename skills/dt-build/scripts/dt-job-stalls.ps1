@@ -6,6 +6,115 @@ function Test-DtJobCpuActivity {
     return ($null -ne $Cpu -and $null -ne $LastCpu -and ($Cpu - $LastCpu) -ge [Math]::Max(0.1, $ElapsedSec * $percent / 100))
 }
 
+function New-DtJobProgress {
+    param([DateTime]$Now, [ValidateRange(1,300)][double]$WindowSec=300)
+    # Only this confirmed clock identifies an episode. Brief activity never advances it.
+    return @{ last_activity=$Now; window_sec=$WindowSec; samples=@(); seen=[ordered]@{}; outputs=@{}; novel_until=$Now }
+}
+
+function Test-DtJobNovelOutput {
+    param([hashtable]$Progress, [string[]]$Lines, [DateTime]$Now)
+    # Insertion order is last-seen order. Expire only the oldest prefix, never
+    # scan the entire table on each heartbeat; capacity is bounded separately.
+    while ($Progress.seen.Count) {
+        $oldest = $Progress.seen.GetEnumerator(); $null = $oldest.MoveNext()
+        $key = [string]$oldest.Key
+        if (($Now - $Progress.seen[$key]).TotalMinutes -le 120) { break }
+        $Progress.seen.Remove($key)
+    }
+    $novel = $false
+    foreach ($line in $Lines) {
+        $normalized = $line -replace '\x1b\[[0-9;]*[A-Za-z]', ''
+        $normalized = $normalized -replace '\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?', '<time>'
+        $normalized = $normalized -replace '\b\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:\s*[AP]M)?\b', '<time>'
+        # Protect real progress even when adjacent to retry/poll words or long
+        # decimal counters which would otherwise resemble hexadecimal IDs.
+        $counters = [Collections.Generic.List[string]]::new()
+        $normalized = [regex]::Replace($normalized, '(?i)\b\d+(?:\.\d+)?\s*(?:/\s*\d+|of\s+\d+|%)', {
+            param($match)
+            $counters.Add(($match.Value -replace '\s+', '').ToLowerInvariant())
+            return '<progress>'
+        })
+        $normalized = $normalized -replace '(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b', '<uuid>'
+        $normalized = $normalized -replace '(?i)\b(pid|port)\s*=\s*\d+\b', '$1=<n>'
+        $normalized = $normalized -replace '(?i)\b(?:0x[0-9a-f]+|(?=[0-9a-f]*[a-f])[0-9a-f]{8,})\b', '<hex>'
+        $normalized = $normalized -replace '(?i)\b\d+(?:\.\d+)?\s*(seconds?|secs?|s|minutes?|mins?|hours?|ms)\b', '<duration>'
+        # Retry metadata can appear anywhere, e.g. waiting for db (attempt 42).
+        # Only protected N/M, N of M and N% counters establish output progress.
+        # Remaining/left counts without an explicit total intentionally repeat.
+        if ($normalized -match '(?i)\b(?:retry|retrying|attempt|try|waiting|wait|polling|poll|reconnect|reconnecting|backoff|heartbeat|alive|still|pending|sleeping|sleep)\b') {
+            $normalized = $normalized -replace '\d+(?:\.\d+)?', '<n>'
+        }
+        $normalized = ($normalized -replace '\s+', ' ').Trim().ToLowerInvariant()
+        if (-not $normalized) { continue }
+        $normalized += '|' + ($counters -join '|')
+        $key = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($normalized)))
+        if (-not $Progress.seen.Contains($key)) { $novel = $true }
+        else { $Progress.seen.Remove($key) }
+        $Progress.seen[$key] = $Now
+        if ($Progress.seen.Count -gt 10000) { $Progress.seen.RemoveAt(0) }
+    }
+    return $novel
+}
+
+function Read-DtJobProgressOutput {
+    param([hashtable]$Progress, [string[]]$Paths)
+    foreach ($path in $Paths) {
+        if (-not $Progress.outputs.ContainsKey($path)) { $Progress.outputs[$path] = @{ offset=0L; partial=''; discard=$false; decoder=[Text.Encoding]::UTF8.GetDecoder() } }
+        $cursor = $Progress.outputs[$path]
+        $stream = $null
+        try {
+            $stream = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+            if ($stream.Length -lt $cursor.offset) { $cursor.offset=0L; $cursor.partial=''; $cursor.discard=$false; $cursor.decoder.Reset() }
+            if ($stream.Length -eq $cursor.offset) { continue }
+            # Bound work even for very noisy tests; inspect the newest 64 KiB per sample.
+            if ($stream.Length - $cursor.offset -gt 65536) { $cursor.offset=$stream.Length - 65536; $cursor.partial=''; $cursor.discard=$true; $cursor.decoder.Reset() }
+            $null = $stream.Seek($cursor.offset, 'Begin')
+            $buffer = [byte[]]::new(65536)
+            $read = $stream.Read($buffer, 0, [int][Math]::Min(65536, $stream.Length - $cursor.offset))
+            $cursor.offset += $read
+            $start = 0
+            if ($cursor.discard) {
+                # Find a line break BEFORE decoding: the arbitrary jump can land
+                # inside UTF-8. Keep discarding across reads for very long lines.
+                while ($start -lt $read -and $buffer[$start] -ne 10 -and $buffer[$start] -ne 13) { $start++ }
+                if ($start -eq $read) { continue }
+                $start++; $cursor.discard=$false
+            }
+            $chars = [char[]]::new([Text.Encoding]::UTF8.GetMaxCharCount(65536))
+            $count = $cursor.decoder.GetChars($buffer, $start, $read - $start, $chars, 0, $false)
+            $parts = ($cursor.partial + [string]::new($chars, 0, $count)) -split '\r\n|\n|\r'
+            $cursor.partial = $parts[-1]
+            if ($cursor.partial.Length -gt 4096) { $cursor.partial=$cursor.partial.Substring($cursor.partial.Length - 4096) }
+            if ($parts.Count -gt 1) { $parts[0..($parts.Count - 2)] | Select-Object -Last 128 }
+        } catch { } finally { if ($stream) { $stream.Dispose() } }
+    }
+}
+
+function Update-DtJobProgress {
+    param([hashtable]$Progress, [DateTime]$Now, [bool]$CpuActive, [bool]$FileActive, [string[]]$Lines)
+    if (Test-DtJobNovelOutput -Progress $Progress -Lines $Lines -Now $Now) {
+        # Default credit covers tests reporting every 61-90 seconds. Scale with
+        # shortened recovery windows; repeated chatter buys nothing.
+        $Progress.novel_until = $Now.AddSeconds(0.3 * $Progress.window_sec)
+    }
+    $active = $CpuActive -or $FileActive -or $Now -lt $Progress.novel_until
+    $Progress.samples = @($Progress.samples | Where-Object { ($Now - $_.time).TotalSeconds -le $Progress.window_sec + 60 }) + @(@{time=$Now; active=$active})
+    $samples = $Progress.samples
+    # Require activity in at least 80% of a full five-minute window. Cap gaps at
+    # two normal heartbeats so a paused runner cannot manufacture sustained work.
+    # Keep the preceding sample and clip its interval at the window boundary.
+    $covered=0.0; $working=0.0
+    for ($i=1; $i -lt $samples.Count; $i++) {
+        $from = @($samples[$i-1].time, $Now.AddSeconds(-$Progress.window_sec)) | Sort-Object | Select-Object -Last 1
+        $seconds = [Math]::Max(0, [Math]::Min(60, ($samples[$i].time - $from).TotalSeconds))
+        $covered += $seconds
+        if ($samples[$i].active) { $working += $seconds }
+    }
+    if ($active -and $covered -ge $Progress.window_sec -and $working -ge 0.8 * $covered) { $Progress.last_activity=$Now }
+    return $Progress.last_activity
+}
+
 function Get-DtJobStallPath {
     param([string]$RunFolder, [string]$JobId)
     Join-Path (Join-Path (Get-DtJobPaths -RunFolder $RunFolder).Jobs $JobId) 'stall.json'
@@ -24,8 +133,9 @@ function Save-DtJobStall {
 }
 
 function Update-DtJobStalls {
-    # Caller holds run lock. Last-activity time identifies an episode, even if activity resumed
-    # and stalled again between watcher ticks. An ack never moves that activity time.
+    # Caller holds run lock. The runner's confirmed progress time identifies an episode,
+    # even if sustained recovery and a new stall occur between watcher ticks.
+    # Brief bursts never move that clock or reset first_stalled_utc/ack_count.
     param([string]$RunFolder)
     $refresh = $false
     foreach ($record in @(Get-DtJobRecords -RunFolder $RunFolder)) {
@@ -33,13 +143,13 @@ function Update-DtJobStalls {
         $activity = if ($record.status -eq 'running') { Get-DtJobActivity -RunFolder $RunFolder -Record $record } else { $null }
         if ($stall -and (-not $activity -or -not $activity.stalled -or -not (Test-DtJobSameInstant $stall.last_activity_utc $activity.last_activity_utc))) {
             Remove-Item -LiteralPath (Get-DtJobStallPath -RunFolder $RunFolder -JobId $record.job_id)
-            Add-DtJobEvent -RunFolder $RunFolder -JobId $record.job_id -Type 'job_stall_cleared' -Status $record.status -Reason 'activity resumed or job ended'
+            Add-DtJobEvent -RunFolder $RunFolder -JobId $record.job_id -Type 'job_stall_cleared' -Status $record.status -Reason 'sustained progress resumed or job ended'
             $stall = $null; $refresh = $true
         }
         if (-not $activity -or -not $activity.stalled) { continue }
         if (-not $stall) {
             Add-DtJobEvent -RunFolder $RunFolder -JobId $record.job_id -Type 'job_stalled' -Status 'stalled' -Reason $activity.line
-            $stall = [pscustomobject]@{ last_activity_utc = $activity.last_activity_utc; detected_utc = [DateTime]::UtcNow.ToString('o'); event_seq = (Get-DtJobLastEventSeq -RunFolder $RunFolder); ack = $null; ack_count = 0; stop_seq = $null }
+            $stall = [pscustomobject]@{ first_stalled_utc = (ConvertTo-DtJobUtc $activity.last_activity_utc).AddSeconds((Get-DtJobSettingSec -Name 'DT_JOB_STALL_SEC' -Default $script:DtJobStallSec)).ToString('o'); last_activity_utc = $activity.last_activity_utc; detected_utc = [DateTime]::UtcNow.ToString('o'); event_seq = (Get-DtJobLastEventSeq -RunFolder $RunFolder); ack = $null; ack_count = 0; stop_seq = $null }
             Save-DtJobStall -RunFolder $RunFolder -JobId $record.job_id -Stall $stall
         }
         $refresh = $true
