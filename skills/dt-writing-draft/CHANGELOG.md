@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.2.44 (2026-11-25): Model router bench: accept Codex 0.171's account/updated reason field and GPT-6.2 Sol's declared send_message_to_user_async tool (calls still rejected).
+
 - 0.2.43 (2026-11-25): Shared script update: model router reads Claude usage from inference rate-limit headers when the token lacks profile scope, plus an hourly refresh timer.
 
 - 0.2.42 (2026-11-23): Model router owner jobs now run on the Linux session host (CT202); SNOWWHITE and the Mac are roster observers.

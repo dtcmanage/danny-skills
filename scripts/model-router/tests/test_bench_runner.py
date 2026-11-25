@@ -1096,7 +1096,10 @@ def test_locked_native_sqlite_cleanup_preserves_answer(tmp_path, monkeypatch, ca
             raise PermissionError('goals_1.sqlite is being used by another process')
         remove(directory)
     monkeypatch.setattr(transport.shutil, 'rmtree', locked)
-    monkeypatch.setattr(transport.time, 'sleep', delays.append)
+    # Record only the cleanup retry backoff; the transport's own polling also sleeps.
+    import sys as _sys
+    monkeypatch.setattr(transport.time, 'sleep', lambda seconds: delays.append(seconds)
+        if _sys._getframe(1).f_code.co_name == 'cleanup_native_home' else None)
     result = _fake_run(tmp_path, 'error-retry')
     assert result['status'] == 'ok' and result['answer'] == 'synthetic answer'
     assert len(attempts) == (6 if persistent else 3)

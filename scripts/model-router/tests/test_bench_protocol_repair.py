@@ -224,12 +224,22 @@ def test_uncaptured_warning_has_bounded_diagnostic(tmp_path):
 @pytest.mark.parametrize('method,params', [
     ('item/started', {'threadId':'t','turnId':'u','item':{'type':'mcpToolCall','id':'x'}}),
     ('account/updated', {'authMode':'apikey'}),
+    ('account/updated', {'authMode':'chatgpt','planType':'pro','reason':{'nested':'x'}}),
+    ('account/updated', {'authMode':'chatgpt','planType':'pro','accountId':'other'}),
     ('model/rerouted', {'threadId':'t','turnId':'u','fromModel':'gpt-6.1-sol','toModel':'gpt-6-luna'}),
     ('unknown/not-approved', {'threadId':'t','turnId':'u'}),
 ])
 def test_boundary_restrictions_remain(tmp_path, method, params):
     with pytest.raises(transport.BoundaryError):
         peer(tmp_path, {'method':method,'params':params})
+
+
+def test_account_updated_reason_accepted(tmp_path):
+    # Live Codex 0.171.0 startup shape (2026-11-25); rejecting it failed every bench call as auth.
+    result = peer(tmp_path, {'method':'account/updated',
+        'params':{'authMode':'chatgpt','planType':'pro','reason':'workspaceRoutingReady'}})
+    assert result['status'] == 'ok'
+    assert 'account/updated' in result['protocol_diagnostics']['seen']
 
 
 def test_server_requests_remain_forbidden():
@@ -920,3 +930,22 @@ def test_historical_ranked_minimum_and_missing_data(tmp_path, count):
     else:
         assert viewed['quality_verdict'] == 'no_difference' and viewed['tied']
     assert all(p.read_bytes() == content for p, content in before.items())
+
+
+def _declaration(*extra):
+    fn = lambda name: {'type':'function','name':name,'description':'d','strict':False,'parameters':{}}
+    tools = [{'type':'custom','name':'exec','description':'d','format':{}}, fn('wait'), *[fn(n) for n in extra]]
+    return {'type':'additional_tools','id':'at_1','role':'developer',
+            'tools':[{'type':'namespace','name':'functions','description':'','tools':tools}]}
+
+
+@pytest.mark.parametrize('extra,ok', [
+    ((), True),
+    (('send_message_to_user_async',), True),   # GPT-6.2 Sol declaration, Codex 0.171 (2026-11-25)
+    (('shell',), False),
+    (('send_message_to_user_async', 'send_message_to_user_async'), False),
+    (('send_message_to_user_async', 'shell'), False),
+])
+def test_additional_tools_declaration_allow_list(extra, ok):
+    assert transport.valid_raw_item(_declaration(*extra), controls_verified=True, disabled_host_warning=True) is ok
+    assert transport.valid_raw_item(_declaration(*extra), controls_verified=False, disabled_host_warning=True) is False

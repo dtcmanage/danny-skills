@@ -472,8 +472,10 @@ class Server:
                     self.protocol_diagnostics['rejected'].append(safe_event_shape(message))
             if method == 'account/updated':
                 params = message['params']
-                if (set(params) - {'authMode', 'planType'} or params.get('authMode') != 'chatgpt'
-                        or params.get('planType') not in (None, *QUOTA_SCHEMA['definitions']['PlanType']['enum'])):
+                # Codex 0.171 adds an informational `reason` (e.g. workspaceRoutingReady); identity is authMode/planType.
+                if (set(params) - {'authMode', 'planType', 'reason'} or params.get('authMode') != 'chatgpt'
+                        or params.get('planType') not in (None, *QUOTA_SCHEMA['definitions']['PlanType']['enum'])
+                        or not isinstance(params.get('reason', ''), str)):
                     raise BoundaryError('account authentication changed or malformed')
                 return message
             if method == 'account/rateLimits/updated':
@@ -873,17 +875,23 @@ def valid_raw_item(item: Any, images_sent: bool = False, *,
                 or set(namespace) != {'type', 'name', 'description', 'tools'}
                 or namespace.get('type') != 'namespace' or namespace.get('name') != 'functions'
                 or namespace.get('description') != ''
-                or not isinstance(namespace.get('tools'), list) or len(namespace['tools']) != 2):
+                or not isinstance(namespace.get('tools'), list) or len(namespace['tools']) not in (2, 3)):
             return False
         nested = namespace['tools']
+        function_keys = {'description', 'name', 'parameters', 'strict', 'type'}
         expected_keys = {('custom', 'exec'): {'description', 'format', 'name', 'type'},
-                         ('function', 'wait'): {'description', 'name', 'parameters', 'strict', 'type'}}
+                         ('function', 'wait'): function_keys}
+        # Codex 0.171 declares this to GPT-6.2 Sol whatever the feature flag says. A declaration
+        # is allowed; any call is still a function_call raw item, which fails the answer.
+        optional = {('function', 'send_message_to_user_async'): function_keys}
         if not all(isinstance(tool, dict) and isinstance(tool.get('type'), str)
                    and isinstance(tool.get('name'), str) for tool in nested):
             return False
-        identities = {(tool['type'], tool['name']) for tool in nested}
-        return (identities == set(expected_keys)
-                and all(set(tool) == expected_keys[(tool['type'], tool['name'])] for tool in nested))
+        identities = [(tool['type'], tool['name']) for tool in nested]
+        allowed = expected_keys | optional
+        return (len(set(identities)) == len(identities)
+                and set(expected_keys) <= set(identities) <= set(allowed)
+                and all(set(tool) == allowed[(tool['type'], tool['name'])] for tool in nested))
     if item.get('type') == 'message':
         return (isinstance(item.get('id'), str) and bool(item['id'])
             and not (set(item) - {'type','id','role','content','phase','end_turn','internal_chat_message_metadata_passthrough','status'})

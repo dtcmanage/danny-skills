@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.62.3
+
+- Model router bench: accept Codex 0.171's account/updated reason field and GPT-6.2 Sol's declared send_message_to_user_async tool (calls still rejected).
+
 ## 2.62.2
 
 - Shared script update: model router reads Claude usage from inference rate-limit headers when the token lacks profile scope, plus an hourly refresh timer.
