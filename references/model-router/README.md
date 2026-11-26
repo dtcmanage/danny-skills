@@ -464,7 +464,7 @@ These are recorded events, not a complete reset census; missing ledgers are labe
 
 No new timer or polling cadence is added. The existing
 `model-router-claude-usage.timer` at hourly :23 ET keeps its entry point,
-`refresh-claude-usage.ps1`, and now collects both vendors independently. Codex calls
+`<danny-skills>/scripts/model-router/refresh-claude-usage.ps1`, and now collects both vendors independently. Codex calls
 `account/rateLimits/read` without inference. Claude keeps the existing endpoint or
 one-token header request, five-minute cache and failure fallback; no extra Claude poll
 is introduced. The JSON result preserves its old fields and adds per-vendor collection
@@ -476,7 +476,7 @@ collect a baseline on CT202 from the primary checkout:
 
 ```bash
 cd "/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills"
-pwsh -NoProfile -File scripts/model-router/refresh-claude-usage.ps1 -Json
+pwsh -NoProfile -File "<danny-skills>/scripts/model-router/refresh-claude-usage.ps1" -Json
 ```
 
 Smoke: expect both vendor statuses fresh (Claude may be `fresh_or_cache`), history
@@ -505,7 +505,7 @@ Read-only analysis requires an explicit state root and creates no runtime state:
 
 ```bash
 cd "/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills"
-python3 scripts/model-router/quota_history.py --state-dir "/home/danny/Claude/_Claude-Workspace/Skill Creation/model-router/state" --events --include-archives --format summary
+python3 "<danny-skills>/scripts/model-router/quota_history.py" --state-dir "/home/danny/Claude/_Claude-Workspace/Skill Creation/model-router/state" --events --include-archives --format summary
 ```
 
 Use `--format json` or `--format csv` for export; omit `--events` for quota-window
