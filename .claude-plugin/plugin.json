@@ -26,7 +26,7 @@
   ],
   "metadata": {
     "changelog": [
-      "1.2.22 model router: durable quota/reset history, independent hourly Codex/Claude collection and analysis CLI; dt-build 2.63.0, dt-review 1.19.0, dt-image-gen 0.4.0, dt-writing-draft 0.3.0, dt-writing-edit 0.4.0; version policy: register quota-history shared owners.",
+      "1.2.22 model router: durable quota/reset history, independent hourly Codex/Claude collection, canonical Claude window aliases, archive-stable exports and current-week ledger event context; hourly failure/guard regressions and analysis CLI; dt-build 2.63.0, dt-review 1.19.0, dt-image-gen 0.4.0, dt-writing-draft 0.3.0, dt-writing-edit 0.4.0; version policy: register quota-history shared owners.",
       "1.2.21 Model router bench works on Codex 0.171 again: account/updated reason field accepted, GPT-6.2 Sol's declared send_message_to_user_async tool allowed (calls still fail the answer), cleanup-backoff test isolated from transport polling; dt-build 2.62.3, dt-review 1.18.10, dt-image-gen 0.3.44, dt-writing-draft 0.2.44, dt-writing-edit 0.3.44.",
       "1.2.20 Model router: Claude usage reads inference rate-limit headers when the token lacks profile scope (CT202), hourly refresh timer model-router-claude-usage; version policy: owner entry for refresh-claude-usage.ps1; dt-build 2.62.2, dt-review 1.18.9, dt-image-gen 0.3.43, dt-writing-draft 0.2.43, dt-writing-edit 0.3.43.",
       "1.2.19 dt-build 2.62.1: prevent intermittent chatter or brief CPU/file bursts from resetting stall escalation; sustained progress recovery and timeline regressions.",
