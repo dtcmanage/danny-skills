@@ -418,6 +418,8 @@ Claude endpoint keys (including optional model/feature windows), all exposed uni
 utilization/reset headers, Codex account `rateLimitsByLimitId` pools plus the legacy
 pool, primary/secondary windows, and individual spending-limit windows are retained.
 Shared pools remain shared; `normalModelSlug` is reported metadata, not a new quota.
+Known Claude five-hour/seven-day aliases (including model/feature suffixes) share
+canonical endpoint-style IDs across sources; sanitized metadata retains the vendor window name.
 The existing bench saver contributes its exposed weekly snapshot only, with pool
 `unreported` because that legacy contract does not carry a pool ID. Normal Codex
 rollout reads capture the last vendor envelope from each file already inspected (at
@@ -437,7 +439,9 @@ Only the latest comparable observation per pool/window remains in the baseline t
 SQLite serializes callers; observation dedupe, baseline updates, event insertion and
 archive moves commit atomically across both databases (rollback journals). Keep both
 files when backing up. Normal analysis excludes archives; `--include-archives` opts in.
-Writers consult archive IDs for dedupe. No history size cap is imposed.
+Writers consult archive IDs for dedupe. Archive-inclusive readers deduplicate both
+observations and events by immutable fact ID if archival commits between reads.
+No history size cap is imposed.
 
 Same source timestamp/value is deduplicated across cache paths. Out-of-order readings,
 same-time corrections, invalid percentages, future observations and already-expired
@@ -452,6 +456,9 @@ separate an ordinary rollover from additional resets. Cause is always `unknown`:
 cannot prove a promotion, payment, manual action or even distinguish correction from reset.
 Unknown old/new fields yield observations without an inferred event. Sampling does not
 support continuous blocked-minute calculations. ET text handles DST; storage stays UTC.
+Weekly reports include current ET week ledger event counts by vendor, separately
+labelling unexpected drops, deadline-only changes and ambiguous deadline-spanning drops.
+These are recorded events, not a complete reset census; missing ledgers are labelled unavailable.
 
 ## Collection and activation (parent only)
 

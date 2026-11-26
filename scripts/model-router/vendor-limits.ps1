@@ -68,7 +68,7 @@ function ConvertFrom-RouterClaudeRateLimitHeaders {
         $util = & $get "anthropic-ratelimit-unified-$($pair[1])-utilization"
         $reset = & $get "anthropic-ratelimit-unified-$($pair[1])-reset"
         if ([string]::IsNullOrWhiteSpace($util) -and [string]::IsNullOrWhiteSpace($reset)) { continue }
-        $window = [ordered]@{ utilization = $null; resets_at = $null }
+        $window = [ordered]@{ utilization = $null; resets_at = $null; vendor_window = $pair[1] }
         if (-not [string]::IsNullOrWhiteSpace($util)) {
             $fraction = [double]::Parse($util, [Globalization.CultureInfo]::InvariantCulture)
             $window.utilization = [Math]::Round($fraction * 100.0, 4)

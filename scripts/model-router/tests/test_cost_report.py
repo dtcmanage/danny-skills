@@ -23,6 +23,7 @@ BASELINE_PATH = Path(__file__).resolve().parent / "fixtures" / "collect-usage-ba
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import cost_report as cr  # noqa: E402
+import quota_history as qh  # noqa: E402
 
 
 @pytest.mark.parametrize("platform", ["win32", "darwin", "freebsd14"])
@@ -56,6 +57,63 @@ def cu():
 
 
 UTC = timezone.utc
+
+
+def _quota_event(state: Path, vendor: str, pool: str, at: datetime, kind: str) -> None:
+    old_reset = at - timedelta(minutes=30) if kind == "scheduled_consistent" else at + timedelta(days=2)
+    new_reset = old_reset if kind == "unexpected_drop" else at + timedelta(days=3)
+    for used, observed, reset in ((80, at - timedelta(hours=1), old_reset),
+                                   (80 if kind == "schedule_change" else 5, at, new_reset)):
+        data = ({pool: {"utilization": used, "resets_at": reset.isoformat()}} if vendor == "claude" else
+                {"rateLimitsByLimitId": {pool: {"primary": {"usedPercent": used,
+                    "resetsAt": reset.timestamp(), "windowDurationMins": 10080}}}})
+        qh.ingest(state, dict(vendor=vendor, source="fixture", observed_at_utc=observed.isoformat(),
+            collected_at_utc=(at + timedelta(days=1)).isoformat(), data=data))
+
+
+def test_current_week_quota_context_uses_actual_events_and_et_boundaries(tmp_path):
+    now = datetime(2026, 11, 4, 14, tzinfo=UTC)
+    start, _ = cr.week_bounds_utc(2026, 45)
+    for vendor in ("claude", "codex"):
+        for kind in ("unexpected_drop", "unexpected_drop_deadline_change", "schedule_change", "scheduled_consistent"):
+            _quota_event(tmp_path, vendor, kind, start if kind == "unexpected_drop" else now, kind)
+        _quota_event(tmp_path, vendor, "previous_week", start - timedelta(seconds=1), "unexpected_drop")
+        _quota_event(tmp_path, vendor, "future", now + timedelta(seconds=1), "unexpected_drop")
+    text = cr.load_quota_reset_context(tmp_path, now)
+    assert "current ET week 2026-W45" in text
+    for vendor in ("Claude", "Codex"):
+        assert f"{vendor}: 2 unexpected drops (1 with deadline changes), 1 deadline-only changes, 1 deadline-spanning drops" in text
+    assert "Causes unknown" in text and "gaps can hide extra resets" in text
+    assert "minutes" not in text and "promotion" not in text
+
+
+def test_quota_context_missing_and_empty_ledger(tmp_path):
+    assert "ledger unavailable" in cr.load_quota_reset_context(tmp_path)
+    assert not tmp_path.joinpath("quota-history.sqlite").exists()  # read-only
+    qh.ingest(tmp_path, dict(vendor="claude", source="fixture", observed_at_utc="2026-11-25T12:00:00Z", data={}))
+    text = cr.load_quota_reset_context(tmp_path)
+    assert "Claude: 0 unexpected drops" in text and "Codex: 0 unexpected drops" in text
+    assert "Recorded events only" in text
+
+
+def test_weekly_cli_includes_live_ledger_context_in_all_outputs(tmp_path):
+    now = datetime.now(tz=UTC)
+    _quota_event(tmp_path, "claude", "seven_day_sonnet", now - timedelta(seconds=1), "unexpected_drop")
+    monday, _ = cr.week_bounds_et(*cr.previous_complete_iso_week(now.astimezone(cr.ET_ZONE).date()))
+    (tmp_path / "usage-all-sessions.jsonl").write_text(json.dumps(
+        _row("claude", "claude-opus-5-5", monday.isoformat(), input=100, output=10)) + "\n")
+    result = subprocess.run([sys.executable, str(REPO_ROOT / "scripts/model-router/cost_report.py"),
+                             "--state-dir", str(tmp_path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    report_dir = tmp_path / "cost-reports"
+    message = json.loads((report_dir / "discord-summary.json").read_text())["message"]
+    for text in ((report_dir / "latest.md").read_text(), next(report_dir.glob("weekly-*.html")).read_text(), message):
+        assert "Quota history, current ET week" in text
+        assert "Claude: 1 unexpected drops" in text and "Codex: 0 unexpected drops" in text
+        assert "Causes unknown" in text and "gaps can hide extra resets" in text
+    # Even a week without model usage reports ledger context in its summary.
+    message = cr.render_discord_summary([], now.astimezone(cr.ET_ZONE).date(), tmp_path)[1]
+    assert "Claude: 1 unexpected drops" in message
 
 
 def _iso(dt: datetime) -> str:

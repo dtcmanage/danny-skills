@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -23,6 +24,15 @@ def utc(value: object) -> str:
 
 def now_utc() -> str:
     return utc(datetime.now(timezone.utc).isoformat())
+
+
+def claude_window_id(name: str) -> str:
+    """Known duration aliases share a baseline, including reported model/feature suffixes."""
+    match = re.fullmatch(r"(5h|five[_-]hour|7d|seven[_-]day)(?:[_-](.+))?", name.lower())
+    if not match:
+        return name
+    duration = "five_hour" if match[1] in ("5h", "five_hour", "five-hour") else "seven_day"
+    return duration + ("_" + match[2].replace("-", "_") if match[2] else "")
 
 
 def normalize(payload: dict) -> list[dict]:
@@ -61,12 +71,14 @@ def normalize(payload: dict) -> list[dict]:
     raw = payload.get("data") or {}
     if vendor == "claude":
         # The endpoint can expose seven_day_sonnet, seven_day_opus and feature windows.
-        # Keep each reported key; never expand shared seven_day into model quotas.
+        # Normalize source aliases; never expand shared seven_day into model quotas.
         for key, value in raw.items():
             if key == "source":
                 continue
             if value is None or isinstance(value, dict) and ("utilization" in value or "resets_at" in value):
-                add(key, key, value, "utilization", "resets_at", "window_duration_minutes", key)
+                canonical = claude_window_id(key)
+                add(canonical, canonical, value, "utilization", "resets_at", "window_duration_minutes", key)
+                rows[-1]["metadata"]["vendor_window"] = (value or {}).get("vendor_window", key)
     elif payload["source"] == "codex-bench-weekly":
         # The legacy bench contract does not expose a limit ID. Do not pretend its
         # weekly value belongs to a known account/feature pool.
@@ -180,14 +192,16 @@ def ingest(state: Path, payload: dict) -> dict:
 
 
 def read_history(state: Path, archives: bool = False, kind: str = "observation") -> list[dict]:
-    rows = []
+    rows = {}
     for name in ("quota-history.sqlite", "quota-history-archive.sqlite") if archives else ("quota-history.sqlite",):
         path = state / name
         if path.exists():
             with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
-                rows.extend((observed, fid, json.loads(body)) for fid, observed, body in db.execute(
-                    "SELECT id, observed, body FROM facts WHERE kind=?", (kind,)))
-    return [row[2] for row in sorted(rows)]
+                for fid, observed, body in db.execute("SELECT id, observed, body FROM facts WHERE kind=?", (kind,)):
+                    # An archival commit between the two reads can move facts already read.
+                    # IDs and bodies are immutable across that move, for both fact kinds.
+                    rows[fid] = (observed, fid, json.loads(body))
+    return [row[2] for row in sorted(rows.values())]
 
 
 def main() -> None:

@@ -18,4 +18,7 @@ for line in sys.stdin:
             print(json.dumps({'id': 2, 'error': {'code': -1, 'message': 'not signed in'}}), flush=True)
         else:
             window = {'usedPercent': int(percent), 'windowDurationMins': 10080, 'resetsAt': int(time.time()) + 3 * 86400}
-            print(json.dumps({'id': 2, 'result': {'rateLimits': {'limitId': 'codex', 'primary': window, 'secondary': None}}}), flush=True)
+            session = os.environ.get('FAKE_CODEX_LIMITS_SESSION_PERCENT')
+            secondary = ({'usedPercent': int(session), 'windowDurationMins': 300, 'resetsAt': int(time.time()) + 3600}
+                         if session is not None else None)
+            print(json.dumps({'id': 2, 'result': {'rateLimits': {'limitId': 'codex', 'primary': window, 'secondary': secondary}}}), flush=True)

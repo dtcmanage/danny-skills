@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eastern_time import eastern_zone
+from quota_history import read_history
 
 ET_ZONE = eastern_zone()
 UTC = timezone.utc
@@ -669,6 +671,32 @@ def current_reading_text(report: dict, text: str) -> str:
 CLAUDE_BLOCKED_NOTE = "Claude blocked-minutes are not computed; sampled quota history cannot establish continuous blocked time. Use quota_history.py --events for reset context (causes unknown)."
 
 
+def load_quota_reset_context(state_dir: Path, now: datetime | None = None) -> str:
+    """Current ET week only; counts describe recorded evidence, never reset cause or duration."""
+    now = now or datetime.now(tz=UTC)
+    year, week, _ = now.astimezone(ET_ZONE).isocalendar()
+    start, _ = week_bounds_utc(year, week)
+    prefix = f"Quota history, current ET week {week_label(year, week)}: "
+    caveat = "Causes unknown; observation gaps can hide extra resets, including across expected deadlines."
+    if not (state_dir / "quota-history.sqlite").is_file():
+        return prefix + "ledger unavailable. " + caveat
+    try:
+        events = read_history(state_dir.resolve(), kind="event")
+    except (OSError, sqlite3.Error, ValueError):
+        return prefix + "ledger unavailable. " + caveat
+    parts = []
+    for vendor in ("claude", "codex"):
+        rows = [e for e in events if e.get("vendor") == vendor
+                and (at := parse_ts(e.get("interval_end_utc"))) is not None and start <= at <= now]
+        drops = [e for e in rows if e.get("kind") in ("unexpected_drop", "unexpected_drop_deadline_change")]
+        changed = sum(e.get("kind") == "unexpected_drop_deadline_change" for e in drops)
+        schedules = sum(e.get("kind") == "schedule_change" for e in rows)
+        ambiguous = sum(e.get("kind") == "scheduled_consistent" for e in rows)
+        parts.append(f"{vendor.capitalize()}: {len(drops)} unexpected drops ({changed} with deadline changes), "
+                     f"{schedules} deadline-only changes, {ambiguous} deadline-spanning drops")
+    return prefix + "; ".join(parts) + ". Recorded events only. " + caveat
+
+
 def difficulty_dispatches(state_dir: Path) -> list[dict]:
     """Read wrapper provenance indexed by the existing outcome collector."""
     dispatches, seen = [], set()
@@ -920,6 +948,8 @@ def render_routing_line(report: dict) -> str:
 
 def render_markdown(report: dict) -> str:
     lines = [f"# Model-router weekly cost report - {report['label']}", ""]
+    if report.get("quota_reset_context"):
+        lines.extend([report["quota_reset_context"], ""])
     if report.get("routing_by_task"):
         lines.extend(["## Routing by task", ""])
         lines.extend(f"- {line}" for line in routing_headline_lines(report))
@@ -1073,6 +1103,7 @@ h1{{font-size:20px;margin:0 0 12px}} h2{{font-size:16px;margin:0 0 10px}}
 p{{margin:6px 0}} ul{{margin:4px 0 8px 18px;padding:0}}
 </style></head><body>
 <h1>Model-router weekly cost report - {html.escape(report['label'])}</h1>
+<p>{html.escape(report.get('quota_reset_context', ''))}</p>
 {routing_html}
 <section><h2>Router version</h2>{''.join('<p>' + html.escape(line) + '</p>' for line in report.get('router_version', {'lines': ['Router epochs unavailable.']})['lines'])}</section>
 <p class='label'>Subscription vs API-equivalent cost, priced at published vendor list rates. Reflects only sessions found in the swept logs -- never a certified full-account total.</p>
@@ -1494,11 +1525,13 @@ def render_discord_summary(reports: list[dict], today_et: date, state_dir: Path,
         (r for r in reports if (r["iso_year"], r["iso_week"]) == (iso_year, iso_week)), None
     )
     if report is None:
-        message = "\n".join([header, "No model usage was recorded last week.", needs_you_text])
+        message = "\n".join([header, "No model usage was recorded last week.",
+                             load_quota_reset_context(state_dir), needs_you_text])
         return label, "\n".join([message, *required])
 
     frontier_models = json.loads(frontier_path.read_text(encoding="utf-8"))
     lines = [header]
+    lines.append(load_quota_reset_context(state_dir))
     if report.get("routing_by_task"):
         lines.extend(routing_headline_lines(report)[:2])
     lines.append(render_headline(report))
@@ -1554,7 +1587,9 @@ def main() -> None:
                                    outcome_rows=load_jsonl(state_dir / "outcomes.jsonl"))
     claude_usage = load_claude_usage(state_dir, refresh_failed="claude" in args.refresh_failed)
     codex_usage = load_codex_usage(state_dir, refresh_failed="codex" in args.refresh_failed)
+    quota_reset_context = load_quota_reset_context(state_dir)
     for report in reports:
+        report["quota_reset_context"] = quota_reset_context
         report["claude_usage"] = claude_usage
         report["codex_usage"] = codex_usage
         report['difficulty_dispatches'] = difficulty_split(dispatches, report['iso_year'], report['iso_week'])
