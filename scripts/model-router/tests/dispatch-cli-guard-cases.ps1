@@ -40,7 +40,7 @@ try {
             $outsideDir=Join-Path $temp 'outside-bin'; [void][IO.Directory]::CreateDirectory($outsideDir)
             foreach ($lane in 'claude','codex') { Copy-Item $outside (Join-Path $outsideDir ($lane+'.ps1')) }
             $escape=Join-Path $fixture.root 'escape'
-            New-Item -ItemType Junction -Path $escape -Target $outsideDir | Out-Null
+            New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $escape -Target $outsideDir | Out-Null
             try { Reject { Assert-RouterTestCliPath -Path (Join-Path $escape 'claude.ps1') } 'ROUTER_TEST_FAKE_CLI_REQUIRED' } finally { (Get-Item $escape).Delete() }
             $env:PATH=$outsideDir+[IO.Path]::PathSeparator+$originalPath
             # A wrapper shim without its own guard proves dispatch's guard is

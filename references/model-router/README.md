@@ -14,6 +14,13 @@ Optional inputs preserve the lane adapters' behavior: `-ReadOnly`, `-AdHoc`,
 `-AllowOutputInProject` (Codex), and `-Json`. `-Model` is a recorded override
 using the selection reason; frontier overrides also need an approved
 `-FrontierRequest` and consume at most one launch, even if that launch fails.
+When Danny names a frontier model himself, pass `-ByNameRequest` instead of a
+request id: the selection reason must attribute a quote to Danny and the quote
+must name the model, for example
+`-Model fable -ByNameRequest -SelectionReason 'Danny asked by name: "use fable for this review"'`.
+The row records `frontier_override: named-by-danny` and the quote in
+`by_name_request`, runs as a single dispatch with no cross-lane fallback, and
+refuses a non-frontier model or a combined `-FrontierRequest`.
 Older Claude names such as `claude-3-opus-20240229` remain refused.
 
 `-Attempt` defaults to 1; later managed attempts retain `-ApprovalOperation` and

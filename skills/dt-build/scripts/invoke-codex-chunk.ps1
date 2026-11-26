@@ -15,6 +15,8 @@ param(
     [string]$Model = "",
     [string]$SelectionReason = "",
     [string]$FrontierRequest = "",
+    # Danny named this frontier -Model himself (model-routing.md rule 4); -SelectionReason quotes him.
+    [switch]$ByNameRequest,
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
     [ValidateRange(1, 2147483647)][int]$Attempt = 1,
     [string]$ApprovalOperation = "",
@@ -81,7 +83,7 @@ $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot 'scripts/model-router/dispatch-evidence.ps1')
 $routerPick = $null
 trap { $failureRecord = $_; if (Get-Command Exit-RouterFrontierFailure -ErrorAction SilentlyContinue) { Exit-RouterFrontierFailure -FailureRecord $failureRecord }; throw $failureRecord }
-$DispatchContext = New-RouterDispatchContext -Context $DispatchContext -PromptPath $PromptPath -AdHoc:$AdHoc -Preflight:$Preflight -Project $ProjectPath -Category $Category -Attempt $Attempt -LogicalTaskId $LogicalTaskId -PriorDispatchId $PriorDispatchId -RequestedModel $Model -OverrideReason $(if ($Model) { $SelectionReason })
+$DispatchContext = New-RouterDispatchContext -Context $DispatchContext -PromptPath $PromptPath -AdHoc:$AdHoc -Preflight:$Preflight -Project $ProjectPath -Category $Category -Attempt $Attempt -LogicalTaskId $LogicalTaskId -PriorDispatchId $PriorDispatchId -RequestedModel $Model -OverrideReason $(if ($Model) { $SelectionReason }) -ByNameQuote $(if ($ByNameRequest) { Get-RouterByNameQuote -Model $Model -SelectionReason $SelectionReason })
 
 # Report shape (v3, with v2 accepted and flagged) is shared with the other wrapper.
 . (Join-Path $PSScriptRoot 'report-contract.ps1')
@@ -241,13 +243,15 @@ function Get-ReadOnlyTreeSnapshot {
     param([Parameter(Mandatory)][string]$Root, [string]$IgnoreDir)
     $ignore = if ($IgnoreDir) { [System.IO.Path]::GetFullPath($IgnoreDir).TrimEnd('\', '/') } else { $null }
     # An output folder that contains the whole project would hide every change: ignore it only inside.
-    if ($ignore -and ([System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + '\').StartsWith($ignore + '\', [System.StringComparison]::OrdinalIgnoreCase)) { $ignore = $null }
+    $separator = [System.IO.Path]::DirectorySeparatorChar
+    if ($ignore -and ([System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + $separator).StartsWith($ignore + $separator, [System.StringComparison]::OrdinalIgnoreCase)) { $ignore = $null }
     $skip = { param([string]$full) ($full -match '[\\/]\.dt-build([\\/]|$)') -or ($ignore -and $full.StartsWith($ignore, [System.StringComparison]::OrdinalIgnoreCase)) }
     # A fixed first entry keeps an empty folder's snapshot non-empty for Compare-Object.
     $parts = [System.Collections.Generic.List[string]]::new(); $parts.Add("root:$Root")
-    $top = (& git -C $Root rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+    # Index the output: piping to Select-Object -First 1 stops git early and leaves a stale $LASTEXITCODE on Linux.
+    $top = @(& git -C $Root rev-parse --show-toplevel 2>$null)[0]
     if ($LASTEXITCODE -eq 0 -and $top) {
-        $head = [string](& git -C $Root rev-parse --verify -q HEAD 2>$null | Select-Object -First 1)
+        $head = [string]@(& git -C $Root rev-parse --verify -q HEAD 2>$null)[0]
         $parts.Add("head:$head")
         foreach ($line in @(& git -C $Root -c core.quotepath=false status --porcelain=v1 --untracked-files=all 2>$null)) {
             if ($line.Length -lt 4) { continue }
@@ -260,9 +264,11 @@ function Get-ReadOnlyTreeSnapshot {
                 catch {
                     $errorCause = $_.Exception
                     while ($errorCause.InnerException) { $errorCause = $errorCause.InnerException }
+                    # Windows: access denied / sharing / lock violation. Linux and macOS: EPERM, EACCES, and the
+                    # EAGAIN that .NET's emulated FileShare.None lock reports (11 on Linux, 35 on macOS).
                     $nativeCode = $errorCause.HResult -band 0xffff
                     if ($errorCause -isnot [UnauthorizedAccessException] -and
-                        -not ($errorCause -is [IO.IOException] -and $nativeCode -in @(5,32,33))) { throw }
+                        -not ($errorCause -is [IO.IOException] -and ($nativeCode -in @(5,32,33) -or (-not $IsWindows -and $nativeCode -in @(1,11,13,35))))) { throw }
                     $parts.Add("${rel}:unreadable")
                     [void]$script:readOnlyWarnings.Add("Read-only check could not verify contents of unreadable file: $rel")
                 }
@@ -362,7 +368,7 @@ try {
     $resolvedDifficulty = if ((Get-RouterCategoryJob -Category $Category) -in @('coder','deep-thinker') -or ($isProtected -and $Category -eq 'mechanical')) { $Difficulty } else { $null }
     $escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
 
-    Assert-RouterNamedModel -Model $Model -Resolution $RouterResolution -RequestId $FrontierRequest
+    Assert-RouterNamedModel -Model $Model -Resolution $RouterResolution -RequestId $FrontierRequest -ByNameRequest:$ByNameRequest -SelectionReason $SelectionReason
     if (-not $RouterResolution -and $FrontierRequest) { $RouterResolution = Get-RouterReservedFrontierPick -RequestId $FrontierRequest -Category $Category -Lane 'codex' -Protected $isProtected }
     $routerPick = if ($RouterResolution) { $RouterResolution } else {
         Resolve-RouterModel -Category $Category -Lane codex -FrontierRequest $FrontierRequest -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -Catalog $modelCatalog -SendAlerts:(-not $Scrutiny -and -not $ValidateOnly) -ChatToStderr:$Json
@@ -370,8 +376,8 @@ try {
 }
 catch { throw "CODEX_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
 if (Get-DispatchValue $routerPick 'difficulty') { $resolvedDifficulty = $routerPick.difficulty }
-Assert-RouterNamedModel -Model $Model -Resolution $routerPick -RequestId $FrontierRequest
-if (Assert-RouterDispatchPick -Resolution $routerPick -Model $Model -RequestId $FrontierRequest -CallerResolution:([bool]$RouterResolution)) { $SingleDispatch = $true }
+Assert-RouterNamedModel -Model $Model -Resolution $routerPick -RequestId $FrontierRequest -ByNameRequest:$ByNameRequest -SelectionReason $SelectionReason
+if (Assert-RouterDispatchPick -Resolution $routerPick -Model $Model -RequestId $FrontierRequest -CallerResolution:([bool]$RouterResolution) -ByNameRequest:$ByNameRequest -SelectionReason $SelectionReason) { $SingleDispatch = $true }
 if ($Model) { $named = Get-RouterNamedModel $Model; if ($named) { $Model = $named.model } }
 $DispatchContext.category = $Category
 if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or (Get-RouterVendorBlocked -Vendor codex))) {

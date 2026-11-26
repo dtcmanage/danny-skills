@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.64.0
+
+- Honor a frontier model Danny names: -ByNameRequest with a quoted selection reason runs it once and records the quote (model-routing rule 4). Fix the Codex read-only check on Linux (stale exit code, output-folder guard, unreadable/locked file codes).
+
 ## 2.63.1
 
 - Keep contextual citations out of legacy authority discovery while continuing to verify governing originals.

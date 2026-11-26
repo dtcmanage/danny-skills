@@ -47,8 +47,31 @@ function Get-RouterNamedModel {
     return $null
 }
 
+function Get-RouterByNameQuote {
+    # model-routing.md rule 4: a frontier model runs when Danny asks for it by
+    # name. The selection reason must say so and quote his words, and the quote
+    # must name the model, so the provenance row carries the request itself.
+    param([string]$Model, [string]$SelectionReason)
+    $named = if ($Model) { Get-RouterNamedModel $Model } else { $null }
+    if (-not $named) { throw 'BY_NAME_REQUEST_MODEL_UNKNOWN' }
+    if (-not $named.frontier) { throw 'BY_NAME_REQUEST_NOT_FRONTIER: -ByNameRequest is only for frontier models; pass -Model alone' }
+    $family = if ($named.model -match '^claude-([a-z]+)-') { $Matches[1] } else { $named.model -replace '^gpt-[\d.]+-', '' }
+    if ([string]$SelectionReason -notmatch '\bDanny\b') { throw 'BY_NAME_REQUEST_QUOTE_REQUIRED: the selection reason must attribute the quote to Danny' }
+    foreach ($match in [regex]::Matches([string]$SelectionReason, '"([^"]+)"|\u201C([^\u201D]+)\u201D')) {
+        $quote = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+        if ($quote -match ('(?i)\b' + [regex]::Escape($family) + '\b')) { return $quote.Trim() }
+    }
+    throw "BY_NAME_REQUEST_QUOTE_REQUIRED: the selection reason must quote Danny's request, and the quote must name '$family'"
+}
+
 function Assert-RouterNamedModel {
-    param([string]$Model, [object]$Resolution, [string]$RequestId)
+    param([string]$Model, [object]$Resolution, [string]$RequestId, [switch]$ByNameRequest, [string]$SelectionReason)
+    if ($ByNameRequest) {
+        if ($RequestId -or (Get-DispatchValue $Resolution 'frontier_request')) { throw 'BY_NAME_REQUEST_CONFLICT: use -ByNameRequest or -FrontierRequest, not both' }
+        if (-not $Model) { throw 'BY_NAME_REQUEST_MODEL_REQUIRED' }
+        $null = Get-RouterByNameQuote -Model $Model -SelectionReason $SelectionReason
+        return
+    }
     if (-not $RequestId) { $RequestId = Get-DispatchValue $Resolution 'frontier_request' }
     $named = if ($Model) { Get-RouterNamedModel $Model } else { $null }
     if ($Model -and (-not $named -or $named.frontier) -and -not $RequestId) { throw 'FRONTIER_REQUEST_REQUIRED' }
@@ -65,14 +88,15 @@ function Assert-RouterNamedModel {
 }
 
 function Assert-RouterDispatchPick {
-    param([object]$Resolution, [string]$Model, [string]$RequestId, [switch]$CallerResolution)
+    param([object]$Resolution, [string]$Model, [string]$RequestId, [switch]$CallerResolution, [switch]$ByNameRequest, [string]$SelectionReason)
     $finalModel = if ($Model) { $Model } else { Get-DispatchValue $Resolution 'model' }
     $named = if ($finalModel) { Get-RouterNamedModel $finalModel } else { $null }
-    if ($CallerResolution) { Assert-RouterNamedModel -Model $finalModel -Resolution $Resolution -RequestId $RequestId }
+    $byName = @{ByNameRequest=$ByNameRequest; SelectionReason=$SelectionReason}
+    if ($CallerResolution) { Assert-RouterNamedModel -Model $finalModel -Resolution $Resolution -RequestId $RequestId @byName }
     # Approved roster names outside the ladder (such as gpt-image-2) stay valid.
     # Unknown explicit overrides are refused by Assert-RouterNamedModel.
     if ($named -and $named.frontier) {
-        Assert-RouterNamedModel -Model $finalModel -Resolution $Resolution -RequestId $RequestId
+        Assert-RouterNamedModel -Model $finalModel -Resolution $Resolution -RequestId $RequestId @byName
         return $true
     }
     return $false
@@ -208,7 +232,8 @@ function Read-RouterCodexExecutionEvidence {
 function New-RouterDispatchContext {
     param([object]$Context, [string]$Project, [string]$Category, [int]$Attempt = 1,
           [string]$LogicalTaskId, [string]$PriorDispatchId, [string]$RequestedModel,
-          [string]$OverrideReason, [string]$PromptPath, [switch]$AdHoc, [switch]$Preflight)
+          [string]$OverrideReason, [string]$PromptPath, [switch]$AdHoc, [switch]$Preflight,
+          [string]$ByNameQuote)
     if ($Context) { return $Context }
     if (-not $LogicalTaskId -and -not $AdHoc -and $PromptPath -and (Test-Path -LiteralPath $PromptPath -PathType Leaf)) {
         $promptText = [IO.File]::ReadAllText($PromptPath)
@@ -228,6 +253,8 @@ function New-RouterDispatchContext {
         category = $Category; host = [Environment]::MachineName; project = [IO.Path]::GetFullPath($Project)
         requested_model = if ($RequestedModel) { $RequestedModel } else { $null }
         override_reason = if ($OverrideReason) { Invoke-SecretRedaction -Text $OverrideReason } else { $null }
+        frontier_override = if ($ByNameQuote) { 'named-by-danny' } else { $null }
+        by_name_request = if ($ByNameQuote) { Invoke-SecretRedaction -Text $ByNameQuote } else { $null }
         fallback_reason = $null; started_utc = [datetimeoffset]::UtcNow.ToString('o')
     }
 }
@@ -236,7 +263,7 @@ function Write-RouterDispatchEvidence {
     param([string]$Path, [object]$Record, [object]$Context,
           [ValidateSet('started','finished','wait')][string]$Phase = 'finished',
           [object]$ExitCode, [object]$ActualModel, [object]$Usage)
-    foreach ($name in @('dispatch_id','logical_task_id','attempt','prior_dispatch_id','category','host','project','requested_model','override_reason','fallback_reason','started_utc')) {
+    foreach ($name in @('dispatch_id','logical_task_id','attempt','prior_dispatch_id','category','host','project','requested_model','override_reason','frontier_override','by_name_request','fallback_reason','started_utc')) {
         $Record | Add-Member -Force -NotePropertyName $name -NotePropertyValue (Get-DispatchValue $Context $name)
     }
     foreach ($name in @('resolved_model','effort','difficulty','failure_category')) {

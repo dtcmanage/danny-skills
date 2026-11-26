@@ -8,6 +8,15 @@ import sys
 import pytest
 
 
+def installed_guard() -> Path:
+    """The workspace's installed guard: the nearest ancestor holding _system-tools, else the Windows default."""
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "_system-tools" / "read-guard" / "read_guard.py"
+        if candidate.is_file():
+            return candidate
+    return Path("D:/Claude/_system-tools/read-guard/read_guard.py")
+
+
 @pytest.mark.parametrize(
     ("name", "codex", "settings", "denied"),
     [
@@ -19,7 +28,7 @@ import pytest
     ],
 )
 def test_installed_guard(name: str, codex: bool, settings: dict[str, str], denied: bool, tmp_path: Path) -> None:
-    guard = Path("D:/Claude/_system-tools/read-guard/read_guard.py")
+    guard = installed_guard()
     if not guard.is_file():
         reason = f"installed read guard absent: {guard}; {name} not exercised"
         print(reason)

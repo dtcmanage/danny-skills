@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$ProjectPath, [string]$Category, [string]$PromptPath, [string]$OutputPath,
-    [string]$SelectionReason, [string]$Model, [string]$FrontierRequest,
+    [string]$SelectionReason, [string]$Model, [string]$FrontierRequest, [switch]$ByNameRequest,
     [ValidateSet('codex','claude')][string]$Lane,
     [ValidateSet('standard','hard')][string]$Difficulty = 'standard', [string]$DifficultyReason,
     [string]$RetryAtHardFrom, [string]$EscalateFrom, [switch]$Protected,
@@ -36,6 +36,13 @@ function Invoke-RouterDispatch {
     }
     if ($Options['SelectionReason'] -match '[\r\n]' -or $Options['SelectionReason'].Length -gt 240) { throw 'DISPATCH_SELECTION_REASON_INVALID' }
     if ([string]$Options['Model'] -match '^\s*(inherit|default|auto)\s*$') { throw 'DISPATCH_INHERITED_MODEL_REFUSED' }
+    $byName = @{ByNameRequest=[bool]$Options['ByNameRequest']; SelectionReason=$Options['SelectionReason']}
+    $byNameQuote = $null
+    if ($Options['ByNameRequest']) {
+        if (-not $Options['Model']) { throw 'BY_NAME_REQUEST_MODEL_REQUIRED' }
+        Assert-RouterNamedModel -Model $Options['Model'] -RequestId $Options['FrontierRequest'] @byName
+        $byNameQuote = Get-RouterByNameQuote -Model $Options['Model'] -SelectionReason $Options['SelectionReason']
+    }
     if (-not (Test-Path -LiteralPath $Options['ProjectPath'] -PathType Container) -or -not (Test-Path -LiteralPath $Options['PromptPath'] -PathType Leaf)) { throw 'DISPATCH_PATH_NOT_FOUND' }
     . (Join-Path $PSScriptRoot '../../skills/dt-build/scripts/worker-verification.ps1')
     if ($env:DT_JOB_DIR) {
@@ -51,7 +58,7 @@ function Invoke-RouterDispatch {
     # Explicit overrides still pass through the roster and its approvals. A lane
     # constraint selects the matching approved slot; it never inherits host effort.
     if ($Options['Model']) {
-        Assert-RouterNamedModel -Model $Options['Model'] -RequestId $Options['FrontierRequest']
+        Assert-RouterNamedModel -Model $Options['Model'] -RequestId $Options['FrontierRequest'] @byName
         $named = Get-RouterNamedModel $Options['Model']
         if ($named) {
             if ($Options['Lane'] -and $Options['Lane'] -ne $named.vendor) { throw 'DISPATCH_MODEL_LANE_MISMATCH' }
@@ -63,7 +70,7 @@ function Invoke-RouterDispatch {
     $pick = Resolve-RouterModel @resolve
     try {
     $requested = if ($Options['Model']) { $Options['Model'] } else { $pick.model }
-    $context = New-RouterDispatchContext -PromptPath $Options['PromptPath'] -AdHoc:([bool]$Options['AdHoc']) -Project $Options['ProjectPath'] -Category $Options['Category'] -Attempt $(if ($Options['Attempt']) {$Options['Attempt']} else {1}) -LogicalTaskId $Options['LogicalTaskId'] -PriorDispatchId $Options['PriorDispatchId'] -RequestedModel $requested -OverrideReason $(if ($Options['Model']) {$Options['SelectionReason']})
+    $context = New-RouterDispatchContext -PromptPath $Options['PromptPath'] -AdHoc:([bool]$Options['AdHoc']) -Project $Options['ProjectPath'] -Category $Options['Category'] -Attempt $(if ($Options['Attempt']) {$Options['Attempt']} else {1}) -LogicalTaskId $Options['LogicalTaskId'] -PriorDispatchId $Options['PriorDispatchId'] -RequestedModel $requested -OverrideReason $(if ($Options['Model']) {$Options['SelectionReason']}) -ByNameQuote $byNameQuote
     $path = [IO.Path]::GetFullPath($Options['OutputPath']) + '.provenance.json'
     $initial = [pscustomobject]@{resolved_model=$pick.model; lane=$pick.vendor; effort=$pick.effort; difficulty=(Get-DispatchValue $pick 'difficulty'); job=(Get-DispatchValue $pick 'job'); selection_reason=$Options['SelectionReason']}
     Write-RouterDispatchEvidence -Path $path -Record $initial -Context $context -Phase started
@@ -82,10 +89,10 @@ function Invoke-RouterDispatch {
             throw $initial.termination_reason
     }
     $adapter = @{}
-    foreach ($name in @('ProjectPath','Category','PromptPath','OutputPath','SelectionReason','Model','Protected','ReadOnly','AdHoc','Scrutiny','SingleDispatch','Attempt','ApprovalOperation','RunFolder','FrontierRequest','TimeoutMs','Difficulty','DifficultyReason','RetryAtHardFrom','EscalateFrom','AllowOutputInProject')) {
+    foreach ($name in @('ProjectPath','Category','PromptPath','OutputPath','SelectionReason','Model','Protected','ReadOnly','AdHoc','Scrutiny','SingleDispatch','Attempt','ApprovalOperation','RunFolder','FrontierRequest','ByNameRequest','TimeoutMs','Difficulty','DifficultyReason','RetryAtHardFrom','EscalateFrom','AllowOutputInProject')) {
         if ($Options.ContainsKey($name)) { $adapter[$name] = $Options[$name] }
     }
-    $frontierPick = Assert-RouterDispatchPick -Resolution $pick -Model $Options['Model'] -RequestId $Options['FrontierRequest']
+    $frontierPick = Assert-RouterDispatchPick -Resolution $pick -Model $Options['Model'] -RequestId $Options['FrontierRequest'] @byName
     if ($frontierPick) { $adapter.SingleDispatch = $true }
     $adapter.Effort = $pick.effort; $adapter.RouterResolution = $pick; $adapter.DispatchContext = $context; $adapter.Json = $true
     $vendor = $pick.vendor

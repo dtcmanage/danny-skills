@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.2.23",
+  "version": "1.2.24",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.2.24 dt-build 2.64.0: by-name frontier override (-ByNameRequest) in the model router dispatch and lane wrappers; Linux fixes to the Codex read-only check; model router real-wrapper tests ported to Linux.",
       "1.2.23 dt-build 2.63.1 fixes managed bootstrap authority discovery for contextual evidence.",
       "1.2.22 model router: durable quota/reset history, independent hourly Codex/Claude collection, canonical Claude window aliases, archive-stable exports and current-week ledger event context; hourly failure/guard regressions and analysis CLI; importlib-safe cost-report sibling loading and anchored quota-history commands; dt-build 2.63.0, dt-review 1.19.0, dt-image-gen 0.4.0, dt-writing-draft 0.3.0, dt-writing-edit 0.4.0; version policy: register quota-history shared owners.",
       "1.2.21 Model router bench works on Codex 0.171 again: account/updated reason field accepted, GPT-6.2 Sol's declared send_message_to_user_async tool allowed (calls still fail the answer), cleanup-backoff test isolated from transport polling; dt-build 2.62.3, dt-review 1.18.10, dt-image-gen 0.3.44, dt-writing-draft 0.2.44, dt-writing-edit 0.3.44.",

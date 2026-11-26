@@ -15,6 +15,8 @@ param(
     [string]$Model = "",
     [string]$SelectionReason = "",
     [string]$FrontierRequest = "",
+    # Danny named this frontier -Model himself (model-routing.md rule 4); -SelectionReason quotes him.
+    [switch]$ByNameRequest,
     [ValidateSet('low', 'medium', 'high', 'xhigh')][string]$Effort,
     [ValidateRange(1, 2147483647)][int]$Attempt = 1,
     [string]$ApprovalOperation = "",
@@ -88,7 +90,7 @@ $repoRoot = Resolve-SkillRepoRoot
 . (Join-Path $repoRoot 'scripts/claude-headless-auth.ps1')
 $routerPick = $null
 trap { $failureRecord = $_; if (Get-Command Exit-RouterFrontierFailure -ErrorAction SilentlyContinue) { Exit-RouterFrontierFailure -FailureRecord $failureRecord }; throw $failureRecord }
-$DispatchContext = New-RouterDispatchContext -Context $DispatchContext -PromptPath $PromptPath -AdHoc:$AdHoc -Preflight:$Preflight -Project $ProjectPath -Category $Category -Attempt $Attempt -LogicalTaskId $LogicalTaskId -PriorDispatchId $PriorDispatchId -RequestedModel $Model -OverrideReason $(if ($Model) { $SelectionReason })
+$DispatchContext = New-RouterDispatchContext -Context $DispatchContext -PromptPath $PromptPath -AdHoc:$AdHoc -Preflight:$Preflight -Project $ProjectPath -Category $Category -Attempt $Attempt -LogicalTaskId $LogicalTaskId -PriorDispatchId $PriorDispatchId -RequestedModel $Model -OverrideReason $(if ($Model) { $SelectionReason }) -ByNameQuote $(if ($ByNameRequest) { Get-RouterByNameQuote -Model $Model -SelectionReason $SelectionReason })
 
 # Report shape (v3, with v2 accepted and flagged) is shared with the other wrapper.
 . (Join-Path $PSScriptRoot 'report-contract.ps1')
@@ -256,7 +258,7 @@ try {
     $resolvedDifficulty = if ((Get-RouterCategoryJob -Category $Category) -in @('coder','deep-thinker') -or ($isProtected -and $Category -eq 'mechanical')) { $Difficulty } else { $null }
     $escalatedFrom = if ([string]::IsNullOrWhiteSpace($EscalateFrom)) { $null } else { $EscalateFrom.Trim() }
 
-    Assert-RouterNamedModel -Model $Model -Resolution $RouterResolution -RequestId $FrontierRequest
+    Assert-RouterNamedModel -Model $Model -Resolution $RouterResolution -RequestId $FrontierRequest -ByNameRequest:$ByNameRequest -SelectionReason $SelectionReason
     if (-not $RouterResolution -and $FrontierRequest) { $RouterResolution = Get-RouterReservedFrontierPick -RequestId $FrontierRequest -Category $Category -Lane 'claude' -Protected $isProtected }
     $routerPick = if ($RouterResolution) { $RouterResolution } else {
         Resolve-RouterModel -Category $Category -Lane claude -FrontierRequest $FrontierRequest -Protected:$isProtected @routingDifficultyArgs -EscalateFrom $escalatedFrom -RetryAtHardFrom $RetryAtHardFrom -SendAlerts:(-not $Scrutiny) -ChatToStderr:$Json
@@ -264,8 +266,8 @@ try {
 }
 catch { throw "CLAUDE_INVOKE_FAIL: model router failed: $($_.Exception.Message)" }
 if (Get-DispatchValue $routerPick 'difficulty') { $resolvedDifficulty = $routerPick.difficulty }
-Assert-RouterNamedModel -Model $Model -Resolution $routerPick -RequestId $FrontierRequest
-if (Assert-RouterDispatchPick -Resolution $routerPick -Model $Model -RequestId $FrontierRequest -CallerResolution:([bool]$RouterResolution)) { $SingleDispatch = $true }
+Assert-RouterNamedModel -Model $Model -Resolution $routerPick -RequestId $FrontierRequest -ByNameRequest:$ByNameRequest -SelectionReason $SelectionReason
+if (Assert-RouterDispatchPick -Resolution $routerPick -Model $Model -RequestId $FrontierRequest -CallerResolution:([bool]$RouterResolution) -ByNameRequest:$ByNameRequest -SelectionReason $SelectionReason) { $SingleDispatch = $true }
 if ($Model) { $named = Get-RouterNamedModel $Model; if ($named) { $Model = $named.model } }
 $DispatchContext.category = $Category
 if ($routerPick.status -eq 'wait' -and ([string]::IsNullOrWhiteSpace($Model) -or (Get-RouterVendorBlocked -Vendor claude))) {

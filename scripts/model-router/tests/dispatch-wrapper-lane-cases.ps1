@@ -2,9 +2,9 @@
 # Runs inside test-dispatch-real-wrappers.ps1's isolated fixture scope; every launch uses the fake CLI.
 $env:M04_FAKE_MODE=''; $env:M04_FAKE_REPORT=''
 Remove-Item (Join-Path $env:DT_MODEL_ROUTER_STATE 'vendor-blocks.json') -ErrorAction SilentlyContinue
-# Real directory junction: exercise both installed wrapper entry points.
+# Real installed link (a junction on Windows, a symlink on Linux and macOS): exercise both installed wrapper entry points.
 $junction=Join-Path $temp 'installed/dt-build'; [void][IO.Directory]::CreateDirectory((Split-Path -Parent $junction))
-New-Item -ItemType Junction -Path $junction -Target (Join-Path $env:M04_REPO_ROOT 'skills/dt-build') | Out-Null
+New-Item -ItemType $(if ($IsWindows) { 'Junction' } else { 'SymbolicLink' }) -Path $junction -Target (Join-Path $env:M04_REPO_ROOT 'skills/dt-build') | Out-Null
 try {
     foreach($lane in 'claude','codex') {
         $a=@{ProjectPath=$repo;PromptPath=$prompt;OutputPath=(Join-Path $temp "junction-$lane.md");Category='routine-coding';Effort='medium';SelectionReason='junction startup fixture';AdHoc=$true;ReadOnly=$true;Json=$true}

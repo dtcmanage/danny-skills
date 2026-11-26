@@ -1,5 +1,6 @@
 # Outcome recovery: execution survives a busy or damaged ledger, and pending snapshots drain later.
 # Runs in the real-wrapper fixture. No live CLI or network calls.
+$hiddenWindow = if ($IsWindows) { @{WindowStyle='Hidden'} } else { @{} } # -WindowStyle exists only on Windows
 $env:M04_FAKE_MODE=''; $env:M04_FAKE_REPORT=''
 Remove-Item (Join-Path $env:DT_MODEL_ROUTER_STATE 'vendor-blocks.json') -ErrorAction SilentlyContinue
 $recoveryState=$env:DT_MODEL_ROUTER_STATE
@@ -13,7 +14,7 @@ while (-not (Test-Path -LiteralPath $Signal)) { if($watch.Elapsed.TotalSeconds -
 $h=[IO.File]::Open($Target,'Open','Read',[IO.FileShare]::ReadWrite)
 try { [IO.File]::WriteAllText(($Signal+'.held'),'held'); Start-Sleep -Milliseconds $HoldMs } finally { $h.Dispose() }
 '@ | Set-Content $holder
-    Start-Process pwsh -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile','-File',('"'+$holder+'"'),('"'+$Target+'"'),('"'+$Signal+'"'),$HoldMs) -RedirectStandardOutput ($Signal+'.out') -RedirectStandardError ($Signal+'.err')
+    Start-Process pwsh @hiddenWindow -PassThru -ArgumentList @('-NoProfile','-File',('"'+$holder+'"'),('"'+$Target+'"'),('"'+$Signal+'"'),$HoldMs) -RedirectStandardOutput ($Signal+'.out') -RedirectStandardError ($Signal+'.err')
 }
 try {
     # Neither direct lane depends on source-root discovery. Failed indexes
@@ -51,12 +52,17 @@ try {
 } finally { $h.Dispose() }
 '@ | Set-Content $holder
     $env:M04_FAKE_READER_SIGNAL=$signal
-    $reader=Start-Process pwsh -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile','-File',('"'+$holder+'"'),('"'+$ledger+'"'),('"'+$signal+'"')) -RedirectStandardOutput (Join-Path $temp 'ledger-reader.out') -RedirectStandardError (Join-Path $temp 'ledger-reader.err')
+    $reader=Start-Process pwsh @hiddenWindow -PassThru -ArgumentList @('-NoProfile','-File',('"'+$holder+'"'),('"'+$ledger+'"'),('"'+$signal+'"')) -RedirectStandardOutput (Join-Path $temp 'ledger-reader.out') -RedirectStandardError (Join-Path $temp 'ledger-reader.err')
     try {
         $a=New-FakeCliWrapperArguments 'ledger-reader'
         Invoke-FakeCliWrapper 'codex' $a
         $r=Read-Evidence $a.OutputPath
-        Check ($r.execution_result -eq 'success' -and @(Get-RouterPendingOutcomes $env:DT_MODEL_ROUTER_STATE).Count -eq 1) 'ledger reader: ledger sharing violation preserves execution and pending pointer'
+        if ($IsWindows) {
+            Check ($r.execution_result -eq 'success' -and @(Get-RouterPendingOutcomes $env:DT_MODEL_ROUTER_STATE).Count -eq 1) 'ledger reader: ledger sharing violation preserves execution and pending pointer'
+        } else {
+            # Linux and macOS replace a file another process is reading, so the row lands directly.
+            Check ($r.execution_result -eq 'success' -and @(Get-RouterPendingOutcomes $env:DT_MODEL_ROUTER_STATE).Count -eq 0 -and (Read-RouterOutcomeLedger $ledger).records.Count -eq 1) 'ledger reader: an open reader does not block the ledger replace off Windows'
+        }
     } finally {
         [IO.File]::WriteAllText(($signal+'.release'),'release')
         $env:M04_FAKE_READER_SIGNAL=''
@@ -131,7 +137,10 @@ try {
                 $elapsed=$watch.Elapsed.TotalMilliseconds
                 $raw=Get-Content $target -Raw | ConvertFrom-Json
                 Check ($r.execution_result -eq 'success' -and $r.finished_utc) "outcome recovery: $lane reader $holdMs preserves successful dispatch result"
-                if ($holdMs -eq 800) {
+                if (-not $IsWindows) {
+                    # Linux and macOS replace a file another process is reading: no retry, no sidecar.
+                    Check ($raw.finished_utc -and -not (Test-Path ($target+'.finished.json')) -and @(Get-RouterPendingOutcomes $env:DT_MODEL_ROUTER_STATE).Count -eq 0) "outcome recovery: $lane reader $holdMs does not block the replace off Windows"
+                } elseif ($holdMs -eq 800) {
                     Check ($raw.finished_utc -and -not (Test-Path ($target+'.finished.json')) -and $elapsed -ge 700) "outcome recovery: $lane writer retries beyond fast window"
                 } else {
                     Check (-not $raw.finished_utc -and (Test-Path ($target+'.finished.json')) -and @(Get-RouterPendingOutcomes $env:DT_MODEL_ROUTER_STATE).Count -eq 1 -and $elapsed -ge 10000 -and $elapsed -lt 20000) "outcome recovery: $lane retry exhaustion keeps finished sidecar and pending pointer"

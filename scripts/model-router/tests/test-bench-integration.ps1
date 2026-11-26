@@ -1,4 +1,5 @@
 param([ValidateRange(30, 1800)][int]$SuiteTimeoutSeconds = 900)
+$hiddenWindow = if ($IsWindows) { @{WindowStyle='Hidden'} } else { @{} } # -WindowStyle exists only on Windows
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 # Child suites have isolated function scopes, checked exits, and one numeric summary.
@@ -6,7 +7,7 @@ function Invoke-IntegrationChild([string]$Name, [string]$SummaryPattern) {
     $logRoot=Join-Path $env:TEMP ('bench-child-'+[guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($logRoot)
     $out=Join-Path $logRoot 'stdout.log'; $err=Join-Path $logRoot 'stderr.log'
-    $child=Start-Process pwsh -WindowStyle Hidden -ArgumentList @('-NoProfile','-File',('"'+(Join-Path $PSScriptRoot $Name)+'"')) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+    $child=Start-Process pwsh @hiddenWindow -ArgumentList @('-NoProfile','-File',('"'+(Join-Path $PSScriptRoot $Name)+'"')) -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
     # The full repair child exceeds five minutes on Windows; retain a bounded
     # suite budget without changing any of its dispatch/lock timeout checks.
     if(-not $child.WaitForExit($SuiteTimeoutSeconds * 1000)){ $child.Kill($true); throw "Child suite timed out: $Name; logs: $logRoot" }

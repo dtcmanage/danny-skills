@@ -1,5 +1,6 @@
 # Dispatch evidence: finished sidecars, pending snapshots, acceptance verdicts and the acceptance ledger.
 # Runs in the real-wrapper fixture, including its focused -EvidenceOnly mode. No live CLI or network calls.
+$hiddenWindow = if ($IsWindows) { @{WindowStyle='Hidden'} } else { @{} } # -WindowStyle exists only on Windows
 $evidenceState=$env:DT_MODEL_ROUTER_STATE
 try {
     # Damage left at a reused output path cannot suppress indexing.
@@ -168,21 +169,29 @@ foreach ($name in @('DT_JOB_ID','DT_JOB_DIR','DT_BUILD_COORDINATOR_ID')) { Remov
 $h=[IO.File]::Open($Target,'Open','Read',[IO.FileShare]::ReadWrite)
 try { [IO.File]::WriteAllText($Signal,'held'); Start-Sleep -Milliseconds 14000 } finally { $h.Dispose() }
 '@ | Set-Content $holder
-        $reader=Start-Process pwsh -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile','-File',('"'+$holder+'"'),('"'+$provenance+'"'),('"'+$signal+'"')) -RedirectStandardOutput ($signal+'.out') -RedirectStandardError ($signal+'.err')
+        $reader=Start-Process pwsh @hiddenWindow -PassThru -ArgumentList @('-NoProfile','-File',('"'+$holder+'"'),('"'+$provenance+'"'),('"'+$signal+'"')) -RedirectStandardOutput ($signal+'.out') -RedirectStandardError ($signal+'.err')
         try {
             $watch=[Diagnostics.Stopwatch]::StartNew()
             while (-not (Test-Path $signal)) { if ($watch.Elapsed.TotalSeconds -gt 20) { throw 'Held reader did not open provenance' }; Start-Sleep -Milliseconds 25 }
             $before=[IO.File]::ReadAllBytes($provenance)
             $watch.Restart()
             Set-RouterDispatchAcceptance $provenance $r.dispatch_id $verdict
-            Check ($watch.Elapsed.TotalSeconds -ge 10 -and (Test-Path ($provenance+'.finished.json'))) "evidence sidecar: $lane $verdict held finished file takes sidecar path"
-            $read=Read-RouterDispatchEvidence $provenance
-            Check ($null -ne $read.independent_acceptance -and $read.independent_acceptance -eq $verdict) "evidence sidecar: $lane $verdict held reader sees verdict"
-            Check ([Convert]::ToBase64String([IO.File]::ReadAllBytes($provenance)) -ceq [Convert]::ToBase64String($before)) "evidence sidecar: $lane $verdict held main bytes preserved"
-            $sideHash=(Get-FileHash ($provenance+'.finished.json')).Hash
-            $rows=(Read-RouterOutcomeLedger (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl')).records
-            $row=$rows['dispatch:'+$r.dispatch_id]
-            Check ($null -ne $row.independent_acceptance -and $row.independent_acceptance -eq $verdict -and $row.pass -eq $verdict -and @(Get-RouterPendingOutcomes $env:DT_MODEL_ROUTER_STATE).Count -eq 0 -and (Get-FileHash ($provenance+'.finished.json')).Hash -ceq $sideHash) "evidence sidecar: $lane $verdict ledger retains verdict and pending drains without byte loss"
+            if ($IsWindows) {
+                Check ($watch.Elapsed.TotalSeconds -ge 10 -and (Test-Path ($provenance+'.finished.json'))) "evidence sidecar: $lane $verdict held finished file takes sidecar path"
+                $read=Read-RouterDispatchEvidence $provenance
+                Check ($null -ne $read.independent_acceptance -and $read.independent_acceptance -eq $verdict) "evidence sidecar: $lane $verdict held reader sees verdict"
+                Check ([Convert]::ToBase64String([IO.File]::ReadAllBytes($provenance)) -ceq [Convert]::ToBase64String($before)) "evidence sidecar: $lane $verdict held main bytes preserved"
+                $sideHash=(Get-FileHash ($provenance+'.finished.json')).Hash
+                $rows=(Read-RouterOutcomeLedger (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl')).records
+                $row=$rows['dispatch:'+$r.dispatch_id]
+                Check ($null -ne $row.independent_acceptance -and $row.independent_acceptance -eq $verdict -and $row.pass -eq $verdict -and @(Get-RouterPendingOutcomes $env:DT_MODEL_ROUTER_STATE).Count -eq 0 -and (Get-FileHash ($provenance+'.finished.json')).Hash -ceq $sideHash) "evidence sidecar: $lane $verdict ledger retains verdict and pending drains without byte loss"
+            } else {
+                # Linux and macOS replace a file another process is reading: the verdict lands in main, no sidecar.
+                $read=Read-RouterDispatchEvidence $provenance
+                $row=(Read-RouterOutcomeLedger (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl')).records['dispatch:'+$r.dispatch_id]
+                Check ($watch.Elapsed.TotalSeconds -lt 10 -and -not (Test-Path ($provenance+'.finished.json')) -and $null -ne $read.independent_acceptance -and $read.independent_acceptance -eq $verdict) "evidence sidecar: $lane $verdict open reader does not block the acceptance write off Windows"
+                Check ($null -ne $row.independent_acceptance -and $row.independent_acceptance -eq $verdict -and $row.pass -eq $verdict -and @(Get-RouterPendingOutcomes $env:DT_MODEL_ROUTER_STATE).Count -eq 0) "evidence sidecar: $lane $verdict ledger records verdict off Windows"
+            }
         } finally { if (-not $reader.WaitForExit(20000)) { $reader.Kill(); throw 'Held reader exceeded timeout' } }
         # This is the same later-finished writer used by dispatch's fallback refusal.
         $read=Read-RouterDispatchEvidence $provenance

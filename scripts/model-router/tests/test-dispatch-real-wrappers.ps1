@@ -104,13 +104,14 @@ $script:RouterDiagnosisHttp = {
     if (-not $RecoveryOnly -and -not $EvidenceOnly) {
         $lockedPath=Join-Path $repo 'held-open.log'
         [IO.File]::WriteAllText($lockedPath,'same content')
-        $lockHandle=[IO.File]::Open($lockedPath,'Open','Read',[IO.FileShare]::None)
+        # FileShare locks are advisory on Linux and macOS; a no-read mode makes the file unreadable there.
+        $lockHandle = if ($IsWindows) { [IO.File]::Open($lockedPath,'Open','Read',[IO.FileShare]::None) } else { [IO.File]::SetUnixFileMode($lockedPath,[IO.UnixFileMode]::None); $null }
         try {
             $o=$base.Clone(); $o.Lane='codex'
             $r=Invoke-RouterDispatch $o $real
             Check ($r.execution_result -eq 'success' -and $r.pass -and -not $r.failure_category -and $null -eq $r.independent_acceptance) 'locked untracked file does not abort real wrapper dispatch'
             Check (($r.warnings -join ' ') -match 'held-open\.log' -and ($r.warnings -join ' ') -match 'could not verify') 'locked path warning explicitly records unverified contents'
-        } finally { $lockHandle.Dispose() }
+        } finally { if ($lockHandle) { $lockHandle.Dispose() } else { [IO.File]::SetUnixFileMode($lockedPath,[IO.UnixFileMode]'UserRead,UserWrite') } }
 
         # Markers stay outside the project. The fake CLI releases this bounded helper
         # between the real wrapper's before/after snapshots, without changing bytes.
@@ -177,7 +178,8 @@ if ($args -contains 'exec') {
             $printedPrompt=[regex]::Match($printed,'-PromptPath "([^"]+)"').Groups[1].Value
             $printedOutput=[regex]::Match($printed,'-OutputPath "([^"]+)"').Groups[1].Value
             [IO.File]::WriteAllText((Join-Path $printedRepo $printedPrompt),'fixture prompt')
-            $installed='D:/Claude/_Claude-Workspace/Skill Creation/danny-skills/scripts/model-router/dispatch.ps1'
+            # The guard names the dispatch.ps1 beside itself, in forward-slash form, on every host.
+            $installed=$publicDispatch.Replace('\','/')
             Check ($printed.Contains($installed) -and $printed.Contains(' -ReadOnly')) 'guard prints the read-only dispatch command'
             $printedScript=Join-Path $temp "printed-$lane-$($case.Write).ps1"
             [IO.File]::WriteAllText($printedScript,$printed.Replace($installed,$publicDispatch)+"`nexit `$LASTEXITCODE")
