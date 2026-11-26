@@ -405,6 +405,46 @@ try {
         $bare = @($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $name -and $_.reason -eq 'non_authority_reference' -and -not $_.required })
         Assert-True ($bare.Count -eq 1) "bare artifact name in a design document skipped as non-authority: $name"
     }
+    # AI-90: host qualifiers waive only remote planning evidence, independently of existence.
+    $remoteLiteral = '/etc/cloudflared/config.yml'
+    foreach ($line in @('Evidence: /etc/cloudflared/config.yml on CT105.', 'Evidence: `/etc/cloudflared/config.yml` on CT105.', 'CT105: `/etc/cloudflared/config.yml`.')) {
+        Write-Text $designDoc $line
+        $remoteInventory = @(Get-AuthorityInventory $proseRoot $proseCheckpoint)
+        Assert-True (@($remoteInventory | Where-Object path -eq $remoteLiteral).Count -eq 0) "remote evidence is not a local original: $line"
+        Assert-True (@($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $remoteLiteral -and $_.waiver_rule -eq 'remote_host_evidence' -and -not $_.required }).Count -eq 1) 'remote evidence waiver is explicit in diagnostics'
+    }
+    foreach ($line in @(
+        ('Evidence: `' + $missingOriginal + '` on CT105.'),
+        'Read governing original: `/etc/ai90-missing/original.md` IN FULL on CT105.',
+        'Read original: `/etc/ai90-missing/original.md` on CT105.',
+        'Local original: `/etc/ai90-missing/original.md`. Evidence is on CT105.'
+    )) {
+        # Remove the local original created earlier, then restore it after these checks.
+        if (Test-Path -LiteralPath $missingOriginal) { Remove-Item -LiteralPath $missingOriginal }
+        Write-Text $designDoc $line
+        $failure = ''
+        try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $failure = $_.Exception.Message }
+        Assert-True ($failure.StartsWith('AUTHORITY_MISSING:')) "local or explicitly required planning original stays fail-closed: $line"
+    }
+    Write-Text $missingOriginal 'Only fixture authority.'
+    $remoteCopy = Join-Path $root 'remote-copy.yml'
+    Write-Text $remoteCopy 'Remote evidence fixture, with a coincidentally existing local path.'
+    Write-Text $designDoc ('Evidence: `' + $remoteCopy + '` on CT105.')
+    $remoteInventory = @(Get-AuthorityInventory $proseRoot $proseCheckpoint)
+    Assert-True (@($remoteInventory | Where-Object path -eq $remoteCopy).Count -eq 0) 'remote qualifier is independent of local file existence'
+    Write-Text $designDoc ('Read governing original: `' + $remoteCopy + '` IN FULL on CT105.')
+    $localInventory = @(Get-AuthorityInventory $proseRoot $proseCheckpoint)
+    Assert-True (@($localInventory | Where-Object path -eq $remoteCopy).Count -eq 1) 'explicit full-read original overrides a host qualifier outside the local planning root'
+    Remove-Item -LiteralPath $remoteCopy
+    $failure = ''
+    try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $failure = $_.Exception.Message }
+    Assert-True ($failure.StartsWith('AUTHORITY_MISSING:') -and $failure.Contains($remoteCopy)) 'deleted explicit original outside planning root fails closed'
+    Write-Text $designDoc 'Scope: local source only.'
+    Write-Text $proseCheckpoint 'Boundary: `/etc/ai90-missing/original.md` on CT105.'
+    $failure = ''
+    try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $failure = $_.Exception.Message }
+    Assert-True ($failure.StartsWith('AUTHORITY_MISSING:')) 'host-qualified checkpoint authority still fails closed'
+    Write-Text $proseCheckpoint 'Scope: fixtures only.'
     # FS-132: milestone briefs naming bare artifacts are not originals.
     $briefDir = Join-Path $proseRoot 'milestones/M06'
     New-Item -ItemType Directory -Path $briefDir -Force | Out-Null

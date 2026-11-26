@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.2.25",
+  "version": "1.2.26",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.2.26 dt-build 2.65.1: exclude checkpoint template shape names and host-qualified planning evidence from local authority discovery; preserve fail-closed originals.",
       "1.2.25 model router: frontier names (fable, astra) track the newest release; version policy owners declare router-ladder.ps1; dt-build 2.65.0, dt-review 1.19.1, dt-image-gen 0.4.1, dt-writing-draft 0.3.1, dt-writing-edit 0.4.1",
       "1.2.24 dt-build 2.64.0: by-name frontier override (-ByNameRequest) in the model router dispatch and lane wrappers; Linux fixes to the Codex read-only check; model router real-wrapper tests ported to Linux.",
       "1.2.23 dt-build 2.63.1 fixes managed bootstrap authority discovery for contextual evidence.",

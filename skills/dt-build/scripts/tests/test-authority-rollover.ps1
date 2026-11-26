@@ -33,7 +33,10 @@ function New-Fixture {
     Write-Text (Join-Path $run 'stop1/next-operation-boundary.json') ($stop1 | ConvertTo-Json)
     $stop2 = [ordered]@{ schema = 'fixture/v1'; operation = 'stop-two'; scope = (Join-Path $run 'stop2/next-scope.md'); source_disposition = (Join-Path $run 'stop2/source-disposition.json'); approval_text = (Join-Path $run 'stop2/next-approval.md'); inherited_boundary = (Join-Path $run 'stop1/next-operation-boundary.json'); required_original_records = 9 }
     Write-Text (Join-Path $run 'stop2/next-operation-boundary.json') ($stop2 | ConvertTo-Json)
-    foreach ($name in @('approvals.json', 'operator-notes.json', 'build-state.md', 'build-plan.md')) { Write-Text (Join-Path $run $name) "fixture $name`n" }
+    foreach ($name in @('build-state.md', 'build-plan.md')) { Write-Text (Join-Path $run $name) "fixture $name`n" }
+    # Registration reads lifecycle JSON as well as the authority files used by prepare/compose.
+    Write-Text (Join-Path $run 'approvals.json') '{"awaiting":null,"approvals":[]}'
+    Write-Text (Join-Path $run 'operator-notes.json') '{"notes":[]}'
     Write-Text (Join-Path $run 'jobs/events.jsonl') ('{"seq":1,"type":"recorded"}' + "`n" + '{"seq":2,"job_id":"j-0001","type":"completed"}' + "`n")
     Write-Text (Join-Path $run 'review-log.md') "M05 review allowance consumed by j-0001 on 2026-10-14.`n"
 }

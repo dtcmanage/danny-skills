@@ -187,6 +187,34 @@ function Get-AuthorityEnumeration {
     return $paths
 }
 
+function Get-AuthorityReferenceWaiver {
+    param([string]$Text, $Candidate, [string]$Source, [string]$Checkpoint, [string]$RunFolder, [string]$Resolved)
+    # Only the filename in the pipeline template's provenance sentence is a shape name.
+    # Do not discard comments generally: comments can contain operative restrictions/pointers.
+    if ($Source -eq $Checkpoint -and $Candidate.literal -ceq '_build-state.md') {
+        foreach ($comment in [regex]::Matches($Text, '(?s)<!--\s*Canonical `(?<path>_build-state\.md)` shape\..*?-->')) {
+            if ($Candidate.index -eq $comment.Groups['path'].Index) { return 'checkpoint_template_shape' }
+        }
+    }
+    # Legacy planning documents mix local originals with host-qualified operational evidence.
+    # Require an adjacent host qualifier, not just an authority/evidence word or a missing file.
+    # Boundaries, approvals, explicit full-read directives and local planning/run paths stay closed.
+    if ((Split-Path -Leaf $Source) -notmatch '(?i)^(?:design-final|plan-draft|roadmap|build-plan|build-input)' -or
+        -not [IO.Path]::IsPathFullyQualified($Candidate.literal)) { return $null }
+    foreach ($directory in @((Split-Path -Parent $Checkpoint), $RunFolder)) {
+        $prefix = [IO.Path]::GetFullPath($directory).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($Resolved.StartsWith($prefix, $(if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }))) { return $null }
+    }
+    $before = ($Text.Substring(0, $Candidate.index) -split '\r?\n')[-1]
+    $after = ($Text.Substring($Candidate.index + $Candidate.literal.Length) -split '\r?\n')[0]
+    $line = $before + $Candidate.literal + $after
+    if ($line -match '(?i)\bIN FULL\b|before\s*bootstrap|\bread\b[^.!?]*\boriginal\b|\b(?:governing|named)\s+(?:authority|original)\b') { return $null }
+    $hostName = '(?:CT|VM)[0-9]+'
+    if ($after -match ('(?i)^[`"''>]*\s+on\s+`?' + $hostName + '`?(?=[\s.,;:)]|$)') -or
+        $before -match ('(?i)\b`?' + $hostName + '`?\s*:\s*[`"''<]*$')) { return 'remote_host_evidence' }
+    return $null
+}
+
 function Get-AuthorityInventory {
     param([string]$RunFolder, [string]$BuildStatePath)
     $root = [IO.Path]::GetFullPath($RunFolder)
@@ -293,6 +321,11 @@ function Get-AuthorityInventory {
                 continue
             }
             $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases
+            $referenceWaiver = Get-AuthorityReferenceWaiver $text $candidate $path $checkpoint $root $resolved
+            if ($referenceWaiver) {
+                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = 'non_authority_reference'; required = $false; waiver_rule = $referenceWaiver })
+                continue
+            }
             if (-not $resolved) {
                 $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false })
                 continue

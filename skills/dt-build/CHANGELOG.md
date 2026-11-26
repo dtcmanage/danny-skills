@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.65.1
+
+- Fix authority discovery of checkpoint template shape names and host-qualified planning evidence while preserving missing local original checks.
+
 ## 2.65.0
 
 - model router: "fable" and "astra" mean the newest release the router has seen (a ladder frontier rung with track_latest; pin by setting it false); ladder lists Fable 5.2 and GPT-6.2 Astra; Codex read-only check no longer crashes outside a git tree

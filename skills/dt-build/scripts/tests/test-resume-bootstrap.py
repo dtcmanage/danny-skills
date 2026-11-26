@@ -156,7 +156,7 @@ class StateDigestTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.run = self.root / 'run'
         self.run.mkdir()
-        self.state = self.root / '_build-state.md'
+        self.state = self.root / '_build-state-finance.md'
         self.roadmap = self.root / 'roadmap.md'
         self.design = self.root / 'plan-draft.md'
         self.design.write_text('Scope: local source changes only. Implementation details deferred.\n')
@@ -181,6 +181,56 @@ class StateDigestTests(unittest.TestCase):
 
     def digest(self, *args: str) -> subprocess.CompletedProcess:
         return self.call('read-coordinator-state.ps1','-RunFolder',str(self.run),'-RunId','digest-test','-BuildStatePath',str(self.state),'-CoordinatorId','fixture',*args)
+
+    def test_ai90_pipeline_template_comment_is_not_a_checkpoint_original(self) -> None:
+        template = (SCRIPT.parents[2] / 'dt-pipeline/templates/build-state-template.md').read_text()
+        comment = re.search(r'<!--.*?-->', template, re.S).group()
+        self.state.write_text(comment + '\n' + self.checkpoint)
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(comment, result.stdout)
+        manifest = json.loads((self.run / 'authority-digest.json').read_text())
+        self.assertNotIn(str(self.root / '_build-state.md'), [row['path'] for row in manifest['originals']])
+        # The same literal outside the provenance comment is still an operative original.
+        self.state.write_text(comment + '\n' + self.checkpoint + 'Read governing original: `_build-state.md` IN FULL.\n')
+        result = self.digest()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AUTHORITY_CHECKPOINT_HASH', result.stderr)
+        result = self.call('build-authority-digest.ps1', '-RunFolder', str(self.run), '-BuildStatePath', str(self.state))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AUTHORITY_MISSING', result.stderr)
+        self.assertIn('_build-state.md', result.stderr)
+
+    def test_ai90_remote_plan_evidence_is_not_local_authority(self) -> None:
+        self.design.write_text('Evidence: /etc/cloudflared/config.yml on CT105.\n'
+                               'Evidence: `/etc/cloudflared/config.yml` on CT105.\n'
+                               'CT105: `/etc/cloudflared/config.yml`.\n')
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((self.run / 'authority-digest.json').read_text())
+        self.assertNotIn('/etc/cloudflared/config.yml', [row['path'] for row in manifest['originals']])
+        self.assertIn(str(self.design), [row['path'] for row in manifest['originals']])
+        self.assertIn('remote_host_evidence', (self.run / 'authority-digest.md').read_text())
+
+    def test_ai90_missing_local_authority_in_plan_stays_required(self) -> None:
+        missing = self.root / 'missing-local-original.md'
+        # Remote evidence on another line cannot waive a local original, even with a host mention.
+        self.design.write_text('Evidence: `/etc/cloudflared/config.yml` on CT105.\n'
+                               f'Read governing original: `{missing}` IN FULL (for CT105).\n')
+        result = self.digest()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AUTHORITY_MISSING', result.stderr)
+        plain_error = re.sub(r'\s+', ' ', re.sub(r'\x1b\[[0-9;]*m', '', result.stderr))
+        self.assertIn(missing.name, plain_error)
+        missing.write_text('Only local source edits; never deploy.\n')
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((self.run / 'authority-digest.json').read_text())
+        self.assertIn(str(missing), [row['path'] for row in manifest['originals']])
+        missing.unlink()
+        result = self.digest()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('AUTHORITY_MISSING', result.stderr)
 
     def populate_long_run(self) -> None:
         dims = json.loads((Path(__file__).parent / 'fixtures/resume-long-run.json').read_text())
