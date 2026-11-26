@@ -660,7 +660,7 @@ def test_claude_latest_usage_rendered_in_markdown_html_and_discord(tmp_path, pre
     for output in outputs:
         assert expected in output
         assert "Claude blocked-minutes are not computed" in output
-        assert "only the latest reading is kept, not a history" in output
+        assert "sampled quota history cannot establish continuous blocked time" in output
         assert "no Claude account-level quota field" not in output
 
 

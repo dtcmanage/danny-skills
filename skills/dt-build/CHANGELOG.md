@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.63.0
+
+- Model router: retain durable quota-window observations and conservatively classified reset history.
+
 ## 2.62.3
 
 - Model router bench: accept Codex 0.171's account/updated reason field and GPT-6.2 Sol's declared send_message_to_user_async tool (calls still rejected).

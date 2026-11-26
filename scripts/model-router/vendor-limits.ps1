@@ -9,6 +9,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 . (Join-Path $PSScriptRoot 'router-credentials.ps1')
+. (Join-Path $PSScriptRoot 'quota-history.ps1')
+$script:RouterQuotaHistoryStatus = 'no_observation'
 
 function Format-RouterUsageMessage {
     param([string]$Vendor, [AllowNull()][object]$Usage)
@@ -54,7 +56,15 @@ function ConvertFrom-RouterClaudeRateLimitHeaders {
     param([Parameter(Mandatory)][System.Collections.IDictionary]$Headers)
     $get = { param($Name) foreach ($key in $Headers.Keys) { if ([string]$key -ieq $Name) { return [string](@($Headers[$key])[0]) } }; return $null }
     $result = [ordered]@{ source = 'inference-headers' }
-    foreach ($pair in @(@('seven_day','7d'), @('five_hour','5h'))) {
+    $pairs = [Collections.Generic.List[object]]::new()
+    $pairs.Add(@('seven_day','7d')); $pairs.Add(@('five_hour','5h'))
+    foreach ($key in $Headers.Keys) {
+        if ([string]$key -match '^anthropic-ratelimit-unified-(.+)-(utilization|reset)$' -and $Matches[1] -notin @('7d','5h')) {
+            $slug = $Matches[1]
+            if (-not @($pairs | Where-Object { $_[1] -eq $slug }).Count) { $pairs.Add(@($slug,$slug)) }
+        }
+    }
+    foreach ($pair in $pairs) {
         $util = & $get "anthropic-ratelimit-unified-$($pair[1])-utilization"
         $reset = & $get "anthropic-ratelimit-unified-$($pair[1])-reset"
         if ([string]::IsNullOrWhiteSpace($util) -and [string]::IsNullOrWhiteSpace($reset)) { continue }
@@ -150,6 +160,8 @@ function Get-RouterClaudeUsage {
         }
         $scopes = @(if ($credential.PSObject.Properties['scopes']) { $credential.scopes })
         $response = & $script:RouterClaudeUsageFetcher ([string]$credential.token) $scopes
+        $historySource = if ($null -ne $response -and $response.PSObject.Properties['source']) { [string]$response.source } else { 'oauth-usage' }
+        Save-RouterQuotaObservation -Vendor claude -Source $historySource -Data $response
         if ($null -eq $response -or -not $response.PSObject.Properties['seven_day'] -or $null -eq $response.seven_day -or
             -not $response.seven_day.PSObject.Properties['utilization'] -or $null -eq $response.seven_day.utilization -or
             -not $response.seven_day.PSObject.Properties['resets_at']) { throw 'CLAUDE_USAGE_SHAPE' }
@@ -191,6 +203,7 @@ function Save-RouterCodexAppServerReading {
     $value = [pscustomobject]@{ used_percent=[double]$Reading.used_percent
         resets_at_utc=([datetimeoffset]$Reading.resets_at_utc).ToUniversalTime().ToString('o')
         observed_at_utc=([datetimeoffset]::UtcNow).ToString('o'); source='codex-app-server' }
+    Save-RouterQuotaObservation -Vendor codex -Source 'codex-bench-weekly' -Data $Reading -ObservedAtUtc $value.observed_at_utc
     $path = Get-RouterCodexAppServerReadingPath
     $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path)
     Write-RouterJsonAtomic -Path $path -Value $value
@@ -244,7 +257,9 @@ function Get-RouterCodexLiveUsage {
         $process.StandardInput.WriteLine('{"id":2,"method":"account/rateLimits/read","params":{}}')
         $process.StandardInput.Flush()
         $reply = & $readReply 2
-        if ($null -eq $reply -or -not $reply.PSObject.Properties['result'] -or $null -eq $reply.result.rateLimits) { return $null }
+        if ($null -eq $reply -or -not $reply.PSObject.Properties['result']) { return $null }
+        Save-RouterQuotaObservation -Vendor codex -Source 'codex-account-limits' -Data $reply.result
+        if (-not $reply.result.PSObject.Properties['rateLimits'] -or $null -eq $reply.result.rateLimits) { return $null }
         $limits = $reply.result.rateLimits
         $window = $null; $weekly = $null
         foreach ($name in @('primary', 'secondary')) {
@@ -254,7 +269,13 @@ function Get-RouterCodexLiveUsage {
             if ($candidate.Value.PSObject.Properties['windowDurationMins'] -and $candidate.Value.windowDurationMins -eq 10080) { $weekly = $candidate.Value }
         }
         if ($null -eq $window) { return $null }
-        if ($null -ne $weekly) { $null = Save-RouterCodexAppServerReading -Reading @{ used_percent=[double]$weekly.usedPercent; resets_at_utc=[datetimeoffset]::FromUnixTimeSeconds([long]$weekly.resetsAt).ToString('o') } }
+        if ($null -ne $weekly) {
+            # Already captured the complete account reply. Do not create a second observation
+            # with a different collection timestamp for the same weekly counter.
+            $weeklyPath = Get-RouterCodexAppServerReadingPath
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $weeklyPath)
+            Write-RouterJsonAtomic -Path $weeklyPath -Value ([pscustomobject]@{ used_percent=[double]$weekly.usedPercent; resets_at_utc=[datetimeoffset]::FromUnixTimeSeconds([long]$weekly.resetsAt).ToString('o'); observed_at_utc=[datetimeoffset]::UtcNow.ToString('o'); source='codex-app-server' })
+        }
         # The fullest window decides blocking for every caller, so it is saved apart from the weekly snapshot.
         $value = [pscustomobject]@{ used_percent=[double]$window.usedPercent
             resets_at_utc=[datetimeoffset]::FromUnixTimeSeconds([long]$window.resetsAt).ToString('o')
@@ -332,7 +353,7 @@ function Get-RouterCodexRolloutUsage {
         try {
             $stream = [IO.FileStream]::new($file.FullName,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
             $reader = [IO.StreamReader]::new($stream)
-            $last = $null
+            $last = $null; $historyLast = $null
             while ($null -ne ($line = $reader.ReadLine())) {
                 try { $row = $line | ConvertFrom-Json -Depth 20 -DateKind String } catch { continue }
                 if ($null -eq $row -or -not $row.PSObject.Properties['type'] -or $row.type -ne 'event_msg' -or
@@ -340,6 +361,7 @@ function Get-RouterCodexRolloutUsage {
                     -not $row.payload.PSObject.Properties['type'] -or $row.payload.type -ne 'token_count' -or
                     -not $row.PSObject.Properties['timestamp']) { continue }
                 if (-not $row.payload.PSObject.Properties['rate_limits'] -or $null -eq $row.payload.rate_limits) { continue }
+                $historyLast = $row
                 $primary = $row.payload.rate_limits.PSObject.Properties['primary']
                 if ($Weekly) {
                     $primary = $null
@@ -360,6 +382,9 @@ function Get-RouterCodexRolloutUsage {
                     $used = [double]$primary.Value.used_percent
                 } catch { continue }
                 $last = [pscustomobject]@{ used_percent=$used; resets_at_utc=$reset.ToString('o'); observed_at_utc=$observed.ToString('o'); source_file=$file.FullName }
+            }
+            if ($null -ne $historyLast) {
+                Save-RouterQuotaObservation -Vendor codex -Source 'codex-rollout' -Data @{ rateLimits=$historyLast.payload.rate_limits } -ObservedAtUtc ([string]$historyLast.timestamp) -Provenance cache
             }
             if ($null -ne $last) {
                 if ([datetimeoffset]$last.resets_at_utc -le [datetimeoffset]::UtcNow) { $last.used_percent = 0.0 }

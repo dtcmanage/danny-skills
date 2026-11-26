@@ -666,7 +666,7 @@ def current_reading_text(report: dict, text: str) -> str:
     return f"Current reading, not from this past week: {text}" if report.get("historical") else text
 
 
-CLAUDE_BLOCKED_NOTE = "Claude blocked-minutes are not computed (only the latest reading is kept, not a history)."
+CLAUDE_BLOCKED_NOTE = "Claude blocked-minutes are not computed; sampled quota history cannot establish continuous blocked time. Use quota_history.py --events for reset context (causes unknown)."
 
 
 def difficulty_dispatches(state_dir: Path) -> list[dict]:

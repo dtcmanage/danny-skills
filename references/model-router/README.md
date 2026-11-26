@@ -403,3 +403,111 @@ once. A refusal before CLI launch releases that reservation. A launched dispatch
 consumes approval even when execution fails. A second launch is refused.
 The scrutiny call runs without tools (Claude uses default permissions;
 Codex uses the read-only sandbox).
+
+# Quota observation and reset history
+
+`vendor-limits.ps1` captures successful vendor responses before its existing routing-only
+zero-at-expiry adjustment. Routing outputs, cache fields and the 95% guard are unchanged.
+`quota-history.ps1` sends an envelope to the standard-library `quota_history.py` ledger.
+Persistence uses the existing Linux owner gate; Mac/Windows observers do not write this
+ledger. The explicit account profile is `danny-local-owner`, never a credential/token hash.
+This profile assumes Danny's single account per vendor; before switching accounts, give
+the collector a distinct explicit profile in code rather than mixing account histories.
+
+Claude endpoint keys (including optional model/feature windows), all exposed unified
+utilization/reset headers, Codex account `rateLimitsByLimitId` pools plus the legacy
+pool, primary/secondary windows, and individual spending-limit windows are retained.
+Shared pools remain shared; `normalModelSlug` is reported metadata, not a new quota.
+The existing bench saver contributes its exposed weekly snapshot only, with pool
+`unreported` because that legacy contract does not carry a pool ID. Normal Codex
+rollout reads capture the last vendor envelope from each file already inspected (at
+most the existing three recent files), labelled `cache`, without additional log walks.
+Claude cache-only reads add no new observation; they never submit routing's synthetic zero.
+
+Each observation records original observation and collection timestamps in UTC, vendor,
+profile, stable pool/window identity, reported scope, percentages, reset deadline,
+source, fresh/cache/backfill provenance and allowlisted vendor metadata. No request
+headers, tokens, credential locators or full session text enter the ledger. Live sources
+do not expose their own observation timestamp, so response collection time is used;
+rollout observations retain the source timestamp. Missing limits stay unknown.
+
+`quota-history.sqlite` holds 90 days of observations/events. Older facts move into
+`quota-history-archive.sqlite` during writes, without deletion of historical facts.
+Only the latest comparable observation per pool/window remains in the baseline table.
+SQLite serializes callers; observation dedupe, baseline updates, event insertion and
+archive moves commit atomically across both databases (rollback journals). Keep both
+files when backing up. Normal analysis excludes archives; `--include-archives` opts in.
+Writers consult archive IDs for dedupe. No history size cap is imposed.
+
+Same source timestamp/value is deduplicated across cache paths. Out-of-order readings,
+same-time corrections, invalid percentages, future observations and already-expired
+vendor deadlines are retained with explicit status and cannot replace the comparable
+baseline. Missing windows do not erase it. Cached synthetic values are never ingested.
+
+Events preserve old/new percentages and deadlines, observation interval, reason and
+confidence. `schedule_change` means no observed usage restoration. `unexpected_drop`
+and `unexpected_drop_deadline_change` mean a possible extra reset or counter correction.
+`scheduled_consistent` means a drop across the expected deadline; sparse sampling cannot
+separate an ordinary rollover from additional resets. Cause is always `unknown`: counters
+cannot prove a promotion, payment, manual action or even distinguish correction from reset.
+Unknown old/new fields yield observations without an inferred event. Sampling does not
+support continuous blocked-minute calculations. ET text handles DST; storage stays UTC.
+
+## Collection and activation (parent only)
+
+No new timer or polling cadence is added. The existing
+`model-router-claude-usage.timer` at hourly :23 ET keeps its entry point,
+`refresh-claude-usage.ps1`, and now collects both vendors independently. Codex calls
+`account/rateLimits/read` without inference. Claude keeps the existing endpoint or
+one-token header request, five-minute cache and failure fallback; no extra Claude poll
+is introduced. The JSON result preserves its old fields and adds per-vendor collection
+and history status. A failed vendor or failed history write produces exit 1 without
+erasing the other vendor's data. The weekly report refreshes through the same readers.
+
+This feature worktree is not activated. After reviewing/landing it, the parent can
+collect a baseline on CT202 from the primary checkout:
+
+```bash
+cd "/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills"
+pwsh -NoProfile -File scripts/model-router/refresh-claude-usage.ps1 -Json
+```
+
+Smoke: expect both vendor statuses fresh (Claude may be `fresh_or_cache`), history
+statuses `recorded` or `no_observation` for an existing Claude cache, and exit 0.
+If cached, the next hourly refresh captures Claude. Check the ledger JSON for actual
+non-synthetic percentages/deadlines and explicit unknown windows; rerun its read-only
+analysis without causing additional inference. Verify the existing timer remains at
+:23 ET with `systemctl --user list-timers model-router-claude-usage.timer`; do not
+register another timer. There is no schema migration of routing caches.
+
+Required parent schedule-registry delta (not applied by this build): for
+`mothership-ai-workspace-ct202-model-router-claude-usage`, update `does` to include
+both vendors' durable quota/reset observations; extend `frequency_reason` to explain
+that hourly sampling bounds otherwise invisible extra-reset intervals, including when
+no model task runs; update `source` to note the no-inference Codex probe alongside the
+existing one-token Claude request; include both SQLite state paths in cost accounting.
+Keep the cadence/catch-up settings; remeasure p95/CPU/RAM/disk for the extended job and
+have the parent reassess its existing 120-second scheduler limit using measurements.
+Canonical model-router-operations reference also needs its quota-source description
+updated from Codex-session-only to account probe plus retained rollout fallback, and
+a pointer here. This build does not edit canonical Resources or schedule-registry.
+
+## Analysis CLI and historical limits
+
+Read-only analysis requires an explicit state root and creates no runtime state:
+
+```bash
+cd "/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills"
+python3 scripts/model-router/quota_history.py --state-dir "/home/danny/Claude/_Claude-Workspace/Skill Creation/model-router/state" --events --include-archives --format summary
+```
+
+Use `--format json` or `--format csv` for export; omit `--events` for quota-window
+observations. Human summaries display ET and expected reset times. JSON/CSV retain UTC.
+No automatic backfill is run: old reports are sparse and the retained routing snapshots
+can have lost window identity or contain synthesized expiry values. History therefore
+begins at activation (plus original-timestamp rollout observations encountered naturally).
+Past reset causes remain unknown. For a separately verified historical vendor envelope,
+`--ingest` accepts one JSON object on stdin with `vendor`, `source`, `observed_at_utc`,
+`collected_at_utc`, `provenance: "backfill"`, optional explicit `owner_profile`, and
+`data` in the original endpoint shape. It is bounded to that envelope and idempotent;
+it cannot rewrite a newer baseline. Do not recursively scan or hash session trees.

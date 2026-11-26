@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.19.0 (2026-11-25): Model router: retain durable quota-window observations and conservatively classified reset history.
+
 - 1.18.10 (2026-11-25): Model router bench: accept Codex 0.171's account/updated reason field and GPT-6.2 Sol's declared send_message_to_user_async tool (calls still rejected).
 
 - 1.18.9 (2026-11-25): Shared script update: model router reads Claude usage from inference rate-limit headers when the token lacks profile scope, plus an hourly refresh timer.

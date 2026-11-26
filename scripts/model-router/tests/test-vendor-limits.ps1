@@ -343,7 +343,9 @@ try {
         $usage = Get-RouterClaudeUsage
         Assert-True ($script:probeCalls -eq 1 -and $script:endpointCalls -eq 1 -and $usage.used_percent -eq 40 -and $usage.session_percent -eq 5 -and $usage.source -ceq 'oauth-usage') 'profile-scope token keeps the usage endpoint'
     } finally { Remove-Item Function:\Invoke-RestMethod -ErrorAction SilentlyContinue; $script:RouterClaudeHeaderProbe = $script:defaultClaudeProbe; $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials }
+    $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND = Join-Path $PSScriptRoot 'fixtures/fake-codex-limits.py'
     $refreshOut = & pwsh -NoProfile -Command "`$env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS='$(Join-Path $temp 'missing-credentials.json')'; & '$(Join-Path $PSScriptRoot '../refresh-claude-usage.ps1')' -Json; exit `$LASTEXITCODE" 2>&1
+    $env:DT_MODEL_ROUTER_CODEX_LIVE_COMMAND = $null
     Assert-True ($LASTEXITCODE -eq 1 -and (($refreshOut | Select-Object -Last 1) | ConvertFrom-Json).fresh -eq $false) 'timed refresh exits 1 when it gets no fresh reading'
     Assert-True ((Format-RouterUsageText -Usage ([pscustomobject]@{ used_percent=98 })) -ceq '98% used / 2% left' -and
         (Format-RouterUsageText -Usage ([pscustomobject]@{ used_percent=104.25 })) -ceq '104.3% used / 0% left' -and
