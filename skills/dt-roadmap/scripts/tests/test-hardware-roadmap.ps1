@@ -64,6 +64,8 @@ Host: measured 32 logical processors, 63 GiB RAM, CIM, 2026-10-17; 2 GiB per job
     & (Join-Path $PSScriptRoot '../build-roadmap.ps1') -DesignPath $design -RoadmapPath $roadmap -ForceMermaidFallback | Out-Null
     $raw = Get-Content $roadmap -Raw
     Check ($raw.Contains('UNRESOLVED') -and $raw.Contains('M01: supply dependencies') -and $raw.Contains('M03: supply dependencies')) 'legacy designs surface missing decisions for every milestone'
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-dependencies.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Dependency regression suite failed' }
     Write-Output "SUMMARY: $passed passed"
 } finally {
     $resolved = [IO.Path]::GetFullPath($root)

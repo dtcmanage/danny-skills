@@ -23,6 +23,12 @@ Check ($clean.errors.Count -eq 0 -and $clean.warnings.Count -eq 0) 'clean correc
 $reordered = Get-MilestoneDependencyAnalysis @($milestones[2], $milestones[0], $milestones[1]) @($surfaces[2], $surfaces[1], $surfaces[0])
 Check (($reordered.edges | ConvertTo-Json -Compress) -ceq ($clean.edges | ConvertTo-Json -Compress)) 'row order cannot create dependencies'
 foreach ($case in @(
+    @('.env.example', '.env.example', $true),
+    @('.env.example', 'README.md', $false),
+    @('.env.example', '**/.env.*', $true),
+    @('config/.env.example', '.env.example', $false),
+    @('a', '?', $true),
+    @('a', 'b', $false),
     @('deploy/**', 'deploy/target_lock.py', $true),
     @('deploy/*.py', 'deploy/target_*.py', $true),
     @('src/**/config?.ts', 'src/config1.*', $true),
@@ -32,6 +38,19 @@ foreach ($case in @(
     @('src/A.ts', 'src/a.ts', $false)
 )) { Check ((Test-GlobIntersection $case[0] $case[1]) -eq $case[2]) "glob intersection $($case[0]) <> $($case[1])" }
 $reverse = @([pscustomobject]@{id='M01';dependencies='M02'}, [pscustomobject]@{id='M02';dependencies='-'})
+$rootSurfaces = Read-MilestoneSurfaces @'
+## Milestone Surfaces
+| milestone-id | write-surface | provides | consumes | design-source |
+| --- | --- | --- | --- | --- |
+| M01 | .env.example | - | - | root config |
+| M02 | **/.env.* | - | - | config templates |
+'@
+$rootMilestones = @([pscustomobject]@{id='M01';dependencies='-'}, [pscustomobject]@{id='M02';dependencies='-'})
+$rootOverlap = Get-MilestoneDependencyAnalysis $rootMilestones $rootSurfaces
+Check (($rootOverlap.errors -join ' ') -match 'DEPENDENCY_OVERLAP_UNDECLARED' -and ($rootOverlap.dependencies.M02 -join ',') -eq 'M01') 'root surface overlap requires serialization'
+$rootSurfaces[1].'write-surface' = 'README.md'
+$rootSeparate = Get-MilestoneDependencyAnalysis $rootMilestones $rootSurfaces
+Check ($rootSeparate.errors.Count -eq 0 -and $rootSeparate.edges.Count -eq 0 -and $rootSeparate.dependencies.M02.Count -eq 0) 'distinct root surfaces stay independent'
 $reverseSurfaces = @(
     [pscustomobject]@{'milestone-id'='M01';'write-surface'='shared/**';provides='-';consumes='api:slots';'design-source'='consumer'},
     [pscustomobject]@{'milestone-id'='M02';'write-surface'='shared/slots.py';provides='api:slots';consumes='-';'design-source'='provider'}

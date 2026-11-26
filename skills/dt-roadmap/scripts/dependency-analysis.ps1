@@ -23,8 +23,8 @@ function Read-MilestoneSurfaces([string]$Text) {
 # Intersect two glob automata. For paths, ** is a whole segment (zero or more
 # directories); segment patterns support * and ?. No filesystem probes needed.
 function Test-GlobIntersection([string]$Left, [string]$Right, [switch]$Segments) {
-    $a = if ($Segments) { @($Left.ToCharArray() | ForEach-Object { [string]$_ }) } else { @($Left.Split('/')) }
-    $b = if ($Segments) { @($Right.ToCharArray() | ForEach-Object { [string]$_ }) } else { @($Right.Split('/')) }
+    $a = @(if ($Segments) { $Left.ToCharArray() | ForEach-Object { [string]$_ } } else { $Left.Split('/') })
+    $b = @(if ($Segments) { $Right.ToCharArray() | ForEach-Object { [string]$_ } } else { $Right.Split('/') })
     $star = if ($Segments) { '*' } else { '**' }
     $todo = [System.Collections.Generic.Queue[object]]::new()
     $seen = [System.Collections.Generic.HashSet[string]]::new()

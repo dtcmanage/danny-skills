@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.5.1
+
+- Keep glob tokens as arrays under strict mode for root-level write surfaces; cover overlapping and independent root files in the release gate.
+
 ## 1.5.0
 
 - Derive milestone dependencies from declared file/glob overlap and provided/consumed interfaces; validate unexplained prerequisites and missing serialization.
