@@ -422,6 +422,46 @@ try {
     $missingFailure = ''
     try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
     Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains('missing-bare-approval.md')) 'missing bare name outside a design document still fails closed'
+    # Legacy discovery pins contextual sources without promoting their citations into originals.
+    $contextWorkspace = Join-Path $root '_Claude-Workspace'
+    $contextRun = Join-Path $contextWorkspace 'Build/run'
+    $contextResources = Join-Path $contextWorkspace '00_Resources'
+    New-Item -ItemType Directory -Path $contextRun, $contextResources -Force | Out-Null
+    $contextCheckpoint = Join-Path $contextRun '_build-state.md'
+    $governingPolicy = Join-Path $contextWorkspace 'CLAUDE.md'
+    $stagePrompt = Join-Path $contextRun 'build-stage-prompt.md'
+    $decisionOutput = Join-Path $contextRun 'decision-needed.md'
+    $missingCitation = Join-Path $contextWorkspace 'Home Server/summary.txt'
+    $contextDocuments = @(
+        (Join-Path $contextWorkspace 'UNIFIED-MEMORY.md')
+        (Join-Path $contextWorkspace 'TCM Tech Stack Reference.md')
+        (Join-Path $contextResources 'model-routing.md')
+        (Join-Path $contextRun 'source-evidence.md')
+        (Join-Path $contextRun 'launch-evidence.md')
+    )
+    foreach ($doc in $contextDocuments) { Write-Text $doc ('Historical evidence: `' + $missingCitation + '`.') }
+    $policyText = ($contextDocuments | ForEach-Object { 'Reference: `' + $_ + '`' }) -join "`n"
+    Write-Text $governingPolicy $policyText
+    $stageText = 'If a user decision becomes necessary, write its exact question to `' + $decisionOutput + '`.'
+    Write-Text $stagePrompt $stageText
+    Write-Text $contextCheckpoint ('Read originals: `' + $governingPolicy + '`, `' + $stagePrompt + '`.')
+    $contextInventory = @(Get-AuthorityInventory $contextRun $contextCheckpoint)
+    Assert-True ($contextInventory.Count -eq 7 -and @($contextInventory | Where-Object path -in $contextDocuments).Count -eq 5) 'contextual source files stay pinned without resolving incidental citations'
+    Assert-True (@($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $decisionOutput -and -not $_.required }).Count -eq 1) 'conditional stage output is found as navigation'
+    Write-Text $stagePrompt ($stageText + ' Read original: `' + $decisionOutput + '`.')
+    $missingFailure = ''
+    try { Get-AuthorityInventory $contextRun $contextCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
+    Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains($decisionOutput)) 'a separate read of the same decision path remains required'
+    Write-Text $stagePrompt $stageText
+    Write-Text $governingPolicy ($policyText + "`n" + 'Read governing original: `' + $missingCitation + '`.')
+    $missingFailure = ''
+    try { Get-AuthorityInventory $contextRun $contextCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
+    Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains($missingCitation)) 'an original separately named from governing policy fails closed even when cited as historical evidence'
+    Write-Text $governingPolicy $policyText
+    Remove-Item -LiteralPath $contextDocuments[0]
+    $missingFailure = ''
+    try { Get-AuthorityInventory $contextRun $contextCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
+    Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains('UNIFIED-MEMORY.md')) 'a directly named context source itself still fails closed if missing'
     # B2 fix 2: POSIX absolute paths with spaces (a Linux workspace's "Home Server") resolve whole.
     $spacedRoot = Join-Path $root 'Home Server'
     New-Item -ItemType Directory -Path (Join-Path $spacedRoot 'design') -Force | Out-Null

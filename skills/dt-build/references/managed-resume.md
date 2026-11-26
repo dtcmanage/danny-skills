@@ -84,6 +84,8 @@ A patch for a live bug is never queued behind milestone work: `fast-lane.md`.
 
 The original records remain the authorization source. The digest is a mechanical navigation index, never an approval. Coordinators never author or edit its authority content, extracts, manifest or pin; invoke the scripts only.
 
+Legacy recursive discovery pins referenced planning evidence (`source-evidence.md` and `launch-evidence.md`) and the workspace's generated memory index, tech stack reference and model-routing reference as terminal documents. Their citations cover research, operational examples and other workstations. Name any governing original independently in the run's authority records. A stage prompt's conditional instruction to write `decision-needed.md` identifies an output. Cite it separately if it becomes an original for an active stop.
+
 **Bootstrap boundary ledger.** Apply this only to boundary/approval source files selected for full bootstrap reads below, including current stop restrictions. For those sources, `unchanged` plus recorded lines satisfies items 1-2's bootstrap full-read requirement. Keep the checkpoint, run build-state/build-plan, verified registration/lease, complete `approvals.json` and operator notes fresh through the existing resume reads; never substitute the ledger for them. Authorization still comes only from the run record Danny's commands write.
 
 - Call `& "<skill>/scripts/boundary-ledger.ps1" plan -RunFolder <folder> -Paths @(<absolute-source-paths>)` in PowerShell; it returns a JSON array. Do not pass arrays through `pwsh -File`.

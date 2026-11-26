@@ -36,6 +36,13 @@ function Test-AuthorityLifecycleLocator {
         $Line -match '^(?:roadmap|design|plan)_path:\s*[^\r\n]+$' -and
         $Line -notmatch '(?i)IN FULL|before\s*bootstrap')
 }
+
+function Test-AuthorityContextDocument {
+    param([string]$Path)
+    $relative = $Path.Replace('\', '/')
+    return $relative -match '(?i)/_Claude-Workspace/(?:UNIFIED-MEMORY\.md|TCM Tech Stack Reference\.md|00_Resources/model-routing\.md)$' -or
+        (Split-Path -Leaf $Path) -in @('source-evidence.md', 'launch-evidence.md')
+}
 $script:AuthorityCheckpointPointerLine = '^\s*(?:[-*]\s*)?[A-Z][A-Z0-9_]*=|(?i:bootstrap)|IN FULL'
 
 function Get-AuthorityCheckpointText {
@@ -266,6 +273,9 @@ function Get-AuthorityInventory {
             }
             continue
         }
+        # Pin the document itself. Its citations describe evidence, runtime examples and
+        # other workstations. Only independent authority references add those originals.
+        if ($path -ne $checkpoint -and (Test-AuthorityContextDocument $path)) { continue }
         $candidates = if ($path -eq $checkpoint) { $checkpointCandidates } else { @(Get-AuthorityCandidates $text $aliases) }
         foreach ($candidate in $candidates) {
             # Keep each waiver explicit and visible in the coordinator's digest read.
@@ -295,6 +305,14 @@ function Get-AuthorityInventory {
             # A boundary's reference to an artifact carries scope even on a separate line.
             # A checkpoint locator alone is navigation; any other authority reference is a full read.
             $sourceLine = ($text.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($text.Substring($candidate.index) -split '\r?\n')[0]
+            # A conditional output named by a stage prompt is produced if a decision arises.
+            # Current stop authority is supplied independently through the checkpoint or approvals.
+            if ((Split-Path -Leaf $path) -eq 'build-stage-prompt.md' -and
+                (Split-Path -Leaf $resolved) -eq 'decision-needed.md' -and
+                ($text.Substring(0, $candidate.index) -split '\r?\n')[-1] -match '(?i)\bif a user decision becomes necessary, write\b[^.!?]*\bto\s+[`"'']?$') {
+                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = 'non_authority_reference'; required = $false; waiver_rule = 'conditional_decision_output' })
+                continue
+            }
             if (-not $script:AuthorityLegacyArtifactKinds -and $resolved -in $script:AuthorityArtifactPaths -and
                 -not (Test-AuthorityLifecycleLocator $path $sourceLine) -and
                 (($kind -in @('boundary', 'approval', 'operator_notes') -and -not $isImplementation) -or
@@ -330,6 +348,7 @@ function Get-AuthorityInventory {
     foreach ($record in $records) {
         if ($record.kind -ne 'implementation') { continue }
         foreach ($boundaryRecord in @($records | Where-Object kind -eq 'boundary')) {
+            if (-not $script:AuthorityEnumeratedPaths.Count -and (Test-AuthorityContextDocument $boundaryRecord.path)) { continue }
             foreach ($candidate in @(Get-AuthorityCandidates ([IO.File]::ReadAllText($boundaryRecord.path)) $aliases)) {
                 $boundaryText = [IO.File]::ReadAllText($boundaryRecord.path)
                 $line = ($boundaryText.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($boundaryText.Substring($candidate.index) -split '\r?\n')[0]

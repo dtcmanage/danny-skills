@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.63.1
+
+- Keep contextual citations out of legacy authority discovery while continuing to verify governing originals.
+
 ## 2.63.0
 
 - Model router: retain durable quota-window observations and conservatively classified reset history.
