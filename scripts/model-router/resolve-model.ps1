@@ -20,6 +20,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'router-common.ps1')
+. (Join-Path $PSScriptRoot 'router-ladder.ps1')
 . (Join-Path $PSScriptRoot 'vendor-limits.ps1')
 . (Join-Path $PSScriptRoot '../resolve-codex-model.ps1')
 . (Join-Path $PSScriptRoot 'send-router-alert.ps1')
@@ -52,7 +53,7 @@ function Resolve-RouterEscalationAlias {
     if ($Lane -ne 'claude' -or -not $EscalateFrom) { return $EscalateFrom }
     $family = ($EscalateFrom -replace '\[1m\]$','').ToLowerInvariant()
     if ($family -notin @('haiku','sonnet','opus','fable')) { return $EscalateFrom }
-    $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json -Depth 10
+    $map = Get-RouterLadderMap
     $match = @($map.lanes.claude.ladder | Where-Object { (Get-RouterAgentAlias -Model $_.model) -eq $family } | Select-Object -First 1)
     if ($match.Count) { return [string]$match[0].model }
     return $EscalateFrom
@@ -95,7 +96,7 @@ function Resolve-RouterRosterPick {
         if ($Lane -and $Lane -ne $vendor) { throw 'RETRY_LANE_CONFLICT' }
         $target = if ($first.vendor -eq $vendor) { $first } else { $backup }
         $from = Resolve-RouterEscalationAlias -EscalateFrom $RetryAtHardFrom -Lane $vendor
-        $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json
+        $map = Get-RouterLadderMap
         $allowed = @($map.lanes.$vendor.ladder | Where-Object { -not $_.frontier } | ForEach-Object { $_.model }) + @($target.model)
         if ($from -notin $allowed) { throw 'RETRY_MODEL_INVALID' }
         $chosen = [pscustomobject]@{model=$from;vendor=$vendor;effort=$target.effort}
@@ -119,7 +120,7 @@ function Resolve-RouterRosterPick {
         $sourceVendor = if ($EscalateFrom -like 'gpt-*') { 'codex' } elseif ($EscalateFrom -like 'claude-*' -or $EscalateFrom -match '^(haiku|sonnet|opus|fable)(\[1m\])?$') { 'claude' } else { $null }
         $source = if ($Lane -and $sourceVendor -and $sourceVendor -ne $Lane) { $chosen.model } else { $EscalateFrom }
         $from = Resolve-RouterEscalationAlias -EscalateFrom $source -Lane $chosen.vendor
-        $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json -Depth 10
+        $map = Get-RouterLadderMap
         $ids = @($map.lanes.($chosen.vendor).ladder | Where-Object { -not $_.frontier } | ForEach-Object { [string]$_.model })
         $at = [array]::IndexOf($ids,$from)
         if ($at -ge 0) {
@@ -273,7 +274,7 @@ function Read-RouterFrontierRequest {
     foreach ($field in @('id','category','status','proposed_model','proposed_effort')) {
         if (-not $request.PSObject.Properties[$field]) { throw 'FRONTIER_REQUEST_INVALID' }
     }
-    $map = Get-Content (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json
+    $map = Get-RouterLadderMap
     $job = Get-RouterCategoryJob $request.category
     if ($job -notin @('coder','deep-thinker')) { throw 'FRONTIER_REQUEST_INVALID' }
     # The legacy roster reader converts JSON timestamps; keep its validation
@@ -283,7 +284,8 @@ function Read-RouterFrontierRequest {
         [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::InvariantCulture
         $vendor = (Read-RouterRoster).roster.jobs.$job.first_vendor
     } finally { [Globalization.CultureInfo]::CurrentCulture = $priorCulture }
-    $frontier = @($map.lanes.$vendor.ladder | Where-Object frontier | ForEach-Object model)
+    # A request filed before a newer release still names an approved frontier rung.
+    $frontier = @($map.lanes.$vendor.ladder | Where-Object frontier | ForEach-Object { $_.model; if ($_.PSObject.Properties['ladder_model']) { $_.ladder_model } })
     if ($request.id -cne $RequestId -or $request.proposed_model -cnotin $frontier -or $request.proposed_effort -cne 'high' -or (Get-RouterCategoryJob $request.category) -notin @('coder','deep-thinker')) { throw 'FRONTIER_REQUEST_INVALID' }
     return $request
 }

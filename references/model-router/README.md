@@ -21,6 +21,12 @@ must name the model, for example
 The row records `frontier_override: named-by-danny` and the quote in
 `by_name_request`, runs as a single dispatch with no cross-lane fallback, and
 refuses a non-frontier model or a combined `-FrontierRequest`.
+`fable` and `astra` mean the newest release of that family: a frontier rung in
+`ladders.json` with `track_latest: true` resolves (in `router-ladder.ps1`) to the
+highest same-family version in the state `known-models.json` that is not marked
+missing, falling back to the listed version. By-name dispatch, frontier requests
+and their validation all read that resolution. To pin a release after a
+regression, set that rung's `track_latest` to `false` and list the version.
 Older Claude names such as `claude-3-opus-20240229` remain refused.
 
 `-Attempt` defaults to 1; later managed attempts retain `-ApprovalOperation` and

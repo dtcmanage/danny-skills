@@ -39,11 +39,11 @@ try {
     }
     $baseline = Get-Content (Join-Path $PSScriptRoot 'fixtures/frontier-router-baseline.json') -Raw | ConvertFrom-Json
     Check ((ConvertTo-Json -InputObject @($matrix) -Depth 30 -Compress) -ceq (ConvertTo-Json -InputObject @($baseline) -Depth 30 -Compress)) 'fixed 132 cases plus 12 classification-escalation cases: every property including difficulty and catalog/quota calls'
-    foreach ($row in $matrix) { Check ($row.result.model -notin @('gpt-6-astra','claude-fable-5-1')) 'difficulty paths exclude frontier' }
+    foreach ($row in $matrix) { Check ($row.result.model -notin @('gpt-6.2-astra','claude-fable-5-2')) 'difficulty paths exclude frontier' }
     foreach ($lane in @('codex','claude')) {
-        foreach ($source in @('gpt-6-luna','gpt-6.1-sol','gpt-6-astra','haiku','sonnet','opus','fable')) {
+        foreach ($source in @('gpt-6-luna','gpt-6.1-sol','gpt-6.2-astra','haiku','sonnet','opus','fable')) {
             $pick = Resolve-RouterModel -Category analysis -Lane $lane -EscalateFrom $source -Difficulty hard -DifficultyReason 'Failed hard'
-            Check ($pick.model -notin @('gpt-6-astra','claude-fable-5-1')) 'escalation excludes frontier'
+            Check ($pick.model -notin @('gpt-6.2-astra','claude-fable-5-2')) 'escalation excludes frontier'
         }
     }
     . (Join-Path $PSScriptRoot '../request-frontier.ps1')
@@ -98,7 +98,7 @@ throw 'Unexpected alert transport request'
     $result=Request-RouterFrontier @requestArgs -ScrutinyInvoker $fake
     $id=$result.request_id; $path=Get-RouterFrontierRequestPath $id
     $request=Read-RouterFrontierRequest $id
-    Check ($result.waits -and $request.status -eq 'pending' -and $request.problem_summary.Length -eq 600 -and $request.proposed_model -eq 'claude-fable-5-1' -and $request.proposed_effort -eq 'high' -and $request.expected_quota_note -and $request.created_at) 'pending request metadata and first-choice vendor frontier'
+    Check ($result.waits -and $request.status -eq 'pending' -and $request.problem_summary.Length -eq 600 -and $request.proposed_model -eq 'claude-fable-5-2' -and $request.proposed_effort -eq 'high' -and $request.expected_quota_note -and $request.created_at) 'pending request metadata and first-choice vendor frontier'
     Check ($request.attempts.Count -eq 1 -and $request.attempts[0].path -eq (Convert-Path $attemptFile) -and $request.attempts[0].sha256 -ceq (Get-FileHash $attemptFile).Hash.ToLowerInvariant() -and $request.scrutiny_verdict.verdict -eq 'needs_frontier') 'attempt paths hashes and scrutiny preserved'
     Check (@(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-dms.jsonl')).Count -eq 1) 'exactly one fake DM'
     $log = Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'alert-log.jsonl') | ConvertFrom-Json
@@ -114,37 +114,37 @@ throw 'Unexpected alert transport request'
     Refused { Resolve-RouterModel -Category analysis -FrontierRequest '../escape' } 'ID_INVALID'
     $approve=Join-Path $PSScriptRoot '../approve-roster.ps1'
     Refused { & $approve -ApproveFrontier -RequestId $id } 'MODEL_REQUIRED'
-    Refused { & $approve -ApproveFrontier -RequestId $id -Model gpt-6-astra } 'MODEL_MISMATCH'
+    Refused { & $approve -ApproveFrontier -RequestId $id -Model gpt-6.2-astra } 'MODEL_MISMATCH'
     Refused { & $approve -ApproveFrontier -RequestId $id -Model CLAUDE-FABLE-5-1 } 'MODEL_MISMATCH'
     $request.status='approved'; Write-RouterJsonAtomic $path $request
     Refused { Resolve-RouterModel -Category analysis -FrontierRequest $id } 'APPROVAL_INVALID'
     $request | Add-Member decided_at 'not-a-date'; $request | Add-Member approved_model $request.proposed_model
     Write-RouterJsonAtomic $path $request
     Refused { Resolve-RouterModel -Category analysis -FrontierRequest $id } 'APPROVAL_INVALID'
-    $request.decided_at=[datetimeoffset]::UtcNow.ToString('o');$request.approved_model='gpt-6-astra';Write-RouterJsonAtomic $path $request
+    $request.decided_at=[datetimeoffset]::UtcNow.ToString('o');$request.approved_model='gpt-6.2-astra';Write-RouterJsonAtomic $path $request
     Refused { Resolve-RouterModel -Category analysis -FrontierRequest $id } 'APPROVAL_INVALID'
     $request.proposed_model='claude-opus-5-5';$request.approved_model='claude-opus-5-5';Write-RouterJsonAtomic $path $request
     Refused { Resolve-RouterModel -Category analysis -FrontierRequest $id } 'REQUEST_INVALID'
-    $request.proposed_model='claude-fable-5-1';$request.status='pending';Write-RouterJsonAtomic $path $request
-    & $approve -ApproveFrontier -RequestId $id -Model claude-fable-5-1 | Out-Null
+    $request.proposed_model='claude-fable-5-2';$request.status='pending';Write-RouterJsonAtomic $path $request
+    & $approve -ApproveFrontier -RequestId $id -Model claude-fable-5-2 | Out-Null
     Check ([bool](Read-RouterFrontierRequest $id).decided_at) 'approval records decision time'
     Refused { Resolve-RouterModel -Category analysis -Lane codex -FrontierRequest $id } 'LANE_MISMATCH'
     $pick=Resolve-RouterModel -Category analysis -FrontierRequest $id
-    Check ($pick.model -eq 'claude-fable-5-1' -and $pick.effort -eq 'high' -and $pick.reason.Contains($id) -and $pick.difficulty -eq 'hard') 'approved one-piece dispatch implies hard'
+    Check ($pick.model -eq 'claude-fable-5-2' -and $pick.effort -eq 'high' -and $pick.reason.Contains($id) -and $pick.difficulty -eq 'hard') 'approved one-piece dispatch implies hard'
     Refused { Resolve-RouterModel -Category analysis -FrontierRequest $id } 'REQUEST_USED'
-    Refused { & $approve -ApproveFrontier -RequestId $id -Model claude-fable-5-1 } 'NOT_PENDING'
+    Refused { & $approve -ApproveFrontier -RequestId $id -Model claude-fable-5-2 } 'NOT_PENDING'
     $requestArgs.Category='routine-coding'; $requestArgs.AttemptVendor='claude'; $requestArgs.AttemptPaths=@($attemptFile,$secondFile)
     $result=Request-RouterFrontier @requestArgs -ScrutinyInvoker $fake
     $id=$result.request_id
-    Check ((Read-RouterFrontierRequest $id).proposed_model -eq 'gpt-6-astra' -and (Read-RouterFrontierRequest $id).attempts.Count -eq 2) 'coder first vendor and disagreeing attempts'
-    Refused { & $approve -DeclineFrontier -RequestId $id -Model gpt-6-astra } 'MODEL_NOT_ALLOWED'
+    Check ((Read-RouterFrontierRequest $id).proposed_model -eq 'gpt-6.2-astra' -and (Read-RouterFrontierRequest $id).attempts.Count -eq 2) 'coder first vendor and disagreeing attempts'
+    Refused { & $approve -DeclineFrontier -RequestId $id -Model gpt-6.2-astra } 'MODEL_NOT_ALLOWED'
     & $approve -DeclineFrontier -RequestId $id | Out-Null
     Check ([bool](Read-RouterFrontierRequest $id).decided_at) 'decline records decision time'
     $pick=Resolve-RouterModel -Category routine-coding -FrontierRequest $id
     Check ($pick.status -eq 'declined' -and $null -eq $pick.model -and $pick.reason -match 'decompose') 'decline tells caller to decompose'
     $result=Request-RouterFrontier @requestArgs -ScrutinyInvoker $fake
     $id=$result.request_id
-    & $approve -ApproveFrontier -RequestId $id -Model gpt-6-astra | Out-Null
+    & $approve -ApproveFrontier -RequestId $id -Model gpt-6.2-astra | Out-Null
     $resolver=(Resolve-Path (Join-Path $PSScriptRoot '../resolve-model.ps1')).Path
     $jobs = 1..2 | ForEach-Object { Start-Job -ScriptBlock {
         param($Resolver,$State,$Id)
@@ -156,7 +156,7 @@ throw 'Unexpected alert transport request'
         $done = @($jobs | Wait-Job -Timeout 30)
         Check ($done.Count -eq 2) 'concurrent resolves complete'
         $answers=@($jobs | Receive-Job)
-        Check (@($answers | Where-Object {$_ -eq 'gpt-6-astra'}).Count -eq 1 -and @($answers | Where-Object {$_ -match 'FRONTIER_REQUEST_USED'}).Count -eq 1) 'atomic consume allows exactly one concurrent dispatch'
+        Check (@($answers | Where-Object {$_ -eq 'gpt-6.2-astra'}).Count -eq 1 -and @($answers | Where-Object {$_ -match 'FRONTIER_REQUEST_USED'}).Count -eq 1) 'atomic consume allows exactly one concurrent dispatch'
     } finally { $jobs | Stop-Job; $jobs | Remove-Job }
     Check ((Read-RouterFrontierRequest $id).status -eq 'used') 'request atomically marked used'
     $used=Read-RouterFrontierRequest $id; $used.status='approved'; Write-RouterJsonAtomic (Get-RouterFrontierRequestPath $id) $used
@@ -187,7 +187,7 @@ throw 'Unexpected alert transport request'
     $dm = Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-dms.jsonl') -Tail 1
     Check ($result.alert_sent -and $dm -notmatch 'sk-ant-|ghp_') 'redacted alert body and successful delivery surfaced'
     # Wrong-vendor frontier and malformed JSON are refused.
-    $boundedRequest.proposed_model='claude-fable-5-1'; Write-RouterJsonAtomic $boundedPath $boundedRequest
+    $boundedRequest.proposed_model='claude-fable-5-2'; Write-RouterJsonAtomic $boundedPath $boundedRequest
     Refused { Read-RouterFrontierRequest $result.request_id } 'REQUEST_INVALID'
     [IO.File]::WriteAllText($boundedPath,'{broken')
     Refused { Read-RouterFrontierRequest $result.request_id } 'REQUEST_MALFORMED'
@@ -195,17 +195,17 @@ throw 'Unexpected alert transport request'
     $cultureBefore = [Globalization.CultureInfo]::CurrentCulture
     try {
         $cultureResult = Request-RouterFrontier @requestArgs -ScrutinyInvoker $fake
-        & $approve -ApproveFrontier -RequestId $cultureResult.request_id -Model gpt-6-astra | Out-Null
+        & $approve -ApproveFrontier -RequestId $cultureResult.request_id -Model gpt-6.2-astra | Out-Null
         [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
         Check ((Read-RouterFrontierRequest $cultureResult.request_id).decided_at -is [string]) 'decision timestamp read as string'
-        Check ((Resolve-RouterModel -Category routine-coding -FrontierRequest $cultureResult.request_id).model -eq 'gpt-6-astra') 'approval resolves regardless of culture'
+        Check ((Resolve-RouterModel -Category routine-coding -FrontierRequest $cultureResult.request_id).model -eq 'gpt-6.2-astra') 'approval resolves regardless of culture'
     } finally { [Globalization.CultureInfo]::CurrentCulture = $cultureBefore }
     # Failed transports leave the request pending and give both exact commands.
     $failedTransport = Join-Path $fixture.root 'failed-alert-transport.ps1'
     'param($Request); throw "fake transport failure"' | Set-Content -LiteralPath $failedTransport
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $failedTransport
     $failed = Request-RouterFrontier @requestArgs -ScrutinyInvoker $fake
-    $approveCommand = "pwsh -NoProfile -File scripts/model-router/approve-roster.ps1 -ApproveFrontier -RequestId '$($failed.request_id)' -Model 'gpt-6-astra'"
+    $approveCommand = "pwsh -NoProfile -File scripts/model-router/approve-roster.ps1 -ApproveFrontier -RequestId '$($failed.request_id)' -Model 'gpt-6.2-astra'"
     $declineCommand = "pwsh -NoProfile -File scripts/model-router/approve-roster.ps1 -DeclineFrontier -RequestId '$($failed.request_id)'"
     Check (-not $failed.alert_sent -and $failed.message.StartsWith('ALERT_FAILED') -and $failed.message.Contains($approveCommand) -and $failed.message.Contains($declineCommand)) 'failed alert surfaces both exact decision commands'
     Check ((Read-RouterFrontierRequest $failed.request_id).status -eq 'pending') 'failed alert leaves pending request'

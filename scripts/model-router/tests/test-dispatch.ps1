@@ -64,11 +64,11 @@ try {
     $o=$base.Clone(); $o.Model='fable'; $o.ByNameRequest=$true; $o.SelectionReason=$byNameReason; $o.FrontierRequest='fr-fixture'; Reject { Invoke-RouterDispatch $o $fake } 'BY_NAME_REQUEST_CONFLICT'
     $o=$base.Clone(); $o.Model='fable'; $o.ByNameRequest=$true; $o.SelectionReason=$byNameReason
     $r=Invoke-RouterDispatch $o $fake
-    Check ($r.requested_model -ceq 'claude-fable-5-1' -and $r.frontier_override -ceq 'named-by-danny' -and $r.by_name_request -ceq 'use fable for this review' -and $r.override_reason -ceq $byNameReason) 'by-name frontier override recorded'
-    Check ($script:received[-1].vendor -eq 'claude' -and $script:received[-1].arguments.Model -ceq 'claude-fable-5-1' -and $script:received[-1].arguments.SingleDispatch -and $script:received[-1].arguments.ByNameRequest) 'by-name override reaches the claude wrapper as one dispatch'
-    $o=$base.Clone(); $o.Model='gpt-6-astra'; $o.ByNameRequest=$true; $o.SelectionReason=([char]0x201C + 'Danny: run Astra on it' + [char]0x201D) -replace '^', 'Danny asked: '
+    Check ($r.requested_model -ceq 'claude-fable-5-2' -and $r.frontier_override -ceq 'named-by-danny' -and $r.by_name_request -ceq 'use fable for this review' -and $r.override_reason -ceq $byNameReason) 'by-name frontier override recorded'
+    Check ($script:received[-1].vendor -eq 'claude' -and $script:received[-1].arguments.Model -ceq 'claude-fable-5-2' -and $script:received[-1].arguments.SingleDispatch -and $script:received[-1].arguments.ByNameRequest) 'by-name override reaches the claude wrapper as one dispatch'
+    $o=$base.Clone(); $o.Model='gpt-6.2-astra'; $o.ByNameRequest=$true; $o.SelectionReason=([char]0x201C + 'Danny: run Astra on it' + [char]0x201D) -replace '^', 'Danny asked: '
     $r=Invoke-RouterDispatch $o $fake
-    Check ($r.frontier_override -ceq 'named-by-danny' -and $script:received[-1].vendor -eq 'codex' -and $script:received[-1].arguments.Model -ceq 'gpt-6-astra') 'by-name override accepts curly quotes and the codex lane'
+    Check ($r.frontier_override -ceq 'named-by-danny' -and $script:received[-1].vendor -eq 'codex' -and $script:received[-1].arguments.Model -ceq 'gpt-6.2-astra') 'by-name override accepts curly quotes and the codex lane'
     $o=$base.Clone(); $r=Invoke-RouterDispatch $o $fake
     Check ($null -eq $r.frontier_override -and $null -eq $r.by_name_request) 'ordinary dispatch records no by-name override'
     foreach ($category in @(Get-RouterDispatchCategories)) {

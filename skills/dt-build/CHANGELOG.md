@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.65.0
+
+- model router: "fable" and "astra" mean the newest release the router has seen (a ladder frontier rung with track_latest; pin by setting it false); ladder lists Fable 5.2 and GPT-6.2 Astra; Codex read-only check no longer crashes outside a git tree
+
 ## 2.64.0
 
 - Honor a frontier model Danny names: -ByNameRequest with a quoted selection reason runs it once and records the quote (model-routing rule 4). Fix the Codex read-only check on Linux (stale exit code, output-folder guard, unreadable/locked file codes).

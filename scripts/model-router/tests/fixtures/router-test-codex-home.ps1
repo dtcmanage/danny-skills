@@ -19,7 +19,10 @@ function Enter-RouterTestCodexHome {
     # Synthetic native auth reference for offline app-server tests; never reuse real credentials.
     [IO.File]::WriteAllText((Join-Path $root 'auth.json'),'{}')
     $slugs = @('gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6.1-terra')
-    $models = for ($i = 0; $i -lt $slugs.Count; $i++) { [pscustomobject]@{ slug = $slugs[$i]; visibility = 'list'; priority = $i + 1 } }
+    $models = @(for ($i = 0; $i -lt $slugs.Count; $i++) { [pscustomobject]@{ slug = $slugs[$i]; visibility = 'list'; priority = $i + 1 } })
+    # The current frontier release, described as the live catalog does, so tier
+    # detection skips it while by-name and approved frontier dispatch can select it.
+    $models += [pscustomobject]@{ slug = 'gpt-6.2-astra'; visibility = 'list'; priority = $slugs.Count + 1; description = 'Frontier intelligence for complex work.' }
     $catalog = [pscustomobject]@{ fetched_at = 'fixture'; models = @($models) }
     [IO.File]::WriteAllText((Join-Path $root 'models_cache.json'), (ConvertTo-Json -InputObject $catalog -Depth 5), [Text.UTF8Encoding]::new($false))
     $saved = [pscustomobject]@{ root = $root; codex_home = $env:CODEX_HOME; sessions = $env:DT_MODEL_ROUTER_CODEX_SESSIONS; set_sessions = $false; claude_credentials = $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS; set_claude_credentials = $false }

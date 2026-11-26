@@ -85,7 +85,7 @@ function Request-RouterFrontier {
         if ($verdict.verdict -cne 'needs_frontier') { return [pscustomobject]@{verdict=$verdict.verdict;guidance=$verdict.guidance;request_id=$null;waits=$false} }
         $roster = Read-RouterRoster
         $vendor = $roster.roster.jobs.$job.first_vendor
-        $map = Get-Content (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json
+        $map = Get-RouterLadderMap
         $models = @($map.lanes.$vendor.ladder | Where-Object frontier)
         if ($models.Count -ne 1) { throw 'FRONTIER_MODEL_UNAVAILABLE' }
         $summary = $frontierProblemText.Substring(0,[Math]::Min(600,$frontierProblemText.Length))

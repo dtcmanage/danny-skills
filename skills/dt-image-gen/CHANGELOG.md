@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.4.1 (2026-11-26): model router: "fable" and "astra" resolve to the newest release the router has seen (ladders.json track_latest); ladder lists Fable 5.2 and GPT-6.2 Astra
+
 - 0.4.0 (2026-11-25): Model router: retain durable quota-window observations and conservatively classified reset history.
 
 - 0.3.44 (2026-11-25): Model router bench: accept Codex 0.171's account/updated reason field and GPT-6.2 Sol's declared send_message_to_user_async tool (calls still rejected).

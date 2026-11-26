@@ -248,10 +248,14 @@ function Get-ReadOnlyTreeSnapshot {
     $skip = { param([string]$full) ($full -match '[\\/]\.dt-build([\\/]|$)') -or ($ignore -and $full.StartsWith($ignore, [System.StringComparison]::OrdinalIgnoreCase)) }
     # A fixed first entry keeps an empty folder's snapshot non-empty for Compare-Object.
     $parts = [System.Collections.Generic.List[string]]::new(); $parts.Add("root:$Root")
-    # Index the output: piping to Select-Object -First 1 stops git early and leaves a stale $LASTEXITCODE on Linux.
-    $top = @(& git -C $Root rev-parse --show-toplevel 2>$null)[0]
-    if ($LASTEXITCODE -eq 0 -and $top) {
-        $head = [string]@(& git -C $Root rev-parse --verify -q HEAD 2>$null)[0]
+    # Collect the whole output: piping to Select-Object -First 1 stops git early and leaves a stale
+    # $LASTEXITCODE on Linux, and indexing an empty result throws under strict mode (not a git tree).
+    $topLines = @(& git -C $Root rev-parse --show-toplevel 2>$null)
+    $topExit = $LASTEXITCODE
+    $top = if ($topLines.Count) { [string]$topLines[0] } else { $null }
+    if ($topExit -eq 0 -and $top) {
+        $headLines = @(& git -C $Root rev-parse --verify -q HEAD 2>$null)
+        $head = if ($headLines.Count) { [string]$headLines[0] } else { '' }
         $parts.Add("head:$head")
         foreach ($line in @(& git -C $Root -c core.quotepath=false status --porcelain=v1 --untracked-files=all 2>$null)) {
             if ($line.Length -lt 4) { continue }

@@ -1,6 +1,7 @@
 # Per-output dispatch evidence shared by the public command and lane adapters.
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot '../security/redact-secrets.ps1')
+. (Join-Path $PSScriptRoot 'router-ladder.ps1')
 . (Join-Path $PSScriptRoot 'router-common.ps1')
 
 function Get-DispatchValue {
@@ -15,7 +16,7 @@ function Get-RouterNamedModel {
     param([string]$Model)
     $name = $Model.Trim().ToLowerInvariant() -replace '\s*\[\d+[km]\]$', ''
     $name = $name -replace '-\d{8}$', ''
-    $map = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/ladders.json') -Raw | ConvertFrom-Json
+    $map = Get-RouterLadderMap
     foreach ($lane in $map.lanes.PSObject.Properties) {
         foreach ($entry in $lane.Value.ladder) {
             $canonical = [string]$entry.model

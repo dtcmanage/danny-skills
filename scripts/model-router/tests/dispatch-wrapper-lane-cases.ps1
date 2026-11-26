@@ -55,8 +55,8 @@ Remove-Item (Join-Path $env:DT_MODEL_ROUTER_STATE 'vendor-blocks.json') -ErrorAc
 $roster.jobs.coder.first_vendor='codex';$roster.jobs.coder.first='gpt-6.1-sol';$roster.jobs.coder.backup_vendor='claude';$roster.jobs.coder.backup='claude-opus-5-5'
 $roster | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json')
 $request=Join-Path $frontier 'handoff.json'
-@{id='handoff';category='complex-coding';status='approved';proposed_model='gpt-6-astra';proposed_effort='high';approved_model='gpt-6-astra';decided_at='2026-11-05T12:00:00Z'} | ConvertTo-Json | Set-Content $request
-$o=$base.Clone();$o.Category='complex-coding';$o.Model='gpt-6-astra';$o.FrontierRequest='handoff';$o.AdHoc=$false
+@{id='handoff';category='complex-coding';status='approved';proposed_model='gpt-6.2-astra';proposed_effort='high';approved_model='gpt-6.2-astra';decided_at='2026-11-05T12:00:00Z'} | ConvertTo-Json | Set-Content $request
+$o=$base.Clone();$o.Category='complex-coding';$o.Model='gpt-6.2-astra';$o.FrontierRequest='handoff';$o.AdHoc=$false
 $before=[IO.File]::ReadAllText($env:M04_FAKE_ARGS);$r=Invoke-RouterDispatch $o $real
 Check ((Get-Content $request -Raw | ConvertFrom-Json).status -eq 'approved' -and [IO.File]::ReadAllText($env:M04_FAKE_ARGS) -ceq $before) 'wrapper validation refusal never burns frontier approval'
 $pick=Resolve-RouterModel -Category complex-coding -FrontierRequest handoff
@@ -120,7 +120,7 @@ try {
     Check ((Read-Evidence $a.OutputPath).logical_task_id -eq 'explicit-wins') 'task identity: explicit logical identity wins'
     # Refreshed catalog, both adapters, plus all special refusal classes.
     Reset-SourceRootState 'model-names'
-    foreach($modelName in @(@((Get-Content (Join-Path $env:CODEX_HOME 'models_cache.json') -Raw | ConvertFrom-Json).models.slug | Where-Object { $_ -ne 'gpt-6-astra' }) + @('claude-opus-4-8','claude-opus-5-5-20261105[1m]','claude-sonnet-4-5-20250929[1m]','claude-haiku-4-5'))) {
+    foreach($modelName in @(@((Get-Content (Join-Path $env:CODEX_HOME 'models_cache.json') -Raw | ConvertFrom-Json).models.slug | Where-Object { $_ -notmatch 'astra' }) + @('claude-opus-4-8','claude-opus-5-5-20261105[1m]','claude-sonnet-4-5-20250929[1m]','claude-haiku-4-5'))) {
         $lane=if($modelName -like 'claude-*'){'claude'}else{'codex'}
         $a=New-FakeCliWrapperArguments ('model-names-'+$lane);$a.Model=$modelName;Invoke-FakeCliWrapper $lane $a
         Check ((Read-Evidence $a.OutputPath).actual_model -eq $modelName) "model names: $lane known name $modelName"
@@ -152,7 +152,7 @@ try {
         $rRoster.jobs.coder.backup_vendor=if($lane -eq 'codex'){'claude'}else{'codex'};$rRoster.jobs.coder.backup=if($lane -eq 'codex'){'claude-opus-5-5'}else{'gpt-6.1-sol'}
         $rRoster | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json')
         $frontierDir=Join-Path $env:DT_MODEL_ROUTER_STATE 'frontier-requests';[void][IO.Directory]::CreateDirectory($frontierDir)
-        $frontierModel=if($lane -eq 'codex'){'gpt-6-astra'}else{'claude-fable-5-1'}
+        $frontierModel=if($lane -eq 'codex'){'gpt-6.2-astra'}else{'claude-fable-5-2'}
         $req=@{id='reservation';category='complex-coding';status='approved';proposed_model=$frontierModel;proposed_effort='high';approved_model=$frontierModel;decided_at='2026-11-05T12:00:00Z'}
         $reqPath=Join-Path $frontierDir 'reservation.json'
         $req | ConvertTo-Json | Set-Content $reqPath

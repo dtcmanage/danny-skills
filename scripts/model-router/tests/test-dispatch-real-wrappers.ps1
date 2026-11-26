@@ -214,7 +214,7 @@ if ($args -contains 'exec') {
     $env:M04_FAKE_MODE='no-rollout'; $o=$base.Clone(); $o.Lane='codex'; $r=Invoke-RouterDispatch $o $real
     Check ($null -eq $r.actual_model -and $null -eq $r.usage -and $r.lane -eq 'codex') 'no session evidence means null telemetry with known Codex lane'
     $env:M04_FAKE_MODE=''
-    foreach($name in @('claude-fable-5-1[1m]','fable[1m]','claude-fable-5-1-20261101',' CLAUDE-FABLE-5-1 ','gpt-6-astra[1m]','astra','unknown-new-model')) {
+    foreach($name in @('claude-fable-5-2[1m]','fable[1m]','claude-fable-5-2-20261101',' CLAUDE-FABLE-5-2 ','gpt-6.2-astra[1m]','astra','unknown-new-model')) {
         $o=$base.Clone(); $o.Model=$name
         $before=[IO.File]::ReadAllText($env:M04_FAKE_ARGS)
         Reject { Invoke-RouterDispatch $o $real } 'FRONTIER_REQUEST_REQUIRED'
@@ -247,7 +247,7 @@ if ($args -contains 'exec') {
         $roster.jobs.coder.first_vendor=$lane; $roster.jobs.coder.first=if($lane -eq 'codex'){'gpt-6.1-sol'}else{'claude-opus-5-5'}
         $roster.jobs.coder.backup_vendor=if($lane -eq 'codex'){'claude'}else{'codex'}; $roster.jobs.coder.backup=if($lane -eq 'codex'){'claude-opus-5-5'}else{'gpt-6.1-sol'}
         $roster | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json')
-        $model=if($lane -eq 'codex'){'gpt-6-astra'}else{'claude-fable-5-1'}
+        $model=if($lane -eq 'codex'){'gpt-6.2-astra'}else{'claude-fable-5-2'}
         $request=Join-Path $frontier "$lane.json"
         @{id=$lane;category='complex-coding';status='approved';proposed_model=$model;proposed_effort='high';approved_model=$model;decided_at='2026-11-05T12:00:00Z'} | ConvertTo-Json | Set-Content $request
         $o=$base.Clone(); $o.Category='complex-coding'; $o.FrontierRequest=$lane; $o.Model='gpt-6.1-sol'
