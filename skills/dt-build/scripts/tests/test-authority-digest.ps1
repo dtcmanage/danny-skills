@@ -54,6 +54,30 @@ try {
     $manifest = Get-Content (Join-Path $root 'authority-digest.json') -Raw | ConvertFrom-Json
     Assert-True (@($manifest.originals).Count -eq 5 -and @($manifest.originals | Where-Object { $_.path -eq $approval }).Count -eq 1 -and @($manifest.originals | Where-Object { $_.path -eq (Join-Path $root 'approvals/r3b3.md') }).Count -eq 1) 'recursive boundary references, bare relative approval paths and complete approvals are covered once'
     Assert-True ($result.mandatory_paths -contains $current -and $result.mandatory_paths -contains $approval -and $result.mandatory_paths -contains $checkpoint) 'current boundary, approvals and checkpoint always remain full reads'
+    # AI-8: awaiting prose can contain path-like text that the filesystem cannot probe.
+    $approvalsPath = Join-Path $root 'approvals.json'
+    $savedApprovals = [IO.File]::ReadAllText($approvalsPath)
+    $overlongCandidates = @(
+        (('x' * 300) + '/original.md'),
+        (('segment/' * 600) + 'original.md')
+    )
+    Write-Text $approvalsPath (@{ approvals = @(@{ source = 'approval.md' }); awaiting = @{ message = ('Review ' + ($overlongCandidates -join ' and ') + ' before answering.') } } | ConvertTo-Json -Depth 5)
+    $longBuilt = Invoke-Fixture 'build-authority-digest.ps1'
+    Assert-True ($longBuilt.code -eq 0) "awaiting message with overlong path candidates builds ($($longBuilt.text))"
+    $longVerified = Invoke-Fixture 'verify-authority-digest.ps1'
+    Assert-True ($longVerified.code -eq 0 -and ($longVerified.text | ConvertFrom-Json).verified) 'awaiting message with overlong path candidates verifies'
+    $longManifest = Get-Content (Join-Path $root 'authority-digest.json') -Raw | ConvertFrom-Json
+    foreach ($candidate in $overlongCandidates) {
+        $unresolved = @($longManifest.diagnostics | Where-Object { $_.source -eq $approvalsPath -and $_.candidate -ceq $candidate -and $null -eq $_.resolved -and $_.reason -eq 'non_authority_reference' -and -not $_.required })
+        Assert-True ($unresolved.Count -eq 1) 'overlong awaiting candidate is unresolved and not required'
+    }
+    Assert-True (@($longManifest.originals | Where-Object path -eq $approval).Count -eq 1) 'valid approval still resolves alongside overlong prose'
+    Remove-Item -LiteralPath $approval
+    $longMissing = Invoke-Fixture 'build-authority-digest.ps1'
+    Assert-True ($longMissing.code -ne 0 -and $longMissing.text.Contains('AUTHORITY_MISSING:') -and $longMissing.text.Contains('approval.md')) 'missing required approval still fails closed alongside overlong prose'
+    Write-Text $approval 'Approved: fixture changes only. No production writes.'
+    Write-Text $approvalsPath $savedApprovals
+    Assert-True ((Invoke-Fixture 'build-authority-digest.ps1').code -eq 0) 'restored approval fixture builds'
     Assert-True (@($manifest.originals | Where-Object { $_.sha256.Length -ne 64 -or $_.bytes -le 0 -or -not $_.kind -or -not $_.extract }).Count -eq 0) 'every original has a hash, byte size, kind and mechanical extract'
     $digestPath = Join-Path $root 'authority-digest.json'
     $beforeEvidence = (Get-FileHash $digestPath).Hash
@@ -220,6 +244,12 @@ try {
     # Sanitized real checkpoint: spaced absolute aliases, forward alias references,
     # prose glue, sibling filenames, braces and a counted structured inheritance chain.
     . (Join-Path $scripts 'authority-digest.ps1')
+    $namedLong = Resolve-AuthorityLiteral $overlongCandidates[0] $checkpoint $root @{} -NamedOriginal
+    Assert-True ($namedLong -eq (Join-Path $root $overlongCandidates[0])) 'explicitly named overlong original remains resolved for fail-closed validation'
+    $longLeaf = ('x' * 300) + '.md'
+    Assert-True ((Resolve-AuthorityLiteral $longLeaf $checkpoint $root @{}) -eq (Join-Path $root $longLeaf)) 'overlong leaf below a real source directory remains a required original'
+    $absoluteLong = Join-Path $root $overlongCandidates[0]
+    Assert-True ((Resolve-AuthorityLiteral $absoluteLong $checkpoint $root @{}) -eq $absoluteLong) 'absolute overlong original remains resolved for fail-closed validation'
     $liveRoot = Join-Path $root 'live shape with spaces'
     New-Item -ItemType Directory -Path $liveRoot | Out-Null
     $liveCheckpoint = Join-Path $liveRoot '_build-state.md'

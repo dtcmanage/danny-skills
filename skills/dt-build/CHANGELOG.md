@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.67.1
+
+- Keep overlong awaiting-message path candidates unresolved without weakening required authority validation; add regression coverage.
+
 ## 2.67.0
 
 - Add trusted-local gate evidence production and verified scope resolution; preserve exact PowerShell ship semantics, permit isolated nested fixture apps, reject same-app cycles, and keep conservative final checks.

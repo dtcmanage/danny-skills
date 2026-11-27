@@ -98,11 +98,21 @@ function Resolve-AuthorityLiteral {
     }
     if ([IO.Path]::IsPathRooted($value)) { return [IO.Path]::GetFullPath($value) }
     $near = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $Source) $value))
-    if (Test-Path -LiteralPath $near) { return $near }
+    try {
+        if (Test-Path -LiteralPath $near) { return $near }
+    } catch [IO.PathTooLongException] {
+        # Prose can produce unprobeable candidates. Still check whether the parent
+        # identifies a real source directory before treating the reference as unresolved.
+    }
     if ($value -in ($script:AuthorityRunRootNames + $script:AuthorityEvidenceOnlyNames)) { return [IO.Path]::GetFullPath((Join-Path $RunFolder $value)) }
     # A named original below an existing source directory still fails closed if deleted.
     # Unresolved repository/prose locators must not become invented run-relative originals.
-    if ($NamedOriginal -or (Test-Path -LiteralPath (Split-Path -Parent $near) -PathType Container)) { return $near }
+    if ($NamedOriginal) { return $near }
+    try {
+        if (Test-Path -LiteralPath (Split-Path -Parent $near) -PathType Container) { return $near }
+    } catch [IO.PathTooLongException] {
+        return $null
+    }
     return $null
 }
 
