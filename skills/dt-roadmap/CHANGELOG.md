@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.5.2
+
+- Require an exact-command rehearsal milestone with current gate derivations, proven checks and a rollback dependency decision.
+
 ## 1.5.1
 
 - Keep glob tokens as arrays under strict mode for root-level write surfaces; cover overlapping and independent root files in the release gate.

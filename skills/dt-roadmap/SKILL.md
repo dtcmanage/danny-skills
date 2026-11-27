@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.5.1
+  version: 1.5.2
   changelog: "Full changelog relocated to skills/dt-roadmap/CHANGELOG.md (newest first)."
 ---
 
@@ -84,6 +84,32 @@ such as `module:slots`, `api:POST /release`, `schema:Slot`, `config:slot_lock`. 
 external interfaces in design-source. The producer computes dependencies from consumption and write
 overlap, removes unsupported declared edges with `DEPENDENCY_UNJUSTIFIED` warnings and names serial
 overlap causes. Consumption sets direction; otherwise use authored direction, then stable ID order.
+
+### Required cutover or migration rehearsal milestone
+
+For any cutover or migration, apply `00_Resources/build-process.md`, "Rehearse a cutover or migration
+runbook end to end before the live attempt." Before generation, require a distinct rehearsal milestone
+in the design's implementation sequence, with concrete runnable Validation Gates. Its acceptance must:
+
+- Run every exact final runbook command in order on a disposable copy of real data, verifiers included,
+  using the same interpreter flags, user and paths. Unit tests or piecewise runs do not count.
+- Re-derive every gate's expected numbers from the current code; save the derivation and actual results.
+- Inventory leftover authority/marker files, test installs and stale config refused by the new release;
+  add cleanup steps and exercise them in the full rehearsal.
+- Prove the check scripts themselves against the live old system, including selectors, quoting and
+  expected values. Fix broken checks and rerun them; a harness failure does not trigger product rollback.
+- Record the owner's answer about dependencies on the old system during the switch and the rollback
+  dependency decision. When nothing uses it, keep it stopped and fix forward to preserve the export.
+- Run steps exceeding worker time limits detached with logs and orchestrator monitoring, and read each
+  gate's result before the next action. Never chain a push or deploy onto a test command.
+
+Record the runbook revision, code SHA, data-copy identity, commands, results and rollback decision in the
+milestone's evidence artifacts. Any change to those commands, code or gate expectations invalidates the
+pass and requires a fresh full rehearsal. In `Milestone Surfaces`, have the rehearsal provide an explicit
+interface such as `gate:cutover-rehearsal` and every live-switch milestone consume it, so the producer
+retains the dependency. Inspect the generated dependency causes and verification manifest before export.
+If the design lacks this milestone or runnable checks, stop and repair the design before generation;
+never treat a generic final integration test as the rehearsal.
 
 1. Intake in one question:
 - Input design path.

@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.67.2
+  version: 2.67.3
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -157,6 +157,10 @@ Run `pwsh -NoProfile -File "<skill>/scripts/collect-usage.ps1" -Quiet` at intake
   `implementation` failure consumes the two-attempt automatic-agent budget. Persist the failure class and evidence.
 - A design-required live database/browser/API replay is build acceptance unless the roadmap explicitly labels
   it as a later ship gate. Mock/unit parity alone cannot mark the build COMPLETE.
+
+2.8 For any cutover or migration, including auto-generated roadmaps and resumes, apply
+`references/cutover-rehearsal.md` at intake and before every live-switch attempt. No live cutover
+until its rehearsal milestone has a current PASS; preserve this gate in worker briefs and checkpoints.
 
 3. Enforce legacy hard-cutover (Contract Freeze Gate):
 - If a resume RUN_ID points to a pre-refactor `.dt-build/<RUN_ID>/` folder, reject intake.

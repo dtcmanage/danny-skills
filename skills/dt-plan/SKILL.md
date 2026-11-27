@@ -5,7 +5,7 @@ disable-model-invocation: false
 user-invocable: true
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.4.3
+  version: 1.4.4
   changelog: "See skills/dt-plan/CHANGELOG.md."
 ---
 
@@ -105,6 +105,29 @@ milestones), or serial with a named cause: shared DB/file state, fixed ports, on
 order-dependent tests, irreversible/production steps or memory ceiling. Name isolation workarounds
 considered before exclusivity. State when no long-running steps exist. Grill this under Feasibility:
 can measured hardware meet the runtime, and does every long step have an explicit decision?
+
+### Cutover or migration rehearsal
+
+For any cutover or migration, require `## Cutover and migration rehearsal` in the plan, including
+custom structures. Apply `00_Resources/build-process.md`, "Rehearse a cutover or migration runbook end
+to end before the live attempt." Define a rehearsal milestone that must pass before any live switch:
+
+- Name the disposable copy of real data and how it reproduces the runbook's user, paths, interpreter
+  flags and execution order. Require one full pass of every exact final command, verifiers included;
+  unit tests and piecewise rehearsals do not satisfy it.
+- Require gate expectations re-derived from the current code, with evidence for every expected number.
+  Inventory old authority/marker files, test installs and stale config the new release refuses, and
+  include their cleanup in the runbook.
+- Prove check scripts, including selectors, quoting and expected values, against the live old system
+  before relying on them. Fix and rerun a broken check as a harness failure, not a rollback trigger.
+- Record the owner's answer on what depends on the old system during the switch and the resulting
+  rollback decision. If nothing uses it, keep it stopped and fix forward rather than resume it and
+  invalidate the export. Do not infer the answer from inactivity.
+- Run steps exceeding worker time limits detached with logs and orchestrator monitoring. Require
+  each gate result to be read before the next action; never chain a push or deploy onto a test.
+
+Keep unresolved rehearsal inputs in Open Questions. Carry this section into the finalized design and
+make the live cutover depend on the rehearsal milestone in the implementation sequence.
 
 ### Tiering the drive
 

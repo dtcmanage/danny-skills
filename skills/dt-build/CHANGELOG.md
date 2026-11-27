@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.67.3
+
+- Block live cutover attempts until a current end-to-end rehearsal milestone has passed.
+
 ## 2.67.2
 
 - Stamp missing worker attempt headers in both wrappers, normalize matching formatting, and reject mismatched retries before transport; add shared helper and regression coverage.
