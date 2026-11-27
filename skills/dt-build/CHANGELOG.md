@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.67.2
+
+- Stamp missing worker attempt headers in both wrappers, normalize matching formatting, and reject mismatched retries before transport; add shared helper and regression coverage.
+
 ## 2.67.1
 
 - Keep overlong awaiting-message path candidates unresolved without weakening required authority validation; add regression coverage.
