@@ -1,8 +1,8 @@
 ---
 name: dt-session-audit
-description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
+description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Checks this session's artifacts and cleans up its own scratch and superseded drafts. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.8.2
+  version: 0.9.0
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -43,6 +43,7 @@ This skill does all of the following:
 4. Applies deterministic non-conflict writes.
 5. Escalates only conflicts, uncertainty, and ambiguous scope.
 6. Triggers memory hygiene when bloat thresholds trip.
+7. Accounts for this session's artifacts and performs report-first cleanup of its own scratch and superseded drafts.
 
 This skill does **not** do project planning, refactoring, or progress management.
 
@@ -346,7 +347,7 @@ Never invent a root glossary file.
 
 ## Presentation Contract
 
-If no findings: `Clean session. Nothing new to capture.`
+If no memory findings: `Clean session. Nothing new to capture.` Still run and report the artifact check below; this line does not imply artifact cleanup is complete.
 
 For each finding, present:
 
@@ -388,6 +389,17 @@ When applying:
    Read and follow `<workspace>/_Claude-Workspace/Command Center/CLAUDE.md` § The session write rule: titles without amounts/account numbers, starter prompts usable in a fresh session, workstation = folder path including substation. Never move open items into `MEMORY.md`; move any open-for-Danny item found there to Command Center.
    Report Command Center writes in one line in the audit output.
    Run `pwsh -NoProfile -File <skill>/scripts/check-ai-item-exits.ps1` from the session's own working directory (never `cd` into the skill folder first), or pass `-TranscriptPath <session.jsonl>`. Without `-TranscriptPath` it reads `<session-id>.jsonl` under `$env:CLAUDE_CONFIG_DIR/projects/<cwd with non-alphanumerics as ->`, taking the id from `CLAUDE_SESSION_ID` or `CLAUDE_CODE_SESSION_ID`; with no id it falls back to the newest top-level transcript there and prints a warning naming it. `TRANSCRIPT_NOT_FOUND` (non-zero exit) means the check did not run: report it, never treat it as clean. Route each hit as a Command Center finding, resolving it with one of the three allowed exits printed by the check.
+8. Run the **Session Artifact Check** below, including any files created during the audit. Reconcile any resulting Command Center items before close-out.
+
+## Session Artifact Check
+
+Read the canonical `<workspace>/_Claude-Workspace/00_Resources/artifact-lifecycle.md`, especially sections 4 and 5, on every audit. Here `<workspace>` is the canonical Claude root on the session host, as in the Command Center command above. If it cannot be read, report the missing policy and leave files untouched.
+
+1. **Inventory this session's files.** Use the live conversation, tool results and available session transcript to list files this session created, including scratch outside the workstation and audit outputs. Give each file's full absolute path, kind (`Scratch`, `Draft`, `Final`, `Living` or `Unclassifiable`), ownership evidence and disposition. Include files already deleted and their deletion evidence. Do not infer ownership or obsolescence from timestamps, filenames, git status or folder location alone. If session evidence is incomplete, state the coverage gap; do not claim a complete inventory or sweep unrelated folders.
+2. **Report before deleting.** Present the proposed deletion list with each exact path and the evidence that it is this session's own obsolete scratch or superseded draft. Name the replacement or completed decision that makes it obsolete. Separately list files to retain and unresolved cases. If there are no candidates, say so. Reporting is not a permission question for these proven candidates.
+3. **Apply only safe deletions.** Immediately before each deletion, recheck the exact file, ownership, classification and continued obsolescence against current session evidence. Delete only this session's own obsolete scratch and superseded drafts; honor any request to keep them. Never delete Living files, code, files another session or tool reads, another session's or Danny's files, unclassifiable files, unconfirmed finals, or anything in `_archive`, Resources, handoff, audit or evidence folders. Protection overrides a scratch/draft label. If a file changed unexpectedly, is a link to another file, or its ownership or kind is uncertain, leave it and list it for Danny. Do not use broad globs or recursive folder deletion. Verify each selected file is absent; report failures as unresolved, not deleted.
+4. **Account for every disposition.** Confirm scratch is deleted. For each draft, confirm it is superseded and deleted or still in progress with a concrete next step on an existing or newly created Command Center item; report the item identifier. For each final, confirm filing in its permanent channel with evidence that the channel has it (for File Sorter, a reviewed Queue item, not a dropzone copy), and check that working copies were removed. Follow `sharepoint-filing.md` when that filing path applies. This audit's automatic deletion authority covers only scratch and superseded drafts: retain any remaining final working copy and report the cleanup needed. Keep required runtime copies per the lifecycle policy. Leave Living and protected files in place; list unclassifiable files for Danny. Put any unresolved filing, retention or classification decision on Command Center with the exact next action; never mark an unconfirmed final as filed.
+5. **Report results.** Show proposed versus actual deletions, retained files and why, active-draft item identifiers, final-filing evidence and unresolved cases. Explicitly say when no files were created. Do not report artifact cleanup as complete while inventory coverage, deletion, draft tracking or final filing/working-copy disposition remains unverified. Do not generate an HTML companion unless requested.
 
 After apply, run:
 
