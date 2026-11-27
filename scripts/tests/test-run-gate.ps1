@@ -18,7 +18,7 @@ foreach ($suite in @(
 }
 $cheap = @($all | Where-Object Skill -eq '*')
 $build = @(Select-GateSteps -ChangedPaths @('skills/dt-build/scripts/a.ps1'))
-Assert-Gate ($build.Count -eq $cheap.Count + 4) 'dt-build selects its four suites and every cheap check'
+Assert-Gate ($build.Count -eq $cheap.Count + 5) 'dt-build selects its five suites and every cheap check'
 Assert-Gate (@($build | Where-Object { $_.Skill -notin @('*','dt-build') }).Count -eq 0) 'dt-build excludes unrelated suites'
 foreach ($path in @('scripts/a.ps1','references/a.md','tools/a.ps1','.ship.json','.claude-plugin/unknown.json','README.md','skills/unknown/a.ps1')) {
     Assert-Gate (@(Select-GateSteps -ChangedPaths @($path)).Count -eq $all.Count) "full gate for shared/unknown $path"

@@ -28,3 +28,7 @@ Accepted-chunk cleanup:
 Final ship:
 - At build end the rehearsed, tested integration branch is left ready to merge to `main`.
 - The merge to `main` is a separate, human-authorized `/git-merge-feature` step. dt-build never writes to `main` itself.
+
+## Worktree packages
+
+Both chunk wrappers run `<skill>/scripts/prepare-worktree-deps.ps1` before every substantive dispatch, so a fresh milestone worktree has its packages before a builder or verifier runs tests: npm ci, pnpm/yarn frozen install, or uv sync --frozen per lockfile, skipped when a stamp shows the install is current. It never links node_modules from another tree. `DEPS_INSTALL_FAIL` is an environment failure and consumes no attempt. `DT_BUILD_SKIP_WORKTREE_DEPS=1` turns it off for one dispatch.

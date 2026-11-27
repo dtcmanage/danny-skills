@@ -25,6 +25,7 @@ function Get-GateSteps {
         @{ Name='versioning-tests'; Skill=''; Command='& ./scripts/test-versioning-policy.ps1' }
         @{ Name='review'; Skill='dt-review'; Command='& ./skills/dt-review/tests/run-tests.ps1' }
         @{ Name='host-adapters'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-host-adapters.ps1' }
+        @{ Name='worktree-deps'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-prepare-worktree-deps.ps1' }
         @{ Name='review-final-draft'; Skill='dt-review'; Command='& ./skills/dt-review/tests/run-final-draft-tests.ps1' }
         @{ Name='roadmap-hardware'; Skill='dt-roadmap'; Command='& ./skills/dt-roadmap/scripts/tests/test-hardware-roadmap.ps1' }
         @{ Name='roadmap-coverage'; Skill='dt-roadmap'; Command='& ./skills/dt-roadmap/scripts/tests/test-design-coverage.ps1' }

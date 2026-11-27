@@ -135,6 +135,15 @@ if (-not $Preflight -and -not $Effort) {
     exit 1
 }
 
+# A fresh milestone worktree has no node_modules or venv: install them from its lockfiles before the worker runs.
+if (-not $Preflight -and -not $AdHoc) {
+    $depsRaw = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'prepare-worktree-deps.ps1') -ProjectPath $projectRoot -Json 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        [Console]::Error.WriteLine('CODEX_INVOKE_FAIL: DEPS_INSTALL_FAIL (environment; consumes no attempt): ' + ($depsRaw -join "`n"))
+        exit 1
+    }
+}
+
 $runPinVendor = $env:DT_BUILD_RUN_PIN_VENDOR
 $runPinModel = $env:DT_BUILD_RUN_PIN_MODEL
 $runPinActive = -not [string]::IsNullOrWhiteSpace($runPinVendor)
