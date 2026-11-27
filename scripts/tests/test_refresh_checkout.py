@@ -1,5 +1,4 @@
 """Disposable real Git repositories only: no network or installed checkout writes."""
-import fcntl
 import importlib.util
 import os
 from pathlib import Path
@@ -10,10 +9,14 @@ import time
 
 import pytest
 
+# Skip during collection, before either fcntl or the CT202-only helper loads.
+if sys.platform != 'linux':
+    pytest.skip('CT202 Linux refresh', allow_module_level=True)
+fcntl = pytest.importorskip('fcntl')
+
 spec = importlib.util.spec_from_file_location('refresh_checkout', Path(__file__).parents[1] / 'refresh-checkout.py')
 refresh_checkout = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(refresh_checkout)
-pytestmark = pytest.mark.skipif(sys.platform != 'linux', reason='CT202 Linux refresh')
 
 
 def git(repo: Path, *args: str) -> str:

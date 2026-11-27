@@ -47,28 +47,40 @@ model calls, research, publication, external alert sends or Git sync.
 
 ## Portable verification boundary
 
-The following aggregate gate is retained as historical Windows release tooling; it is not the Linux owner's acceptance command. On CT202, run individual router suites directly with `pwsh -NoProfile -File`. The historical gate still refuses Linux because it includes Windows-specific wrapper fixtures.
+The aggregate runs on the actual Linux owner host (CT202). It includes owner CLI
+entry points, so Windows and Mac observers cannot run the complete selection. It
+uses the standard build-test Python resolver and the current PowerShell installation.
+Child interpreters inherit dt-build's shared startup-profile guard against the
+Linux .NET JIT profile race.
 
-Historical command from the Windows primary checkout:
+On CT202:
 
-```powershell
-cd "D:/Claude/_Claude-Workspace/Skill Creation/danny-skills"
-pwsh -NoProfile -File "<danny-skills>/scripts/model-router/tests/test-mac-regressions.ps1"
+```bash
+cd "/home/danny/Claude/_Claude-Workspace/Skill Creation/danny-skills"
+pwsh -NoProfile -File "<danny-skills>/scripts/model-router/tests/test-mac-regressions.ps1" -PythonWorkers 4
 ```
 
-This actual-OS Windows-only gate declares 24 suites: the 14 retained suites plus
-`test_bench_tasks.py`, `test_bench_review.py`, `test_bench_runner.py`,
-`test-bench-runner.ps1`, `test_bench_integration.py`, `test-bench-integration.ps1`,
-`test-bench-cache-duration.ps1`, `test-bench-judge-effort.ps1`, `test-proposal-validity.ps1`,
-and `test-proposal-items.ps1` (isolated fake Command Center reconciliation).
-The obsolete `test-canary.ps1` entry is removed. Use the generated per-suite evidence and final summary for the actual result; the declared list alone is not a passing gate.
-
-M01 now exercises Linux authority and cross-process named mutexes. The historical aggregate still includes other Windows-specific wrapper fixtures. Do not describe the full gate as native Mac testing.
+All 26 declared suites run, including router, benchmark, cost-report and dt-build
+regressions. Named mutexes and process/output capture work on Linux. The Windows-only
+`Start-Process -WindowStyle Hidden` option in benchmark integration is conditional;
+no portable module is skipped. Windows file-sharing locks, junction behavior and
+Windows sandbox arguments require separate native Windows wrapper evidence.
+Benchmark PATH fixtures use npm's `.cmd` on Windows and an executable symlink on
+Linux, followed by the host's native executable name. The `.cmd` process-vector
+assertion remains exercised on Linux. Provision the UI grader in each fresh tree
+with `npm ci --ignore-scripts` in
+`<danny-skills>/scripts/model-router/bench/tasks/ui-frontend-card/harness` before
+running the selection. The per-suite deadline remains 900 seconds; a stalled
+fixture is a failure requiring diagnosis.
+Use the generated per-suite evidence and final summary for the actual result;
+the declared list alone is not a passing gate. Do not describe Linux fixtures as
+native Windows or Mac acceptance.
 `test-mac-observer.ps1` stands alone safely on Mac; actual Apply refusal
 assertions are conditional on non-Mac, while installation fixtures use fake commands.
-Accepted Windows evidence executes 84 observer checks (prior 81 + 3); Mac expects 82 (prior 79 + 3) because the two real
-non-Mac CLI inventory and Apply refusal assertions are skipped. The Windows-emulated Mac foundation has 58 checks: the prior 55 plus direct benchmark refusal, no state creation, and fresh-child CLI refusal. Quota has 72 checks after the credential-expiry correction.
-These counts are fixture evidence, never native acceptance.
+Mac reporting collection is a successful no-op before output/cache creation;
+router cost reporting refuses non-Linux owner operations before writes. Integration
+tests emulate Mac to verify both contracts. Exact check counts come from current
+evidence, never historical fixture totals.
 
 Each suite uses a bounded fresh child, isolated runtime/shared/session/config/temp
 paths, exclusive missing Claude credentials and an isolated fixture Codex model cache.

@@ -174,6 +174,16 @@ if ($args.Count -ne 4 -or $args[0] -cne 'app-server' -or $args[1] -cne 'generate
     [IO.File]::WriteAllText($entry,$js)
     $cmd=Join-Path $cliRoot 'codex.cmd'
     [IO.File]::WriteAllText($cmd,'@echo off')
+    # Windows discovers npm's .cmd; Unix discovers its executable symlink.
+    # Keep the .cmd resolver contract covered on either platform as well.
+    $npmSpec=Get-CodexProcessSpec -CodexPath $cmd
+    Assert ($npmSpec.file -eq $node -and $npmSpec.prefix_args.Count -eq 1 -and $npmSpec.prefix_args[0] -eq $entry) 'npm cmd vector follows the active JS entrypoint'
+    $unixCli=Join-Path $cliRoot 'codex'
+    if (-not $IsWindows) {
+        [IO.File]::WriteAllText($entry,"#!$node`n"+$js)
+        [IO.File]::SetUnixFileMode($entry,[IO.UnixFileMode]'UserRead,UserWrite,UserExecute')
+        $null=New-Item -ItemType SymbolicLink -Path $unixCli -Target $entry
+    }
     foreach($package in @('codex',' .codex-KuOUUsQs'.Trim())) {
         $stale=Join-Path $cliRoot ("node_modules/@openai/$package/vendor/bin/codex.exe")
         [void][IO.Directory]::CreateDirectory((Split-Path $stale))
@@ -181,6 +191,8 @@ if ($args.Count -ne 4 -or $args[0] -cne 'app-server' -or $args[1] -cne 'generate
     }
     $env:BENCH_DISCOVERY_SCENARIO='ok'
     try {
+        $expectedNpm=if ($IsWindows) { $cmd } else { $unixCli }
+        Assert ((Get-Command codex).Source -eq $expectedNpm) 'PATH discovery stays inside the npm fixture'
         $discovered=Invoke-BenchCli -Request $request
         Assert ($discovered.status -eq 'ok' -and $discovered.answer -ceq 'synthetic answer') 'Default PATH npm discovery with stale sibling'
         $env:BENCH_DISCOVERY_SCENARIO='descendant'
@@ -190,12 +202,14 @@ if ($args.Count -ne 4 -or $args[0] -cne 'app-server' -or $args[1] -cne 'generate
         Assert (-not (Get-Process -Id $tree.pid -ErrorAction SilentlyContinue) -and -not (Get-Process -Id $tree.parent -ErrorAction SilentlyContinue) -and -not (Test-Path $tree.cwd)) 'Default npm descendant/temp leaked'
         $env:BENCH_DISCOVERY_SCENARIO='ok'
         Remove-Item -LiteralPath $cmd
+        if (-not $IsWindows) { Remove-Item -LiteralPath $unixCli }
         $shim=Join-Path $cliRoot 'codex.ps1'
         [IO.File]::WriteAllText($shim,('& '+"'"+$python.Replace("'","''")+"' '"+$fakeServer.Replace("'","''")+"' ok @args"))
+        Assert ((Get-Command codex).Source -eq $shim) 'PATH discovery stays inside the PowerShell fixture'
         $discovered=Invoke-BenchCli -Request $request
         Assert ($discovered.status -eq 'ok' -and $discovered.answer -ceq 'synthetic answer') 'Default PATH PowerShell discovery'
         Remove-Item -LiteralPath $shim
-        $native=Join-Path $cliRoot 'codex.exe'
+        $native=Join-Path $cliRoot $(if ($IsWindows) { 'codex.exe' } else { 'codex' })
         Copy-Item -LiteralPath $node -Destination $native
         $spec=Get-CodexProcessSpec -CodexPath (Get-Command codex).Source
         Assert ($spec.file -eq $native -and $spec.prefix_args.Count -eq 0) 'Native executable vector changed'
@@ -206,7 +220,7 @@ if ($args.Count -ne 4 -or $args[0] -cne 'app-server' -or $args[1] -cne 'generate
         $env:PATH=$cliRoot
         try {Invoke-BenchCli -Request $request;throw 'accepted missing CLI'} catch {Assert ($_.Exception.Message -match 'codex.*not recognized') 'Missing PATH CLI did not fail discovery'}
     } finally {$env:PATH=$oldPath;Remove-Item Env:BENCH_DISCOVERY_SCENARIO -ErrorAction SilentlyContinue}
-    Write-Output 'PASS: default PATH npm/stale sibling, npm descendant cleanup, PowerShell, native and missing CLI: 7 checks'
+    Write-Output 'PASS: default PATH npm/stale sibling, npm descendant cleanup, PowerShell, native and missing CLI: 10 checks'
     $fakeClaude=Join-Path $root 'claude.ps1'
     $env:BENCH_FAKE_EVIDENCE=Join-Path $root 'claude-evidence.json'
     $env:BENCH_FAKE_DOC=(@{result='synthetic Claude answer';modelUsage=@{'claude-opus-5-5'=@{inputTokens=7;outputTokens=2}};usage=@{input_tokens=7;output_tokens=2;cache_read_input_tokens=20;cache_creation_input_tokens=3};total_cost_usd=0.012;is_error=$false;subtype='success'} | ConvertTo-Json -Depth 10 -Compress)

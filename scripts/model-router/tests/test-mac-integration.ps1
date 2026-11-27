@@ -158,7 +158,7 @@ try {
     Assert-Owner { & (Join-Path $PSScriptRoot '../cost-report.ps1') } 'Mac refuses weekly report'
     $collector = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../../skills/dt-build/scripts/collect-usage.ps1'))
     $collectorOutput = & $collector -OutDir $guardState -Quiet | Out-String
-    Assert-True ($collectorOutput -match 'owned by Windows' -and -not (Test-Path $guardState)) 'Mac build intake skips reporting collector before any writes'
+    Assert-True ($collectorOutput.Trim() -eq 'DT_BUILD_USAGE: Reporting sweep runs on the session host; Mac collection skipped.' -and -not (Test-Path $guardState)) 'Mac build intake skips reporting collector before any writes'
     $show = & (Join-Path $PSScriptRoot '../approve-roster.ps1') -Show | Out-String
     Assert-True ($show -match 'Current roster' -and -not (Test-Path $guardState)) 'Mac Show is permitted and all guards precede state creation'
     $platformFixture.Value = 'Linux'; $env:DT_MODEL_ROUTER_STATE = $win
@@ -188,25 +188,33 @@ try {
         $target = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $relative))
         $probe = Join-Path $temp 'python-owner-probe.py'
         $pythonProbe = @'
-import pathlib, runpy, sys, sysconfig, zoneinfo
+import contextlib, io, os, pathlib, runpy, sys, sysconfig, zoneinfo
 # Initialize native stdlib configuration before emulating another platform.
 sysconfig.get_config_vars()
 target = pathlib.Path(sys.argv[1])
 root = pathlib.Path(sys.argv[2])
 sys.platform = 'darwin'
-sys.argv = [str(target), '--state-dir', str(root)]
-try:
-    runpy.run_path(str(target), run_name='__main__')
-except SystemExit as exc:
-    expected = 'ROUTER_OWNER:' if target.name == 'cost_report.py' else 'ROUTER_WINDOWS_OWNER:'
-    if expected not in str(exc):
-        raise
-assert not root.exists(), 'non-Windows writer created state'
-print('PASS: direct Python writer has no Mac effects')
+if target.name == 'cost_report.py':
+    sys.argv = [str(target), '--state-dir', str(root)]
+    try:
+        runpy.run_path(str(target), run_name='__main__')
+    except SystemExit as exc:
+        assert 'ROUTER_OWNER:' in str(exc), str(exc)
+    else:
+        raise AssertionError('Mac cost report did not refuse owner operation')
+else:
+    sys.argv = [str(target), '--out', str(root)]
+    os.environ['DT_BUILD_USAGE_CACHE'] = str(root / 'cache')
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        runpy.run_path(str(target), run_name='__main__')
+    assert output.getvalue().strip() == 'DT_BUILD_USAGE: Reporting sweep runs on the session host; Mac collection skipped.'
+assert not root.exists(), 'Mac reporting created state'
+print('PASS: direct Python reporting has no Mac effects')
 '@
         [IO.File]::WriteAllText($probe,$pythonProbe,[Text.UTF8Encoding]::new($false))
         & $python $probe $target (Join-Path $temp 'python-mac-state') *> (Join-Path $temp 'python-probe.log')
-        Assert-True ($LASTEXITCODE -eq 0) "Mac refuses Python writer $relative"
+        Assert-True ($LASTEXITCODE -eq 0) "Mac Python reporting has no writes: $relative"
     }
     # Hold a publisher after reading approved=true; a concurrent revoke must wait, then publish false last.
     Write-RouterJsonAtomic -Path (Join-Path $win 'roster.json') -Value (New-TestRoster)

@@ -1,17 +1,22 @@
 param(
-    # Complete Windows wrapper/build suites now take more than five minutes.
     [ValidateRange(30, 1800)][int]$SuiteTimeoutSeconds = 900,
     [ValidateRange(1, 32)][int]$PythonWorkers = 1,
     [string]$EvidencePath = (Join-Path ([IO.Path]::GetTempPath()) ('mac-regressions-' + [guid]::NewGuid().ToString('N')))
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-# Actual OS, never the router's fixture platform selector: M01 exercises Windows
-# authority, named mutexes and Start-Process -WindowStyle Hidden.
-if (-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
-    throw 'ROUTER_REGRESSIONS_WINDOWS_ONLY: Run the full gate on Windows; test-mac-observer.ps1 stands alone on Mac.'
+# Actual OS, never the router's fixture selector: the aggregate includes real
+# owner CLI entry points. Linux owns these; Windows/Mac are roster observers.
+# Named mutexes work on Linux; Windows-only window options are guarded in suites.
+if (-not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) {
+    throw 'ROUTER_REGRESSIONS_LINUX_OWNER: Run the aggregate on Linux (CT202); test-mac-observer.ps1 stands alone on Mac.'
 }
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
+. (Join-Path $repo 'skills/dt-build/scripts/powershell-startup.ps1')
+Disable-DtPowerShellStartupProfile
+. (Join-Path $repo 'scripts/lib/resolve-test-python.ps1')
+$testPython = Resolve-TestPython
+if (-not $testPython.Path) { throw 'Test Python unavailable' }
 $evidence = [IO.Path]::GetFullPath($EvidencePath)
 if (Test-Path -LiteralPath $evidence) { throw 'EvidencePath must be a new directory owned by this run.' }
 [IO.Directory]::CreateDirectory($evidence) | Out-Null
@@ -85,7 +90,7 @@ try {
         Write-Output "RUN: $suite (timeout ${SuiteTimeoutSeconds}s)"
         try {
             $python = $suite.EndsWith('.py')
-            $exe = if ($python) { (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source } else { Join-Path $PSHOME 'pwsh.exe' }
+            $exe = if ($python) { $testPython.Path } else { Join-Path $PSHOME 'pwsh' }
             $info = [Diagnostics.ProcessStartInfo]::new($exe)
             $info.UseShellExecute = $false; $info.CreateNoWindow = $true
             $info.WorkingDirectory = $repo
@@ -139,11 +144,17 @@ try {
         $output = (@(Get-Content -LiteralPath $stdout -ErrorAction SilentlyContinue) + @(Get-Content -LiteralPath $stderr -ErrorAction SilentlyContinue)) -join "`n"
         $count = $null
         $patterns = if ($suite.EndsWith('.py')) { @('(?m)(\d+) passed') } else {
-            @('(?m)^SUMMARY: (\d+) passed','(?m)^SUMMARY: PASS \((\d+) checks\)','(?m)^TOTAL PASS: (\d+)','(?m)^PASS: (\d+) tests')
+            @('(?m)^SUMMARY: (\d+) passed','(?m)^SUMMARY: PASS \((\d+) checks\)','(?m)^TOTAL PASS: (\d+)','(?m)^PASS: (\d+) tests','(?m)^All (\d+) proposal item tests passed\.\r?$')
         }
         foreach ($pattern in $patterns) {
             $matchesFound = [regex]::Matches($output,$pattern)
             if ($matchesFound.Count) { $count = [int]$matchesFound[-1].Groups[1].Value; break }
+        }
+        if ($suite -eq 'skills/dt-build/scripts/test-dt-build-regressions.ps1') {
+            # Each of the six shards ends with its own top-level summary. Do not
+            # report only the last shard, or count nested helper summaries twice.
+            $shards = [regex]::Matches($output,'(?m)^PASS: dt-build regression suite\r?\nSUMMARY: (\d+) passed')
+            $count = if ($shards.Count -eq 6) { ($shards | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum).Sum } else { $null }
         }
         $ok = $exitCode -eq 0 -and -not $timedOut -and -not $failure -and $null -ne $count -and $count -gt 0 -and -not (Test-Path -LiteralPath $unexpectedAlert)
         if ($output -match '(?m)^SUMMARY: .*\b[1-9]\d* failed' -or ($suite.EndsWith('.py') -and $output -match '\b[1-9]\d* failed\b')) { $ok = $false }
