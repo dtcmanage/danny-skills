@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.5.0 (2026-11-27): Optional .ship.json "scratch" key runs the gate under the shared ram-scratch helper (per-run RAM temp with budget, headroom, cap and disk fallback); absent key keeps disk.
+
 - 0.4.1 (2026-11-24): Use the shared standard test venv resolver in test preflight and the danny-skills gate, preserving venv PATH for child suites.
 
 - 0.4.0 (2026-11-22): Release-time severity triage at ship time: only critical findings block or re-gate; non-critical ones ship as Known issues via scripts/release-triage.ps1. New -KnownIssuesPath puts the run's known issues in the summary (missing file fails at preflight-known-issues before any mutation); the release summary lists them.

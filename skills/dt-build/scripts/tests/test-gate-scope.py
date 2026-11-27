@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -239,6 +241,32 @@ class GateScopeTests(unittest.TestCase):
     @property
     def output(self) -> Path:
         return self.repo / ".dt-build" / "actual" / "final-integration.json"
+
+    def test_producer_runs_gate_under_ram_scratch_when_configured(self) -> None:
+        tool = Path("/home/danny/Claude/_system-tools/ram-scratch/ram-scratch")
+        if os.name == "nt" or not tool.exists():
+            self.skipTest("ram-scratch helper not installed")
+        self.write(".ship.json", json.dumps({"gateCommand": COMMAND, "scratch": {"mode": "auto", "capGb": 1}}))
+        self.write("gate.py", "import os\nfrom pathlib import Path\n"
+                   "Path('.dt-build/scratch.txt').write_text(os.environ.get('RAM_SCRATCH_MODE', '') + ' ' + os.environ['TMPDIR'])\n")
+        self.commit("scratch-gate")
+        scratch_root = Path(self.temp.name + " scratch")
+        env = dict(os.environ, RAM_SCRATCH_RAM_ROOT=str(scratch_root / "shm"),
+                   RAM_SCRATCH_DISK_ROOT=str(scratch_root / "disk"), RAM_SCRATCH_STATE=str(scratch_root / "state"),
+                   RAM_SCRATCH_SAMPLE_S="0")
+        self.addCleanup(shutil.rmtree, scratch_root, True)
+        (self.repo / ".dt-build").mkdir(exist_ok=True)
+        completed = subprocess.run(
+            [sys.executable, str(PRODUCER), "--working-tree", str(self.repo), "--command", COMMAND,
+             "--scope", "release", "--contract-path", "gate.py", "--contract-path", "suites.json",
+             "--output", str(self.output)], capture_output=True, text=True, env=env)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        mode, tmp = (self.repo / ".dt-build" / "scratch.txt").read_text().split(" ", 1)
+        self.assertIn(mode, ("ram", "disk"))
+        self.assertTrue(tmp.startswith(str(scratch_root)))
+        gate = json.loads(self.output.read_text())["gate"]
+        self.assertEqual(gate["scratch"], {"mode": "auto", "cap_gb": 1})
+        self.assertEqual(gate["result"], "PASS")
 
     def test_producer_to_resolver_next_commit_selects_only_subsequent_diff(self) -> None:
         # The actual gate consumes the producer's resolver output via its documented

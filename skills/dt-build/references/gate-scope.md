@@ -131,3 +131,7 @@ app-owner adoption follow-up is implemented (AI-108/permanent619, dependent on p
 Existing app selectors can therefore still over-test. That noncritical performance/adoption work
 does not block releasing the working shared capability. dt-ship authorization and live hash/smoke
 proof are unchanged.
+
+## RAM scratch
+
+When `.ship.json` declares `scratch` (`{"mode": "auto|ram|disk", "capGb": N}`), `record-gate.py` runs the exact gate under `_system-tools/ram-scratch exec`, which keeps the gate's exit code and records `gate.scratch` in `final-integration.json`. Absent key or `disk` means no wrapper. See dt-ship `references/ship-config.md`.

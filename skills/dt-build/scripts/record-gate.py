@@ -17,6 +17,29 @@ SPEC = importlib.util.spec_from_file_location("gate_scope", Path(__file__).with_
 SCOPE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SCOPE)
 ACTIVE = "DT_BUILD_RECORD_GATE_ACTIVE"
+RAM_SCRATCH_TOOL = "/home/danny/Claude/_system-tools/ram-scratch/ram-scratch"
+
+
+def scratch_prefix(repo: Path) -> tuple[list[str], dict]:
+    """Same opt-in as dt-ship: .ship.json "scratch": {"mode": auto|ram|disk, "capGb": N}.
+    Absent key or mode disk means no wrapper. The helper keeps the gate's exit code."""
+    try:
+        config = json.loads((repo / ".ship.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], {"mode": "disk", "reason": "no .ship.json scratch key"}
+    scratch = config.get("scratch") if isinstance(config, dict) else None
+    if not scratch:
+        return [], {"mode": "disk", "reason": "no .ship.json scratch key"}
+    mode, cap = scratch.get("mode"), scratch.get("capGb")
+    if mode not in ("auto", "ram", "disk") or not isinstance(cap, (int, float)) or cap <= 0:
+        raise ValueError("scratch needs mode auto|ram|disk and a positive capGb")
+    if mode == "disk":
+        return [], {"mode": "disk", "reason": "configured"}
+    tool = os.environ.get("RAM_SCRATCH_TOOL", RAM_SCRATCH_TOOL)
+    if os.name == "nt" or not os.access(tool, os.X_OK):
+        return [], {"mode": "disk", "reason": f"ram-scratch helper not available at {tool}"}
+    return ([tool, "exec", "--owner", f"{repo.name}-gate", "--cap-gb", str(cap), "--mode", mode, "--"],
+            {"mode": mode, "cap_gb": cap})
 
 
 def active_targets(repo: Path, output: Path, log: Path) -> list[dict[str, str]]:
@@ -107,10 +130,11 @@ def run_gate(repo: Path, command: str, scope: str, contracts: list[str],
     # Match Invoke-ShipStep in dt-ship/scripts/ship.ps1: UTF-16LE EncodedCommand,
     # no profile, no interactive input, and no wrapper that changes exit semantics.
     encoded = base64.b64encode(command.encode("utf-16le")).decode("ascii")
+    prefix, gate["scratch"] = scratch_prefix(repo)
     try:
         with log.open("w", encoding="utf-8") as stream:
             completed = subprocess.run(
-                ["pwsh", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                [*prefix, "pwsh", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
                 cwd=repo, env=env, stdin=subprocess.DEVNULL, stdout=stream, stderr=subprocess.STDOUT)
         gate["exit_code"] = completed.returncode
     finally:

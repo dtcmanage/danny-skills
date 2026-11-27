@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.68.0
+
+- record-gate.py honours the .ship.json "scratch" key (ram-scratch helper) and records gate.scratch; absent key keeps disk.
+
 ## 2.67.4
 
 - Run each milestone gateCommand verbatim through the tracked gate producer before acceptance, including resume and auto-generation.

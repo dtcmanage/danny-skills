@@ -187,7 +187,8 @@ function Invoke-ShipStep {
     param(
         [string]$Step,
         [string]$Command,
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        $Scratch = $null
     )
     New-Item -ItemType Directory -Force -Path $StepLogDir | Out-Null
     $outLog = Join-Path $StepLogDir "$Step.out.log"
@@ -197,7 +198,16 @@ function Invoke-ShipStep {
     $timeoutSec = Get-Prop $StepTimeouts $Step
     $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Command))
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    $proc = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) `
+    $file = 'pwsh'
+    $argv = @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded)
+    if ($Scratch) {
+        # RAM scratch (ops-conventions "RAM scratch (CT202)"): the shared helper owns TMPDIR, budget,
+        # headroom, cap and cleanup; it falls back to disk by itself.
+        $file = $Scratch.Tool
+        $argv = @('exec', '--owner', $Scratch.Owner, '--cap-gb', [string]$Scratch.CapGb, '--mode', $Scratch.Mode, '--', 'pwsh') + $argv
+        $state.scratch = [ordered]@{ mode = $Scratch.Mode; cap_gb = $Scratch.CapGb }
+    }
+    $proc = Start-Process -FilePath $file -ArgumentList $argv `
         -WorkingDirectory $WorkingDirectory -RedirectStandardInput $inFile -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
         -NoNewWindow -PassThru
     $null = $proc.Handle  # cache the handle so ExitCode is readable after exit
@@ -457,6 +467,18 @@ if (Test-Path -LiteralPath $configFile) {
         }
     }
     $TimeoutAlertCommand = Get-Prop $config 'timeoutAlertCommand'
+    # RAM scratch for the gate is opt-in per repo; an absent key means disk (no wrapper).
+    $ScratchConfig = Get-Prop $config 'scratch'
+    if ($ScratchConfig) {
+        $sMode = [string](Get-Prop $ScratchConfig 'mode')
+        if ($sMode -notin @('auto', 'ram', 'disk')) {
+            Fail-Step 'config' "scratch.mode must be 'auto', 'ram' or 'disk'; got '$sMode'."
+        }
+        $sCap = Get-Prop $ScratchConfig 'capGb'
+        if (-not ($sCap -is [int] -or $sCap -is [long] -or $sCap -is [double] -or $sCap -is [decimal]) -or [double]$sCap -le 0) {
+            Fail-Step 'config' "scratch.capGb must be a positive number of GiB; got '$sCap'."
+        }
+    }
 }
 $state.step_logs = $StepLogDir
 
@@ -468,7 +490,17 @@ if ($gateCommand -and -not $SkipGate) {
     if (-not $branchTree) {
         Fail-Step 'gate' "gateCommand is configured but branch '$resolvedBranch' is not checked out in any worktree, so there is no tree to run the gate in. Run the gate by hand in the right tree, then re-run with -SkipGate."
     }
-    $gateRun = Invoke-ShipStep -Step 'gate' -Command $gateCommand -WorkingDirectory $branchTree
+    $gateScratch = $null
+    if ($ScratchConfig -and [string](Get-Prop $ScratchConfig 'mode') -ne 'disk') {
+        $tool = if ($env:RAM_SCRATCH_TOOL) { $env:RAM_SCRATCH_TOOL } else { '/home/danny/Claude/_system-tools/ram-scratch/ram-scratch' }
+        if (-not $IsWindows -and (Test-Path -LiteralPath $tool)) {
+            $gateScratch = [pscustomobject]@{ Tool = $tool; Owner = "$(Split-Path -Leaf $primary)-gate"
+                Mode = [string](Get-Prop $ScratchConfig 'mode'); CapGb = [double](Get-Prop $ScratchConfig 'capGb') }
+        } else {
+            $state.scratch = [ordered]@{ mode = 'disk'; reason = "ram-scratch helper not available at '$tool'" }
+        }
+    }
+    $gateRun = Invoke-ShipStep -Step 'gate' -Command $gateCommand -WorkingDirectory $branchTree -Scratch $gateScratch
     if ($gateRun.ExitCode -ne 0) {
         Fail-Step 'gate' "Gate command failed (exit $($gateRun.ExitCode)) in '$branchTree'. NOT merged, NOT shipped. Log: $($gateRun.Log). Output tail: $(Get-TailText $gateRun.Output)"
     }
