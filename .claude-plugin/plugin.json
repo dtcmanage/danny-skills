@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.4.3 dt-session-audit 0.9.2, dt-handoff 0.2.7, dt-ship 0.5.2: audit workflows close automatically in the same turn without confirmation unless Danny has a decision or requested an open session.",
       "1.4.2 dt-session-audit 0.9.1: match complete workstation rows and explicit aliases, preserve correct repository attribution, and cover Finance versus Finance HQ with regression fixtures.",
       "1.4.1 dt-build 2.68.1: freeze acceptance checks, parse report layouts safely, detach job logs and refresh authority after owned writes; dt-ship 0.5.1: document pre-merge release-tip checks; version policy: prove rejection at the shipping boundary.",
       "1.4.0 dt-ship 0.5.0 and dt-build 2.68.0: opt-in RAM scratch for release gates via the shared ram-scratch helper.",

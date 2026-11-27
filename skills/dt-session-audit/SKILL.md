@@ -1,8 +1,8 @@
 ---
 name: dt-session-audit
-description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Checks this session's artifacts and cleans up its own scratch and superseded drafts. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
+description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Checks this session's artifacts and cleans up its own scratch and superseded drafts. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Closes automatically in the same turn unless Danny has a decision to make or asked to keep the session open. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.9.1
+  version: 0.9.2
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -44,6 +44,7 @@ This skill does all of the following:
 5. Escalates only conflicts, uncertainty, and ambiguous scope.
 6. Triggers memory hygiene when bloat thresholds trip.
 7. Accounts for this session's artifacts and performs report-first cleanup of its own scratch and superseded drafts.
+8. Closes the session automatically after the audit unless a decision for Danny remains or he asked to keep it open.
 
 This skill does **not** do project planning, refactoring, or progress management.
 
@@ -407,9 +408,9 @@ After apply, run:
 
 If `should_run_hygiene=true`, invoke `dt-memory-hygiene` automatically.
 
-## Workspace Upload (final step)
+## Workspace Upload
 
-Session audit is where CLAUDE.md, MEMORY.md, and the other scaffolding files are most likely to have just been edited. As the LAST step of every audit run, push those edits to GitHub immediately instead of waiting for the hourly sync (systemd `workspace-sync.timer` at :07):
+Session audit is where CLAUDE.md, MEMORY.md, and the other scaffolding files are most likely to have just been edited. After the audit checks and any memory hygiene, push those edits to GitHub immediately, before session close-out, instead of waiting for the hourly sync (systemd `workspace-sync.timer` at :07):
 
 On the Linux session host (CT202, workspace at `/home/danny/Claude`) and on the Mac (workspace at `~/Claude`):
 
@@ -424,6 +425,22 @@ pwsh -NoProfile -File "D:/Claude/_system-tools/workspace-sync/workspace-sync.ps1
 ```
 
 The script commits any workspace changes (area-grouped message), rebases onto origin, and pushes; it is a no-op when the tree is clean. On failure it writes `SYNC-ALERT.md` at the workspace root and exits 1 — surface that in the audit report rather than retrying. Skip this step only on a machine that has no workspace repo clone.
+
+## Session Close-out (final step)
+
+Read and follow `<workspace>/_Claude-Workspace/00_Resources/build-process.md` § Session close-out. Finish all audit checks, any memory hygiene, workspace upload, and reporting before this step.
+
+- If a decision for Danny remains after the audit, state the exact decision and stay open. In a child session, report it to the master through the required reporting channel.
+- If Danny explicitly asked to keep the session open, honor that request.
+- Otherwise, close automatically in the same turn. Never ask for confirmation, offer to close later, or wait for a reply. An audit requested by another skill follows the same rule; return neither a close question nor a waiting state to the caller.
+
+In a Command Center session, run its own close command with a concrete summary and left-off line, then give the final reply; the session closes after that reply:
+
+```bash
+bash "<workspace>/_Claude-Workspace/Command Center/command-center-v2/command-center-v2-app/tools/ccv2-close-self.sh" --summary "<what this session did>" --left-off "<what is open, or Nothing left to do.>"
+```
+
+Outside Command Center, say the audit is done and end the turn. If the close command fails, report the failure accurately; do not claim the session closed or ask Danny to confirm a close that was already authorized.
 
 ## Normative Terminology Contract
 

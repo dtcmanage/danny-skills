@@ -2,7 +2,7 @@
 name: dt-ship
 description: "One-command close-out for a finished feature: run the build/tests gate, rebase + ff-only merge to main via the shared merge machinery, push, deploy per the repo's .ship.json, PROVE the deploy is live (deployed commit hash must equal local main HEAD, plus browser-smoke on the configured routes), then purge the merged worktree and branch. Trigger on /dt-ship, 'ship it', 'push live', or 'ship and clean tree'. Do NOT use to create branches or worktrees (that is start-work), for design review (dt-review), or for build execution (dt-build)."
 metadata:
-  version: 0.5.1
+  version: 0.5.2
   changelog: See CHANGELOG.md.
 ---
 
@@ -66,6 +66,7 @@ Optionally a branch or worktree name ("ship it" alone auto-detects: the current 
 5. **Report a verification table.** One row per claim: what was done, how it was checked, and the concrete evidence. At minimum: gate (command + exit code), merge (commit range), push (origin main), deploy (command exit), hash proof (`prod_commit` vs `local_head`), each smoke route (pass + screenshot path), purge (worktrees/branches removed — quote `purged`, and confirm `git worktree list` shows only the primary tree). Then a **Known issues** list in the release summary: every entry of `known_issues` plus any found at step 4a, each with what, where and why it does not block — or "none". If `rerere_enabled` is `false`, suggest `git config --global rerere.enabled true`.
 
 6. **Chain if asked.** If Danny's request included an audit or handoff ("ship it and audit sess", "ship and hand off"), invoke `dt-session-audit` / `dt-handoff` after the ship report — a model step, not part of the script.
+   Complete the audit's final Session Close-out step in the same turn: if no decision for Danny remains and he has not asked to keep the session open, run the Command Center close command from `00_Resources/build-process.md` § Session close-out with `--summary` and `--left-off`, then give the final reply. Never ask for confirmation or wait after the audit. Outside Command Center, say it is done and end. If a decision remains, state it and stay open; child sessions report it to their master.
 
 ## Rules
 

@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.9.2 (2026-11-27): Close automatically in the same turn after audit and upload unless Danny has a decision or asked to keep the session open; never ask for close confirmation.
+
 - 0.9.1 (2026-11-27): Match complete workstation names and explicit aliases so Finance cannot borrow Finance HQ repository ownership; retain truthful registration findings and add ambiguous-name fixtures.
 
 - 0.9.0 (2026-11-27): Add report-first session artifact inventory, safe scratch and superseded-draft cleanup, tracked active drafts, and verified final disposition.

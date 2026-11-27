@@ -3,7 +3,7 @@ name: dt-handoff
 description: "Compact the current session into a single-use, paste-ready starting prompt for a fresh session, save it to the project's _handoffs folder, then run a session audit. Trigger when Danny says '/dt-handoff', 'hand this off', 'write a handoff', 'wrap this up for next time', or 'set up the next session'. Also owns handoff validation: trigger on 'validate the handoff X', 'validate the build X', 'was this handoff acted on?', or '-validate <handoff-path>' to audit a handoff against deterministic evidence. Do not use for capturing memory or preferences mid-session - that is dt-session-audit's job."
 argument-hint: "What should the next session focus on?"
 metadata:
-  version: 0.2.6
+  version: 0.2.7
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -131,9 +131,11 @@ the same way and include a one-line command to open it; keep the command's liter
 ii "<absolute path to .html handoff>"
 ```
 
-## Step 5: Run the session audit
+## Step 5: Run the session audit and close
 
 After the handoff is written and reported, invoke the `dt-session-audit` skill to capture any uncaptured corrections, preferences, and decisions from the session.
+
+Complete its final Session Close-out step in the same turn: when no decision for Danny remains and he has not asked to keep the session open, run the Command Center close command from `00_Resources/build-process.md` § Session close-out with `--summary` and `--left-off`, then give the final reply. Never ask for confirmation or wait after the audit. Outside Command Center, say it is done and end. If a decision remains, state it and stay open; child sessions report it to their master.
 
 ## Validate Mode
 
