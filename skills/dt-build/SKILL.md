@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.66.1
+  version: 2.67.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -40,13 +40,10 @@ outputs. Exception: `build-run-review.html` is on-request only (step 6.5).
 ## When this fires
 
 Trigger when all are true:
-- Input artifact is **either** a `roadmap.md` produced by `dt-roadmap` **or** a finalized design
-  (`design-final-<slug>.md` — dt-review's current naming, slug describing what is being built — or the
-  legacy `design-final.md`; accept anything matching `design-final-*.md` or `design-final.md`. Also
-  `plan-draft.md` when review was skipped). A roadmap is *preferred* for heavier
-  builds (many milestones, load-bearing/gate milestones, anything you want a reviewed contract for).
-  When handed a design, dt-build auto-generates the roadmap itself
-  (step 2.5); a missing roadmap never blocks it.
+- Input is a `dt-roadmap` **roadmap.md** or finalized design (`design-final-*.md`, legacy
+  `design-final.md`; also `plan-draft.md` when review was skipped). Prefer a roadmap for heavier
+  builds (many milestones, load-bearing/gate milestones, or a reviewed contract).
+  For designs, generate the roadmap in step 2.5; a missing roadmap never blocks intake.
 - Repository is a git repo.
 - Danny is asking to run the build stage, not planning/review.
 
@@ -77,7 +74,7 @@ A milestone in any non-PASS state blocks every dependent milestone from starting
 
 ## Model routing
 
-Pass `-Difficulty standard|hard` to the resolver and wrappers; hard requires a single-line `-DifficultyReason`. The verifier of a load-bearing milestone and the final integrated review declare hard, because their verdict is acted on without line-by-line checking. Within the two-attempt budget, retry a failed standard first attempt with `-RetryAtHardFrom <model>`; retry a failed hard first attempt with `-EscalateFrom <model> -Difficulty hard -DifficultyReason <reason>`. A category without tiers (unprotected `mechanical`, which routes to the fast job) retries with `-EscalateFrom <failed model>` as before.
+Pass `-Difficulty standard|hard` to the resolver and wrappers; hard requires a single-line `-DifficultyReason`. Load-bearing verifiers and the final integrated review declare hard. Follow the retry ladder below.
 
 Routing lives in the shared model router: `<danny-skills>/scripts/model-router/resolve-model.ps1`, operator reference `references/model-router/README.md`, session rules `00_Resources\model-routing.md`. dt-build adds only these rules.
 
@@ -243,10 +240,14 @@ Run `pwsh -NoProfile -File "<skill>/scripts/collect-usage.ps1" -Quiet` at intake
 6.5 Emit acceptance ledger; review artifact on request only:
 - Run a final integrated baseline/E2E rehearsal on the final integration-branch SHA, including design-required
   live checks. If that branch's `.ship.json` has a `gateCommand`, run that exact command as a tracked job
-  on a clean checkout of that SHA; read saved gate output and job status. Record command, result, exit code,
-  and SHA in `final-integration.json`. A failing or unrun gate means BLOCKED, never COMPLETE; any subsequent
+  on a clean checkout of that SHA through `<skill>/scripts/record-gate.py`, using the executable command in
+  `<danny-skills>/skills/dt-build/references/gate-scope.md`. The producer calls `resolve-gate-scope.py`,
+  runs the exact gate, and atomically records actual before/after and dependency evidence in
+  `final-integration.json`, preserving other integration fields. Read saved gate output and job status.
+  A current-HEAD PASS/empty delta still requires full final checks; it never means run zero suites.
+  A failing or unrun gate means BLOCKED, never COMPLETE; any subsequent
   code change requires rerunning it on the new SHA. Without such a `gateCommand`, record its absence and
-  continue as before. Have a fresh non-builder verifier (via VERIFY_DISPATCH) review the combined diff.
+  run the explicit roadmap final gate through the same producer. Have a fresh non-builder verifier (via VERIFY_DISPATCH) review the combined diff.
   Include branch SHA, commands, environment, verifier provenance (codex-host: wrapper provenance JSON path), and PASS/BLOCKED
   in `final-integration.json`. Missing or BLOCKED final integration prevents COMPLETE.
   Run the review rounds before that complete gate, per `references/review-fix-loop.md`: labeled findings,

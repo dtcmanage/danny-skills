@@ -70,6 +70,8 @@ try {
     }
     # Independent helper suites run once, outside the wrapper fixture shards.
     if ($Shard -in @(0,5)) {
+        & $testPython (Join-Path $scriptDir 'tests/test-gate-scope.py')
+        Assert-True ($LASTEXITCODE -eq 0) 'verified gate scope rejects stale evidence and includes working changes'
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-regression-fixtures.ps1')
         Assert-True ($LASTEXITCODE -eq 0) 'stale regression fixtures expire without removing recent failures'
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-powershell-startup.ps1')

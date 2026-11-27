@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.3.2 dt-build 2.67.0: record exact PowerShell gates and resolve verified scope with isolated fixture nesting and conservative final checks; retain worktree dependency installation and explicit dispatch-category guidance.",
       "1.3.1 dt-build 2.66.1; model router: require explicit categories in dispatch-guard retry guidance, document the placeholder, add native/shell category regressions, and reconcile three non-launch migration inventory entries.",
       "1.3.0 dt-build 2.66.0: install fresh build worktrees' packages before dispatch; ship gate: add worktree-deps step.",
       "1.2.30 dt-build 2.65.2, dt-review 1.19.2, dt-image-gen 0.4.2, dt-writing-draft 0.3.2, dt-writing-edit 0.4.2; model router rolling-hour alert dedupe, lane-scoped probe recovery and concurrency tests; version policy ownership declaration.",

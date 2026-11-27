@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.67.0
+
+- Add trusted-local gate evidence production and verified scope resolution; preserve exact PowerShell ship semantics, permit isolated nested fixture apps, reject same-app cycles, and keep conservative final checks.
+
 ## 2.66.1
 
 - Require an explicit task category in dispatch-guard retry guidance instead of hard-coding routine-coding.

@@ -71,22 +71,21 @@ implementation loop limit" in `acceptance-contract.md` and the SKILL.md step 6j 
   changed paths (front end, back end, shared contract) per `00_Resources/build-process.md`, plus the
   builds, E2E groups and design-required live checks those paths need. That run writes
   `final-integration.json`.
-- **Changed relative to what.** Changed paths are `git diff --name-only <base>..<candidate>`, where
-  `<base>` is the most recent commit whose gate record is still valid:
-  - A gate record is a `final-integration.json` (this run's `<run-folder>/final-integration.json`, or one
-    left by an earlier dt-build run of the same repo in its run folder under `.dt-build/`) whose
-    gate `result` is PASS and which names the gated SHA and the exact gate command.
-  - It is still valid when (a) it passed, (b) its gate command equals the current `.ship.json`
-    `gateCommand` (or the roadmap's named gate when there is none) and the gate configuration has not
-    changed since that SHA: `git diff --quiet <record-sha>..<candidate> -- .ship.json <suite map>`, where
-    the suite map is the file or folder the gate reads to map paths to suites, and (c) its SHA is an
-    ancestor of the candidate (`git merge-base --is-ancestor <record-sha> <candidate>`).
-  - Of the valid records, take the nearest ancestor of the candidate. Only when none is valid, fall back
-    to the live release SHA (the commit production runs); never the live release when a newer valid
-    record exists. (Command Center v2.1, 2026-11-22: comparing a 3-line fix to a live release far behind
-    `main` selected every suite.)
-  - Record the base in `final-integration.json` as `gate_scope_base: {sha, record_path, reason}` with the
-    changed path list, so the next scoped gate and dt-ship can check it.
+- **Changed relative to what.** Before the gate, read
+  `<danny-skills>/skills/dt-build/references/gate-scope.md` and run
+  `<danny-skills>/skills/dt-build/scripts/record-gate.py` as the tracked final-gate job against the
+  clean committed candidate, with the exact configured gate (or explicit roadmap gate if absent).
+  Use that reference's executable command. The producer calls `resolve-gate-scope.py`, supplies
+  `DT_BUILD_GATE_SCOPE_JSON` and executes the unchanged command, then atomically writes actual
+  before/after and dependency evidence plus the resolver output to `final-integration.json`.
+  dt-build supplies the verified nearest successful ancestor/base and changed paths, including working
+  changes; the app gate owns suite selection. Command, coverage scope, committed tree and unchanged gate
+  dependencies must match. No usable evidence means full testing, never a default live-release base.
+  Require ignored in-repo evidence (normally `.dt-build/`); otherwise use an external run folder.
+  A current-HEAD PASS with empty delta is evidence to validate, never a zero-suite final gate;
+  without an explicit verified-evidence reuse contract, run conservative full final checks.
+  Read the producer exit, record and log; FAIL or unrun remains BLOCKED. The helpers never
+  authorize skipping the final gate or change its exact command.
 - If it fails, label the failures, make one bundled fix, rerun the failed tests plus its targeted tests and
   fix verification, then run the full gate once more. A failing full gate is the only reason to repeat it.
 
