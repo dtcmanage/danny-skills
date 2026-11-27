@@ -72,9 +72,11 @@ using it. Keep the sidecar until the staged exercise or release is accepted.
 For emergency relief, set `ROUTER_GUARD_OFF=1` before starting a session, or remove
 only this hook entry. The guard fails open on malformed input and runtime errors.
 It reads no roster and uses no ticket or authorization store. Every deny begins
-`ROUTER_GUARD_DENY:`, suggests category `routine-coding`, and gives an exact
-`dispatch.ps1` invocation. The operator writes the task prompt first and chooses
-the appropriate category if the suggested starting point does not match the task.
+`ROUTER_GUARD_DENY:` and gives a `dispatch.ps1` command template with
+`-Category "<category>"`. The operator writes the task prompt and replaces the
+placeholder with an explicitly chosen category before running the command.
+The guidance names `mechanical` for bulk reading, search, web-fetch and Explore
+collection; choose other categories per `model-routing.md`.
 
 ## Measured surfaces and retained limitations
 

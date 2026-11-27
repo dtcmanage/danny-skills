@@ -32,7 +32,7 @@ def guard_decision(payload: object) -> dict | None:
         calls = module.executed_dispatch_details(inputs["command"])
         if not any(not call["wrapper"] for call in calls):
             return None
-    # A suggested category is a retry starting point, never inferred approval.
+    # The session must choose a category; free-form task text is not routing authority.
     # Single-quoted PowerShell arguments preserve literal path characters.
     project = payload.get("cwd")
     if not isinstance(project, str) or not project or any(c in project for c in "\r\n\x00"):
@@ -45,12 +45,16 @@ def guard_decision(payload: object) -> dict | None:
     output = f"_dispatch/{task}-output.md" if read_only else f"{task}-output.md"
     command = (
         'pwsh -NoProfile -File "' + DISPATCH_PATH + '" -ProjectPath ' + quoted_project +
-        ' -Category routine-coding -PromptPath "' + task + '-prompt.md" -OutputPath "' + output + '"'
+        ' -Category "<category>" -PromptPath "' + task + '-prompt.md" -OutputPath "' + output + '"'
         ' -SelectionReason "Route native delegation through the category resolver" -AdHoc -AllowOutputInProject -Live'
     )
     if read_only:
         command += " -ReadOnly"
-    reason = f"ROUTER_GUARD_DENY: category routine-coding; save the task in {task}-prompt.md, then run: " + command
+    reason = (
+        "ROUTER_GUARD_DENY: explicitly name the task category; replace <category> before running "
+        "(mechanical for bulk reading/search/web-fetch and Explore collection; other work per model-routing.md); "
+        f"save the task in {task}-prompt.md, then run: " + command
+    )
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": reason}}
 

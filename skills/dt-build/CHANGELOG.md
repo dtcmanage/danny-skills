@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.66.1
+
+- Require an explicit task category in dispatch-guard retry guidance instead of hard-coding routine-coding.
+
 ## 2.66.0
 
 - Install a fresh build worktree's packages from its lockfiles (npm ci, pnpm/yarn frozen install, uv sync --frozen) before every substantive chunk dispatch; failures stop as DEPS_INSTALL_FAIL (environment, no attempt used).

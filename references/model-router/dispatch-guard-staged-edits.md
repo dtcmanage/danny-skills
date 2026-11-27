@@ -385,6 +385,9 @@ The first matching row disposes each hit. Path is relative to `<danny-skills>`; 
 | `<danny-skills>/skills/dt-session-context/SKILL.md` | * | Describes which sessions the digest covers. |
 | `<danny-skills>/skills/start-work/SKILL.md` | Agent-neutral | Means vendor-neutral. |
 | `<danny-skills>/references/shared-component-owners.json` | Explore.json | Owner entry naming a captured hook payload fixture; records ownership and gives no delegation instruction. |
+| `<danny-skills>/scripts/model-router/vendor-limits.ps1` | User-Agent | HTTP header for the quota probe, not a native Agent tool launch. |
+| `<danny-skills>/skills/dt-build/references/resume-bootstrap-measurement.md` | excluding subagents | Transcript discovery excludes subagent transcripts; no delegation instruction. |
+| `<danny-skills>/skills/dt-build/references/managed-resume.md` | Never judge a lane by a bare | Prohibits direct CLI launches and requires wrapper preflights for lane health. |
 <!-- dispositions:end -->
 
 ## Grep dispositions: scaffolding

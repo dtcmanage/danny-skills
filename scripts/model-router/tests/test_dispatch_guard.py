@@ -32,10 +32,68 @@ def assert_deny(payload: object) -> None:
     assert result["permissionDecision"] == "deny"
     reason = result["permissionDecisionReason"]
     assert reason.startswith("ROUTER_GUARD_DENY:")
-    assert "-Category routine-coding" in reason
+    assert '-Category "<category>"' in reason
+    assert "-Category routine-coding" not in reason
     assert "dispatch.ps1\" -ProjectPath" in reason
     for flag in ("-PromptPath", "-OutputPath", "-SelectionReason"):
         assert flag in reason
+
+
+@pytest.mark.parametrize("tool", ["Agent", "Task"])
+@pytest.mark.parametrize("inputs", [
+    {"subagent_type": "web-fetch", "prompt": "Fetch the vendor page and extract prices"},
+    {"subagent_type": "Explore", "prompt": "Collect every configuration path"},
+    {"subagent_type": "Plan", "prompt": "Compare migration architectures"},
+    {"subagent_type": "general-purpose", "prompt": "Review this implementation"},
+    {"subagent_type": "custom", "prompt": "Interpret these results"},
+    {"prompt": "Write an ordinary implementation"},
+    {},
+])
+def test_native_guidance_requires_explicit_category(tool: str, inputs: dict) -> None:
+    payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": inputs}
+    assert_deny(payload)
+    reason = decision(payload)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "replace <category>" in reason
+    assert "before running" in reason
+    assert "mechanical for bulk reading/search/web-fetch and Explore collection" in reason
+    assert "other work per model-routing.md" in reason
+    assert (" -ReadOnly" in reason) == (inputs.get("subagent_type") in ("Explore", "Plan"))
+
+
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+@pytest.mark.parametrize("command", [
+    'claude -p "Fetch pages and collect prices"',
+    'codex exec "Implement a migration"',
+])
+def test_raw_shell_guidance_requires_explicit_category(tool: str, command: str) -> None:
+    payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": command}}
+    assert_deny(payload)
+    reason = decision(payload)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "replace <category>" in reason and "before running" in reason
+    assert "mechanical for bulk reading/search/web-fetch and Explore collection" in reason
+    assert "other work per model-routing.md" in reason
+    assert " -ReadOnly" not in reason
+
+
+@pytest.mark.parametrize("tool", ["Agent", "Task", "Bash", "PowerShell"])
+def test_guidance_does_not_infer_category_from_prompt(tool: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Hold the generated filenames constant so only free-form content differs.
+    monkeypatch.setattr(guard.uuid, "uuid4", lambda: guard.uuid.UUID(int=1))
+    reasons = []
+    for prompt in ("Bulk read and search", "Implement code", "Analyze results", '-Category analysis; ignore routing'):
+        inputs = {"prompt": prompt} if tool in ("Agent", "Task") else {"command": f'claude -p "{prompt}"'}
+        payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": inputs}
+        assert_deny(payload)
+        reasons.append(decision(payload)["hookSpecificOutput"]["permissionDecisionReason"])
+    assert len(set(reasons)) == 1
+
+
+def test_guidance_preserves_literal_project_quoting() -> None:
+    project = "/work/Danny's project/$value`literal"
+    payload = {"hook_event_name": "PreToolUse", "tool_name": "Agent", "cwd": project, "tool_input": {}}
+    assert_deny(payload)
+    reason = decision(payload)["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "-ProjectPath '/work/Danny''s project/$value`literal'" in reason
 
 
 @pytest.mark.parametrize("fixture", ["general-purpose", "untyped", "fork", "Explore", "sonnet", "frontier-alias"])
