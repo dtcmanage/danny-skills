@@ -170,6 +170,34 @@ Final integration must pass the integration branch's `.ship.json` `gateCommand`,
 
 ### Default implementation loop limit
 
+Before fix round 1, run the complete milestone acceptance harness and every named check without
+early-stop flags or a hand-picked subset. This is the milestone harness, not the repository-wide
+final integration gate. Record its command, candidate SHA, harness revision, enumerated check IDs
+(including parameter cases), results and logs. Freeze all those checks, passing and failing, as the
+baseline at fix round 1. Where the harness cannot enumerate cases, the coordinator records the test
+files/procedures, revision and case inventory in the decision log. The acceptance script runs named
+commands; it cannot discover internal cases or enforce a fix-round counter.
+
+Run baseline checks and all later added checks on subsequent acceptance runs. Account by stable
+check identity and assertion/procedure, never renamed tests, failure messages or raw count deltas:
+
+- Failures of baseline checks, including regressions of initially passing checks, belong to the
+  original bucket. A bundled fix and full named rerun consumes one original fix round when that
+  bucket had failures. Added checks never reset that counter.
+- Genuinely added assertions or parameter cases belong to the new-check bucket. Record their
+  first-seen revision and reason. Their failures do not consume original fix rounds; a mixed fix
+  consumes a round in both buckets. Never remove, weaken or relabel a check to recover budget.
+  Changed assertions retain the original requirement and add coverage.
+- Allow at most two bundled new-check fix rounds total per milestone, not per added check. Stop
+  either bucket early when its same failing check set remains on two consecutive post-fix runs.
+  Recurring baseline regressions remain in the original bucket. At either cap, leave acceptance
+  BLOCKED and obtain a parent ruling for one named narrow fix and return condition. All added
+  checks still must pass before clean acceptance.
+
+This coordinator accounting does not bypass the separately enforced worker attempt cap. Extra
+dispatches past attempt 2 still require recorded approval and the next -Attempt. Never reset attempt
+numbers or create a new chunk identity to evade that gate.
+
 - Build only what the milestone's acceptance checks require. Put everything else in `deferred-findings.md`.
 - Fix a review finding only if it has a realistic path in ordinary system use or breaks an acceptance check.
   Record contrived edge cases requiring debugger hooks, deliberately damaged environments, or inputs nobody

@@ -701,7 +701,7 @@ function Start-DtJobRunner {
         # and a job must survive its coordinator's rotation kill.
         foreach ($name in $script:DtJobEnvExclude) { if ([System.Environment]::GetEnvironmentVariable($name)) { $withheld[$name] = $null } }
         $process = Start-Process -FilePath $pwsh -WorkingDirectory $workDir -PassThru -ArgumentList ($runnerArgs -join ' ') `
-            -RedirectStandardOutput '/dev/null' -RedirectStandardError (Join-Path $jobDir 'runner-stderr.log') -Environment $withheld
+            -RedirectStandardInput '/dev/null' -RedirectStandardOutput (Join-Path $jobDir 'runner-stdout.log') -RedirectStandardError (Join-Path $jobDir 'runner-stderr.log') -Environment $withheld
         $runnerPid = $process.Id
     }
     return [pscustomobject]@{ pid = $runnerPid; start_utc = (Get-DtJobProcessStartUtc -ProcessId $runnerPid) }
@@ -1717,7 +1717,16 @@ function Save-DtJobApprovals {
     $delegateRecord = if ($Approvals.PSObject.Properties['delegate']) { $Approvals.delegate } else { $null }
     $history = @(if ($Approvals.PSObject.Properties['director_replacements']) { $Approvals.director_replacements | Where-Object { $null -ne $_ } })
     $content = [ordered]@{ awaiting = $Approvals.awaiting; approvals = @($Approvals.approvals); delegate = $delegateRecord; director_replacements = $history } | ConvertTo-Json -Depth 10
+    # Only this writer's authorized change may be repinned. Never bless unrelated stale authority.
+    $digestPresent = Test-Path -LiteralPath (Join-Path $RunFolder 'authority-digest.json')
+    if ($digestPresent) {
+        $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath
+        $null = & (Join-Path $PSScriptRoot 'verify-authority-digest.ps1') -RunFolder $RunFolder -BuildStatePath $ctx.build_state_path
+    }
     Write-DtJobAtomic -Path (Get-DtJobPaths -RunFolder $RunFolder).Approvals -Content $content
+    if ($digestPresent) {
+        $null = & (Join-Path $PSScriptRoot 'build-authority-digest.ps1') -RunFolder $RunFolder -BuildStatePath $ctx.build_state_path
+    }
 }
 
 function Get-DtJobNotifications {

@@ -44,6 +44,11 @@ implementation loop limit" in `acceptance-contract.md` and the SKILL.md step 6j 
 
 ## 3. Test what the fix touched, not everything
 
+Before the first fix, run the complete milestone acceptance harness and freeze its baseline inventory
+per `acceptance-contract.md`, "Default implementation loop limit". Later added checks still run;
+their failures use the bounded new-check bucket. Baseline regressions consume the original budget.
+This initial milestone harness does not replace section 5's final gate.
+
 - The fix brief names the test selection the worker runs, and the standing rule "full named test
   selection" means this set:
   - each finding's check test (new or corrected),

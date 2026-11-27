@@ -145,6 +145,14 @@ Heartbeats watch the resolved worktree, excluding the run folder's own ledger wr
 
 Lifecycle events automatically refresh checkpoint `status_line` under the run lock, showing running jobs, waiting count, and the latest event. Checkpoint writes derive that line again from the latest ledger event so an older coordinator snapshot cannot restore stale job status. Keep milestone intent and next steps in the checkpoint body.
 
+Every launched command/script receives `DT_BUILD_LOG_DIR=jobs/<job-id>/logs` as an absolute directory
+inside its run. Inherited values are replaced. On Linux the runner's stdin/stdout/stderr are detached
+from the caller; job stdin is closed, so `dt-job start | tail` can finish while the worker continues.
+
+The approval writer and checkpoint installer verify any existing authority digest before changing
+their owned source, then rebuild it from the final checkpoint and authority files. A stale digest
+fails before the write; it is never silently repinned. Runs with no digest retain the full-read path.
+
 ## Waiting at an approval boundary
 
 Coordinators call `await-danny -CoordinatorId <id> -Operation <op> -Message "<decision>" -WaitMinutes 7.5 -CallStartedUtc <call-start-utc> -Json` with tool timeout `600000`. Default/max wait is 7.5 minutes from caller start (0 disables it; fractional minutes are supported). Only the current unreleased lease holder with a live director waits. The blocking call polls without model turns and renews its lease. A matching live waiter lets operator `approve` apply immediately; `decision=approved` means continue in the same coordinator after reading the receipt and reason. No continuation request or relaunch is emitted for that approval. Other live coordinators retain queued approval until exit.

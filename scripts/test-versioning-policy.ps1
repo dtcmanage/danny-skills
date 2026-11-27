@@ -119,6 +119,22 @@ try {
     $tipJson = & pwsh -NoProfile -File $validator -RepoRoot $tipRoot -BaseRef main -Json
     Assert-True ($LASTEXITCODE -eq 1 -and ($tipJson -join ' ') -match 'RELEASE_COMMIT_NOT_TIP') 'clean branch rejects post-bump commit with tip error'
     Assert-True (($tipJson -join ' ') -match 'Fold the change into the release commit or bump again') 'tip error provides repair instruction'
+    # Exercise the real dt-ship boundary with this repo's gate, rather than imposing plugin rules
+    # on generic repositories. No fixture is allowed to reach merge, push or deploy here.
+    $shipConfig = Join-Path $tempRoot 'tip-ship-config.json'
+    Write-Utf8 $shipConfig (@{
+        gateCommand = "& '" + $validator.Replace("'", "''") + "' -RepoRoot '" + $tipRoot.Replace("'", "''") + "' -BaseRef auto -Json; exit `$LASTEXITCODE"
+        deployCommand = "throw 'fixture must not deploy'"
+        prodCommitProbe = @{ command = "throw 'fixture must not probe'" }
+    } | ConvertTo-Json -Depth 3)
+    $shipScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'skills/dt-ship/scripts/ship.ps1'
+    $tipBranch = (& git -C $tipRoot branch --show-current).Trim()
+    $mainBeforeShip = (& git -C $tipRoot rev-parse main).Trim()
+    $shipJson = & pwsh -NoProfile -File $shipScript -RepoRoot $tipRoot -Branch $tipBranch -ConfigPath $shipConfig -SkipPull -SkipPush -AllowLiveJobs -Json
+    $shipCode = $LASTEXITCODE
+    $shipResult = $shipJson -join "`n" | ConvertFrom-Json
+    Assert-True ($shipCode -ne 0 -and $shipResult.failed_step -eq 'gate' -and -not $shipResult.merged -and -not $shipResult.pushed -and -not $shipResult.deployed) 'post-release review fix is rejected by dt-ship before merge/push/deploy'
+    Assert-True ((& git -C $tipRoot rev-parse main).Trim() -ceq $mainBeforeShip -and (Test-Path $tipRoot)) 'rejected release preserves main and the feature checkout'
     Write-Utf8 (Join-Path $tipRoot 'README.md') 'dirty pending release'
     $dirtyTipJson = & pwsh -NoProfile -File $validator -RepoRoot $tipRoot -BaseRef main -Json
     Assert-True ($LASTEXITCODE -eq 0 -and ($dirtyTipJson -join ' ') -notmatch 'RELEASE_COMMIT_NOT_TIP') 'dirty branch keeps current behavior'

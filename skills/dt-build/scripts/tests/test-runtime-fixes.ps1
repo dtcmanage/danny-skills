@@ -30,6 +30,7 @@ $state = Join-Path $run '_build-state.md'
 [IO.File]::WriteAllText($state, "updated_utc: fixture`nstatus_line: old job is still rebasing now`nrun_status: runnable`nlast_consumed_event_seq: 0`nbody: preserve me`n")
 $env:DT_BUILD_STATE_DIR = Join-Path $root 'state'
 $env:DT_JOB_HEARTBEAT_SEC = '1'
+$originalStallSec = $env:DT_JOB_STALL_SEC
 try {
     JobCall @('register-run','-RunFolder',$run,'-RunId','runtime-fixture','-BuildStatePath',$state,'-PinnedHost','codex') | Out-Null
     $candidate = Join-Path $root 'older-checkpoint.md'
@@ -83,12 +84,16 @@ try {
     # Launch from a subdirectory; only a sibling file changes, with no stdout.
     $sub = Join-Path $tree 'sub'; New-Item -ItemType Directory $sub | Out-Null
     $touch = (Join-Path $tree 'activity').Replace("'", "''")
+    # Exercise sustained file progress in a two-second fixture window. Production's five-minute
+    # window cannot be proved by a four-second freshness assertion on a twenty-second worker.
+    $env:DT_JOB_STALL_SEC = '8'
     Push-Location $sub
-    try { $h = JobCall @('start','-RunFolder',$run,'-Writes','-Command',"1..20 | ForEach-Object { [IO.File]::WriteAllText('$touch', [string]`$_); Start-Sleep 1 }") } finally { Pop-Location }
-    $reader = JobCall @('start','-RunFolder',$run2,'-WorkingTree',$tree,'-ReadOnly','-Command','Start-Sleep 30')
+    try { $h = JobCall @('start','-RunFolder',$run,'-Writes','-Command',"while (`$true) { [IO.File]::WriteAllText('$touch', [DateTime]::UtcNow.Ticks.ToString()); Start-Sleep 1 }") } finally { Pop-Location }
+    $reader = JobCall @('start','-RunFolder',$run2,'-WorkingTree',$tree,'-ReadOnly','-Command','while ($true) { Start-Sleep 1 }')
     # Observe real heartbeat readiness and idle age. Process startup under load
     # can consume most of a fixed sleep before the read-only heartbeat exists.
     $heartbeatDeadline = [DateTime]::UtcNow.AddSeconds(60)
+    $writerFirstActivity = $null; $writerAdvanced = $false
     do {
         $writerHeartbeat = Join-Path $run "jobs/$($h.job_id)/heartbeat.json"
         $readerHeartbeat = Join-Path $run2 "jobs/$($reader.job_id)/heartbeat.json"
@@ -96,17 +101,20 @@ try {
         if ((Test-Path $writerHeartbeat) -and (Test-Path $readerHeartbeat)) {
             $observedWriter = Get-Content -Raw $writerHeartbeat | ConvertFrom-Json
             $observedReader = Get-Content -Raw $readerHeartbeat | ConvertFrom-Json
-            $ready = $observedWriter.file_changes -gt 0 -and
+            if ($null -eq $writerFirstActivity) { $writerFirstActivity = [DateTime]$observedWriter.last_activity_utc }
+            $writerAdvanced = [DateTime]$observedWriter.last_activity_utc -gt $writerFirstActivity
+            $ready = $observedWriter.file_changes -gt 0 -and $writerAdvanced -and
                 ([DateTime]::UtcNow - [DateTime]$observedReader.last_activity_utc).TotalSeconds -ge 3
         }
         if (-not $ready) { Start-Sleep -Milliseconds 100 }
     } while (-not $ready -and [DateTime]::UtcNow -lt $heartbeatDeadline)
     $beat = Get-Content -Raw (Join-Path $run "jobs/$($h.job_id)/heartbeat.json") | ConvertFrom-Json
-    Check ($beat.file_changes -gt 0 -and ([DateTime]::UtcNow - [DateTime]$beat.last_activity_utc).TotalSeconds -lt 4) "sibling worktree writes refresh heartbeat from nested launch directory ($($beat | ConvertTo-Json -Compress); $(Get-Content -Raw (Join-Path $run ('jobs/' + $h.job_id + '.json'))))"
+    Check ($beat.file_changes -gt 0 -and $writerAdvanced) "sibling worktree writes refresh heartbeat from nested launch directory ($($beat | ConvertTo-Json -Compress); $(Get-Content -Raw (Join-Path $run ('jobs/' + $h.job_id + '.json'))))"
     $readerBeat = Get-Content -Raw (Join-Path $run2 "jobs/$($reader.job_id)/heartbeat.json") | ConvertFrom-Json
     Check ($readerBeat.file_changes -eq 0 -and ([DateTime]::UtcNow - [DateTime]$readerBeat.last_activity_utc).TotalSeconds -ge 3) 'unrelated worktree writes do not refresh read-only job activity'
     JobCall @('cancel','-RunFolder',$run2,'-JobId',$reader.job_id) | Out-Null
     JobCall @('cancel','-RunFolder',$run,'-JobId',$h.job_id) | Out-Null
+    $env:DT_JOB_STALL_SEC = $originalStallSec
 
     # Missing/archived holder records release, malformed reservations still diagnose corruption.
     foreach ($holderRun in @((Join-Path $root 'deleted'), $run)) {
@@ -329,6 +337,7 @@ try {
     & pwsh -NoProfile -File $cas -RepoPath $tree -SourceRef $old -ExpectedTargetSha $old -TargetBranch build/fixture -AllowRebase -RebasedFromSha $old -RunFolder $run -Json >$null
     Check ($LASTEXITCODE -ne 0 -and (& git -C $tree rev-parse build/fixture).Trim() -eq $new) 'rebase option preserves stale-tip rejection'
 } finally {
+    $env:DT_JOB_STALL_SEC = $originalStallSec
     foreach ($rf in $run,$run2) {
         foreach ($record in @(Get-ChildItem (Join-Path $rf 'jobs') -Filter 'j-*.json' -ErrorAction SilentlyContinue)) {
             $r = Get-Content -Raw $record | ConvertFrom-Json

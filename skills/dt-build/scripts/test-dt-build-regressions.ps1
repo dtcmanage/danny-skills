@@ -82,6 +82,8 @@ try {
         Assert-True ($LASTEXITCODE -eq 0) 'authority digest preference and full authorization coverage regressions pass'
     }
     if ($Shard -in @(0,4)) {
+    & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-tooling-hiccups.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'detached job streams, log directory and authority writer regressions pass'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-boundary-ledger.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'boundary ledger bootstrap regressions pass'
     if ($IsWindows) {

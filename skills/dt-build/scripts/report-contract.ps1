@@ -111,6 +111,16 @@ function Test-DtReportPathShaped {
     return ($Entry -ceq 'NONE' -or $Entry -match '^(?:[A-Za-z]:[\\/]|[\\/])' -or ($Entry -notmatch '\s' -and $Entry -match '[\\/]'))
 }
 
+function ConvertFrom-DtReportMarkdown {
+    param([string]$Text)
+    # Keep fence boundaries (section terminators), but normalize indented Markdown contract lines.
+    # Never expand variables or infer missing field values from surrounding narrative.
+    return (($Text -split '\r?\n' | ForEach-Object {
+        if ($_ -match '^\s*(?:`{3,}|~{3,})[^\r\n]*$') { '```' }
+        else { $_.TrimStart() }
+    }) -join "`n")
+}
+
 function Get-DtReportSection {
     # A report field's entries: an inline value after the colon, then every non-blank line up to the next
     # field header or a code fence. $null when the header is absent.
@@ -121,7 +131,7 @@ function Get-DtReportSection {
     # non-path line after its value. Each entry drops a leading '- ' or '* ' bullet and
     # surrounding backticks.
     param([Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string]$Name, [switch]$PathField, [switch]$SingleValue)
-    $lines = $Text -split '\r?\n'
+    $lines = (ConvertFrom-DtReportMarkdown $Text) -split '\r?\n'
     $headerPattern = '^\s*(?:' + (($script:DtReportHeaders | ForEach-Object { [regex]::Escape($_) }) -join '|') + '):'
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $m = [regex]::Match($lines[$i], '^\s*' + [regex]::Escape($Name) + ':(.*)$')
@@ -153,6 +163,22 @@ function Get-ReportShapeResult {
     $errors = New-Object System.Collections.Generic.List[string]
     $version = $null
     $warning = $null
+    $Text = ConvertFrom-DtReportMarkdown $Text
+    # A report is one contract, wherever it appears. Never combine partial contracts or pick a
+    # convenient identity/verdict from duplicate fields (including an unfilled output template).
+    foreach ($name in $script:DtReportHeaders) {
+        $matches = [regex]::Matches($Text, '(?im)^' + [regex]::Escape($name) + ':')
+        if ($matches.Count -gt 1) { $errors.Add("duplicate or ambiguous $name") | Out-Null }
+    }
+    $start = [regex]::Match($Text, '(?m)^DT_BUILD_REPORT_VERSION:')
+    if ($start.Success) {
+        foreach ($name in $script:DtReportHeaders | Where-Object { $_ -ne 'DT_BUILD_REPORT_VERSION' }) {
+            if ($Text.Substring(0, $start.Index) -cmatch ('(?m)^' + [regex]::Escape($name) + ':')) {
+                $errors.Add("$name occurs outside report contract") | Out-Null
+            }
+        }
+        $Text = $Text.Substring($start.Index)
+    }
     $versionMatch = [regex]::Match($Text, '(?m)^DT_BUILD_REPORT_VERSION:\s*([23])\s*$')
     if ($versionMatch.Success) { $version = [int]$versionMatch.Groups[1].Value }
     else { $errors.Add('missing or mismatched DT_BUILD_REPORT_VERSION') | Out-Null }
@@ -172,7 +198,7 @@ function Get-ReportShapeResult {
     if ($version -eq 3) {
         $verdict = Get-DtReportSection -Text $Text -Name 'VERDICT'
         if ($null -eq $verdict -or @($verdict).Count -eq 0) { $errors.Add('missing VERDICT') | Out-Null }
-        elseif ($script:DtReportVerdicts -cnotcontains $verdict[0]) { $errors.Add("VERDICT '$($verdict[0])' is not one of $($script:DtReportVerdicts -join ', ')") | Out-Null }
+        elseif (@($verdict).Count -ne 1 -or $script:DtReportVerdicts -cnotcontains $verdict[0]) { $errors.Add("VERDICT '$($verdict[0])' is not one of $($script:DtReportVerdicts -join ', ') or has multiple values") | Out-Null }
 
         $evidence = Get-DtReportSection -Text $Text -Name 'EVIDENCE_PATHS' -PathField
         if ($null -eq $evidence -or @($evidence).Count -eq 0) { $errors.Add('missing EVIDENCE_PATHS') | Out-Null }
@@ -194,6 +220,16 @@ function Get-ReportShapeResult {
                 foreach ($problem in (Get-DtContinuationRecord -Path $path -RunId $RunId -ChunkId $ChunkId).errors) { $errors.Add("CONTINUATION_STATE invalid: $problem") | Out-Null }
             }
         }
+    }
+    foreach ($name in @('CHANGED_FILES', 'COMMANDS_AND_RESULTS', 'UNRESOLVED_BLOCKERS', 'DISCOVERED_ENHANCEMENTS')) {
+        $entries = Get-DtReportSection -Text $Text -Name $name
+        if ($null -eq $entries -or @($entries).Count -eq 0 -or @($entries | Where-Object { $_ -match '^<.*>$' }).Count) {
+            $errors.Add("empty or unfilled $name") | Out-Null
+        }
+    }
+    if ($version -eq 3 -and $null -ne $verdict -and @($verdict).Count -eq 1 -and $verdict[0] -ceq 'PASS') {
+        $blockers = Get-DtReportSection -Text $Text -Name 'UNRESOLVED_BLOCKERS' -PathField
+        if (@($blockers).Count -ne 1 -or $blockers[0] -cne 'NONE') { $errors.Add('PASS report must declare UNRESOLVED_BLOCKERS: NONE') | Out-Null }
     }
     return [pscustomobject]@{ errors = @($errors); version = $version; warning = $warning }
 }

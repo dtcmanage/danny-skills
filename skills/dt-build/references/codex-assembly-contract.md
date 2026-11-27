@@ -15,3 +15,9 @@ Codex verify gate requires:
 - payload integrity check against manifest-bound data
 
 Any verification failure blocks spawn.
+
+`-RequiredEntitlements` accepts an array or comma-separated text through `pwsh -File` and trims names.
+`-PreambleText` supplies inline framing; `-PreamblePath` reads a file and takes precedence if both are
+supplied. Both are optional; omit both for the built-in worker preamble. Neither replaces identity,
+envelopes or the output contract. Both wrappers add a missing attempt header from `-Attempt`, and
+reject conflicting, malformed or ambiguous existing headers without hiding them.

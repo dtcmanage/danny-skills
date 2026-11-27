@@ -258,6 +258,7 @@ try {
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    $psi.RedirectStandardInput = $true
     $psi.WorkingDirectory = (Get-Location).ProviderPath
     # This runner was started from the registry profile; restore the caller's allow-listed environment.
     if ($spec.PSObject.Properties['environment'] -and $null -ne $spec.environment) {
@@ -272,6 +273,10 @@ try {
     $psi.Environment.Remove('DT_BUILD_COORDINATOR_LOCK_HELD') | Out-Null
     $psi.Environment['DT_JOB_ID'] = $JobId
     $psi.Environment['DT_JOB_DIR'] = $jobDir
+    # Commands and scripts need the same log contract as model wrappers. Ignore inherited stale paths.
+    $logDirectory = Join-Path $jobDir 'logs'
+    [IO.Directory]::CreateDirectory($logDirectory) | Out-Null
+    $psi.Environment['DT_BUILD_LOG_DIR'] = $logDirectory
     if ($spec.command) {
         $script = Get-DtJobCommandScript -Command ([string]$spec.command)
         $psi.FileName = [System.Environment]::ProcessPath
@@ -341,6 +346,7 @@ public static class DtJobOutputCopy {
         # Linux may lose StartTime as soon as the child exits. Capture before any ledger wait;
         # null means unavailable, never a reason to replace the child's real exit result.
         $processStartUtc = Get-DtJobProcessStartUtc -Process $process
+        $process.StandardInput.Close()
         $copyOut = [DtJobOutputCopy]::CopyAsync($process.StandardOutput.BaseStream, $stdoutFile)
         $copyErr = [DtJobOutputCopy]::CopyAsync($process.StandardError.BaseStream, $stderrFile)
 

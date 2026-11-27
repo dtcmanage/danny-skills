@@ -29,6 +29,7 @@ try {
             $psi = [Diagnostics.ProcessStartInfo]::new((Join-Path $PSHOME 'pwsh'))
             $psi.UseShellExecute = $false
             $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+            $psi.RedirectStandardInput = $true
             foreach ($arg in @('-NoProfile','-Command',"Start-Sleep -Milliseconds 250; 'fast child'; exit $expectedExit")) { $psi.ArgumentList.Add($arg) }
             $stdoutFile = [IO.File]::Create((Join-Path $root 'stdout'))
             $stderrFile = [IO.File]::Create((Join-Path $root 'stderr'))

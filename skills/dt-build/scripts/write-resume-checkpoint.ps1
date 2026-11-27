@@ -46,6 +46,10 @@ $result = Invoke-DtJobLocked -RunFolder $ResumeRunFolder -Action {
     $entry = Get-DtJobRegistryEntry -RunFolder $ResumeRunFolder
     if ($null -eq $entry -or -not (Test-DtCtxSamePath $entry.build_state_path $ResumeBuildStatePath)) { throw 'DT_CHECKPOINT_IDENTITY: checkpoint does not match run registration' }
     $old = Read-DtJobText -Path $ResumeBuildStatePath
+    $digestPresent = Test-Path -LiteralPath (Join-Path $ResumeRunFolder 'authority-digest.json')
+    if ($digestPresent) {
+        $null = & (Join-Path $PSScriptRoot 'verify-authority-digest.ps1') -RunFolder $ResumeRunFolder -BuildStatePath $ResumeBuildStatePath
+    }
     $state = Get-DtJobRunState -BuildStatePath $ResumeBuildStatePath
     $next = [regex]::Replace($candidate, '(?m)^run_status:.*$', "run_status: $($state.run_status)")
     $next = [regex]::Replace($next, '(?m)^last_consumed_event_seq:.*$', "last_consumed_event_seq: $($state.last_consumed_event_seq)")
@@ -58,6 +62,10 @@ $result = Invoke-DtJobLocked -RunFolder $ResumeRunFolder -Action {
     if ($events.Count) {
         try { Update-DtJobStatusLine -RunFolder $ResumeRunFolder -Event $events[-1] }
         catch { Write-Verbose "DT_JOB_STATUS_REFRESH_FAILED: $($_.Exception.Message)" }
+    }
+    if ($digestPresent) {
+        # Pin the final installed checkpoint, after owned fields and the status display are restored.
+        $null = & (Join-Path $PSScriptRoot 'build-authority-digest.ps1') -RunFolder $ResumeRunFolder -BuildStatePath $ResumeBuildStatePath
     }
     [ordered]@{ checkpoint = [IO.Path]::GetFullPath($ResumeBuildStatePath); history = $archive; bytes = (Get-Item -LiteralPath $ResumeBuildStatePath).Length }
 }

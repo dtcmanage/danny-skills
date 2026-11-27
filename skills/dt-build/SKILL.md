@@ -193,6 +193,11 @@ until its rehearsal milestone has a current PASS; preserve this gate in worker b
 - Apply `Get-WorkerEnvironmentRule` from `<skill>/scripts/worker-standing-rules.ps1` before builder/fix/verifier briefs.
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
 - b. **Assemble and verify the chunk prompt (both lanes).** `<skill>/scripts/assemble-codex-prompt.ps1` (canonical for both lanes despite its name; it emits the identity headers and report contract both wrappers enforce; envelope via `<danny-skills>/scripts/wrap-prompt-envelope.ps1`), then the four-check gate `<skill>/scripts/verify-codex-prompt.ps1` before every chunk. An approved retry past the two-attempt budget passes the next `-Attempt` with `-ApprovalOperation <op> -RunFolder <run>` to all three.
+  Prompt assembly accepts `-RequiredEntitlements contracts,glossary` through `pwsh -File` (splits and
+  trims names; PowerShell arrays also work). `-PreambleText <text>` and `-PreamblePath <file>` are
+  optional; omit both for the built-in preamble. Path takes precedence when both are supplied.
+  Both wrappers stamp a missing attempt header from `-Attempt` before validation; conflicting,
+  malformed or ambiguous headers fail without being overwritten.
 - c. **Run the chunk through the canonical lane.** For Codex, call `<skill>/scripts/invoke-codex-chunk.ps1`
   with the chunk's `-Category` (plus `-Protected` when earned), `-Effort <returned effort>` from the resolver, and `-SelectionReason`.
   For Claude, dispatch via CLAUDE_DISPATCH with the same brief and scoped worktree. Run the dispatch diagnosis before any

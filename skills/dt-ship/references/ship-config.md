@@ -81,3 +81,11 @@ it must not hardcode a base that is only valid in one of them. For danny-skills,
 `<danny-skills>/scripts/verify-versioning-policy.ps1` and `tools/build-plugin.ps1`: they resolve `main` on a feature
 branch, `HEAD` on dirty `main`, and the prior plugin-release commit on clean `main`. Log-only commits
 (`_log.md`, `_log-archive.md`) after the release commit do not move that boundary.
+
+For danny-skills, the release commit is the latest commit touching `.claude-plugin/plugin.json`.
+The version gate already rejects a clean feature candidate with substantive commits after it
+(`RELEASE_COMMIT_NOT_TIP`) before merge/push; clean main uses `RELEASE_COMMIT_NOT_HEAD`.
+Preserve the friction-log exemption. Finish review fixes before the final release bump, commit,
+then run the configured gate on that clean candidate. Dirty-tree validation is an authoring check,
+not proof of a committed release. This invariant belongs to the danny-skills version gate; generic
+repositories need no plugin release commit or equivalent rule.

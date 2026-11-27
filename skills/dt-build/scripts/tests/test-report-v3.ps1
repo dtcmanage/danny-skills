@@ -90,6 +90,23 @@ try {
     Assert-True (@($r.errors).Count -eq 0 -and $r.version -eq 2 -and $r.warning -eq 'v2') 'a v2 report is accepted with the v2 warning'
     $fenced = "Summary prose.`n`n```````n" + (New-Report -Evidence @($evidence)) + "`n```````n`nTrailing prose."
     Assert-True (@((& $check $fenced).errors).Count -eq 0) 'a v3 report inside a code fence with prose around it validates'
+    $indented = "Prose before contract.`n~~~text`n" + (((New-Report) -split "`n" | ForEach-Object { '    ' + $_ }) -join "`n") + "`n~~~`nTrailing prose."
+    Assert-True (@((& $check $indented).errors).Count -eq 0) 'indented tilde-fenced contract after prose validates'
+    foreach ($bad in @(
+        ((New-Report) + "`n" + (New-Report)),
+        ((New-Report) -replace 'attempt: 1', "attempt: 1`nattempt: 2"),
+        ((New-Report) -replace "VERDICT:\nPASS", "VERDICT:`nPASS`nFAIL"),
+        ((New-Report) -replace "UNRESOLVED_BLOCKERS:\nNONE", "UNRESOLVED_BLOCKERS:`nBroken core flow"),
+        ((New-Report) -replace "CHANGED_FILES:\nNONE", 'CHANGED_FILES:'),
+        ((New-Report) -replace "COMMANDS_AND_RESULTS:\nNONE", "COMMANDS_AND_RESULTS:`n<fill commands>"),
+        ((New-Report) -replace 'RUN_ID: fixture-run', 'RUN_ID: another-run'),
+        ((New-Report) -replace 'chunk_id: fixture-chunk', 'chunk_id: another-chunk'),
+        ((New-Report) -replace 'attempt: 1', 'attempt: 2'),
+        ((New-Report) -replace "EVIDENCE_PATHS:\nNONE", 'EVIDENCE_PATHS:'),
+        ((New-Report) -replace "EVIDENCE_PATHS:\nNONE", 'EVIDENCE_PATHS: $DT_BUILD_LOG_DIR/report.log')
+    )) {
+        Assert-True (@((& $check $bad).errors).Count -gt 0) 'ambiguous, incomplete, mismatched or false PASS contract fails closed'
+    }
     $inline = (New-Report) -replace "VERDICT:\nPASS", 'VERDICT: PASS'
     Assert-True (@((& $check $inline).errors).Count -eq 0) 'an inline VERDICT value validates'
 
@@ -292,6 +309,9 @@ Write-Output (@{ type = 'result'; is_error = $false; result = [System.IO.File]::
     $reportFile = Join-Path $tempRoot 'fake-report.md'
     $env:DT_FAKE_REPORT_FILE = $reportFile
     $cases = @(
+        @{ name = 'indented-fenced'; text = $indented; pass = $true; warning = $null },
+        @{ name = 'duplicate-contract'; text = (New-Report) + "`n" + (New-Report); pass = $false; match = 'duplicate or ambiguous' },
+        @{ name = 'false-pass'; text = (New-Report) -replace "UNRESOLVED_BLOCKERS:\nNONE", "UNRESOLVED_BLOCKERS:`nBroken flow"; pass = $false; match = 'PASS report must declare' },
         @{ name = 'v3'; text = (New-Report -Evidence @($evidence) -Continuation $goodRecord); pass = $true; warning = $null },
         @{ name = 'v2'; text = (New-Report -Version 2); pass = $true; warning = 'v2' },
         @{ name = 'bad-verdict'; text = (New-Report -Verdict 'DONE'); pass = $false; match = "VERDICT 'DONE'" },
