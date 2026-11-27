@@ -75,12 +75,25 @@ foreach ($folder in $folders) {
 foreach ($folder in $folders) {
     $rows = @($directory | Where-Object { $_.Name -eq $folder.Name })
     if ($rows.Count -eq 0) {
-        $rows = @($directory | Where-Object { Test-Mention -Text $_.Text -Name $folder.Name })
+        # Only an explicit bold/code name in another cell is a parent-row alias.
+        # Word boundaries alone also match Finance in Finance HQ or in prose.
+        $rows = @($directory | Where-Object {
+            $body = ($_.Text.Trim().Trim('|') -split '(?<!\\)\|', 2)[1]
+            @([regex]::Matches($body, '\*\*`?([^*`]+)`?\*\*|`([^`]+)`') | Where-Object {
+                $alias = if ($_.Groups[1].Success) { $_.Groups[1].Value } else { $_.Groups[2].Value }
+                $alias.Trim().TrimEnd('/', '\') -eq $folder.Name
+            }).Count -gt 0
+        })
     }
     if ($rows.Count -eq 0) {
         Add-Finding 'workstation_missing_from_table' $folder.Name 'Folder has no directory table entry or named parent-row mention.'
     }
-    if (-not @($routing | Where-Object { Test-Mention -Text $_.Text -Name $folder.Name }).Count) {
+    # Retain plain routing mentions, but do not count a prefix of a named route.
+    $routeMentions = $routing.Text -join ' '
+    foreach ($route in ($routing | Where-Object { $_.Name.Length -gt $folder.Name.Length })) {
+        $routeMentions = $routeMentions -replace [regex]::Escape($route.Name), ''
+    }
+    if (-not (Test-Mention -Text $routeMentions -Name $folder.Name)) {
         Add-Finding 'folder_missing_from_routing_map' $folder.Name 'Folder is not named in the routing map.'
     }
     if ($rows.Count -eq 0) { continue }

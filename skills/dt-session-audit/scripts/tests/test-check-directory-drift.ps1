@@ -145,6 +145,51 @@ try {
     Set-Tables $cleanRows $cleanRoutes 'unknown'
     $result = Invoke-Check
     Assert-Check ($null -eq $result.verified_date -and $result.full_rescan_due) 'missing stamp requires rescan'
+
+    # Use a separate tree so the exact findings prove which workstation owns each repo.
+    $originalWorkspace = $workspace
+    $workspace = Join-Path $fixture 'finance/_Claude-Workspace'
+    $originalFixture = $fixture
+    $fixture = Join-Path $fixture 'finance'
+    $financeRows = @'
+| **Finance HQ** | Finance monorepo | Repo **`personal-finance-dashboard`** | |
+'@
+    $financeRoutes = '|Finance HQ|Personal finances|'
+    Set-FixtureFile '_Claude-Workspace/Finance HQ/personal-finance-dashboard/.git/config'
+    Set-FixtureFile '_Claude-Workspace/Finance/notes.txt'
+    Set-Tables $financeRows $financeRoutes $todayText
+    $result = Invoke-Check
+    Assert-Check ($result.findings.Count -eq 2 -and @($result.findings | Where-Object { $_.workstation -ne 'Finance' -or $_.kind -notin @('workstation_missing_from_table', 'folder_missing_from_routing_map') }).Count -eq 0) 'unlisted Finance is reported without borrowing Finance HQ repos'
+    Assert-Check (@($result.findings | Where-Object { $_.kind -eq 'listed_repo_missing_on_disk' }).Count -eq 0) 'existing Finance HQ repo is not reported missing under Finance'
+
+    Set-Tables ($financeRows + "`n| **Finance** | Separate workstation | Repo **``finance-only``** | |") ($financeRoutes + "`n|Finance|Separate finances|") $todayText
+    $result = Invoke-Check
+    Assert-Check ($result.findings.Count -eq 1 -and $result.findings[0].kind -eq 'listed_repo_missing_on_disk' -and $result.findings[0].workstation -eq 'Finance' -and $result.findings[0].detail -match 'finance-only') 'exact Finance row owns its actually missing listed repo'
+    Set-FixtureFile '_Claude-Workspace/Finance/finance-only/.git/config'
+    Assert-Check ((Invoke-Check).findings.Count -eq 0) 'both exact workstation rows validate their own existing repos'
+    Remove-Item -LiteralPath (Join-Path $workspace 'Finance HQ/personal-finance-dashboard') -Recurse -Force
+    $result = Invoke-Check
+    Assert-Check ($result.findings.Count -eq 1 -and $result.findings[0].kind -eq 'listed_repo_missing_on_disk' -and $result.findings[0].workstation -eq 'Finance HQ' -and $result.findings[0].detail -match 'personal-finance-dashboard') 'actually missing Finance HQ repo stays attributed to Finance HQ'
+    Set-FixtureFile '_Claude-Workspace/Finance HQ/personal-finance-dashboard/.git/config'
+    Set-FixtureFile '_Claude-Workspace/Finance/unlisted-repo/.git/config'
+    $result = Invoke-Check
+    Assert-Check ($result.findings.Count -eq 1 -and $result.findings[0].kind -eq 'repo_missing_from_row' -and $result.findings[0].workstation -eq 'Finance' -and $result.findings[0].detail -match 'unlisted-repo') 'actual unlisted repo belongs to the exact Finance row'
+
+    $aliasRows = $financeRows + @'
+
+| **Parent** | Aliases | Substation **Calendar**; repo **`alias-repo`** | |
+'@
+    Set-FixtureFile '_Claude-Workspace/Parent/alias-repo/.git/config'
+    Set-FixtureFile '_Claude-Workspace/Parent/Calendar/CLAUDE.md'
+    Set-FixtureFile '_Claude-Workspace/Calendar/notes.txt'
+    Set-FixtureFile '_Claude-Workspace/Calendar/alias-repo/.git/config'
+    Set-FixtureFile '_Claude-Workspace/alias-repo/alias-repo/.git/config'
+    Set-Tables $aliasRows ($financeRoutes + "`n|Parent|Calendar and alias-repo retained paths|") $todayText
+    $result = Invoke-Check
+    Assert-Check (@($result.findings | Where-Object { $_.workstation -in @('Parent', 'Calendar', 'alias-repo') }).Count -eq 0) 'explicit substation and repo aliases retain parent-row and routing mentions'
+    $fixture = $originalFixture
+    $workspace = $originalWorkspace
+
     Set-FixtureFile 'CLAUDE.md' '## Routing Map'
     $rejected = $false
     try { $null = Invoke-Check } catch { $rejected = $_.Exception.Message -match 'Missing or empty table' }
