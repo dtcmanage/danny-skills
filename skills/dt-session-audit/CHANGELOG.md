@@ -1,5 +1,7 @@
 # dt-session-audit changelog
 
+- 0.9.1 (2026-11-27): Match complete workstation names and explicit aliases so Finance cannot borrow Finance HQ repository ownership; retain truthful registration findings and add ambiguous-name fixtures.
+
 - 0.9.0 (2026-11-27): Add report-first session artifact inventory, safe scratch and superseded-draft cleanup, tracked active drafts, and verified final disposition.
 
 - 0.8.2 (2026-11-23): Linux session-host fixes (2026-11-23): see plugin 1.1.3.
