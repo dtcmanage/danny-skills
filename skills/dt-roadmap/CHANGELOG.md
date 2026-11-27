@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.5.3
+
+- Record the exact final release gateCommand and source per milestone; forbid test-runner subsets.
+
 ## 1.5.2
 
 - Require an exact-command rehearsal milestone with current gate derivations, proven checks and a rollback dependency decision.

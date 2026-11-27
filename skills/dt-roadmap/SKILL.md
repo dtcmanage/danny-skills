@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.5.2
+  version: 1.5.3
   changelog: "Full changelog relocated to skills/dt-roadmap/CHANGELOG.md (newest first)."
 ---
 
@@ -135,6 +135,19 @@ never treat a generic final integration test as the rehearsal.
   `-RoadmapViewPath`) only when Danny has explicitly asked for the HTML companion (see step 5.5).
 
 4. Validate contract before export:
+- Record one exact `gateCommand` for every milestone in a `## Milestone gate commands` section of the
+  generated roadmap. Use one fenced JSON object keyed by milestone-id; each entry records `gateCommand`
+  and the absolute path of its release ship configuration. Copy the command verbatim from that file,
+  including flags, wrappers, conditionals and exit handling. Use the same command the final release gate
+  runs for that milestone's scope; for example, retain `npm test` when it also runs contract checks,
+  never substitute direct `vitest` or a selected test subset. If no ship configuration exists, record
+  that absence and the explicit final gate command agreed in the design. Missing or ambiguous commands
+  block export. Preserve this section when regenerating the roadmap.
+- Compare each recorded command with the actual ship configuration and final gate before export.
+  Put that exact command in the milestone's verification procedure, with targeted checks only as
+  additional checks. `dt-build` must execute the recorded command at every milestone gate; final-only
+  execution cannot cover earlier milestone acceptance. Carry the command source and comparison evidence
+  with the roadmap so a later change invalidates the old gate result.
 - Run `<skill>/scripts/roadmap-validator.ps1 -RoadmapPath <roadmap.md>`.
 - Resolve dependency warnings against the design; missing surfaces, undeclared consumption/overlap,
   cycles and non-serial overlaps are errors. Review `Dependency Causes` before export.

@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.67.4
+
+- Run each milestone gateCommand verbatim through the tracked gate producer before acceptance, including resume and auto-generation.
+
 ## 2.67.3
 
 - Block live cutover attempts until a current end-to-end rehearsal milestone has passed.

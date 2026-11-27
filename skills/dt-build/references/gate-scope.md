@@ -2,6 +2,34 @@
 
 `<danny-skills>` is the resolved canonical repo root.
 
+## Exact gate command at every milestone
+
+At intake, including auto-generated roadmaps and resumes, require `## Milestone gate commands` in the
+roadmap: one fenced JSON object keyed by milestone-id, each with one nonempty `gateCommand` and its
+release ship configuration path. If no ship configuration exists, record that absence and use the
+explicit final gate command agreed in the design. Missing or ambiguous entries block intake; repair
+the roadmap before build setup. This requirement applies to every milestone, not just cutovers.
+
+Before each milestone acceptance, read that milestone's recorded `gateCommand` and its source ship
+configuration, including a scope-specific release file when selected by the design. Compare it with
+the final gate's actual command. A mismatch blocks acceptance until the roadmap and source agree.
+Do not reconstruct the command from remembered test names or run a subset in its place: `npm test`
+must remain `npm test` when it also runs button/contract checks; direct `vitest` is not equivalent.
+
+Run the exact recorded command through the existing `record-gate.py` producer below as a tracked
+milestone gate job, using `--scope "release"` for the same coverage contract as the final gate and
+`--output "<run-folder>/milestones/<mid>/milestone-gate.json"`. Pass the actual milestone candidate
+worktree, its committed SHA and all gate implementation/suite-map dependencies under the producer's
+normal clean-tree contract. This runner preserves the command verbatim, including conditionals and
+exit handling; do not substitute a normalized command from another acceptance runner. Read its exit
+status, saved output and record. Require `gate.result: PASS`, integer-zero exit, matching current SHA,
+and the exact recorded command before the ordinary milestone acceptance check can pass. Save that
+evidence in the milestone acceptance row. Additional targeted verification does not replace this gate.
+
+If commands, ship configuration or candidate code change, rerun the milestone gate before accepting.
+The exact final gate still runs on the final candidate; a final-only PASS cannot retroactively supply
+missing milestone evidence. Auto-generation and resume never waive the per-milestone requirement.
+
 ## Executable final-integration path
 
 dt-build produces and verifies its final-integration evidence. The app gate owns suite selection

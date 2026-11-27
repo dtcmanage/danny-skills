@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.67.3
+  version: 2.67.4
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -216,7 +216,7 @@ until its rehearsal milestone has a current PASS; preserve this gate in worker b
   the milestone's named artifacts and stated scope as an out-of-scope finding — unrequested work is a defect.
   Every finding carries a type (`app-bug`, `test-env`, `docs`, `design-gap`) and severity; fix them per
   `references/review-fix-loop.md`: one bundled fix per round, targeted tests, a verifier that reads only the fix diff.
-- e. **Run the acceptance gate.** `<skill>/scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json` — must return PASS. On BLOCKED, the milestone does not count as complete and dependent milestones do not start.
+- e. **Run acceptance.** Apply `references/gate-scope.md`, "Exact gate command at every milestone," then `<skill>/scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json`. Both must PASS; otherwise BLOCKED, with dependents stopped.
   Run each pass to the end past failures; fix everything in one bundled fix and rerun the failed and touched checks until clean (`references/review-fix-loop.md`).
   A milestone that depends on the real target host (tmux, OS paths, systemd, deploy config) includes a short end-to-end smoke on that host here, added if the roadmap lacks it (`references/review-fix-loop.md` section 6).
 - f. **Run the downgrade-language scan.** `<skill>/scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
