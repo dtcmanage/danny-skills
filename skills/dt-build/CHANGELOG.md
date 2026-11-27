@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.68.1
+
+- Freeze acceptance baselines and isolate later checks; normalize report layouts while rejecting ambiguous contracts; detach job streams, supply log directories, and refresh authority after owned writes.
+
 ## 2.68.0
 
 - record-gate.py honours the .ship.json "scratch" key (ram-scratch helper) and records gate.scratch; absent key keeps disk.

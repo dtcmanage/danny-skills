@@ -92,6 +92,37 @@ try {
     Assert-True (@((& $check $fenced).errors).Count -eq 0) 'a v3 report inside a code fence with prose around it validates'
     $indented = "Prose before contract.`n~~~text`n" + (((New-Report) -split "`n" | ForEach-Object { '    ' + $_ }) -join "`n") + "`n~~~`nTrailing prose."
     Assert-True (@((& $check $indented).errors).Count -eq 0) 'indented tilde-fenced contract after prose validates'
+    # Field names are exact; differently cased narrative is allowed only where prose belongs.
+    $narrative = "Attempt: 2 timed out`n    Verdict: earlier diagnostic only"
+    foreach ($text in @(
+        ($narrative + "`n" + (New-Report)),
+        ((New-Report) + "`n`n" + $narrative),
+        ((New-Report) -replace "COMMANDS_AND_RESULTS:\nNONE", ("COMMANDS_AND_RESULTS:`n" + $narrative)),
+        ("```````n" + (New-Report) + "`n```````n" + $narrative)
+    )) {
+        Assert-True (@((& $check $text).errors).Count -eq 0) 'mixed-case narrative outside the contract or inside a prose section validates'
+    }
+    foreach ($header in @('attempt: 1', 'VERDICT: PASS')) {
+        foreach ($text in @(
+            ($header + "`n" + (New-Report)),
+            ((New-Report) + "`n`n" + $header),
+            ((New-Report) -replace "COMMANDS_AND_RESULTS:\nNONE", ("COMMANDS_AND_RESULTS:`nNONE`n" + $header))
+        )) {
+            $field = ($header -split ':')[0]
+            Assert-True (@((& $check $text).errors | Where-Object { $_ -ceq "duplicate or ambiguous $field" }).Count -eq 1) 'exact duplicate fields fail before, within and after the contract'
+        }
+    }
+    foreach ($text in @(
+        ((New-Report) -replace "VERDICT:\nPASS", "VERDICT:`nPASS`nVerdict: diagnostic"),
+        ((New-Report) -replace "UNRESOLVED_BLOCKERS:\nNONE", "UNRESOLVED_BLOCKERS:`nNONE`nAttempt: unresolved diagnostic"),
+        ((New-Report) -replace "EVIDENCE_PATHS:\nNONE", "EVIDENCE_PATHS:`nNONE`nVerdict: diagnostic"),
+        ((New-Report) -creplace 'attempt: 1', 'Attempt: 1'),
+        ((New-Report) -creplace 'RUN_ID: fixture-run', 'RUN_ID: Fixture-run'),
+        ((New-Report) -creplace 'chunk_id: fixture-chunk', 'chunk_id: Fixture-chunk'),
+        ((New-Report) -creplace 'VERDICT:', 'Verdict:')
+    )) {
+        Assert-True (@((& $check $text).errors).Count -gt 0) 'mixed-case narrative cannot replace identity or verdict fields or weaken strict value sections'
+    }
     foreach ($bad in @(
         ((New-Report) + "`n" + (New-Report)),
         ((New-Report) -replace 'attempt: 1', "attempt: 1`nattempt: 2"),

@@ -31,10 +31,15 @@ try {
     $approvals = [pscustomobject]@{ awaiting=$null; approvals=@(); delegate=$null }
     Save-DtJobApprovals $run $approvals
     $null = & (Join-Path $scripts 'build-authority-digest.ps1') -RunFolder $run -BuildStatePath $state
+    # Dynamic caller scope must not redirect the approval writer to another checkpoint.
+    $BuildStatePath = Join-Path $root 'unrelated-state.md'
+    [IO.File]::WriteAllText($BuildStatePath, "Unrelated authority must remain untouched.`n")
+    $unrelatedState = [IO.File]::ReadAllText($BuildStatePath)
     $approvals.approvals = @([pscustomobject]@{ operation='fixture'; approved_by='fixture' })
     Save-DtJobApprovals $run $approvals
     $verified = & (Join-Path $scripts 'verify-authority-digest.ps1') -RunFolder $run -BuildStatePath $state | ConvertFrom-Json
     Check $verified.verified 'approval writer refreshes authority digest'
+    Check ([IO.File]::ReadAllText($BuildStatePath) -ceq $unrelatedState) 'approval writer ignores unrelated ambient BuildStatePath'
     $candidate = Join-Path $root 'candidate.md'
     [IO.File]::WriteAllText($candidate, ([IO.File]::ReadAllText($state) + "`nAdditional restriction: fixture remains read-only outside its root.`n"))
     $null = & (Join-Path $scripts 'write-resume-checkpoint.ps1') -RunFolder $run -BuildStatePath $state -ContentPath $candidate
@@ -44,12 +49,14 @@ try {
     $beforeApproval = [IO.File]::ReadAllText((Join-Path $run 'approvals.json'))
     $beforeState = [IO.File]::ReadAllText($state)
     [IO.File]::AppendAllText($state, "`nUnreviewed authority drift.`n")
+    $driftedState = [IO.File]::ReadAllText($state)
     $rejected = $false
     try { Save-DtJobApprovals $run $approvals } catch { $rejected = $_.Exception.Message -like 'AUTHORITY_CHECKPOINT_HASH:*' }
     Check ($rejected -and [IO.File]::ReadAllText((Join-Path $run 'approvals.json')) -ceq $beforeApproval) 'approval writer refuses stale authority before mutation'
     $rejected = $false
     try { $null = & (Join-Path $scripts 'write-resume-checkpoint.ps1') -RunFolder $run -BuildStatePath $state -ContentPath $candidate } catch { $rejected = $_.Exception.Message -like 'AUTHORITY_CHECKPOINT_HASH:*' }
     Check ($rejected -and [IO.File]::ReadAllText((Join-Path $run 'authority-digest.json.sha256')) -ceq $pin) 'checkpoint writer refuses to bless stale authority'
+    Check ([IO.File]::ReadAllText($state) -ceq $driftedState) 'checkpoint writer leaves stale checkpoint content unchanged'
     [IO.File]::WriteAllText($state, $beforeState)
 
     # Hold the worker until AFTER the start | tail caller exits. Its stdin must already be EOF.

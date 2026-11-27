@@ -167,8 +167,8 @@ function Get-ReportShapeResult {
     # A report is one contract, wherever it appears. Never combine partial contracts or pick a
     # convenient identity/verdict from duplicate fields (including an unfilled output template).
     foreach ($name in $script:DtReportHeaders) {
-        $matches = [regex]::Matches($Text, '(?im)^' + [regex]::Escape($name) + ':')
-        if ($matches.Count -gt 1) { $errors.Add("duplicate or ambiguous $name") | Out-Null }
+        $headerHits = [regex]::Matches($Text, '(?m)^' + [regex]::Escape($name) + ':')
+        if ($headerHits.Count -gt 1) { $errors.Add("duplicate or ambiguous $name") | Out-Null }
     }
     $start = [regex]::Match($Text, '(?m)^DT_BUILD_REPORT_VERSION:')
     if ($start.Success) {
@@ -193,7 +193,7 @@ function Get-ReportShapeResult {
         @{ label = 'DISCOVERED_ENHANCEMENTS'; pattern = '(?m)^DISCOVERED_ENHANCEMENTS:\s*$' }
     )
     foreach ($entry in $required) {
-        if ($Text -notmatch $entry.pattern) { $errors.Add("missing or mismatched $($entry.label)") | Out-Null }
+        if ($Text -cnotmatch $entry.pattern) { $errors.Add("missing or mismatched $($entry.label)") | Out-Null }
     }
     if ($version -eq 3) {
         $verdict = Get-DtReportSection -Text $Text -Name 'VERDICT'

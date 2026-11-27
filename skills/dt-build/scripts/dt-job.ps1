@@ -1720,7 +1720,7 @@ function Save-DtJobApprovals {
     # Only this writer's authorized change may be repinned. Never bless unrelated stale authority.
     $digestPresent = Test-Path -LiteralPath (Join-Path $RunFolder 'authority-digest.json')
     if ($digestPresent) {
-        $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath
+        $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder
         $null = & (Join-Path $PSScriptRoot 'verify-authority-digest.ps1') -RunFolder $RunFolder -BuildStatePath $ctx.build_state_path
     }
     Write-DtJobAtomic -Path (Get-DtJobPaths -RunFolder $RunFolder).Approvals -Content $content

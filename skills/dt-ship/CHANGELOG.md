@@ -1,5 +1,7 @@
 # dt-ship changelog
 
+- 0.5.1 (2026-11-27): Document existing pre-merge release-tip enforcement and prove a post-release review commit stops at the shipping gate before merge, push or deploy.
+
 - 0.5.0 (2026-11-27): Optional .ship.json "scratch" key runs the gate under the shared ram-scratch helper (per-run RAM temp with budget, headroom, cap and disk fallback); absent key keeps disk.
 
 - 0.4.1 (2026-11-24): Use the shared standard test venv resolver in test preflight and the danny-skills gate, preserving venv PATH for child suites.
