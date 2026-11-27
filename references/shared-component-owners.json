@@ -551,6 +551,9 @@
   "scripts/release-triage.ps1": {"consumers": ["dt-build", "dt-ship"], "summary_token": "release triage"},
   "scripts/release-triage-lib.ps1": {"consumers": ["dt-build", "dt-ship"], "summary_token": "release triage"},
   "scripts/tests/test-release-triage.ps1": {"consumers": [], "summary_token": "release triage"},
+  "scripts/refresh-checkout.py": {"consumers": [], "summary_token": "checkout freshness"},
+  "scripts/tests/test_refresh_checkout.py": {"consumers": [], "summary_token": "checkout freshness"},
+  "references/checkout-freshness.md": {"consumers": [], "summary_token": "checkout freshness"},
   "scripts/run-gate.ps1": {"consumers": [], "summary_token": "ship gate"},
   "scripts/tests/test-run-gate.ps1": {"consumers": [], "summary_token": "ship gate"}
 }

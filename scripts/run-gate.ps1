@@ -35,6 +35,7 @@ function Get-GateSteps {
         @{ Name='preflight'; Skill='*'; Command='& ./scripts/test-preflight.ps1 -Scope gate' }
         @{ Name='preflight-tests'; Skill='*'; Command='& ./scripts/tests/test-test-preflight.ps1' }
         @{ Name='gate-runner-tests'; Skill='*'; Command='& ./scripts/tests/test-run-gate.ps1' }
+        @{ Name='checkout-freshness'; Skill=''; Command='if ($IsLinux) { & $env:DANNY_SKILLS_TEST_PYTHON -m pytest -n 2 scripts/tests/test_refresh_checkout.py -q; exit $LASTEXITCODE }'; Slots=2 }
         @{ Name='eastern-time'; Skill='*'; Command='& $env:DANNY_SKILLS_TEST_PYTHON -m unittest scripts/tests/test_eastern_time.py; exit $LASTEXITCODE' }
         @{ Name='versioning-policy'; Skill='*'; Command='& ./scripts/verify-versioning-policy.ps1 -BaseRef auto' }
         @{ Name='plugin-validation'; Skill='*'; Command='& ./tools/build-plugin.ps1 -BaseRef auto -ValidateOnly' }
