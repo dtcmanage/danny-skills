@@ -181,7 +181,8 @@ if (`$env:DT_FAKE_CODEX_MODE -eq 'touch-project') {
     [IO.File]::WriteAllText((Join-Path ([string]`$args[`$cdIndex + 1]) 'reviewer-wrote-this.txt'), 'x')
 }
 `$outIndex = [Array]::IndexOf([object[]]`$args, '--output-last-message')
-[void][Console]::In.ReadToEnd()
+`$stdin = [Console]::In.ReadToEnd()
+if (`$stdin -like '*single word OK*') { [IO.File]::WriteAllText([string]`$args[`$outIndex + 1], 'OK'); exit 0 }
 [IO.File]::WriteAllText([string]`$args[`$outIndex + 1], @'
 $report
 '@)
@@ -338,6 +339,47 @@ Write-Output (@{ type = 'result'; is_error = `$false; result = `$message; total_
     $stamped = Invoke-ClaudeWrapper 'claude-stamped-preflight' @('-Preflight')
     Assert-True ($stamped.exit -ne 0) 'stamped Claude OK fails preflight'
     $env:DT_FAKE_CLAUDE_MODE = $null
+    # Only a successful launched preflight clears prior probes. Ordinary successful work and
+    # Codex validation leave them alone. Other-vendor and non-probe alerts remain unresolved.
+    . (Join-Path $repoRoot 'scripts/model-router/send-router-alert.ps1')
+    foreach ($lane in @('codex','claude')) {
+        $other = if ($lane -eq 'codex') { 'claude' } else { 'codex' }
+        $null = Send-RouterAlert -Key "vendor-error:${lane}:probe-fixture" -Message 'fixture' -Vendor $lane -ErrorText 'probe fixture failure' -Probe -ChatToStderr
+        $null = Send-RouterAlert -Key "vendor-error:${lane}:work-fixture" -Message 'fixture' -Vendor $lane -ErrorText 'work fixture failure' -ChatToStderr
+        $null = Send-RouterAlert -Key "vendor-error:${other}:other-probe-fixture" -Message 'fixture' -Vendor $other -ErrorText 'other fixture failure' -Probe -ChatToStderr
+        $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-no-recovery" @('-Category','routine-coding') } else { Invoke-ClaudeWrapper "$lane-no-recovery" @('-Category','routine-coding') }
+        Assert-True ($r.exit -eq 0 -and -not ((Get-Content (Join-Path $state 'alert-log.jsonl') -Raw) -match 'probe-recovered')) "$lane ordinary success does not clear probes"
+        if ($lane -eq 'codex') {
+            $r = Invoke-CodexWrapper 'codex-validation-no-recovery' @('-Preflight','-ValidateOnly')
+            Assert-True ($r.exit -eq 0 -and -not ((Get-Content (Join-Path $state 'alert-log.jsonl') -Raw) -match 'probe-recovered')) 'Codex validation alone does not clear probes'
+        }
+        $before = Get-TransportCount
+        $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-recovery" @('-Preflight') } else { Invoke-ClaudeWrapper "$lane-recovery" @('-Preflight') }
+        $parsed = $r.stdout | ConvertFrom-Json
+        $clears = @(Get-Content (Join-Path $state 'alert-log.jsonl') | ConvertFrom-Json | Where-Object { $_.event -eq 'acknowledged' })
+        Assert-True ($r.exit -eq 0 -and $parsed.pass -and $parsed.preflight -and $r.stderr -notmatch 'RECOVERY_FAILED') "$lane launched preflight succeeds with pure JSON"
+        Assert-True ($clears.Count -eq 1 -and $clears[0].key -eq "vendor-error:${lane}:probe-fixture" -and $clears[0].reason -eq 'probe-recovered' -and (Get-TransportCount) -eq $before) "$lane recovery clears matching probe only without delivery"
+        Remove-Item (Join-Path $state 'alert-log.jsonl') -Force
+        $env:DT_FAKE_DIAGNOSIS = 'unexplained-fail'
+        foreach ($call in 1..2) {
+            $env:DT_FAKE_DISPATCH_COUNTER = Join-Path $temp "$lane-probe-failure-$call.counter"
+            $failedProbe = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-probe-failure-$call" @('-Preflight') } else { Invoke-ClaudeWrapper "$lane-probe-failure-$call" @('-Preflight') }
+            Assert-True ($failedProbe.exit -ne 0 -and ($failedProbe.stdout | ConvertFrom-Json).diagnosis -eq 'unexplained') "$lane probe failure $call remains a failed pure JSON result"
+        }
+        $delivered = @(Get-Content (Join-Path $state 'alert-log.jsonl') | ConvertFrom-Json | Where-Object { $_.event -eq 'delivered' -and $_.key -like 'vendor-error:*' })
+        Assert-True ($delivered.Count -eq 1 -and $delivered[0].probe -and $delivered[0].vendor -eq $lane -and $delivered[0].fingerprint) "$lane unique failed preflight dispatches share one delivery"
+        $env:DT_FAKE_DIAGNOSIS = $null; $env:DT_FAKE_DISPATCH_COUNTER = $null
+        $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-next-success" @('-Preflight') } else { Invoke-ClaudeWrapper "$lane-next-success" @('-Preflight') }
+        $clears = @(Get-Content (Join-Path $state 'alert-log.jsonl') | ConvertFrom-Json | Where-Object { $_.event -eq 'acknowledged' })
+        Assert-True ($r.exit -eq 0 -and $clears.Count -eq 1 -and $clears[0].key -eq $delivered[0].key) "$lane next real preflight automatically clears its failure"
+        $env:DT_FAKE_DIAGNOSIS = 'unexplained-fail'
+        $env:DT_FAKE_DISPATCH_COUNTER = Join-Path $temp "$lane-probe-new-failure.counter"
+        $r = if ($lane -eq 'codex') { Invoke-CodexWrapper "$lane-probe-new-failure" @('-Preflight') } else { Invoke-ClaudeWrapper "$lane-probe-new-failure" @('-Preflight') }
+        $delivered = @(Get-Content (Join-Path $state 'alert-log.jsonl') | ConvertFrom-Json | Where-Object { $_.event -eq 'delivered' -and $_.key -like 'vendor-error:*' })
+        Assert-True ($r.exit -ne 0 -and $delivered.Count -eq 2) "$lane failure after recovery can alert again within the hour"
+        $env:DT_FAKE_DIAGNOSIS = $null; $env:DT_FAKE_DISPATCH_COUNTER = $null
+        Remove-Item (Join-Path $state 'alert-log.jsonl') -Force
+    }
     foreach ($lane in @('codex','claude')) {
         foreach ($limit in @(@('complex-coding', @(), 2700000), @('code-review', @(), 1800000), @('mechanical', @(), 600000), @('complex-coding', @('-TimeoutMs','120000'), 120000))) {
             $extra = @('-Category', $limit[0]) + @($limit[1])

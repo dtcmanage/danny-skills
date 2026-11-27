@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.65.2
+
+- Deduplicate model router vendor errors for one rolling hour and clear recovered probe alerts on a successful real preflight.
+
 ## 2.65.1
 
 - Fix authority discovery of checkpoint template shape names and host-qualified planning evidence while preserving missing local original checks.

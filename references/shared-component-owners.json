@@ -481,6 +481,7 @@
   "scripts/model-router/tests/fixtures/fake-codex-limits.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-resolve-model.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-send-router-alert.ps1": {"consumers": [], "summary_token": "model router"},
+  "scripts/model-router/tests/test_alert_recovery.py": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-update-outcomes.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/tests/test-outcome-concurrency.ps1": {"consumers": [], "summary_token": "model router"},
   "scripts/model-router/update-outcomes.ps1": {"consumers": ["dt-build","dt-review","dt-image-gen","dt-writing-draft","dt-writing-edit"], "summary_token": "model router"},

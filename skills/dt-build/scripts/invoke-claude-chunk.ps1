@@ -362,6 +362,7 @@ $args = @(
 
 if ($Effort) { $args = @($args[0..2]) + @('--effort', $Effort) + @($args[3..($args.Count - 1)]) }
 
+$probeStartedAt = [datetimeoffset]::UtcNow
 $dispatchStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
 $dispatchId = $DispatchContext.dispatch_id
 $diagnosis = $null
@@ -626,7 +627,7 @@ try {
                     $failureReason = 'ROUTER_UNEXPLAINED'
                     $key = 'vendor-error:claude:' + $dispatchId
                     $message = Get-RouterAlertMessage -Key $key -Model $resolvedModel -Category $Category -ErrorText $claudeErrorText -Checks $dispatchDiagnosis.checks -ArtifactPath $provenancePath -PromptText $prompt -InvocationText ($startInfo.ArgumentList -join ' ')
-                    $null = Send-RouterAlert -Key $key -Message $message -ChatToStderr:$Json
+                    $null = Send-RouterAlert -Key $key -Message $message -Vendor claude -ErrorText $claudeErrorText -Probe:$Preflight -ChatToStderr:$Json
                 }
             } }
         }
@@ -706,6 +707,10 @@ try {
         report_version_warning = $reportVersionWarning
     }
 
+    if ($Preflight -and $result.pass) {
+        try { Complete-RouterProbeRecovery -Vendor claude -StartedAt $probeStartedAt }
+        catch { [Console]::Error.WriteLine('ROUTER_ALERT_RECOVERY_FAILED: claude') }
+    }
     if ($Preflight -and -not $result.pass) {
         Add-RouterPreflightOutcome -DispatchId $dispatchId -Repo $outcomeRepo -Tier $Tier -Lane 'claude' -Model $resolvedModel -Category $Category -Attempt $Attempt -FailureCategory $failureCategory -Diagnosis $diagnosis
     }

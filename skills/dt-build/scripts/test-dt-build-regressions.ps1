@@ -1455,7 +1455,8 @@ $script:RouterDiagnosisHttp = {
                 }
             }
             # B2 fix 5: a preflight that pages (ROUTER_ALERT) keeps -Json stdout one parseable document.
-            Remove-Item (Join-Path $routerState 'vendor-status-cache.json'),(Join-Path $routerState 'vendor-blocks.json') -Force -ErrorAction SilentlyContinue
+            # This is a fresh delivery fixture, independent of identical probes above.
+            Remove-Item (Join-Path $routerState 'vendor-status-cache.json'),(Join-Path $routerState 'vendor-blocks.json'),(Join-Path $routerState 'alert-log.jsonl') -Force -ErrorAction SilentlyContinue
             $env:DT_BUILD_TEST_VERDICT = 'unexplained'
             $out = Join-Path $tempRoot "$lane-preflight-alert.md"
             $resultPath = Join-Path $tempRoot "$lane-preflight-alert.json"

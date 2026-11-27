@@ -68,6 +68,45 @@ proposals and changes already applied by a later approval are not pending;
 partial approvals retain outstanding changes. The CLI has no general roster
 decline verb: `-DeclineDrift -Job` keeps current choices after drift alerts.
 
+## Failure alert deduplication and probe recovery
+
+The Codex and Claude chunk wrappers pass the vendor and original error text to
+`<danny-skills>/scripts/model-router/send-router-alert.ps1` after the existing retry
+is exhausted. Delivery is deduplicated across dispatch IDs using a SHA-256 digest
+of the vendor and normalized error (ANSI removed, whitespace collapsed, trimmed,
+case folded). Different vendors and different remaining error text stay distinct.
+Probe and substantive-work alerts have separate scopes, so neither hides the
+other or prevents a recovered probe from alerting again.
+Only successful deliveries suppress another delivery, for 60 minutes measured
+from the last delivery; suppressed calls do not extend that rolling window.
+Other callers retain their existing exact-key deduplication.
+
+The one-hour deduplication view is reconstructed from the existing alert ledger;
+there is no additional growing cache or state file. Suppressed calls append no
+rows. Keep the existing alert history and outcomes archive retention: old rows
+remain available for audit and unresolved work, but cannot suppress a new
+vendor/error delivery after an hour. Delivery, recovery, and manual acknowledge
+use the same existing alert mutex, including abandoned-owner recovery. Automatic
+recovery waits behind an in-flight delivery so its success signal is not lost
+to the sender's busy timeout.
+
+Only a successful launched `-Preflight` in either chunk wrapper completes probe
+recovery. Ordinary work, failed probes, and `-ValidateOnly` do not. Recovery
+appends local `acknowledged` events with reason `probe-recovered` for that
+vendor's delivered probe failures predating the successful preflight's start.
+It sends no recovery message. A later failure can alert immediately. Non-probe
+work stops and other vendors remain unresolved. Legacy alerts without probe
+metadata require exact dispatch UUID evidence from the wrapper's `:preflight`
+outcome in the active ledger or its existing outcomes archives; ambiguous rows
+stay untouched. The weekly report consumes these acknowledgements normally,
+so recovered probe failures need no manual acknowledge.
+
+Test without delivery using disposable `DT_MODEL_ROUTER_STATE` and stub transport:
+`<danny-skills>/scripts/model-router/tests/test_alert_recovery.py` covers the
+rolling window, concurrency and recovery boundaries, and
+`<danny-skills>/scripts/model-router/tests/test-consumer-wiring.ps1` exercises
+both wrapper preflight paths with fake vendor CLIs.
+
 ## Difficulty tiers
 
 Coder and deep-thinker default to `standard`; request `-Difficulty hard -DifficultyReason "<single-line reason, at most 240 characters>"` for hard work. Difficulty is lowercase in results and wrapper provenance; fast, writer and illustrator return null. A job without tier objects uses its scalar at both difficulties and treats tie evidence as standard.

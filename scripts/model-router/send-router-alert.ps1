@@ -123,6 +123,80 @@ function Acknowledge-RouterAlert {
     }
 }
 
+# Reuse the delivery ledger and mutex: no second cache/lock with a different lifetime.
+# Fingerprint the complete error before redaction; never collapse different secret-bearing
+# errors to the same [REDACTED] text. Only presentation whitespace/ANSI/case is normalized.
+function Get-RouterAlertFingerprint {
+    param([string]$Vendor, [string]$ErrorText)
+    $normalized = [regex]::Replace($ErrorText, '\x1b\[[0-?]*[ -/]*[@-~]', '')
+    $normalized = [regex]::Replace($normalized, '\s+', ' ').Trim().ToLowerInvariant()
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes($Vendor.ToLowerInvariant() + "`n" + $normalized))).ToLowerInvariant()
+}
+
+function Read-RouterAlertEvents {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path) {
+        foreach ($line in [IO.File]::ReadLines($Path)) {
+            try {
+                $row = $line | ConvertFrom-Json -AsHashtable -DateKind String -ErrorAction Stop
+                if ($row -is [Collections.IDictionary] -and $row['key'] -is [string]) { $row }
+            } catch { }
+        }
+    }
+}
+
+function Complete-RouterProbeRecovery {
+    param([ValidateSet('codex','claude')][string]$Vendor,
+          [datetimeoffset]$StartedAt = [datetimeoffset]::UtcNow)
+    $mutex = [Threading.Mutex]::new($false, 'Local\DtModelRouterAlert')
+    $owned = $false
+    try {
+        # This is the only signal of a successful real preflight. Serialize behind
+        # an in-flight delivery rather than dropping recovery at the sender's busy timeout.
+        try { $owned = $mutex.WaitOne() }
+        catch [Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) { throw 'Alert log is busy' }
+        $log = Join-Path (Get-RouterStateDir) 'alert-log.jsonl'
+        $active = @{}
+        $legacy = @{}
+        foreach ($row in @(Read-RouterAlertEvents -Path $log)) {
+            if ($row['event'] -eq 'acknowledged') { $active.Remove([string]$row.key); $legacy.Remove([string]$row.key) }
+            elseif ($row['event'] -eq 'delivered' -and $row['probe'] -eq $true -and $row['vendor'] -eq $Vendor) {
+                $at = [datetimeoffset]::MinValue
+                if ([datetimeoffset]::TryParse([string]$row['at'], [ref]$at) -and $at -le $StartedAt) { $active[[string]$row.key] = $row }
+            }
+            elseif ($row['event'] -eq 'delivered' -and -not $row.Contains('probe') -and $row.key -cmatch "^vendor-error:${Vendor}:([a-f0-9]{32})$") {
+                $at = [datetimeoffset]::MinValue
+                if ([datetimeoffset]::TryParse([string]$row['at'], [ref]$at) -and $at -le $StartedAt) { $legacy[[string]$row.key] = $row }
+            }
+        }
+        # Pre-release rows have no probe metadata. Only the wrapper's exact preflight
+        # outcome proves that a legacy UUID was a probe; never infer it from its message.
+        if ($legacy.Count) {
+            $state = Get-RouterStateDir
+            $ledgers = @((Join-Path $state 'outcomes.jsonl'))
+            $archive = Join-Path $state '_archive'
+            if (Test-Path -LiteralPath $archive) { $ledgers += @(Get-ChildItem -LiteralPath $archive -Filter 'outcomes-*.jsonl' -File | Select-Object -ExpandProperty FullName) }
+            foreach ($ledger in $ledgers) {
+                foreach ($row in @(Read-RouterAlertEvents -Path $ledger)) {
+                    if ($row['source'] -eq 'canary' -and $row['run_id'] -eq 'preflight' -and $row['lane'] -eq $Vendor -and $row['pass'] -eq $false -and $row['key'] -cmatch '^([a-f0-9]{32}):preflight$') {
+                        $key = "vendor-error:${Vendor}:$($Matches[1])"
+                        if ($legacy.ContainsKey($key)) { $active[$key] = $legacy[$key] }
+                    }
+                }
+            }
+        }
+        foreach ($key in $active.Keys) {
+            Write-RouterAlertLogWithRetry -Path $log -Record @{ event='acknowledged'; key=$key;
+                reason='probe-recovered'; vendor=$Vendor; at=[datetimeoffset]::UtcNow.ToString('o') }
+        }
+    } finally {
+        if ($owned) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
 function Get-RouterAlertMessage {
     param(
         [string]$Key, [string]$Model, [string]$Category,
@@ -214,6 +288,10 @@ function Send-RouterAlert {
         [Parameter(Mandatory)][string]$Message,
         [ValidateSet('info','warn')][string]$Severity = 'warn',
         [scriptblock]$Transport,
+        [ValidateSet('codex','claude')][string]$Vendor,
+        [string]$ErrorText,
+        [switch]$Probe,
+        [datetimeoffset]$Now = [datetimeoffset]::UtcNow,
         [datetime]$Deadline = [datetime]::MaxValue,
         # Script -Json modes keep stdout to one JSON object, so the chat line goes to stderr.
         [switch]$ChatToStderr
@@ -227,18 +305,32 @@ function Send-RouterAlert {
         catch [System.Threading.AbandonedMutexException] { $owned = $true }
         if (-not $owned) { $status.error = 'busy'; return [pscustomobject]$status }
         if ([datetime]::UtcNow -ge $Deadline) { $status.error = 'busy'; return [pscustomobject]$status }
+        # A caller may have queued behind a delivery. Compare against time after
+        # acquiring the mutex, not against the time before that delivery finished.
+        if (-not $PSBoundParameters.ContainsKey('Now')) { $Now = [datetimeoffset]::UtcNow }
         $state = Get-RouterStateDir
         [System.IO.Directory]::CreateDirectory($state) | Out-Null
         $log = Join-Path $state 'alert-log.jsonl'
+        $fingerprint = if ($Vendor -and -not [string]::IsNullOrWhiteSpace($ErrorText)) { Get-RouterAlertFingerprint -Vendor $Vendor -ErrorText $ErrorText } else { $null }
         if (Test-Path -LiteralPath $log) {
-            foreach ($line in @(Get-Content -LiteralPath $log)) {
-                try {
-                    $row = $line | ConvertFrom-Json
-                    if ($row.key -ceq $Key -and $row.event -eq 'delivered') {
-                        $status.sent = $true; $status.channel = [string]$row.channel; $status.deduped = $true
-                        return [pscustomobject]$status
-                    }
-                } catch { }
+            $events = @(Read-RouterAlertEvents -Path $log)
+            $recovered = @{}
+            foreach ($row in $events) {
+                if ($row['event'] -eq 'acknowledged' -and $row['reason'] -eq 'probe-recovered') { $recovered[[string]$row.key] = $true }
+                elseif ($row['event'] -eq 'delivered') { $recovered.Remove([string]$row.key) }
+            }
+            foreach ($row in $events) {
+                $matches = $row.key -ceq $Key
+                if ($fingerprint) {
+                    $at = [datetimeoffset]::MinValue
+                    $matches = $row['fingerprint'] -ceq $fingerprint -and $row['vendor'] -eq $Vendor -and
+                        $row['probe'] -eq [bool]$Probe -and -not $recovered.ContainsKey([string]$row.key) -and
+                        [datetimeoffset]::TryParse([string]$row['at'], [ref]$at) -and $at -gt $Now.AddHours(-1) -and $at -le $Now
+                }
+                if ($matches -and $row['event'] -eq 'delivered') {
+                    $status.sent = $true; $status.channel = [string]$row['channel']; $status.deduped = $true
+                    return [pscustomobject]$status
+                }
             }
         }
         if ($ChatToStderr) { [Console]::Error.WriteLine("ROUTER_ALERT: $Message") } else { Write-Host "ROUTER_ALERT: $Message" }
@@ -291,7 +383,8 @@ function Send-RouterAlert {
             } catch { $status.error = "$discordError; email delivery failed" }
         }
         $event = if ($status.sent) { 'delivered' } else { 'delivery_failed' }
-        try { Write-RouterAlertLogWithRetry -Path $log -Record @{ event = $event; key = $Key; channel = $status.channel; severity = $Severity; message = $Message; at = (Get-Date).ToString('o') } }
+        $recordAt = if ($PSBoundParameters.ContainsKey('Now')) { $Now } else { [datetimeoffset]::UtcNow }
+        try { Write-RouterAlertLogWithRetry -Path $log -Record @{ event = $event; key = $Key; channel = $status.channel; severity = $Severity; message = $Message; at = $recordAt.ToString('o'); vendor=$Vendor; fingerprint=$fingerprint; probe=[bool]$Probe } }
         catch { $status.log_error = 'Alert log write failed' }
     } catch {
         $status.sent = $false; $status.channel = 'none'; $status.error = 'Alert delivery failed'

@@ -498,6 +498,7 @@ $args = @(
 
 if ($Effort) { $args = @($args[0..($args.Count - 2)]) + @('-c', ('model_reasoning_effort="{0}"' -f $Effort), '-') }
 
+$probeStartedAt = [datetimeoffset]::UtcNow
 $dispatchStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
 $dispatchId = $DispatchContext.dispatch_id
 $diagnosis = $null
@@ -853,7 +854,7 @@ try {
                     $failureReason = 'ROUTER_UNEXPLAINED'
                     $key = 'vendor-error:codex:' + $dispatchId
                     $message = Get-RouterAlertMessage -Key $key -Model $resolvedModel -Category $Category -ErrorText $codexErrorText -Checks $dispatchDiagnosis.checks -ArtifactPath $provenancePath -PromptText $prompt -InvocationText ($startInfo.ArgumentList -join ' ')
-                    $null = Send-RouterAlert -Key $key -Message $message -ChatToStderr:$Json
+                    $null = Send-RouterAlert -Key $key -Message $message -Vendor codex -ErrorText $codexErrorText -Probe:$Preflight -ChatToStderr:$Json
                 }
             } }
         }
@@ -966,6 +967,10 @@ try {
         report_version_warning = $reportVersionWarning
     }
 
+    if ($Preflight -and $result.pass) {
+        try { Complete-RouterProbeRecovery -Vendor codex -StartedAt $probeStartedAt }
+        catch { [Console]::Error.WriteLine('ROUTER_ALERT_RECOVERY_FAILED: codex') }
+    }
     if ($Preflight -and -not $result.pass) {
         Add-RouterPreflightOutcome -DispatchId $dispatchId -Repo $outcomeRepo -Tier $Tier -Lane 'codex' -Model $resolvedModel -Category $Category -Attempt $Attempt -FailureCategory $failureCategory -Diagnosis $diagnosis
     }
