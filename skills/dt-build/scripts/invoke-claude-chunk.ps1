@@ -182,6 +182,11 @@ if (-not $Preflight) {
     $PromptPath = (Resolve-Path -LiteralPath $PromptPath).Path
     $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
     $promptText = Get-Content -Raw -LiteralPath $PromptPath
+    if (-not $AdHoc) {
+        . (Join-Path $PSScriptRoot 'worker-attempt-prompt.ps1')
+        try { $promptText = Get-WorkerAttemptPrompt -Text $promptText -Attempt $Attempt }
+        catch { throw "CLAUDE_INVOKE_FAIL: $($_.Exception.Message)" }
+    }
     if ($AdHoc) {
         . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
         $hardwareRule = Get-WorkerHardwareRule
@@ -204,10 +209,6 @@ if (-not $Preflight) {
         $promptChunkId = 'adhoc-' + [System.IO.Path]::GetFileNameWithoutExtension($PromptPath)
     }
     else {
-        $attemptMatch = [regex]::Match($promptText, '(?m)^attempt:\s*(\d+)\s*$')
-        if (-not $attemptMatch.Success -or [int]$attemptMatch.Groups[1].Value -ne $Attempt) {
-            throw "CLAUDE_INVOKE_FAIL: prompt attempt header must equal -Attempt $Attempt."
-        }
         $runMatch = [regex]::Match($promptText, '(?m)^RUN_ID:\s*(.+?)\s*$')
         $chunkMatch = [regex]::Match($promptText, '(?m)^chunk_id:\s*(.+?)\s*$')
         if (-not $runMatch.Success -or -not $chunkMatch.Success) {

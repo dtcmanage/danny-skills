@@ -132,6 +132,9 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     foreach ($section in @('execution','routing','context','guardrails','adapter','worker-briefs','checkpoint','lane-health','worker-authority','roll-forward','local-work','operator-actions','fast-lane','shared','authority')) {
         $sectionText = (Invoke-TestPwsh -Script (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -Section $section) -join "`n"
         Assert-True ($LASTEXITCODE -eq 0 -and $sectionText.Length -gt 300) "on-demand section $section resolves from authoritative source"
+        if ($section -eq 'worker-briefs') {
+            Assert-True ($sectionText.Contains('worker-attempt-prompt.ps1') -and $sectionText.Contains('invoke-claude-chunk.ps1') -and $sectionText.Contains('invoke-codex-chunk.ps1')) 'worker briefs render the authoritative shared attempt contract and both wrappers'
+        }
     }
     Assert-True (-not $rulebook.Contains('## Lane health') -and -not $rulebook.Contains('## Launch watch') -and $rulebook.Contains('lane-health diagnosis')) 'lane diagnosis and launch watch are deferred'
     Assert-True ($rulebook.Contains('## Before marking bootstrap') -and -not $rulebook.Contains('## Authority roll-forward') -and -not $rulebook.Contains('## Operator recovery')) 'entry defers procedures outside bootstrap'
@@ -1353,6 +1356,7 @@ Write-Envelope $report
     # Check the actual prompt received, retained final message and stderr on both lanes.
     }
     if ($Shard -in @(0,3)) {
+    & (Join-Path $scriptDir 'tests/test-worker-attempt-header.ps1') -FixtureRoot $tempRoot -ProjectPath $workingTree -FakeCodex $fakeCodex -FakeClaude $fakeClaude
     $unicode = [char]0xA7 + ' snow ' + [char]0x96EA + ' emoji ' + [char]::ConvertFromUtf32(0x1F600) + ' Tibetan ' + [char]0x0F56 + [char]0x0F7C + [char]0x0F51 + [char]0x0F0B + ' quote \" backslash \\'
     $unicodePrompt=Join-Path $tempRoot 'unicode-prompt.md'
     $unicodePromptText="RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`n"+$unicode+"`nline two`ttab"
@@ -1367,7 +1371,8 @@ Write-Envelope $report
             $cliArgs=if($lane -eq 'codex'){@('-CodexCliPath',$fakeCodex)}else{@('-ClaudeCliPath',$fakeClaude,'-Model','claude-sonnet-5')}
             $env:DT_FAKE_CODEX_MODE='success';$env:DT_FAKE_CLAUDE_MODE='success'
             & pwsh -NoProfile -File (Join-Path $scriptDir "invoke-$lane-chunk.ps1") -ProjectPath $workingTree -PromptPath $unicodePrompt -OutputPath $out -Category routine-coding -Effort medium -SelectionReason 'Unicode transport fixture' -Json @cliArgs *> $null
-            $check=@{lane=$lane;success=($LASTEXITCODE -eq 0);prompt=((Get-Content -Raw $env:DT_FAKE_UNICODE_PROMPT) -ceq $unicodePromptText);answer=((Get-Content -Raw $out).Contains($unicode));stream=((Get-Content -Raw "$out.stream.log").Contains($unicode))}
+            $expectedPrompt = $unicodePromptText + "`nWorker output identity: return the structured dt-build report and echo exactly ``attempt: 1`` in its attempt field.`n"
+            $check=@{lane=$lane;success=($LASTEXITCODE -eq 0);prompt=((Get-Content -Raw $env:DT_FAKE_UNICODE_PROMPT) -ceq $expectedPrompt);answer=((Get-Content -Raw $out).Contains($unicode));stream=((Get-Content -Raw "$out.stream.log").Contains($unicode))}
             Write-Output "UNICODE: $lane success=$($check.success); prompt=$($check.prompt); answer=$($check.answer); stream=$($check.stream)"
             $unicodeResults+=$check
         }

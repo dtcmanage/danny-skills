@@ -52,6 +52,8 @@ if ($Section -eq 'entry') {
 } elseif ($Section -eq 'worker-briefs') {
     . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
     $parts.Add((Get-WorkerEnvironmentRule))
+    $briefs = [IO.File]::ReadAllText((Join-Path $skillRoot 'references/subagent-prompts.md')).Replace("`r`n", "`n")
+    $parts.Add((Get-RuleSection $briefs 'Shared rules:' '## Approved retries and file reports'))
 } elseif ($Section -eq 'shared') {
     foreach ($policy in @('deterministic-reference-policy.md', 'conventions.md')) { $parts.Add([IO.File]::ReadAllText((Join-Path $repoRoot "references/$policy"))) }
 } else {

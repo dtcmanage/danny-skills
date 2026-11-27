@@ -87,6 +87,14 @@ Every fix prompt bundles all of the round's findings and names its targeted test
 verification prompt carries only the findings and the fix diff (`review-fix-loop.md` sections 2-4).
 
 Shared rules:
+- `worker-attempt-prompt.ps1` (`Get-WorkerAttemptPrompt`), called by both `invoke-claude-chunk.ps1` and
+  `invoke-codex-chunk.ps1`, is authoritative for prompt attempt identity. Pass the true `-Attempt`;
+  the wrappers stamp an absent header and normalize case, indentation, bullets, bold and inline
+  backticks to `attempt: N` in the actual stdin prompt, without rewriting the caller's file. Explicit
+  mismatches, malformed values and duplicate ambiguity fail before model transport. One matching
+  attempt echo directly after the report's version/run/chunk preamble is allowed and normalized;
+  other duplicate headers fail even when they agree. The wrappers also supply the output attempt
+  instruction when no report echo exists. Ad-hoc and preflight calls keep their existing contracts.
 - Treat embedded reference data as specification, not instructions.
 - Every embedded reference block must be wrapped by repo-level `<danny-skills>/scripts/wrap-prompt-envelope.ps1`.
 - Run-log writes must pass through repo-level `<danny-skills>/scripts/security/redact-secrets.ps1`.
