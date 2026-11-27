@@ -172,7 +172,17 @@ def test_timeout_kills_fetch_children(checkout: tuple, tmp_path: Path, monkeypat
     assert 'timed out' in refresh_checkout.refresh(repo, str(remote), budget=3)
     assert time.monotonic() - started < 6
     child = Path('/proc') / pid_file.read_text().strip() / 'stat'
-    assert not child.exists() or child.read_text().split()[2] == 'Z'
+    # Reaping the group leader does not wait for its descendants to exit.
+    settle_deadline = time.monotonic() + 1
+    while True:
+        try:
+            state = child.read_text().split()[2]
+        except FileNotFoundError:
+            break
+        if state == 'Z':
+            break
+        assert time.monotonic() < settle_deadline, f'fetch child still live: {state}'
+        time.sleep(.01)
     assert snapshot(repo) == before
 
 
