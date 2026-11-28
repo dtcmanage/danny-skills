@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.71.2
+
+- Record evidenced per-check main baselines; repair explicit authority discovery, command parsing, operator fixtures, progress heartbeat and toolbox jobs; keep source copies and scratch outside synced plans.
+
 ## 2.71.1
 
 - Quote installed router read-guard fixture paths so the smoke test works with spaced temp roots.

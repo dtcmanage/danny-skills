@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.71.1
+  version: 2.71.2
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -170,6 +170,7 @@ until its rehearsal milestone has a current PASS; preserve this gate in worker b
 - Build execution in step 6 uses this set to reorder within each DAG layer: when multiple milestones become unblocked simultaneously, the load-bearing one is built first and its `accepted` status must be `PASS` before any dependent non-load-bearing milestone's chunk is assembled.
 
 6. Execute milestones with deterministic execution-side procedures, **per-milestone in this order**:
+- AI-5: Keep disposable source exports, source copies and test scratch under `~/.cache/<run>/`, never in synced planning folders. Keep retained logs/reports in the owning workstation `_audits` or run evidence. Clean only scratch created by this invocation; carry this rule into every chunk brief through `Get-WorkerEnvironmentRule`.
 - Apply `Get-WorkerEnvironmentRule` from `<skill>/scripts/worker-standing-rules.ps1` before builder/fix/verifier briefs.
 - a. **Quote the verification check.** Restate the `chk-mNN` procedure text and the milestone's acceptance-checks text verbatim in the milestone's `build-decision-log` entry before any code is written.
 - b. **Assemble and verify the chunk prompt (both lanes).** `<skill>/scripts/assemble-codex-prompt.ps1` (canonical for both lanes despite its name; it emits the identity headers and report contract both wrappers enforce; envelope via `<danny-skills>/scripts/wrap-prompt-envelope.ps1`), then the four-check gate `<skill>/scripts/verify-codex-prompt.ps1` before every chunk. An approved retry past the two-attempt budget passes the next `-Attempt` with `-ApprovalOperation <op> -RunFolder <run>` to all three.
@@ -197,7 +198,7 @@ until its rehearsal milestone has a current PASS; preserve this gate in worker b
   the milestone's named artifacts and stated scope as an out-of-scope finding — unrequested work is a defect.
   Every finding carries a type (`app-bug`, `test-env`, `docs`, `design-gap`) and severity; fix them per
   `references/review-fix-loop.md`: one bundled fix per round, targeted tests, a verifier that reads only the fix diff.
-- e. **Run acceptance.** Apply `references/gate-scope.md`, "Exact gate command at every milestone," then `<skill>/scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunTests -Json`. Both must PASS; otherwise BLOCKED, with dependents stopped.
+- e. **Run acceptance.** Apply `references/gate-scope.md`, "Exact gate command at every milestone," then `<skill>/scripts/verify-milestone-acceptance.ps1 -RoadmapPath <r> -MilestoneId <mid> -WorkingTree <wt> -RunFolder <run-folder> -RunTests -Json`. Both must PASS; otherwise BLOCKED, with dependents stopped. Preserve each check's default-branch baseline evidence and explicit identical-failure note; an evidenced baseline floor needs no director downgrade.
   Run each pass to the end past failures; fix everything in one bundled fix and rerun the failed and touched checks until clean (`references/review-fix-loop.md`).
   A milestone that depends on the real target host (tmux, OS paths, systemd, deploy config) includes a short end-to-end smoke on that host here, added if the roadmap lacks it (`references/review-fix-loop.md` section 6).
 - f. **Run the downgrade-language scan.** `<skill>/scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.

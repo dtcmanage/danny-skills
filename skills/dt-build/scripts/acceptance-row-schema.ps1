@@ -2,6 +2,7 @@
 # Dot-sourced by append-acceptance-row.ps1 (write-time validation) and
 # build-acceptance-ledger.ps1 (read-time classification). Schema lives in
 # references/acceptance-contract.md, "Acceptance row schema".
+. (Join-Path $PSScriptRoot 'acceptance-baseline.ps1')
 
 function Get-AcceptanceRowValue {
     param($Row, [string]$Name)
@@ -41,8 +42,8 @@ function Get-AcceptanceRowSchemaErrors {
     }
     $commands = Get-AcceptanceRowValue $Row 'command_results'
     if ($null -eq $commands -or @($commands).Count -eq 0) { $errors.Add('command_results is required') | Out-Null }
-    elseif ($status -ceq 'PASS' -and @($commands | Where-Object { $_.exit_code -ne 0 }).Count -gt 0) {
-        $errors.Add('status PASS requires every command_results exit_code to be 0') | Out-Null
+    elseif ($status -ceq 'PASS' -and @($commands | Where-Object { -not (Test-AcceptanceCommandPass $_) }).Count -gt 0) {
+        $errors.Add('status PASS requires every command_results exit_code to be 0 or an evidenced identical default-branch failure') | Out-Null
     }
     $hasId = -not [string]::IsNullOrWhiteSpace([string](Get-AcceptanceRowValue $Row 'dispatch_id'))
     $hasPath = -not [string]::IsNullOrWhiteSpace([string](Get-AcceptanceRowValue $Row 'provenance_path'))

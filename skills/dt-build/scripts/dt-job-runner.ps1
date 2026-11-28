@@ -10,6 +10,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'toolbox-path.ps1')
+Enable-DtBuildToolboxPath
 
 # Pass our own values so the dot-sourced param block does not clear them.
 . (Join-Path $PSScriptRoot 'dt-job.ps1') -RunFolder $RunFolder -JobId $JobId
@@ -198,6 +200,7 @@ function Wait-DtJobProcess {
     $windowSec = [Math]::Min(300, [Math]::Max(1, (Get-DtJobSettingSec -Name 'DT_JOB_STALL_SEC' -Default $script:DtJobStallSec) / 4))
     $progress = New-DtJobProgress -Now $started -WindowSec $windowSec
     $lastCpu = $null; $fileChanges = 0; $newFiles = 0
+    $logStamp = ''
     $lastSample = $started
     $nextBeat = $started
     $nextMemorySample = $started
@@ -215,13 +218,17 @@ function Wait-DtJobProcess {
             if ($null -ne $fsWatcher) {
                 foreach ($evt in @(Get-Event -ErrorAction SilentlyContinue | Where-Object { $_.SourceIdentifier -like "$sourceId-*" })) {
                     $full = [string]$evt.SourceEventArgs.FullPath
-                    if ($full -ne $runRoot -and -not $full.StartsWith($runRoot + [IO.Path]::DirectorySeparatorChar, [System.StringComparison]::Ordinal)) { $newFiles++ }
+                    # Attribute worktree events only to declared writers. Job-owned
+                    # log changes count for readers too; never count heartbeat/state writes.
+                    if ($Writes -and $full -ne $runRoot -and -not $full.StartsWith($runRoot + [IO.Path]::DirectorySeparatorChar, [System.StringComparison]::Ordinal)) { $newFiles++ }
                     Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
                 }
             }
             $now = [DateTime]::UtcNow
             if ($null -eq $executionStarted -and (Test-Path -LiteralPath $AdmissionReady)) { $executionStarted = $now }
             if ($now -ge $nextBeat) {
+                $newLogStamp = (@(Get-ChildItem -LiteralPath (Join-Path $jobDir 'logs') -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object { "$($_.FullName)|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)" }) -join "`n")
+                if ($newLogStamp -cne $logStamp) { $newFiles++; $logStamp = $newLogStamp }
                 $cpu = try { Get-DtJobTreeCpuSeconds -RootPid $Process.Id } catch { $null }
                 $bytes = [long]0; foreach ($s in $Outputs) { try { $bytes += $s.Position } catch { } }
                 $cpuActive = Test-DtJobCpuActivity -Cpu $cpu -LastCpu $lastCpu -ElapsedSec ($now - $lastSample).TotalSeconds
@@ -266,6 +273,9 @@ try {
         # The runner's own heartbeat settings come from the caller too.
         foreach ($property in @($spec.environment.PSObject.Properties | Where-Object { $_.Name -like 'DT_JOB_*' })) { [System.Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value) }
     }
+    # Legacy specs can restore the headless caller's system-only PATH. Repair
+    # the child environment after restoration as well as this runner's PATH.
+    $psi.Environment['PATH'] = Get-DtBuildToolboxPath -Path $psi.Environment['PATH']
     # Defense against an inherited watcher environment or legacy job spec.
     $psi.Environment.Remove('DT_BUILD_LEAN_BOOTSTRAP') | Out-Null
     # A job never carries its coordinator's identity tag, so a rotation kill never reaches it.
@@ -368,7 +378,7 @@ public static class DtJobOutputCopy {
         $timeoutSec = [int]$spec.timeout_sec
         # Record is a typed string parameter inherited from dt-job; use a distinct variable here.
         $activityRecord = Get-DtJobRecord -RunFolder $RunFolder -JobId $JobId
-        $activityTree = if ($activityRecord.PSObject.Properties['working_tree']) { $activityRecord.working_tree } else { $psi.WorkingDirectory }
+        $activityTree = if ($activityRecord.PSObject.Properties['working_tree'] -and -not [string]::IsNullOrWhiteSpace($activityRecord.working_tree)) { $activityRecord.working_tree } else { $psi.WorkingDirectory }
         $isWriter = $activityRecord.PSObject.Properties['writes'] -and [bool]$activityRecord.writes
         $finished = Wait-DtJobProcess -Process $process -TimeoutSec $timeoutSec -WorkDir $activityTree -Outputs @($stdoutFile, $stderrFile) -AdmissionReady $pytestReadyFile -Writes $isWriter
         if (-not $finished) {

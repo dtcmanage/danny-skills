@@ -359,6 +359,7 @@ foreach ($mid in $milestoneIds) {
         "-SkipMovedPathCheck",
         "-Json"
     )
+    if ($RunFolder) { $args += @('-RunFolder', $RunFolder) }
 
     # Revalidation evaluates current checks without writing original dispatch
     # acceptance. Identity remains on the rendered row, never on this evaluator.
@@ -660,6 +661,10 @@ foreach ($r in $ledgerRows) {
                 if ($cr) {
                     $exitText = "[exit=$($cr.exit_code)] "
                     $exitColor = if ($cr.exit_code -eq 0) { "#1f7a3a" } else { "#a02020" }
+                    if ($cr.exit_code -ne 0 -and (Test-AcceptanceCommandPass $cr)) {
+                        $exitText = "[baseline-identical exit=$($cr.exit_code); main $($cr.baseline.commit)] "
+                        $exitColor = '#1f7a3a'
+                    }
                 } elseif ($vc.test_status -eq "NOT_RUN") {
                     $exitText = "[not run] "
                 }

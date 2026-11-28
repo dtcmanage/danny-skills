@@ -44,6 +44,7 @@ artifact requires the parent to judge coverage before using it.
 ## Build workers
 
 Execution parity scope:
+- AI-5: Keep disposable source exports, source copies and test scratch under `~/.cache/<run>/`, never in synced planning folders. Retain logs/reports in the owning workstation `_audits` or run evidence; clean only scratch created by this invocation. Include this rule through `Get-WorkerEnvironmentRule` in every chunk brief.
 - Every builder/fix/verifier brief resolves the default branch and reads live default-branch/HEAD hashes, branch and status at dispatch. Use `Get-WorkerEnvironmentRule` from `worker-standing-rules.ps1`; pass `-ReadOnly` for verifier/read-only/scrutiny briefs and to `assemble-codex-prompt.ps1` when assembling those prompts. Write-mode workers repair their own verification within the fix-round budget; read-only workers report failures without edits. Derive network/SSH allowances from gate commands and fixtures, subject to existing authorization. Do not add blanket offline restrictions.
 - For milestones adding/changing an external API client, the brief points to saved redacted auth and endpoint samples, with reference-pack entitlement; fixture clients from those samples, never invented shapes. Follow `fidelity-gates.md` for read-only live acceptance and named credential residuals.
 - Prompt templates remain reference artifacts so `SKILL.md` stays lean.

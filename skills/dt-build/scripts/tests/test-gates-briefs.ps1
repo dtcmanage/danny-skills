@@ -32,10 +32,16 @@ try {
 | --- | --- | --- |
 | CHK-M01 | M01 | Run `pwsh -NoProfile -Command exit 0` |
 '@)
-    $json = & pwsh -NoProfile -File (Join-Path $scripts 'verify-milestone-acceptance.ps1') -RoadmapPath $roadmap -MilestoneId M01 -WorkingTree $root -BaseRef main -RunTests -Json 2> (Join-Path $evidence 'acceptance.err')
+    $retainedRun = Join-Path $evidence 'retained-run'
+    $json = & pwsh -NoProfile -File (Join-Path $scripts 'verify-milestone-acceptance.ps1') -RoadmapPath $roadmap -MilestoneId M01 -WorkingTree $root -BaseRef main -RunFolder $retainedRun -RunTests -Json 2> (Join-Path $evidence 'acceptance.err')
     Assert ($LASTEXITCODE -eq 1) 'acceptance must block stale consumers even when named check passes'
     $acceptance = ($json -join "`n") | ConvertFrom-Json
     Assert ($acceptance.status -eq 'BLOCKED' -and ($acceptance.blockers -join ' ').Contains('windows_screen.rs:1:')) 'acceptance carries file/line diagnostics'
+    $expectedLogs = if ($env:DT_BUILD_LOG_DIR) { $env:DT_BUILD_LOG_DIR } else { Join-Path $retainedRun 'acceptance-logs' }
+    $logPrefix = [IO.Path]::GetFullPath($expectedLogs) + [IO.Path]::DirectorySeparatorChar
+    $commandResult = $acceptance.command_results[0]
+    Assert ($commandResult.stdout_path.StartsWith($logPrefix) -and (Test-Path -LiteralPath $commandResult.stdout_path)) 'runtime command logs stay under the retained run or explicit environment override'
+    Assert ($commandResult.baseline.available -and $commandResult.baseline.result.stdout_path.StartsWith($logPrefix) -and (Test-Path -LiteralPath $commandResult.baseline.result.stdout_path)) 'baseline command logs stay under the same retained log root'
     [IO.File]::WriteAllText((Join-Path $root 'windows_screen.rs'), 'read("web/src/settings/new.json")')
     [IO.File]::WriteAllText((Join-Path $root 'other.py'), 'read("web/src/settings/new.json")')
     Assert (@(Test-MovedPathConsumers $root main).Count -eq 0) 'updated consumers should pass'

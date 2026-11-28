@@ -73,6 +73,12 @@ try {
         Assert-True ($LASTEXITCODE -eq 0) 'control calls refuse unsupported input before writes, echo persisted decisions, and stale copies fail the preflight'
     }
     # Independent helper suites run once, outside the wrapper fixture shards.
+    if ($Shard -in @(0,1)) {
+        foreach ($helper in @('test-acceptance-baseline.ps1','test-acceptance-gate-fixes.ps1','test-command-extractor.ps1','test-authority-discovery.ps1','test-toolbox-path.ps1')) {
+            & pwsh -NoProfile -File (Join-Path $scriptDir "tests/$helper")
+            Assert-True ($LASTEXITCODE -eq 0) "acceptance regression helper $helper"
+        }
+    }
     if ($Shard -in @(0,5)) {
         & $testPython (Join-Path $scriptDir 'tests/test-gate-scope.py')
         Assert-True ($LASTEXITCODE -eq 0) 'verified gate scope rejects stale evidence and includes working changes'

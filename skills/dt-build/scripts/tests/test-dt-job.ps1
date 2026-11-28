@@ -10,6 +10,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
 Enter-RuntimeTestSuite
+. (Join-Path $PSScriptRoot 'operator-fixture-caller.ps1')
+$operatorFixturesUnavailable = Test-OperatorFixtureAutomationCaller
+if ($operatorFixturesUnavailable -and $Shard -in @(2,5)) {
+    "SKIP: operator-only shard $Shard (approve/hold/delegate/pin fixtures) requires launching-session ancestry; DT_JOB_OPERATOR_ONLY protection retained."
+    exit 0
+}
 $env:DT_BUILD_HEADLESS = '1' # Fixtures are automation, never borrow the test runner's director.
 $script:passed = 0
 $script:failed = 0
@@ -654,7 +660,7 @@ return [pscustomobject]@{ id = 'fake' }
     New-Item -ItemType Directory -Path $env:DT_MODEL_ROUTER_STATE -Force | Out-Null
     Assert-True ([IO.Path]::GetFullPath($env:DT_MODEL_ROUTER_STATE).StartsWith([IO.Path]::GetFullPath($tempRoot) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) 'router state stays under the suite temp directory'
     Remove-Item Env:DT_BUILD_COORDINATOR_ID, Env:DT_JOB_ID -ErrorAction SilentlyContinue
-    if ($Shard -in @(0,2)) {
+    if ($Shard -in @(0,2) -and -not $operatorFixturesUnavailable) {
     # FS-101: fixtures opt into temp storage explicitly; raw calls exercise the default guard.
     foreach ($verb in @('start', 'register-run', 'lease', 'note')) {
         $newTemp = Join-Path $tempRoot "refused-$verb"
@@ -994,10 +1000,12 @@ Set-DtJobCommandArgument $command OutputPath 'new output.txt'
         $copy.job_id = $id
         Write-Utf8 (Join-Path $manyRun "jobs/$id.json") ($copy | ConvertTo-Json -Depth 8)
     }
+    foreach ($repeat in 1..10) {
     foreach ($arguments in @(@('status', '-RunFolder', $manyRun), @('wait', '-RunFolder', $manyRun, '-JobId', ($manyIds -join ','), '-All', '-TimeoutSec', '1'))) {
         $reply = Invoke-DtJob $arguments
         Assert-True ($reply.evidence_hint -is [string] -and $reply.evidence_hint.Length -lt 400 -and $reply.evidence_hint.Contains('-JobId <job>')) 'large envelope retains its bounded evidence hint'
         Assert-True ($reply.truncated -and @($reply.jobs).Count -lt 300 -and [Text.Encoding]::UTF8.GetByteCount(($reply | ConvertTo-Json -Depth 8 -Compress)) -le 8192) '300-job envelope including hint is trimmed within 8 KB'
+    }
     }
     $events = @(Get-Content -LiteralPath (Join-Path $rf 'jobs/events.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     $seqs = @($events | ForEach-Object { [int]$_.seq })
@@ -1304,6 +1312,8 @@ exit 0
     if ($Shard -in @(0,4)) {
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-approval-wait.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'blocking approval process fixtures pass'
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-heartbeat-paths.ps1')
+    Assert-True ($LASTEXITCODE -eq 0) 'owned worktree/log progress and toolbox runner regressions'
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-runtime-fixes.ps1')
     Assert-True ($LASTEXITCODE -eq 0) 'runtime lifecycle, worktree, heartbeat and rebase fixes'
     # Separate process keeps regression doubles out of the integration fixtures.
@@ -1714,7 +1724,7 @@ while (-not (Test-Path -LiteralPath $Stop)) {
     Assert-True ($after.Count -ge 1 -and $after[0] -eq $lastSeq + 1 -and (($after -join ',') -eq (($lastSeq + 1)..($lastSeq + $after.Count) -join ','))) "events continue at the next seq ($lastSeq -> $($after -join ','))"
 
     }
-    if ($Shard -in @(0,5)) {
+    if ($Shard -in @(0,5) -and -not $operatorFixturesUnavailable) {
     # FS-133: host-disruptive stops name other registered builds, using only fake alerts.
     & {
         . $dtJob

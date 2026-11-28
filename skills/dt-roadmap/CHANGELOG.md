@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.5.4
+
+- Share explicit verification-command extraction with dt-build so unmarked roadmap prose cannot become executable checks.
+
 ## 1.5.3
 
 - Record the exact final release gateCommand and source per milestone; forbid test-runner subsets.

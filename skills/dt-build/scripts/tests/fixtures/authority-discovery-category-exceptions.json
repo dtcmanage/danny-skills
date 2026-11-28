@@ -1,0 +1,1844 @@
+{
+  "source": "category-exceptions/authority-diagnostics.json",
+  "source_sha256": "009bb7dd5212c8fdff52a736fe8576af1797c4e92813d2055d10afb764371d87",
+  "row_count": 261,
+  "rows": [
+    {
+      "source": "__RUN__/approvals.json",
+      "candidate": "readings/codex-appserver.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-plan.md",
+      "candidate": "skills/dt-roadmap/references/roadmap-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "roster-schema.md",
+      "resolved": "__RUN__/roster-schema.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "roster-proposals/verdicts.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "references/model-router/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "roster-schema.md",
+      "resolved": "__RUN__/roster-schema.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "Skill Creation Resources/model-router-operations.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "roster-schema.md",
+      "resolved": "__RUN__/roster-schema.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "default-roster.json",
+      "resolved": "__RUN__/default-roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/plan-draft.md",
+      "candidate": "references/versioning-policy.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "objective.md",
+      "resolved": "__RUN__/design/objective.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "references/model-router/default-roster.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "roster-schema.md",
+      "resolved": "__RUN__/design/roster-schema.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "model-router-operations.md",
+      "resolved": "__RUN__/design/model-router-operations.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "roster-schema.md",
+      "resolved": "__RUN__/design/roster-schema.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "frontier-models.json",
+      "resolved": "__RUN__/design/frontier-models.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "roster-proposals/verdicts.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "references/model-router/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "roster-schema.md",
+      "resolved": "__RUN__/design/roster-schema.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "Skill Creation Resources/model-router-operations.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "research-queue.json",
+      "resolved": "__RUN__/design/research-queue.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "review-context.md",
+      "resolved": "__RUN__/design/review-context.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/design/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "default-roster.json",
+      "resolved": "__RUN__/design/default-roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/design/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "bench/bank-hash.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "replay/live-hashes-before.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/design/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "drift-marks.json",
+      "resolved": "__RUN__/design/drift-marks.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "drift-declines.json",
+      "resolved": "__RUN__/design/drift-declines.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "effort-declines.jsonl",
+      "resolved": "__RUN__/design/effort-declines.jsonl",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "replay/run-a-verdicts.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "readings/passes.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "replay/replay-report.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "replay/live-hashes-after.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/design/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "bench/*.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "wildcard_star"
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "replay/live-hashes-*.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "wildcard_star"
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "state/roster.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "state/readings/passes.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "state/roster-proposals/verdicts.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "research-queue.json",
+      "resolved": "__RUN__/design/research-queue.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "drift-marks.json",
+      "resolved": "__RUN__/design/drift-marks.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "verdicts.jsonl",
+      "resolved": "__RUN__/design/verdicts.jsonl",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/design/design-final-category-exceptions.md",
+      "candidate": "objective.md",
+      "resolved": "__RUN__/design/objective.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "default-roster.json",
+      "resolved": "__RUN__/default-roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/default-roster.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "default-roster.json",
+      "resolved": "__RUN__/default-roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "default-roster.json",
+      "resolved": "__RUN__/default-roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "roster-proposals/verdicts.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "Skill Creation Resources/model-router-operations.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "bench/*.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "wildcard_star"
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "/SKILL.md",
+      "resolved": "/SKILL.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "/CHANGELOG.md",
+      "resolved": "/CHANGELOG.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/default-roster.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": ".claude-plugin/plugin.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/roadmap.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "roster-proposals/verdicts.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "references/model-router/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "Skill Creation Resources/model-router-operations.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/roster.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "bench/*.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "wildcard_star"
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "Resources/model-router-operations.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "readings/codex-appserver.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "readings/codex-live.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-decision-log.md",
+      "candidate": "readings/codex-appserver.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/common-brief.md",
+      "candidate": "__RUN__/milestones/<milestone>/continuation-1.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "angle_name"
+    },
+    {
+      "source": "__RUN__/objective.md",
+      "candidate": "model-router/state/readings/*.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "wildcard_star"
+    },
+    {
+      "source": "__RUN__/objective.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/objective.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/roster.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__RUN__/objective.md",
+      "candidate": "references/model-router/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/objective.md",
+      "candidate": "roster-schema.md",
+      "resolved": "__RUN__/roster-schema.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__RUN__/objective.md",
+      "candidate": "Skill Creation Resources/model-router-operations.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/objective.md",
+      "candidate": "references/versioning-policy.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0016/logs/fixture-diagnosis.md",
+      "candidate": "roster-proposals/latest.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0016/logs/fixture-diagnosis.md",
+      "candidate": "__WORKSPACE__/SYNC-ALERT.md",
+      "resolved": "__WORKSPACE__/SYNC-ALERT.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "final-results.json",
+      "resolved": "__RUN__/milestones/M06/final-results.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "suites-final/summary.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "gate-final/timings.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "live-hash-comparison.json",
+      "resolved": "__RUN__/milestones/M06/live-hash-comparison.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "references/model-router/dispatch-guard-staged-edits.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "references/shared-component-owners.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "readings/codex-appserver.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "readings/codex-live.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "readings/codex-appserver.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/continuation-2.md",
+      "candidate": "readings/codex-live.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "milestones/M06/builder-c1-report-a1.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "milestones/M06/continuation-2.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "readings/codex-appserver.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "readings/codex-live.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "references/model-router/roster-schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "references/model-router/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "Skill Creation Resources/model-router-operations.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "references/versioning-policy.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "replay/replay-report.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "replay/live-hashes-before.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "replay/live-hashes-after.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "baseline/ps-baseline-failures.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "baseline/pytest-baseline-failures.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "milestones/M06/acceptance-ledger.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c2.md",
+      "candidate": "milestones/M06/continuation-3.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "milestones/M06/brief-c2.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "milestones/M06/builder-c2-report-a1.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "milestones/M06/continuation-3.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "milestones/M06/acceptance-ledger.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "readings/codex-appserver.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "readings/codex-live.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "replay/replay-report.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "replay/live-hashes-before.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "replay/live-hashes-after.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "replay/live-guard-verdict.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "milestones/M06/acceptance-ledger.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief-c3.md",
+      "candidate": "milestones/M06/continuation-4.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/coding-conventions.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/coding-conventions.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/powershell-scripting.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/powershell-scripting.md",
+      "candidate": "Tech HQ/SNOWWHITE/SNOWWHITE Resources/pc-terminal/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/powershell-scripting.md",
+      "candidate": "bash-heredoc-backslash-mangling.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/bash-heredoc-backslash-mangling.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": ".claude-plugin/marketplace.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": ".claude-plugin/plugin.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "references/model-router/dispatch-guard-staged-edits.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "references/shared-component-owners.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-build/CHANGELOG.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-build/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-image-gen/CHANGELOG.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-image-gen/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-review/CHANGELOG.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-review/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-writing-draft/CHANGELOG.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-writing-draft/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-writing-edit/CHANGELOG.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/jobs/j-0024/logs/git-facts-final.txt",
+      "candidate": "skills/dt-writing-edit/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "live-hashes-before.txt",
+      "resolved": "__RUN__/milestones/M06/live-hashes-before.txt",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "live-hashes-after.txt",
+      "resolved": "__RUN__/milestones/M06/live-hashes-after.txt",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "roster.json",
+      "resolved": "__RUN__/milestones/M06/roster.json",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "bench/*.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "wildcard_star"
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "run-a-verdicts.jsonl",
+      "resolved": "__RUN__/milestones/M06/run-a-verdicts.jsonl",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "replay-report.md",
+      "resolved": "__RUN__/milestones/M06/replay-report.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "readings/passes.jsonl",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "replay-report.md",
+      "resolved": "__RUN__/milestones/M06/replay-report.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "baseline/pytest-baseline-failures.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "references/versioning-policy.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "skills/dt-build/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "skills/dt-review/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "skills/dt-image-gen/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "skills/dt-writing-draft/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "skills/dt-writing-edit/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "CHANGELOG.md",
+      "resolved": "__RUN__/milestones/M06/CHANGELOG.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": ".claude-plugin/plugin.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "CHANGELOG.md",
+      "resolved": "__RUN__/milestones/M06/CHANGELOG.md",
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/milestones/M06/brief.md",
+      "candidate": "__RUN__/milestones/<milestone>/continuation-1.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "angle_name"
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/git-workflow.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/git-workflow.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/git-workflow.md",
+      "candidate": ".ship.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/.ship.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/front-end-defaults.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/ops-conventions.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/ops-conventions.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/ops-conventions.md",
+      "candidate": ".ship.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/.ship.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/ops-conventions.md",
+      "candidate": "00_Resources/browser-automation.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/ops-conventions.md",
+      "candidate": "_system-tools/remote-control-server/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/ops-conventions.md",
+      "candidate": "authority-history.jsonl",
+      "resolved": "__RUN__/authority-history.jsonl",
+      "reason": "evidence_only",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "00_Resources/browser-automation.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "README.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/README.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "AGENTS.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/AGENTS.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "~/.codex/AGENTS.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "home_template"
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "AGENTS.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/AGENTS.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "AGENTS.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/AGENTS.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "./codex-out.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-out.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/codex-cli-usage.md",
+      "candidate": "./design/draft-v3.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-stage-prompt.md",
+      "candidate": "skills/dt-build/SKILL.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__RUN__/build-stage-prompt.md",
+      "candidate": "references/versioning-policy.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/CONTEXT.md",
+      "candidate": "state/bench/golden-approval.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/CONTEXT.md",
+      "candidate": "bench-config.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/bench-config.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/CONTEXT.md",
+      "candidate": "roster.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/roster.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/CONTEXT.md",
+      "candidate": "roster.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/roster.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/CONTEXT.md",
+      "candidate": "default-roster.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/default-roster.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/CONTEXT.md",
+      "candidate": "settings.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/Skill Creation/model-router/internal-bench/settings.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling-policy.md",
+      "candidate": "00_Resources/scheduling/schedule-registry.yaml",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "D:/Claude/_system-tools/orphan-reaper/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "C:/ProgramData/UpdateRestartGuard/state.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "D:/Claude/_system-tools/update-restart-guard/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "/var/lib/command-center/items.inboxwatch-audit.json",
+      "resolved": "/var/lib/command-center/items.inboxwatch-audit.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "/var/lib/command-center/items.inboxwatch-audit.jsonl",
+      "resolved": "/var/lib/command-center/items.inboxwatch-audit.jsonl",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "/var/lib/capacity-watch/state.json",
+      "resolved": "/var/lib/capacity-watch/state.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "Server/schedule-policy/schedule-inventory.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "Resources/ct202-recovery-runbook.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "Resources/scripts/wifi-watch/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "Center/astavet-mailbox-monitor/design-final-astavet-mailbox-monitor.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "Center/inbox-watch/design/design-final-inbox-watch.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "_review/mothership-migration-2026-11-22/decisions.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "release-speed/design/design-final-release-speed.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "Resources/release-artifact-prune/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "skills/dt-build/references/adapter-claude.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/scheduling/schedule-registry.yaml",
+      "candidate": "Sorter/release-speed/port-batch1/ar2-prompt.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "ai-browser-fleet2win-setup.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/ai-browser-fleet2win-setup.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "Home Server/Home Server Resources/scripts/fleet-browser/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "command-center-surfaces.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/command-center-surfaces.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "_system-tools/ai-browser/README.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "settings.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/settings.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "Tech HQ/ai-browser-fleet2win-setup.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "settings.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/settings.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/browser-automation.md",
+      "candidate": "D:\\Claude\\.claude.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/build-process.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/build-process.md",
+      "candidate": "plan-draft.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/plan-draft.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/build-process.md",
+      "candidate": "deferred-findings.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/deferred-findings.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_system-tools/ram-scratch/README.md",
+      "candidate": "_Claude-Workspace/00_Resources/ops-conventions.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_system-tools/ram-scratch/README.md",
+      "candidate": ".ship.json",
+      "resolved": "__WORKSPACE__/_system-tools/ram-scratch/.ship.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_system-tools/ram-scratch/README.md",
+      "candidate": "~/.local/state/command-center-v2/host-memory.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false,
+      "waiver_rule": "home_template"
+    },
+    {
+      "source": "__WORKSPACE__/_system-tools/ram-scratch/README.md",
+      "candidate": "ledger.json",
+      "resolved": "__WORKSPACE__/_system-tools/ram-scratch/ledger.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_system-tools/ram-scratch/README.md",
+      "candidate": "events.jsonl",
+      "resolved": "__WORKSPACE__/_system-tools/ram-scratch/events.jsonl",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_system-tools/ram-scratch/README.md",
+      "candidate": "local/state/ram-scratch/ledger.json",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Tech HQ/ai-browser-fleet2win-setup.md",
+      "candidate": "00_Resources/browser-automation.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Tech HQ/ai-browser-fleet2win-setup.md",
+      "candidate": ".claude.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/Tech HQ/.claude.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/Tech HQ/ai-browser-fleet2win-setup.md",
+      "candidate": "browser-automation.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/Tech HQ/browser-automation.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "MEMORY.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/MEMORY.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "00_Resources/browser-automation.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "OneDrive Migration/Metadata_Schema.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "ECKS/ECKS_System.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "file-sorter/docs/operations/learning-loop.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "docs/port/filed-items.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "docs/agent-door/hint-contract.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "docs/port/web-serving.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "docs/port/linux-runbook.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "docs/port/backlog-clearance.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/sharepoint-filing.md",
+      "candidate": "docs/port/filed-items.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": ".credentials.json",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/.credentials.json",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "00_Resources/read-delegation.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "_Claude-Workspace\\UNIFIED-MEMORY.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "UNIFIED-MEMORY.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/UNIFIED-MEMORY.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "UNIFIED-MEMORY.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/UNIFIED-MEMORY.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "CLAUDE.md",
+      "resolved": "__WORKSPACE__/_Claude-Workspace/00_Resources/CLAUDE.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "OneDrive Migration\\File Sorter\\File Sorter Resources\\successor-install.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "00_Resources/build-process.md",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/_Claude-Workspace/00_Resources/calibration-log.md",
+      "candidate": "$S/cfo.txt",
+      "resolved": null,
+      "reason": "non_authority_reference",
+      "required": false
+    },
+    {
+      "source": "__WORKSPACE__/.claude.json",
+      "candidate": "ONBOARDING.md",
+      "resolved": "__WORKSPACE__/ONBOARDING.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/.claude.json",
+      "candidate": "ONBOARDING.md",
+      "resolved": "__WORKSPACE__/ONBOARDING.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/.claude.json",
+      "candidate": "ONBOARDING.md",
+      "resolved": "__WORKSPACE__/ONBOARDING.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/.claude.json",
+      "candidate": "ONBOARDING.md",
+      "resolved": "__WORKSPACE__/ONBOARDING.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/.claude.json",
+      "candidate": "ONBOARDING.md",
+      "resolved": "__WORKSPACE__/ONBOARDING.md",
+      "reason": "missing_named_original",
+      "required": true
+    },
+    {
+      "source": "__WORKSPACE__/.claude.json",
+      "candidate": "ONBOARDING.md",
+      "resolved": "__WORKSPACE__/ONBOARDING.md",
+      "reason": "missing_named_original",
+      "required": true
+    }
+  ]
+}

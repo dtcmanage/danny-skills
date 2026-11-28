@@ -40,7 +40,7 @@ function Test-AuthorityLifecycleLocator {
 function Test-AuthorityContextDocument {
     param([string]$Path)
     $relative = $Path.Replace('\', '/')
-    return $relative -match '(?i)/_Claude-Workspace/(?:UNIFIED-MEMORY\.md|TCM Tech Stack Reference\.md|00_Resources/model-routing\.md)$' -or
+    return $relative -match '(?i)/_Claude-Workspace/(?:UNIFIED-MEMORY\.md|TCM Tech Stack Reference\.md|00_Resources/[^/]+\.md)$' -or
         (Split-Path -Leaf $Path) -in @('source-evidence.md', 'launch-evidence.md')
 }
 $script:AuthorityCheckpointPointerLine = '^\s*(?:[-*]\s*)?[A-Z][A-Z0-9_]*=|(?i:bootstrap)|IN FULL'
@@ -96,6 +96,7 @@ function Resolve-AuthorityLiteral {
         $visited[$name] = $true
         $value = Join-Path $Aliases[$name] $tail
     }
+    if ($value -match '^~[/\\](.*)$') { $value = Join-Path ([Environment]::GetFolderPath('UserProfile')) $Matches[1] }
     if ([IO.Path]::IsPathRooted($value)) { return [IO.Path]::GetFullPath($value) }
     $near = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $Source) $value))
     try {
@@ -131,8 +132,10 @@ function Get-AuthorityCandidates {
         ("(?<![\w'])'(?<path>[^'`\r\n]+\." + $ext + ")'(?![\w'])"),
         # A POSIX absolute path follows the same rule as a drive path (spaces allowed, never past another
         # file's extension); a spaced match must name an existing directory, else it falls to the next pattern.
-        ('(?<![\w.:~/\\-])(?<path>/(?:(?!\.[A-Za-z0-9]{1,5}[)\],;.:]{0,2}\s)[^`"''<>|\r\n])*?\.' + $ext + ')(?=[\s,;.)\]]|$)'),
-        ('(?<![\w:/\\])(?<path>(?:[\w.-]+[\\/])+[\w.-]+\.' + $ext + ')')
+        ('(?<![\w.:~/*?\\-])(?<path>/(?:(?!\.[A-Za-z0-9]{1,5}[)\],;.:]{0,2}\s)[^`"''<>|\r\n])*?\.' + $ext + ')(?=[\s,;.)\]]|$)'),
+        ('(?<![\w:/*?\\])(?<path>(?:[\w.*?-]+[\\/])+[\w.*?-]+\.' + $ext + ')'),
+        # Bare names require an actual authority label, never a prose-wide scan.
+        ('(?i)(?:\bread\s+(?:(?:governing|named|required|local|authority)\s+)*originals?\s*:\s*|\b(?:(?:authority|approval)(?:\s+(?:source|references?))?|(?:governing|named|required|local)\s+original|inherited|current boundary|director brief|roadmap_path|design_path|plan_path)\s*:\s*)(?<path>[\w.-]+\.' + $ext + ')(?![\w./\\-])')
     )
     if ($Aliases.Count) {
         $names = ($Aliases.Keys | Sort-Object Length -Descending | ForEach-Object { [regex]::Escape($_) }) -join '|'
@@ -144,7 +147,7 @@ function Get-AuthorityCandidates {
         foreach ($m in [regex]::Matches($Text, $pattern)) {
             $g = $m.Groups['path']
             if (@($occupied | Where-Object { $g.Index -lt $_.end -and ($g.Index + $g.Length) -gt $_.start }).Count) { continue }
-            if ($pattern.StartsWith('(?<![\w.:~/') -and $g.Value -match '\s' -and -not (Test-Path -LiteralPath (Split-Path -Parent $g.Value) -PathType Container)) { continue }
+            if ($pattern.StartsWith('(?<![\w.:~') -and $g.Value -match '\s' -and -not (Test-Path -LiteralPath (Split-Path -Parent $g.Value) -PathType Container)) { continue }
             $occupied.Add(@{ start = $g.Index; end = $g.Index + $g.Length })
             $literal = $g.Value
             if ($pattern.StartsWith('"')) { $literal = ('"' + $literal + '"') | ConvertFrom-Json }
@@ -225,6 +228,27 @@ function Get-AuthorityReferenceWaiver {
     return $null
 }
 
+function Test-AuthorityExplicitReference {
+    param([string]$Text, $Candidate, [bool]$Checkpoint)
+    $before = ($Text.Substring(0, $Candidate.index) -split '\r?\n')[-1]
+    $line = $before + ($Text.Substring($Candidate.index) -split '\r?\n')[0]
+    # Structured provenance fields name originals. Other JSON strings (messages,
+    # commands, log paths and design output descriptions) do not acquire authority.
+    if ($before -match '(?i)"(?:source|authority_source|scope_source|inherited_boundary|scope|source_disposition|approval_text)"\s*:\s*"$') { return $true }
+    if ($Text.Substring(0, $Candidate.index) -match '(?is)"inherited_authority_sources"\s*:\s*\[(?:\s*"[^"\r\n]*"\s*,)*\s*"$') { return $true }
+    if ($Checkpoint -and $line -match '^\s*(?:roadmap|design|plan)_path:') { return $true }
+    # A labelled pointer may use a Markdown link or put its value on the next
+    # line. Neither formatting choice turns an explicit authority edge into prose.
+    if ($line -match '(?i)^\s*(?:[-*]\s*)?(?:(?:current\s+)?boundary|inherited|(?:authority|approval)\s*(?:source|references?)?|director\s+brief|(?:governing|named|local|required)\s+original)\s*:') { return $true }
+    $prefixLines = $Text.Substring(0, $Candidate.index) -split '\r?\n'
+    if ($prefixLines.Count -gt 1 -and $prefixLines[-2] -match '(?i)^\s*(?:read\s+(?:(?:governing|required)\s+)?originals?|scope\s+per\s+(?:the\s+)?(?:design|plan|roadmap)(?:\s+doc)?|authority\s+sources?)\s*:\s*$') { return $true }
+    # Explicit read directives and authority labels are the only prose edges.
+    if ($line -match '(?i)\bread\s+(?:(?:governing|named|local|required|authority)\s+)*originals?\b|\bread\b[^\r\n]*\bIN FULL\b|(?:^|[.!?]\s+|[-*]\s+)(?:also\s+)?before\s*bootstrap\s+(?:also\s+)?read\b|^\s*read\b.*before\s*bootstrap|\bscope\s+per\s+(?:the\s+)?(?:design|plan|roadmap)\b') { return $true }
+    if ($before -match '(?i)\b(?:(?:current\s+)?boundary|inherited|(?:authority|approval)\s*(?:source|references?)?|director\s+brief|(?:governing|named|local|required)\s+original)\s*:\s*[`"''(\[]*$') { return $true }
+    # Legacy checkpoints also use a literal list as their inherited authority set.
+    return ($Checkpoint -and $line -match '^\s*[-*]\s+`[^`]+`\s*$')
+}
+
 function Get-AuthorityInventory {
     param([string]$RunFolder, [string]$BuildStatePath)
     $root = [IO.Path]::GetFullPath($RunFolder)
@@ -296,11 +320,14 @@ function Get-AuthorityInventory {
         if ($path -ne $checkpoint) {
             $records.Add([pscustomobject][ordered]@{ path = $path; sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($originalBytes)).ToLowerInvariant(); bytes = $originalBytes.Length; chars = $text.Length; kind = $kind; extract = $extract })
         }
+        # Logs remain evidence even when explicitly pinned for a complete read.
+        if ($path -match '(?i)[/\\]jobs[/\\]|\.(?:log|jsonl)$|\.instructions\.md$|(?:build-)?decision-log\.md$|[/\\]\.claude\.json$') { continue }
         # An enumerated set is closed. A boundary naming a deferred artifact outside
         # that set is inconsistent, not permission to silently omit its scope.
         if ($script:AuthorityEnumeratedPaths.Count -and $path -ne $checkpoint) {
             if (-not $script:AuthorityLegacyArtifactKinds -and $kind -in @('boundary', 'approval', 'operator_notes')) {
                 foreach ($candidate in @(Get-AuthorityCandidates $text $aliases)) {
+                    if (-not (Test-AuthorityExplicitReference $text $candidate $false)) { continue }
                     $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases
                     if ($resolved -notin $script:AuthorityArtifactPaths) { continue }
                     if ($resolved -notin $script:AuthorityEnumeratedPaths -and (Split-Path -Leaf $resolved) -notin $script:AuthorityRunRootNames) {
@@ -311,16 +338,12 @@ function Get-AuthorityInventory {
             }
             continue
         }
-        # Pin the document itself. Its citations describe evidence, runtime examples and
-        # other workstations. Only independent authority references add those originals.
-        if ($path -ne $checkpoint -and (Test-AuthorityContextDocument $path)) { continue }
         $candidates = if ($path -eq $checkpoint) { $checkpointCandidates } else { @(Get-AuthorityCandidates $text $aliases) }
         foreach ($candidate in $candidates) {
             # Keep each waiver explicit and visible in the coordinator's digest read.
             $waiverRule = switch -Regex -CaseSensitive ($candidate.literal) {
                 '[*]' { 'wildcard_star'; break }
                 '[?]' { 'wildcard_question'; break }
-                '^~[/\\]' { 'home_template'; break }
                 '<[A-Za-z][A-Za-z0-9_-]*>' { 'angle_name'; break }
                 '\{[A-Za-z_][A-Za-z0-9_-]*\}' { 'brace_name'; break }
                 '(?:^|[/\\])(?:yyyy-mm-dd|yyyy/mm/dd|YYYYMMDD|yyyymmdd)(?=$|[/\\]|\.[^/\\]+$)' { 'full_date_template'; break }
@@ -330,24 +353,37 @@ function Get-AuthorityInventory {
                 $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false; waiver_rule = $waiverRule })
                 continue
             }
-            $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases
+            $sourceLine = ($text.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($text.Substring($candidate.index) -split '\r?\n')[0]
+            # The previous lifecycle format treated these exact run-root fields as
+            # authority edges. Replay only those edges when verifying that format;
+            # an old receipt never enables generic prose or log discovery.
+            $legacyLifecycleReference = $script:AuthorityLegacyLifecycleLocators -and
+                $leaf -in @('build-plan.md', 'build-state.md') -and
+                $sourceLine -match '^(?:roadmap|design|plan)_path:\s*[^\r\n]+$'
+            $explicitReference = (Test-AuthorityExplicitReference $text $candidate ($path -eq $checkpoint)) -or $legacyLifecycleReference
+            $resolved = Resolve-AuthorityLiteral $candidate.literal $path $root $aliases -NamedOriginal:$explicitReference
             $referenceWaiver = Get-AuthorityReferenceWaiver $text $candidate $path $checkpoint $root $resolved
             if ($referenceWaiver) {
                 $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = 'non_authority_reference'; required = $false; waiver_rule = $referenceWaiver })
+                continue
+            }
+            # Evidence classification does not require an authority edge. Never
+            # enqueue or read these files, including when the locator is missing.
+            if ($resolved -and (Split-Path -Leaf $resolved) -in $script:AuthorityEvidenceOnlyNames) {
+                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = 'evidence_only'; required = $false })
+                continue
+            }
+            if (-not $explicitReference) {
+                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false })
                 continue
             }
             if (-not $resolved) {
                 $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $null; reason = 'non_authority_reference'; required = $false })
                 continue
             }
-            if ((Split-Path -Leaf $resolved) -in $script:AuthorityEvidenceOnlyNames) {
-                $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = 'evidence_only'; required = $false })
-                continue
-            }
             $required = $true
             # A boundary's reference to an artifact carries scope even on a separate line.
             # A checkpoint locator alone is navigation; any other authority reference is a full read.
-            $sourceLine = ($text.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($text.Substring($candidate.index) -split '\r?\n')[0]
             # A conditional output named by a stage prompt is produced if a decision arises.
             # Current stop authority is supplied independently through the checkpoint or approvals.
             if ((Split-Path -Leaf $path) -eq 'build-stage-prompt.md' -and
@@ -376,12 +412,7 @@ function Get-AuthorityInventory {
                 if ($required -and $resolved -notin $script:AuthorityEnumeratedPaths -and $line -notmatch '(?i)necessary\s*metadata\s+clarifications\s+grant\s+no\s*new\s*authority') { $script:AuthorityCheckpointFullReads += $resolved }
             }
             if (Test-Path -LiteralPath $resolved -PathType Leaf) { if ($required) { $pending.Enqueue($resolved) }; continue }
-            # FS-123: in a design or plan document, a missing bare file name (no directory part) names an
-            # artifact the build will create, not an original. Boundaries, approvals, the checkpoint,
-            # paths with a directory and enumerated authority files stay fail-closed.
-            if ($required -and $candidate.literal -notmatch '[\\/]' -and $resolved -notin $script:AuthorityEnumeratedPaths -and
-                ((Split-Path -Leaf $path) -match '(?i)^(design-final|plan-draft|roadmap|build-plan|build-input)' -or
-                 $path -match '(?i)[\\/]milestones[\\/]')) { $required = $false }
+            # Explicit required authority fails closed, including bare filenames.
             $script:AuthorityDiagnostics.Add([pscustomobject]@{ source = $path; candidate = $candidate.literal; resolved = $resolved; reason = $(if ($required) { 'missing_named_original' } else { 'non_authority_reference' }); required = $required })
             if ($required) { $missing.Add($resolved) }
         }
@@ -394,6 +425,7 @@ function Get-AuthorityInventory {
             if (-not $script:AuthorityEnumeratedPaths.Count -and (Test-AuthorityContextDocument $boundaryRecord.path)) { continue }
             foreach ($candidate in @(Get-AuthorityCandidates ([IO.File]::ReadAllText($boundaryRecord.path)) $aliases)) {
                 $boundaryText = [IO.File]::ReadAllText($boundaryRecord.path)
+                if (-not (Test-AuthorityExplicitReference $boundaryText $candidate $false)) { continue }
                 $line = ($boundaryText.Substring(0, $candidate.index) -split '\r?\n')[-1] + ($boundaryText.Substring($candidate.index) -split '\r?\n')[0]
                 if (Test-AuthorityLifecycleLocator $boundaryRecord.path $line) { continue }
                 $resolved = Resolve-AuthorityLiteral $candidate.literal $boundaryRecord.path $root $aliases

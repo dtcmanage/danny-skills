@@ -41,7 +41,7 @@ try {
     Write-Text $approval 'Approved: fixture changes only. No production writes.'
     New-Item -ItemType Directory -Path (Join-Path $root 'approvals') | Out-Null
     Write-Text (Join-Path $root 'approvals/r3b3.md') 'Approved: source-only recovery. Never deploy.'
-    Write-Text $current "# Current boundary`nOnly source changes. Approval: ``approval.md```nAlso see approvals/r3b3.md."
+    Write-Text $current "# Current boundary`nOnly source changes. Approval: ``approval.md```nRead original: approvals/r3b3.md."
     Write-Text $checkpoint "run_status: runnable`nInherited: ``old boundary.md```nCurrent boundary: [current](current-boundary.md)"
     Write-Text (Join-Path $root 'approvals.json') '{"approvals":[{"source":"approval.md"}]}'
     $built = Invoke-Fixture 'build-authority-digest.ps1'
@@ -409,7 +409,7 @@ try {
         'digests\<machine>\<workstation>\<YYYY-MM-DD>_<session_id>.md'
     )
     $missingOriginal = Join-Path $proseRoot 'genuinely-missing-original.md'
-    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ notes = @($tokens) + @($missingOriginal) } | ConvertTo-Json)
+    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ notes = @($tokens); source = $missingOriginal } | ConvertTo-Json)
     $missingFailure = ''
     try { Get-AuthorityInventory $proseRoot $proseCheckpoint | Out-Null } catch { $missingFailure = $_.Exception.Message }
     Assert-True ($missingFailure.StartsWith('AUTHORITY_MISSING:') -and $missingFailure.Contains($missingOriginal)) 'prose tokens do not mask a missing absolute named original'
@@ -430,7 +430,7 @@ try {
     $bareNames = @('index.json', 'requirements-dev.txt', 'open-sessions.json')
     $designDoc = Join-Path $proseRoot 'design-final-fixture.md'
     Write-Text $designDoc ("The hub writes " + (($bareNames | ForEach-Object { "``$_``" }) -join ', ') + '.')
-    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ design = $designDoc } | ConvertTo-Json)
+    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ source = $designDoc } | ConvertTo-Json)
     $bareInventory = @(Get-AuthorityInventory $proseRoot $proseCheckpoint)
     Assert-True ($bareInventory.Count -ge 1) 'missing bare artifact names in a design document do not block the inventory'
     foreach ($name in $bareNames) {
@@ -446,7 +446,7 @@ try {
         Assert-True (@($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq $remoteLiteral -and $_.waiver_rule -eq 'remote_host_evidence' -and -not $_.required }).Count -eq 1) 'remote evidence waiver is explicit in diagnostics'
     }
     foreach ($line in @(
-        ('Evidence: `' + $missingOriginal + '` on CT105.'),
+        ('Read local original: `' + $missingOriginal + '` on CT105.'),
         'Read governing original: `/etc/ai90-missing/original.md` IN FULL on CT105.',
         'Read original: `/etc/ai90-missing/original.md` on CT105.',
         'Local original: `/etc/ai90-missing/original.md`. Evidence is on CT105.'
@@ -482,7 +482,7 @@ try {
     New-Item -ItemType Directory -Path $briefDir -Force | Out-Null
     $brief = Join-Path $briefDir 'fix-brief-3.md'
     Write-Text $brief 'The verifier writes `verify-sources-progress.json`.'
-    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ brief = $brief } | ConvertTo-Json)
+    Write-Text (Join-Path $proseRoot 'operator-notes.json') (@{ source = $brief } | ConvertTo-Json)
     $briefInventory = @(Get-AuthorityInventory $proseRoot $proseCheckpoint)
     Assert-True ($briefInventory.Count -ge 1 -and @($script:AuthorityDiagnostics | Where-Object { $_.candidate -ceq 'verify-sources-progress.json' -and -not $_.required }).Count -eq 1) 'bare artifact name in a milestone brief is not a named original'
     # FS-132: an absolute path does not run across another file's extension into later prose.
@@ -512,7 +512,7 @@ try {
         (Join-Path $contextRun 'launch-evidence.md')
     )
     foreach ($doc in $contextDocuments) { Write-Text $doc ('Historical evidence: `' + $missingCitation + '`.') }
-    $policyText = ($contextDocuments | ForEach-Object { 'Reference: `' + $_ + '`' }) -join "`n"
+    $policyText = ($contextDocuments | ForEach-Object { 'Read original: `' + $_ + '`' }) -join "`n"
     Write-Text $governingPolicy $policyText
     $stageText = 'If a user decision becomes necessary, write its exact question to `' + $decisionOutput + '`.'
     Write-Text $stagePrompt $stageText

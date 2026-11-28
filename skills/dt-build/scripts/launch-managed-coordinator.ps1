@@ -27,6 +27,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'powershell-startup.ps1')
 Disable-DtPowerShellStartupProfile
+. (Join-Path $PSScriptRoot 'toolbox-path.ps1')
+Enable-DtBuildToolboxPath
 
 $dtJob = Join-Path $PSScriptRoot 'dt-job.ps1'
 $runRoot = [System.IO.Path]::GetFullPath($RunFolder)
@@ -47,6 +49,7 @@ Complete required authorization reads, then mark-bootstrap immediately with: pws
 Only after the marker load on-demand sections for the checkpoint's next action. The bootstrap order is system instructions, entry, state digest, mark-bootstrap. Target at most 20,000 coordinator-added input tokens.
 Do not repeat intake or preload implementation/close-out references. Never run dt-job resume, approve, delegate or hold.
 That rule binds you only: the launching session runs resume, approve and relaunch, so never ask Danny to type a command; raise only genuine decisions with dt-job await-danny.
+AI-5: Keep disposable source exports, copies and test scratch under ~/.cache/<run>/, never synced planning/workstation folders. Retain logs/reports in the owning workstation _audits or run evidence. Clean only scratch created by this invocation; carry this rule into every chunk brief.
 At a stop, use await-danny -WaitMinutes 7.5 -CallStartedUtc <UTC captured before pwsh launch> -Json with tool timeout 600000. A live director can approve while this call blocks and renews your lease: on decision=approved read its receipt and continue in this SAME coordinator. Otherwise checkpoint and end; never re-wait the boundary. Never self-approve.
 "@
 $log = Join-Path $runRoot "coordinator-$CoordinatorId.log"

@@ -21,17 +21,28 @@
 #   - skills/dt-build/scripts/verify-milestone-acceptance.ps1 (byte-identical inline copy)
 
 function Extract-NamedArtifacts {
-    # Walks the procedure / acceptance text looking for explicit artifact paths
-    # and command invocations. Heuristic but deterministic; the roadmap convention
-    # is to name them concretely (file paths in backticks, pytest commands inline).
+    # Commands require an explicit code/command boundary. Never search prose for
+    # a runner: removing `-n 8` from prose can otherwise invent `pytest green`.
     param([string]$Text)
     $artifacts = New-Object System.Collections.Generic.List[string]
     $commands = New-Object System.Collections.Generic.List[string]
 
-    # Backtick-quoted paths like `tests/backend/test_x.py` or `scripts/foo.py`.
-    $backtickMatches = [regex]::Matches($Text, '`([^`]+)`')
-    foreach ($m in $backtickMatches) {
-        $candidate = $m.Groups[1].Value.Trim()
+    $snippets = [Collections.Generic.List[string]]::new()
+    $fencePattern = '(?ms)^\s*(?<fence>`{3,}|~{3,})[^\r\n]*\r?\n(?<code>.*?)^\s*\k<fence>\s*$'
+    foreach ($fence in [regex]::Matches($Text, $fencePattern)) {
+        foreach ($line in ($fence.Groups['code'].Value -split '\r?\n')) { $snippets.Add($line.Trim()) }
+    }
+    $outsideFences = [regex]::Replace($Text, $fencePattern, ' ')
+    foreach ($span in [regex]::Matches($outsideFences, '(?<!`)(?<ticks>`{1,2})(?!`)(?<code>[^\r\n]*?)\k<ticks>(?!`)')) {
+        $snippets.Add($span.Groups['code'].Value.Trim())
+    }
+    # Command-marked values consume their line verbatim, preserving quoted paths.
+    # If backticks supply the boundary, the span above already supplies the value.
+    foreach ($marked in [regex]::Matches($outsideFences, '(?im)^\s*(?:[-*]\s+)?(?:\*\*)?(?:Test Command|Command|Runnable Command)(?:\*\*)?\s*:\s*(?:\*\*)?(?<code>[^\r\n]+)$')) {
+        $candidate = $marked.Groups['code'].Value.Trim()
+        if (-not $candidate.StartsWith('`')) { $snippets.Add($candidate) }
+    }
+    foreach ($candidate in $snippets) {
         # Whole-string command (pytest ..., python ...) -- treat as command.
         if ($candidate -match '^(?:(?:pytest|python(?:3(?:\.\d+)?)?|pwsh|powershell|node|npm|npx|pnpm|bun|bash|sh|uv|make|go|cargo)(?=\s|$)|\./\S)') {
             $commands.Add($candidate) | Out-Null
@@ -43,21 +54,6 @@ function Extract-NamedArtifacts {
         # Looks like a file path?
         if ($candidate -match '^(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(?:py|ts|js|ps1|sh|md|yaml|yml|json|html|sql)$') {
             $artifacts.Add($candidate) | Out-Null
-        }
-    }
-
-    # Inline (no-backtick) `pytest <path>` and `python <script>` invocations.
-    # Remove fenced inline-code spans first. Otherwise `python -m pytest ...`
-    # inside backticks is captured once as the full command and a second time as
-    # the inner `pytest ...`, causing the same test suite to run twice.
-    $inlineText = [regex]::Replace($Text, '`[^`]*`', ' ')
-    $inlineCmd = [regex]::Matches($inlineText, '(?i)(?:^|\s)(pytest\s+[A-Za-z0-9_./\-\s]+|python\s+(?:scripts|backend|workers|tests)/[A-Za-z0-9_./-]+\.py(?:\s+[A-Za-z0-9_.\-\/=]+)*)')
-    foreach ($m in $inlineCmd) {
-        $cmd = $m.Groups[1].Value.Trim()
-        if (-not ($commands -contains $cmd)) { $commands.Add($cmd) | Out-Null }
-        $pathMatches = [regex]::Matches($cmd, '(?<![A-Za-z0-9_./\\-])(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
-        foreach ($p in $pathMatches) {
-            if (-not ($artifacts -contains $p.Value)) { $artifacts.Add($p.Value) | Out-Null }
         }
     }
 

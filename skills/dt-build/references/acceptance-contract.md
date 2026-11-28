@@ -39,7 +39,11 @@ Acceptance scans renamed/deleted paths against the milestone's pre-build commit.
 
 The scan matches whole path tokens across tracked and nonignored untracked text in every language. Letters, digits, underscores, dots, slashes, backslashes and hyphens extend a token, so `src/a.json` does not match `src/a.js`. Searches and exclusions are repo-top relative even for a nested `-WorkingTree`. Exclude the old file and detected rename destination. Historical defaults are `**/CHANGELOG*`, `**/history/**`, `**/_history/**`, `**/_archive/**`, `**/design/**`, `**/designs/**`, `**/plans/**`, `**/_planning/**`, `**/design-*.md`, and `**/plan-*.md`. Add repo-relative glob exclusions with `-MovedPathExclude`; other active documentation remains eligible. Remaining consumers block acceptance with file/line hits.
 
-Named commands retain complete stdout/stderr in log files under `DT_BUILD_LOG_DIR` or a temporary `dt-build-acceptance-logs` directory. JSON exposes `stdout_path`, `stderr_path` and tails bounded to 20 lines and 4,000 characters per stream. Failures emit the command, log paths and bounded tails to stderr even when JSON stdout is piped to a file. dt-job records failing invocations in stderr.log. Keep the logs with gate evidence.
+Named commands retain complete stdout/stderr in log files under `DT_BUILD_LOG_DIR` or the run folder's `acceptance-logs` directory. JSON exposes `stdout_path`, `stderr_path` and tails bounded to 20 lines and 4,000 characters per stream. Failures emit the command, log paths and bounded tails to stderr even when JSON stdout is piped to a file. dt-job records failing invocations in stderr.log. Keep the logs with gate evidence.
+
+For each named verification command, record a baseline from an immutable export of the resolved default branch (remote HEAD, then an existing local main/master). Run the same command on that export. Identical nonzero exit codes and complete output fingerprints satisfy the baseline floor with an explicit note; retain both raw results and the baseline commit. Normalize only source-root identity, ANSI formatting and line endings. Never compare tails or failure counts. Recompute saved fingerprints from both retained streams and stored source roots whenever validating a baseline pass; missing or changed logs block it. Changed or added failures, setup/infrastructure errors, timeouts, missing artifacts and unavailable baselines receive no waiver. Variable output conservatively blocks until investigated. This floor requires no director downgrade. Run-folder artifacts such as `replay/replay-report.md` resolve relative to `-RunFolder`, defaulting to the roadmap's folder.
+
+Keep disposable exports, source copies and test scratch under `~/.cache/<run>/` (dt-build baseline exports use `~/.cache/build-acceptance-gates/`). Never place scratch in synced planning folders. Preserve logs/reports in the owning workstation's `_audits` or retained run evidence. Clean only scratch created by the current invocation.
 
 Render all Design Coverage `out-of-build` rows as the go-live checklist (owner and reason included),
 and carry it to switch-on. A human/session must record completion evidence before enabling the system.
@@ -61,7 +65,7 @@ pass; compound labels such as `PASS_WITH_RUN_STOP` remain `BLOCKED` until a fres
 Write every row with `<skill>/scripts/append-acceptance-row.ps1`; it validates, then appends one line, and refuses
 invalid rows. Required: `milestone_id`; full 40/64-hex `commit_sha`; boolean `accepted`; `status` of `PASS`,
 `APPROVED_DOWNGRADE` or `BLOCKED` (accepted true only with PASS/APPROVED_DOWNGRADE, and the reverse);
-`tests` text or `checks` records; non-empty `command_results`, all exit 0 when `status` is `PASS`; and
+`tests` text or `checks` records; non-empty `command_results`, all exit 0 or carrying evidenced identical default-branch failures when `status` is `PASS`; and
 `dispatch_id` with `provenance_path` together or neither. Plus the provenance fields listed in SKILL.md step 6.g.
 `-Audit` reports each existing line as `current`, `legacy` or `invalid` without writing.
 

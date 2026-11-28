@@ -1907,6 +1907,9 @@ function Invoke-DtJobWait {
     $notes = @(Get-DtJobOperatorNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } })
     $envelope = [ordered]@{ result = $result; pin = (Get-DtJobRunPinLabel -RunFolder $RunFolder); evidence_hint = 'read-evidence.ps1 -RunFolder <run folder> -JobId <job> -File summary|stdout|stderr|spec|report|provenance; run files: approvals.json, operator-notes.json, evidence-notes.json, launches.jsonl, worktrees.jsonl, jobs/events.jsonl'; operator_notes = $notes; evidence_notes = @(Get-DtJobEvidenceNotes -RunFolder $RunFolder | ForEach-Object { [ordered]@{ id = $_.id; text = $_.text } }); evidence_notes_label = $script:DtJobEvidenceNotesLabel; jobs = $jobs; still_running = @($running); progress = @($progress | ForEach-Object { [ordered]@{ job_id = $_.job_id; running_min = $_.running_min; idle_sec = $_.idle_sec; stalled = $_.stalled; line = (Limit-DtJobLine $_.line ([ref]$cut)) } }); omitted = 0; truncated = $false; last_event_seq = $snap.last_event_seq; last_consumed_event_seq = $snap.last_consumed_event_seq }
     $envelope.stalled = @($records | Where-Object status -eq 'running' | Where-Object { (Get-DtJobActivity -RunFolder $RunFolder -Record $_).stalled } | Select-Object -First 5 | ForEach-Object { Get-DtJobStallFacts -RunFolder $RunFolder -Record $_ })
+    # Include every fixed field before measuring: adding omitted_stalls after
+    # trimming could push an envelope just below 8192 bytes over the limit.
+    $envelope.omitted_stalls = 0
     if ($Json -and $null -ne $script:DtJobContext) { $envelope.context = $script:DtJobContext.line }
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $jobs.Count -gt 0) {
         $jobs.RemoveAt($jobs.Count - 1)
@@ -1914,7 +1917,6 @@ function Invoke-DtJobWait {
         $envelope.omitted++
         $cut = $true
     }
-    $envelope.omitted_stalls = 0
     while ((Get-DtJobEnvelopeBytes $envelope) -gt $script:DtJobEnvelopeMaxBytes -and $envelope.stalled.Count -gt 1) {
         $envelope.stalled = @($envelope.stalled | Select-Object -First ($envelope.stalled.Count - 1))
         $envelope.omitted_stalls++; $cut = $true

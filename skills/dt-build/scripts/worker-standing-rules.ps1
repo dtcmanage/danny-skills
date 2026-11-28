@@ -6,6 +6,7 @@ function Get-WorkerFixRoundRule {
 function Get-WorkerEnvironmentRule {
     param([switch]$ReadOnly)
     $verification = if ($ReadOnly) { 'Run authorized read-only verification and report failures with the failing command, evidence and remaining failures. Do not edit or repair files.' } else { 'Run your own verification and fix failures until green within the fix-round budget; do not return PARTIAL on the first repairable failure. Report a real blocker with the failing command, evidence and remaining failures.' }
+    $verification += ' AI-5: Keep disposable source exports, copies and test scratch under ~/.cache/<run>/, never synced planning/workstation folders. Keep retained logs/reports in the owning workstation _audits or run evidence. Clean only scratch created by this invocation.'
     return $verification + ' Derive network/SSH allowances from the milestone gate and verification commands and their fixtures, including required hosts and credentials; never impose a blanket offline or no-SSH rule. Keep access inside existing authorization; report a conflict with an explicit boundary as a blocker. Read live git facts before work and before reporting: resolve the default branch using git symbolic-ref refs/remotes/origin/HEAD; if unavailable inspect existing local branches and repository configuration (main or master only when present), then git rev-parse <resolved-default-branch>, git rev-parse HEAD, git branch --show-current and git status --short; never copy current hashes or branch state from memory.'
 }
 

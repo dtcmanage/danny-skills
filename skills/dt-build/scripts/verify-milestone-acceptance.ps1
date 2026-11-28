@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory)][string]$MilestoneId,
     [Parameter(Mandatory)][string]$WorkingTree,
     [switch]$RunTests,
+    [string]$RunFolder,
     [string]$BaseRef,
     [switch]$WriteMode,
     [switch]$SkipMovedPathCheck,
@@ -102,17 +103,28 @@ function Parse-MarkdownTableRows {
 # (and vice versa). The gate keeps an inline copy so it has no external
 # dependency at run time; the shared helper exists for new consumers.
 function Extract-NamedArtifacts {
-    # Walks the procedure / acceptance text looking for explicit artifact paths
-    # and command invocations. Heuristic but deterministic; the roadmap convention
-    # is to name them concretely (file paths in backticks, pytest commands inline).
+    # Commands require an explicit code/command boundary. Never search prose for
+    # a runner: removing `-n 8` from prose can otherwise invent `pytest green`.
     param([string]$Text)
     $artifacts = New-Object System.Collections.Generic.List[string]
     $commands = New-Object System.Collections.Generic.List[string]
 
-    # Backtick-quoted paths like `tests/backend/test_x.py` or `scripts/foo.py`.
-    $backtickMatches = [regex]::Matches($Text, '`([^`]+)`')
-    foreach ($m in $backtickMatches) {
-        $candidate = $m.Groups[1].Value.Trim()
+    $snippets = [Collections.Generic.List[string]]::new()
+    $fencePattern = '(?ms)^\s*(?<fence>`{3,}|~{3,})[^\r\n]*\r?\n(?<code>.*?)^\s*\k<fence>\s*$'
+    foreach ($fence in [regex]::Matches($Text, $fencePattern)) {
+        foreach ($line in ($fence.Groups['code'].Value -split '\r?\n')) { $snippets.Add($line.Trim()) }
+    }
+    $outsideFences = [regex]::Replace($Text, $fencePattern, ' ')
+    foreach ($span in [regex]::Matches($outsideFences, '(?<!`)(?<ticks>`{1,2})(?!`)(?<code>[^\r\n]*?)\k<ticks>(?!`)')) {
+        $snippets.Add($span.Groups['code'].Value.Trim())
+    }
+    # Command-marked values consume their line verbatim, preserving quoted paths.
+    # If backticks supply the boundary, the span above already supplies the value.
+    foreach ($marked in [regex]::Matches($outsideFences, '(?im)^\s*(?:[-*]\s+)?(?:\*\*)?(?:Test Command|Command|Runnable Command)(?:\*\*)?\s*:\s*(?:\*\*)?(?<code>[^\r\n]+)$')) {
+        $candidate = $marked.Groups['code'].Value.Trim()
+        if (-not $candidate.StartsWith('`')) { $snippets.Add($candidate) }
+    }
+    foreach ($candidate in $snippets) {
         # Whole-string command (pytest ..., python ...) -- treat as command.
         if ($candidate -match '^(?:(?:pytest|python(?:3(?:\.\d+)?)?|pwsh|powershell|node|npm|npx|pnpm|bun|bash|sh|uv|make|go|cargo)(?=\s|$)|\./\S)') {
             $commands.Add($candidate) | Out-Null
@@ -124,21 +136,6 @@ function Extract-NamedArtifacts {
         # Looks like a file path?
         if ($candidate -match '^(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(?:py|ts|js|ps1|sh|md|yaml|yml|json|html|sql)$') {
             $artifacts.Add($candidate) | Out-Null
-        }
-    }
-
-    # Inline (no-backtick) `pytest <path>` and `python <script>` invocations.
-    # Remove fenced inline-code spans first. Otherwise `python -m pytest ...`
-    # inside backticks is captured once as the full command and a second time as
-    # the inner `pytest ...`, causing the same test suite to run twice.
-    $inlineText = [regex]::Replace($Text, '`[^`]*`', ' ')
-    $inlineCmd = [regex]::Matches($inlineText, '(?i)(?:^|\s)(pytest\s+[A-Za-z0-9_./\-\s]+|python\s+(?:scripts|backend|workers|tests)/[A-Za-z0-9_./-]+\.py(?:\s+[A-Za-z0-9_.\-\/=]+)*)')
-    foreach ($m in $inlineCmd) {
-        $cmd = $m.Groups[1].Value.Trim()
-        if (-not ($commands -contains $cmd)) { $commands.Add($cmd) | Out-Null }
-        $pathMatches = [regex]::Matches($cmd, '(?<![A-Za-z0-9_./\\-])(?:tests|scripts|backend|workers|policy|classifier)/[A-Za-z0-9_./-]+\.(?:py|ts|json|js|ps1)(?![A-Za-z0-9_./-])')
-        foreach ($p in $pathMatches) {
-            if (-not ($artifacts -contains $p.Value)) { $artifacts.Add($p.Value) | Out-Null }
         }
     }
 
@@ -154,6 +151,8 @@ function Test-ArtifactPresence {
     $missing = New-Object System.Collections.Generic.List[string]
     foreach ($a in $Artifacts) {
         $full = Join-Path $WorkingTree $a
+        # Run evidence belongs to the roadmap/run folder even if a stale copy exists in the tree.
+        if ($a -match '^(?:replay/|_runs/)') { $full = Join-Path $artifactRunFolder $a }
         if (Test-Path -LiteralPath $full) {
             $present.Add($a) | Out-Null
         } else {
@@ -200,7 +199,7 @@ function Remove-TempFileQuietly {
 }
 
 function Invoke-NamedCommand {
-    param([string]$WorkingTree, [string]$Command, [int]$TimeoutMs, [string]$ExclusiveReason)
+    param([string]$WorkingTree, [string]$Command, [int]$TimeoutMs, [string]$ExclusiveReason, [string]$LogRoot)
     # Redirect to files instead of synchronously draining stdout and then stderr.
     # Sequential pipe reads can deadlock when both buffers fill (observed with a
     # high-volume Vitest run). File redirection also keeps the retained JSON small.
@@ -214,13 +213,11 @@ function Invoke-NamedCommand {
         $testEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($effectiveCommand))
         $effectiveCommand = "& '$lockPath' -Reason '$reasonQuoted' -ReadyFile '$readyQuoted' pwsh -NoProfile -EncodedCommand $testEncoded; exit `$LASTEXITCODE"
     }
-    $logRoot = if ($env:DT_BUILD_LOG_DIR) { $env:DT_BUILD_LOG_DIR } else { Join-Path ([IO.Path]::GetTempPath()) 'dt-build-acceptance-logs' }
-    if (-not $env:DT_BUILD_LOG_DIR -and (Test-Path -LiteralPath $logRoot)) {
-        # Retain recent evidence; cleanup is best effort and only owns temp logs.
-        Get-ChildItem -LiteralPath $logRoot -Directory | Where-Object { $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-7) -and $_.Name -match '^[a-f0-9]{32}$' } | ForEach-Object {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
+    # Runtime callers supply the retained run folder. Standalone callers (including
+    # AST-extracted probes) have no acceptance-main context and keep temp logs.
+    if ($env:DT_BUILD_LOG_DIR) { $LogRoot = $env:DT_BUILD_LOG_DIR }
+    elseif ([string]::IsNullOrWhiteSpace($LogRoot)) { $LogRoot = Join-Path ([IO.Path]::GetTempPath()) 'dt-build-acceptance-logs' }
+    # Other invocations own their evidence; never age-delete their folders here.
     $logDir = Join-Path $logRoot ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
     $stdoutFile = Join-Path $logDir 'stdout.log'
@@ -293,6 +290,8 @@ function Invoke-NamedCommand {
     }
 }
 
+. (Join-Path $PSScriptRoot 'acceptance-baseline.ps1')
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -302,6 +301,9 @@ if (-not (Test-Path -LiteralPath $WorkingTree)) {
     exit 2
 }
 
+$artifactRunFolder = if ($RunFolder) { [IO.Path]::GetFullPath($RunFolder) } else { Split-Path -Parent ([IO.Path]::GetFullPath($RoadmapPath)) }
+$baseline = if ($RunTests) { New-AcceptanceBaseline -WorkingTree $WorkingTree } else { $null }
+try {
 $roadmapText = Read-RoadmapText -Path $RoadmapPath
 
 try {
@@ -387,12 +389,32 @@ foreach ($vRow in $matchingVerificationRows) {
         } else {
             $anyFailedHere = $false
             foreach ($cmd in $checkCommands) {
-                $r = Invoke-NamedCommand -WorkingTree $WorkingTree -Command $cmd -TimeoutMs $CommandTimeoutMs -ExclusiveReason $exclusiveReason
+                $r = Invoke-NamedCommand -WorkingTree $WorkingTree -Command $cmd -TimeoutMs $CommandTimeoutMs -ExclusiveReason $exclusiveReason -LogRoot (Join-Path $artifactRunFolder 'acceptance-logs')
+                $baseResult = $null
+                $identical = $false
+                if ($baseline.available) {
+                    $baseCommand = $cmd.Replace([IO.Path]::GetFullPath($WorkingTree), $baseline.path)
+                    $baseResult = Invoke-NamedCommand -WorkingTree $baseline.path -Command $baseCommand -TimeoutMs $CommandTimeoutMs -ExclusiveReason $exclusiveReason -LogRoot (Join-Path $artifactRunFolder 'acceptance-logs')
+                    $identical = Test-AcceptanceBaselineFailure -Current $r -Baseline $baseResult -WorkingTree $WorkingTree -BaselineTree $baseline.path
+                }
+                $baselineEvidence = [pscustomobject]@{
+                    commit = $baseline.commit
+                    ref = if ($baseline.available) { $baseline.ref } else { $null }
+                    current_source_root = [IO.Path]::GetFullPath($WorkingTree)
+                    baseline_source_root = if ($baseline.available) { $baseline.path } else { $null }
+                    available = $baseline.available
+                    result = $baseResult
+                    identical_failure = $identical
+                    current_fingerprint = Get-AcceptanceFailureFingerprint $r $WorkingTree
+                    baseline_fingerprint = if ($baseResult) { Get-AcceptanceFailureFingerprint $baseResult $baseline.path } else { $null }
+                    note = if ($identical) { 'PASS: identical failure reproduced on default branch; baseline floor applied.' } elseif (-not $baseline.available) { $baseline.reason } else { 'No baseline failure waiver.' }
+                }
+                $r | Add-Member -NotePropertyName baseline -NotePropertyValue $baselineEvidence
                 $r | Add-Member -NotePropertyName "check_id" -NotePropertyValue $checkId -Force
                 $checkCommandResults += $r
                 $allCommandResults.Add($r) | Out-Null
                 $anyCommandRan = $true
-                if ($r.exit_code -ne 0) { $anyFailedHere = $true; $anyCommandFailed = $true }
+                if ($r.exit_code -ne 0 -and -not $r.baseline.identical_failure) { $anyFailedHere = $true; $anyCommandFailed = $true }
             }
             $checkTestStatus = if ($anyFailedHere) { "FAIL" } else { "PASS" }
         }
@@ -406,7 +428,7 @@ foreach ($vRow in $matchingVerificationRows) {
         if (-not $topBlockers.Contains($tagged)) { $topBlockers.Add($tagged) | Out-Null }
     }
     if ($checkTestStatus -eq "FAIL") {
-        foreach ($r in $checkCommandResults | Where-Object { $_.exit_code -ne 0 }) {
+        foreach ($r in $checkCommandResults | Where-Object { $_.exit_code -ne 0 -and -not $_.baseline.identical_failure }) {
             $msg = if ($r.timed_out) {
                 "verification command timed out after $($r.timeout_ms)ms: $($r.command)"
             }
@@ -533,7 +555,7 @@ $result = [pscustomobject]@{
 }
 
 if ($Json) {
-    $result | ConvertTo-Json -Depth 8
+    $result | ConvertTo-Json -Depth 12
 }
 else {
     Write-Output ("Milestone {0}: {1}" -f $result.milestone_id, $result.status)
@@ -542,6 +564,7 @@ else {
         Write-Output ("  - {0} [{1}]" -f $vc.check_id, $vc.test_status)
         foreach ($r in $vc.command_results) {
             Write-Output ("      [exit={0}] {1}" -f $r.exit_code, $r.command)
+            if ($r.baseline.identical_failure) { Write-Output ("      {0} Main commit: {1}" -f $r.baseline.note, $r.baseline.commit) }
         }
         foreach ($m in $vc.artifacts_missing) {
             Write-Output ("      missing: {0}" -f $m)
@@ -556,4 +579,7 @@ else {
 if ($status -in @("PASS", "INSPECT_ONLY")) { exit 0 } else {
     [Console]::Error.WriteLine("ACCEPTANCE BLOCKED: $mid; see JSON blockers and command log paths.")
     exit 1
+}
+} finally {
+    if ($baseline -and $baseline.available) { Remove-Item -LiteralPath $baseline.scratch -Recurse -Force }
 }

@@ -6,6 +6,11 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
 Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'operator-fixture-caller.ps1')
+if (Test-OperatorFixtureAutomationCaller) {
+    'SKIP: operator-only control compatibility fixtures require launching-session ancestry; DT_JOB_OPERATOR_ONLY protection retained.'
+    exit 0
+}
 $scripts = Split-Path -Parent $PSScriptRoot
 $dtJob = Join-Path $scripts 'dt-job.ps1'
 $control = Join-Path $scripts 'invoke-dt-job-control.ps1'
@@ -222,14 +227,10 @@ try {
     $staleDir = Join-Path $root 'stale-copy/scripts'
     New-Item -ItemType Directory -Path $staleDir -Force | Out-Null
     $stalePath = Join-Path $staleDir 'dt-job.ps1'
-    $gitInfo = [Diagnostics.ProcessStartInfo]::new('git')
-    $gitInfo.UseShellExecute = $false; $gitInfo.RedirectStandardOutput = $true
-    foreach ($arg in @('-C', $repoRoot, 'show', '916b53f:skills/dt-build/scripts/dt-job.ps1')) { $gitInfo.ArgumentList.Add($arg) }
-    $gitProcess = [Diagnostics.Process]::Start($gitInfo)
-    $stream = [IO.File]::Create($stalePath)
-    try { $gitProcess.StandardOutput.BaseStream.CopyTo($stream); $gitProcess.WaitForExit(); if ($gitProcess.ExitCode) { throw 'cannot read stale git fixture' } }
-    finally { $stream.Dispose(); $gitProcess.Dispose() }
-    $evidence.stale_fixture = [ordered]@{ source = 'git 916b53f:skills/dt-build/scripts/dt-job.ps1'; sha256 = (Get-FileHash -LiteralPath $stalePath -Algorithm SHA256).Hash.ToLowerInvariant() }
+    # Model the old public binding contract, without requiring .git/history in
+    # release archives or baseline exports. Any accidental control execution fails.
+    Write-Utf8 $stalePath 'param([ValidateSet("approve","status")][string]$Verb,[string]$RunFolder,[switch]$AllowTempRunFolder,[switch]$Json) throw "STALE_CONTROL_MUST_NOT_RUN"'
+    $evidence.stale_fixture = [ordered]@{ source = 'self-contained pre-capabilities binding contract'; sha256 = (Get-FileHash -LiteralPath $stalePath -Algorithm SHA256).Hash.ToLowerInvariant() }
     $staleRun = New-Run 'stale' 'pick-option'
     $before = Get-TreeSnapshot $staleRun.folder
     $staleBefore = Get-TreeSnapshot (Split-Path -Parent $staleDir)

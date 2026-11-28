@@ -182,6 +182,80 @@ class StateDigestTests(unittest.TestCase):
     def digest(self, *args: str) -> subprocess.CompletedProcess:
         return self.call('read-coordinator-state.ps1','-RunFolder',str(self.run),'-RunId','digest-test','-BuildStatePath',str(self.state),'-CoordinatorId','fixture',*args)
 
+    def test_category_exceptions_diagnostics_do_not_extend_authority(self) -> None:
+        fixture = json.loads((Path(__file__).parent / 'fixtures/authority-discovery-category-exceptions.json').read_text())
+        self.assertEqual(fixture['row_count'], 261)
+        self.assertEqual(len(fixture['rows']), 261)
+        prose = '\n'.join(f"Observed artifact `{row['candidate']}`." for row in fixture['rows'])
+        policy = self.root / '00_Resources' / 'policy.md'
+        policy.parent.mkdir()
+        policy.write_text(prose + '\nAn implementation example uses `CLAUDE.md` and `~/.claude.json`.\n')
+        self.design.write_text(prose + f'\nEvidence: `{policy}`.\n')
+        self.roadmap.write_text(self.roadmap.read_text() + '\n## Generic prose\n' + prose)
+        objective = self.root / 'objective.md'
+        decision_log = self.root / 'build-decision-log.md'
+        job_log = self.run / 'jobs' / 'j-0001' / 'stdout.log'
+        job_log.parent.mkdir(parents=True)
+        for path in (objective, decision_log, job_log):
+            path.write_text('Read original: `missing-from-log.md` IN FULL.\n' + prose)
+        self.state.write_text(self.checkpoint + f'objective: {objective}\ndecision_log: {decision_log}\n'
+                              f'job_log: {job_log}\nRead governing original: `{policy}` IN FULL.\n')
+        (self.run / 'approvals.json').write_text(json.dumps({'approvals': [], 'awaiting': {'message':
+            'Coordinator blocked before bootstrap: read-coordinator-state.ps1 fails. '
+            'Missing named originals reported as /SKILL.md, /CHANGELOG.md, '
+            '00_Resources/CLAUDE.md and /var/lib/capacity-watch/state.json. Evidence only.'}}))
+        fallback = self.call('read-authority-original.ps1', '-RunFolder', str(self.run),
+                             '-BuildStatePath', str(self.state), '-Path', str(self.state), '-BootstrapFallback')
+        self.assertEqual(fallback.returncode, 0, fallback.stderr)
+        self.assertEqual(fallback.stdout.rstrip(), self.state.read_text().rstrip())
+        result = self.digest()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((self.run / 'authority-digest.json').read_text())
+        originals = {row['path'] for row in manifest['originals']}
+        self.assertIn(str(policy), originals)
+        self.assertIn(str(self.design), originals)
+        self.assertIn(str(self.roadmap), originals)
+        for path in (objective, decision_log, job_log, policy.parent / 'CLAUDE.md', self.root / 'SKILL.md'):
+            self.assertNotIn(str(path), originals)
+        for path in (objective, decision_log, job_log):
+            path.write_text('Read governing original: `/missing-new-authority.md` IN FULL.\n')
+        self.assertEqual(self.digest().returncode, 0, 'changes to unrelated logs cannot invalidate authority')
+
+    def test_missing_explicit_original_blocks_state_and_bootstrap_fallback(self) -> None:
+        for placement in ('checkpoint', 'approval', 'approval-scope', 'boundary', 'design'):
+            with self.subTest(placement=placement):
+                self.state.write_text(self.checkpoint)
+                approvals = {'awaiting': None, 'approvals': [], 'delegate': None,
+                             'director_replacements': []}
+                (self.run / 'approvals.json').write_text(json.dumps(approvals))
+                self.boundary.write_text('Only local source changes.\n')
+                self.design.write_text('Implementation details.\n')
+                for path in self.run.glob('authority-digest*'):
+                    path.unlink()
+                missing = f'missing-{placement}.md'
+                directive = f'Read governing original: `{missing}` IN FULL.\n'
+                if placement == 'checkpoint':
+                    self.state.write_text(self.checkpoint + directive)
+                elif placement == 'approval':
+                    approvals['approvals'] = [{'operation': 'local', 'seq': 7, 'source': missing}]
+                    (self.run / 'approvals.json').write_text(json.dumps(approvals))
+                elif placement == 'approval-scope':
+                    approvals['scope_source'] = missing
+                    (self.run / 'approvals.json').write_text(json.dumps(approvals))
+                elif placement == 'boundary':
+                    self.state.write_text(self.checkpoint + f'Current boundary: `{self.boundary}`\n')
+                    self.boundary.write_text(directive)
+                else:
+                    self.design.write_text(directive)
+                result = self.digest()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('AUTHORITY_MISSING', result.stderr)
+                self.assertIn(missing, result.stderr)
+                fallback = self.call('read-authority-original.ps1', '-RunFolder', str(self.run),
+                                     '-BuildStatePath', str(self.state), '-Path', str(self.state), '-BootstrapFallback')
+                self.assertNotEqual(fallback.returncode, 0)
+                self.assertIn('AUTHORITY_MISSING', fallback.stderr)
+
     def test_ai90_pipeline_template_comment_is_not_a_checkpoint_original(self) -> None:
         template = (SCRIPT.parents[2] / 'dt-pipeline/templates/build-state-template.md').read_text()
         comment = re.search(r'<!--.*?-->', template, re.S).group()
@@ -368,6 +442,30 @@ class StateDigestTests(unittest.TestCase):
         self.assertEqual(legacy.returncode, 0, legacy.stderr)
         before = json.loads((self.run / 'authority-digest.json').read_text())
         self.assertIn(str(self.roadmap), before['mandatory_paths'])
+        # Neither changed source bytes nor a forged, locally repinned receipt
+        # may be silently promoted through the lifecycle migration fallback.
+        manifest_path = self.run / 'authority-digest.json'
+        pin_path = self.run / 'authority-digest.json.sha256'
+        manifest_bytes, pin_bytes = manifest_path.read_bytes(), pin_path.read_bytes()
+        roadmap_bytes = self.roadmap.read_bytes()
+        for mutation in ('source', 'receipt'):
+            with self.subTest(mutation=mutation):
+                if mutation == 'source':
+                    self.roadmap.write_text('Changed scope: production writes allowed.\n')
+                else:
+                    import hashlib
+                    forged = json.loads(manifest_bytes)
+                    forged['originals'][0]['sha256'] = '0' * 64
+                    manifest_path.write_text(json.dumps(forged))
+                    pin_path.write_text(hashlib.sha256(manifest_path.read_bytes()).hexdigest())
+                pinned = manifest_path.read_bytes()
+                rejected = self.digest()
+                self.assertNotEqual(rejected.returncode, 0, rejected.stdout)
+                self.assertEqual(rejected.stdout, '')
+                self.assertEqual(manifest_path.read_bytes(), pinned)
+                self.roadmap.write_bytes(roadmap_bytes)
+                manifest_path.write_bytes(manifest_bytes)
+                pin_path.write_bytes(pin_bytes)
         result = self.digest()
         self.assertEqual(result.returncode, 0, result.stderr)
         after = json.loads((self.run / 'authority-digest.json').read_text())
