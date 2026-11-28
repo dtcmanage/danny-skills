@@ -239,7 +239,8 @@ try {
     $baseline = Get-Content (Join-Path $PSScriptRoot 'fixtures/difficulty-router-baseline.json') -Raw | ConvertFrom-Json
     foreach ($row in $baseline) {
         $currentPick = Resolve-RouterModel -Category $row.category -Lane $row.lane -Catalog $catalog
-        $currentJson = $currentPick | ConvertTo-Json -Depth 20 -Compress
+        Check (-not $currentPick.category_override -and $currentPick.category_override_slots -is [array] -and $currentPick.category_override_slots.Count -eq 0) 'legacy roster has no category exception'
+        $currentJson = $currentPick | Select-Object -Property * -ExcludeProperty category_override,category_override_slots | ConvertTo-Json -Depth 20 -Compress
         $expectedJson = $row.result | ConvertTo-Json -Depth 20 -Compress
         Check ($currentJson -ceq $expectedJson) "unchanged baseline JSON including difficulty: $($row.category)/$($row.lane)"
     }

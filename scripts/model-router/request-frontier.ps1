@@ -84,7 +84,7 @@ function Request-RouterFrontier {
         } catch { }
         if ($verdict.verdict -cne 'needs_frontier') { return [pscustomobject]@{verdict=$verdict.verdict;guidance=$verdict.guidance;request_id=$null;waits=$false} }
         $roster = Read-RouterRoster
-        $vendor = $roster.roster.jobs.$job.first_vendor
+        $vendor = (Get-RouterEffectiveSlots -Entry $roster.roster.jobs.$job -Category $Category).first_vendor
         $map = Get-RouterLadderMap
         $models = @($map.lanes.$vendor.ladder | Where-Object frontier)
         if ($models.Count -ne 1) { throw 'FRONTIER_MODEL_UNAVAILABLE' }

@@ -77,8 +77,9 @@ function Resolve-RouterRosterPick {
     if ($IsProtected -and $job -eq 'fast') { $job = 'coder' }
     $entry = $Read.roster.jobs.$job
     $tieDifficulty = if ($entry.PSObject.Properties['first_efforts'] -or $entry.PSObject.Properties['backup_efforts']) { $Difficulty } else { 'standard' }
-    $first = [pscustomobject]@{ model=$entry.first; vendor=$entry.first_vendor; effort=$(Get-RouterTierEffort -Entry $entry -Slot first -Difficulty $Difficulty) }
-    $backup = if ($null -ne $entry.backup) { [pscustomobject]@{ model=$entry.backup; vendor=$entry.backup_vendor; effort=$(Get-RouterTierEffort -Entry $entry -Slot backup -Difficulty $Difficulty) } } else { $null }
+    $effective = Get-RouterEffectiveSlots -Entry $entry -Category $Category
+    $first = [pscustomobject]@{ model=$effective.first; vendor=$effective.first_vendor; effort=$(Get-RouterTierEffort -Entry $entry -Slot first -Difficulty $Difficulty) }
+    $backup = if ($null -ne $effective.backup) { [pscustomobject]@{ model=$effective.backup; vendor=$effective.backup_vendor; effort=$(Get-RouterTierEffort -Entry $entry -Slot backup -Difficulty $Difficulty) } } else { $null }
     $quotaWait = $false
     $chosen = $first
     $other = $backup
@@ -145,7 +146,7 @@ function Resolve-RouterRosterPick {
         $errorText = Get-RouterTieEvidenceError -Entry $entry -Evidence $entry.tie_evidence
         if ($errorText -cne 'TIE_BANK_UNAVAILABLE' -and (-not $entry.tie_evidence -or -not $entry.tie_evidence.PSObject.Properties['approved_at'] -or -not $entry.tie_evidence.approved_at)) { $errorText = 'Tie approval missing.' }
         if ($errorText -and $errorText -cne 'TIE_BANK_UNAVAILABLE') { $alerts.Add("roster-tie-invalid:$job") }
-        elseif (-not $errorText -and $entry.tie_evidence.tier -ceq $tieDifficulty -and -not $Lane -and -not $EscalateFrom -and -not $RetryAtHardFrom) {
+        elseif (-not $errorText -and $effective.first -ceq $entry.first -and $effective.backup -ceq $entry.backup -and $entry.tie_evidence.tier -ceq $tieDifficulty -and -not $Lane -and -not $EscalateFrom -and -not $RetryAtHardFrom) {
             $chosen = $first; $other = $backup
             $readings = @{}
             $labels = @()
@@ -248,7 +249,10 @@ function Resolve-RouterRosterPick {
     }
     if ($tieReason -and $reason -cne $tieReason) { $reason = "Quota tie-break ($($labels -join '; ')). $reason" }
     $model = if ($chosen) { $chosen.model } else { $null }
+    if ($effective.override_slots.Count) { $reason += " (category exception $Category)" }
     $result = [pscustomobject]@{ model=$model; agent_alias=$null; effort=$(if ($chosen) { $chosen.effort } else { $null }); category=$Category; lane=$null; protected=$IsProtected; reason=$reason; table_source=$null; table_date=$null; validation_error=$Read.validation_error; alerts=@($alerts.ToArray()); ranked=[object[]]@($model | Where-Object { $_ }) }
+    $result | Add-Member -NotePropertyName category_override -NotePropertyValue ([bool]$effective.override_slots.Count)
+    $result | Add-Member -NotePropertyName category_override_slots -NotePropertyValue @($effective.override_slots)
     $resume = if ($quotaWait) {
         $vendors = @($first, $backup | Where-Object { $null -ne $_ -and (-not $Lane -or $_.vendor -eq $Lane) } | ForEach-Object { $_.vendor })
         Get-RouterResumeAfter -Vendors $vendors
@@ -282,7 +286,7 @@ function Read-RouterFrontierRequest {
     $priorCulture = [Globalization.CultureInfo]::CurrentCulture
     try {
         [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::InvariantCulture
-        $vendor = (Read-RouterRoster).roster.jobs.$job.first_vendor
+        $vendor = (Get-RouterEffectiveSlots -Entry (Read-RouterRoster).roster.jobs.$job -Category $request.category).first_vendor
     } finally { [Globalization.CultureInfo]::CurrentCulture = $priorCulture }
     # A request filed before a newer release still names an approved frontier rung.
     $frontier = @($map.lanes.$vendor.ladder | Where-Object frontier | ForEach-Object { $_.model; if ($_.PSObject.Properties['ladder_model']) { $_.ladder_model } })

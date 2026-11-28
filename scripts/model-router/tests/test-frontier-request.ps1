@@ -38,6 +38,10 @@ try {
         }
     }
     $baseline = Get-Content (Join-Path $PSScriptRoot 'fixtures/frontier-router-baseline.json') -Raw | ConvertFrom-Json
+    foreach ($row in $matrix) {
+        Check (-not $row.result.category_override -and $row.result.category_override_slots -is [array] -and $row.result.category_override_slots.Count -eq 0) 'default categories have no exception'
+        $row.result = $row.result | Select-Object -Property * -ExcludeProperty category_override,category_override_slots
+    }
     Check ((ConvertTo-Json -InputObject @($matrix) -Depth 30 -Compress) -ceq (ConvertTo-Json -InputObject @($baseline) -Depth 30 -Compress)) 'fixed 132 cases plus 12 classification-escalation cases: every property including difficulty and catalog/quota calls'
     foreach ($row in $matrix) { Check ($row.result.model -notin @('gpt-6.2-astra','claude-fable-5-2')) 'difficulty paths exclude frontier' }
     foreach ($lane in @('codex','claude')) {
@@ -227,6 +231,11 @@ $null=[Console]::In.ReadToEnd()
 if ($env:DT_FRONTIER_FAKE_FAIL -eq '1') { [Console]::Error.WriteLine('ERROR: usage limit reached'); exit 1 }
 $outIndex=[array]::IndexOf([object[]]$args,'--output-last-message')
 [IO.File]::WriteAllText([string]$args[$outIndex+1],'{"verdict":"decompose","failed_attempt":"check A","why_effort_insufficient":"constraints","guidance":"split the piece"}')
+if ($args -contains '--json') {
+    '{"type":"thread.started","thread_id":"frontier-fixture"}'
+    '{"type":"turn.started"}'
+    '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+}
 '@ | Set-Content (Join-Path $cliDir 'codex.ps1')
     @'
 if ($args -contains '--version') { 'claude-cli fixture'; exit 0 }
@@ -280,6 +289,20 @@ $usage=@{}; $usage[[string]$args[$modelIndex+1]]=@{inputTokens=1;outputTokens=1;
             Check (@(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'fake-dms.jsonl')).Count -eq $dmsBefore) 'failed scrutiny sends no alert'
         } finally { $env:DT_FRONTIER_FAKE_FAIL=$priorFail }
     } finally { $env:PATH=$oldPath }
+    # The math category swaps both vendors while other deep-thinker categories
+    # retain the defaults. Frontier creation and validation must agree on it.
+    Remove-Item (Join-Path $env:DT_MODEL_ROUTER_STATE 'vendor-blocks.json') -ErrorAction SilentlyContinue
+    $overrideRoster = Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json
+    $overrideRoster.approved = $true; $overrideRoster.approved_at = [datetimeoffset]::UtcNow.ToString('o')
+    $overrideRoster.jobs.'deep-thinker' | Add-Member -NotePropertyName category_overrides -NotePropertyValue ([pscustomobject]@{math=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6-sol';vendor='codex'};backup=[pscustomobject]@{model='claude-opus-5-5';vendor='claude'}}})
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $overrideRoster
+    $exceptionArgs = $requestArgs.Clone(); $exceptionArgs.Category = 'math'
+    $result = Request-RouterFrontier @exceptionArgs -ScrutinyInvoker $fake
+    $exceptionRequest = Read-RouterFrontierRequest $result.request_id
+    Check ($exceptionRequest.proposed_model -ceq 'gpt-6.2-astra') 'exception effective first vendor selects and validates Codex frontier'
+    $defaultArgs = $requestArgs.Clone(); $defaultArgs.Category = 'analysis'
+    $defaultRequest = Request-RouterFrontier @defaultArgs -ScrutinyInvoker $fake
+    Check ((Read-RouterFrontierRequest $defaultRequest.request_id).proposed_model -ceq 'claude-fable-5-2') 'default category keeps Claude frontier with exception present'
     Write-Output "PASS: $script:checks frontier checks; 144 combinations (132 fixed plus 12 alias cases) match the baseline."
 } finally {
     $env:DT_MODEL_ROUTER_STATE=$priorState

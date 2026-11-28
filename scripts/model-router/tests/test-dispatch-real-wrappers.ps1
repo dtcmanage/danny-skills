@@ -92,6 +92,8 @@ $script:RouterDiagnosisHttp = {
     $env:DT_MODEL_ROUTER_ALERT_TRANSPORT=$transport
     @{checked_at=(Get-Date).ToString('o')} | ConvertTo-Json | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'last-check.json')
     $roster=Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json
+    # These legacy fixtures deliberately swap the first vendor in both directions.
+    $roster.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
     $roster.approved=$true; $roster.approved_at='2026-11-05T00:00:00Z'
     $roster | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json')
     $catalogPath=Join-Path $env:CODEX_HOME 'models_cache.json'; $catalog=Get-Content $catalogPath -Raw | ConvertFrom-Json
@@ -106,6 +108,7 @@ $script:RouterDiagnosisHttp = {
     $ledger=Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl'
     $fakeCli=(Resolve-Path -LiteralPath (Join-Path $fixture.root 'dispatch-fake-cli.ps1')).Path
     $defaultApprovedRoster=Get-Content (Join-Path $env:M04_REPO_ROOT 'references/model-router/default-roster.json') -Raw | ConvertFrom-Json
+    $defaultApprovedRoster.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
     $defaultApprovedRoster.approved=$true; $defaultApprovedRoster.approved_at='2026-11-05T00:00:00Z'
     if (-not $RecoveryOnly -and -not $EvidenceOnly) {
         $lockedPath=Join-Path $repo 'held-open.log'

@@ -151,6 +151,76 @@ try {
     Check-Valid $r 'deep-thinker exception validates'
     Check ((Get-RouterEffectiveSlots $r.jobs.'deep-thinker' math).first -ceq 'claude-sonnet-4-6') 'deep-thinker effective first'
     Check ((Get-RouterEffectiveSlots $r.jobs.'deep-thinker' 'routine-coding').override_slots.Count -eq 0) 'another multi-category job uses defaults'
+    # Resolver integration uses only isolated catalogs, state and vendor seams.
+    . (Join-Path $PSScriptRoot '../resolve-model.ps1')
+    . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
+    $fixture = Enter-RouterTestCodexHome
+    try {
+        function Invoke-RestMethod { throw 'UNEXPECTED NETWORK' }
+        function Invoke-WebRequest { throw 'UNEXPECTED NETWORK' }
+        $script:blocked = @()
+        function Get-RouterVendorBlocked {
+            param($Vendor, $UsageReadings)
+            return ($Vendor -in $script:blocked -or @(Read-RouterJsonArray (Join-Path $temp 'vendor-blocks.json') | Where-Object vendor -EQ $Vendor).Count -gt 0)
+        }
+        $catalog = Get-Content (Join-Path $env:CODEX_HOME 'models_cache.json') -Raw | ConvertFrom-Json
+        $catalog.models += [pscustomobject]@{slug='gpt-6.2-sol';visibility='list';priority=1}
+        $r = Copy-Roster
+        $r.approved = $true; $r.approved_at = [datetimeoffset]::UtcNow.ToString('o')
+        Set-Overrides $r ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'};backup=[pscustomobject]@{model='claude-sonnet-4-6';vendor='claude'}}})
+        function Save-ResolverRoster { Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $r }
+        Save-ResolverRoster
+        $args = @{Category='ui-frontend';Catalog=$catalog;SkipModelCheck=$true}
+        $pick = Resolve-RouterModel @args
+        Check ($pick.model -ceq 'gpt-6.2-sol' -and $pick.effort -ceq 'medium' -and $pick.roster_source -ceq 'state') 'effective first model and inherited effort'
+        Check ($pick.category_override -is [bool] -and $pick.category_override -and $pick.category_override_slots -is [array] -and ($pick.category_override_slots -join ',') -ceq 'first,backup') 'exception output fields'
+        Check ($pick.reason -ceq 'roster job coder first choice (category exception ui-frontend)') 'exception reason'
+        $normal = Resolve-RouterModel -Category routine-coding -Catalog $catalog -SkipModelCheck
+        Check ($normal.model -ceq $r.jobs.coder.first -and -not $normal.category_override -and $normal.category_override_slots.Count -eq 0) 'default category unaffected'
+        Check ((Resolve-RouterModel -Category mechanical -Protected -Catalog $catalog -SkipModelCheck).model -ceq $r.jobs.coder.first) 'protected remap uses coder defaults'
+        Check ((Resolve-RouterModel @args -Lane claude).model -ceq 'claude-sonnet-4-6') 'lane uses effective backup'
+        Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @(@{model='gpt-6.2-sol';job='coder'})
+        Check ((Resolve-RouterModel @args).model -ceq 'claude-sonnet-4-6') 'exception drift uses effective backup'
+        Check ((Resolve-RouterModel -Category routine-coding -Catalog $catalog -SkipModelCheck).model -ceq $r.jobs.coder.first) 'exception drift leaves default category alone'
+        $wait = Resolve-RouterModel @args -Lane codex
+        Check ($wait.status -ceq 'wait' -and $wait.reason -match 'gpt-6.2-sol drifting' -and $wait.category_override) 'constrained drift waits on exception model'
+        Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @()
+        $script:blocked = @('codex')
+        Check ((Resolve-RouterModel @args).model -ceq 'claude-sonnet-4-6') 'vendor block uses effective backup'
+        $script:blocked = @('codex','claude')
+        Check ((Resolve-RouterModel @args).status -ceq 'wait') 'both effective vendors blocked wait'
+        $script:blocked = @()
+        $missing = $args.Clone(); $missing.Catalog = [pscustomobject]@{models=@($catalog.models | Where-Object slug -NE 'gpt-6.2-sol')}
+        Check ((Resolve-RouterModel @missing).model -ceq 'claude-sonnet-4-6') 'unselectable exception uses effective backup'
+        $pick = Resolve-RouterModel @args -RetryAtHardFrom 'gpt-6.2-sol' -DifficultyReason 'Synthetic failed standard check'
+        Check ($pick.model -ceq 'gpt-6.2-sol' -and $pick.effort -ceq 'high' -and $pick.category_override) 'retry accepts effective model outside ladder'
+        $pick = Resolve-RouterModel @args -EscalateFrom 'gpt-6.2-sol' -Difficulty hard -DifficultyReason 'Synthetic failed hard check'
+        Check ($pick.model -ceq 'gpt-6.2-sol' -and $pick.effort -ceq 'high' -and $pick.category_override) 'escalation retains effective off-ladder model'
+        $pick = Resolve-RouterModel @args -AfterRefusal codex -ResetAtUtc ([datetimeoffset]::UtcNow.AddHours(1))
+        Check ($pick.model -ceq 'claude-sonnet-4-6' -and $pick.category_override) 'after refusal uses effective backup'
+        Remove-Item (Join-Path $temp 'vendor-blocks.json') -ErrorAction SilentlyContinue
+        function Resolve-RouterDispatchFailure { param($Vendor,$ErrorText) return [pscustomobject]@{verdict='vendor_incident';detail='synthetic';incident_id='fixture';checks=@()} }
+        $errorPath = Join-Path $temp 'error.txt'; [IO.File]::WriteAllText($errorPath,'synthetic incident')
+        $pick = Resolve-RouterModel @args -Diagnose codex -ErrorTextPath $errorPath
+        Check ($pick.model -ceq 'claude-sonnet-4-6' -and $pick.verdict -ceq 'vendor_incident' -and $pick.category_override) 'diagnose uses effective backup'
+        # A backup-only exception leaves the first choice intact.
+        Set-Overrides $r ([pscustomobject]@{'ui-frontend'=(New-Exception backup 'claude-sonnet-4-6' claude)})
+        Save-ResolverRoster
+        $pick = Resolve-RouterModel @args
+        Check ($pick.model -ceq $r.jobs.coder.first -and ($pick.category_override_slots -join ',') -ceq 'backup') 'backup-only override metadata'
+        Check ((Resolve-RouterModel @args -Lane claude).model -ceq 'claude-sonnet-4-6') 'backup-only exception lane'
+        Set-Overrides $r ([pscustomobject]@{'ui-frontend'=(New-Exception)})
+        Save-ResolverRoster
+        $pick = Resolve-RouterModel @args
+        Check ($pick.model -ceq 'gpt-6.2-sol' -and ($pick.category_override_slots -join ',') -ceq 'first') 'first-only exception metadata'
+        Check ((Resolve-RouterModel @args -Lane claude).model -ceq $r.jobs.coder.backup) 'first-only exception retains default backup'
+        Set-Overrides $r ([pscustomobject]@{math=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6-sol';vendor='codex'};backup=[pscustomobject]@{model='claude-opus-5-5';vendor='claude'}}}) 'deep-thinker'
+        Save-ResolverRoster
+        $firstLane = Resolve-RouterModel -Category math -Lane codex -Catalog $catalog -SkipModelCheck
+        $otherLane = Resolve-RouterModel -Category math -Lane claude -Catalog $catalog -SkipModelCheck
+        Check ($firstLane.model -ceq 'gpt-6-sol' -and $firstLane.effort -ceq $r.jobs.'deep-thinker'.first_efforts.standard) 'swapped vendor first lane inherits first effort'
+        Check ($otherLane.model -ceq 'claude-opus-5-5' -and $otherLane.effort -ceq $r.jobs.'deep-thinker'.backup_efforts.standard) 'swapped vendor other lane inherits backup effort'
+    } finally { Exit-RouterTestCodexHome $fixture }
     "SUMMARY: $script:checks passed"
 } finally {
     $env:DT_MODEL_ROUTER_STATE = $priorState

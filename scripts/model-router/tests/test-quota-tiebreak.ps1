@@ -54,6 +54,15 @@ try {
     $entry | Add-Member -NotePropertyName tie_evidence -NotePropertyValue $evidence; Save-Roster
     $pick = Resolve-RouterModel -Category routine-coding -Catalog $catalog
     Check ($pick.model -eq $entry.backup -and $pick.reason -match 'codex: 70% used / 30% left' -and $pick.reason -match 'claude: 20% used / 80% left') 'lower-use vendor and both readings'
+    $entry | Add-Member -NotePropertyName category_overrides -NotePropertyValue ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{backup=[pscustomobject]@{model='claude-sonnet-4-6';vendor='claude'}}})
+    Save-Roster
+    $exception = Resolve-RouterModel -Category ui-frontend -Catalog $catalog
+    Check ($exception.model -eq $entry.first -and $exception.category_override -and $exception.reason -notmatch 'Quota tie-break' -and $exception.alerts -notcontains 'roster-tie-invalid:coder') 'valid default tie skipped silently for exception pair'
+    Check ((Resolve-RouterModel -Category routine-coding -Catalog $catalog).model -eq $entry.backup) 'default category still applies tie with exceptions present'
+    $savedRun = $evidence.run_id; $evidence.run_id = ''; Save-Roster
+    Check ((Resolve-RouterModel -Category ui-frontend -Catalog $catalog).alerts -contains 'roster-tie-invalid:coder') 'exception still validates default tie evidence'
+    $evidence.run_id = $savedRun
+    $entry.PSObject.Properties.Remove('category_overrides'); Save-Roster
     Remove-Item -LiteralPath (Join-Path $temp 'bench/bank-hash.json')
     $missingBank = Resolve-RouterModel -Category routine-coding -Catalog $catalog
     Check ($missingBank.model -eq $entry.first -and $missingBank.alerts -notcontains 'roster-tie-invalid:coder') 'absent bank skips tie quietly'
