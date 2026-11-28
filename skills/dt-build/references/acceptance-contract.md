@@ -58,7 +58,7 @@ pass; compound labels such as `PASS_WITH_RUN_STOP` remain `BLOCKED` until a fres
 
 ## Acceptance row schema
 
-Write every row with `scripts/append-acceptance-row.ps1`; it validates, then appends one line, and refuses
+Write every row with `<skill>/scripts/append-acceptance-row.ps1`; it validates, then appends one line, and refuses
 invalid rows. Required: `milestone_id`; full 40/64-hex `commit_sha`; boolean `accepted`; `status` of `PASS`,
 `APPROVED_DOWNGRADE` or `BLOCKED` (accepted true only with PASS/APPROVED_DOWNGRADE, and the reverse);
 `tests` text or `checks` records; non-empty `command_results`, all exit 0 when `status` is `PASS`; and
