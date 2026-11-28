@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.71.0
+
+- Require capability/path/hash-checked canonical operator controls; reject unsupported arguments, preserve decision/reason/actor history, withdraw declined queued approvals, and isolate orchestration fixtures from live directors.
+
 ## 2.70.0
 
 - Acceptance rows get a write-time schema (append-acceptance-row.ps1, with -Audit). The ledger renders legacy rows lacking status as RECORD_INCOMPLETE with their original gate evidence named, never PASS and never a router rejection; it no longer stamps independent_acceptance=false into builder provenance for them. Router outcomes ignore legacy keyed rows instead of counting them as rejections; rows sharing one dispatch_id stay one outcome.
