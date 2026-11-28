@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.71.3
+
+- Honor category-specific coder and reviewer routing, effective backups and effort-aware proposals through the shared model router.
+
 ## 2.71.2
 
 - Record evidenced per-check main baselines; repair explicit authority discovery, command parsing, operator fixtures, progress heartbeat and toolbox jobs; keep source copies and scratch outside synced plans.

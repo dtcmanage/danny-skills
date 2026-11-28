@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.19.6 (2026-11-28): Honor category-specific review and planning model choices and their effective other-vendor backups through the shared router.
+
 - 1.19.5 (2026-11-28): Shared model router outcomes: legacy acceptance rows without status no longer count as rejections; rows sharing one dispatch_id stay one outcome.
 
 - 1.19.4 (2026-11-27): Fix model router bench lock IO classification.

@@ -1,5 +1,7 @@
 # dt-writing-draft changelog
 
+- 0.3.6 (2026-11-28): Honor effective category routes and backups from the shared roster while retaining the long-form-writing job defaults.
+
 - 0.3.5 (2026-11-28): Shared model router outcomes: legacy acceptance rows without status no longer count as rejections; rows sharing one dispatch_id stay one outcome.
 
 - 0.3.4 (2026-11-27): Fix model router bench lock IO classification.
