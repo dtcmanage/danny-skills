@@ -26,6 +26,23 @@ $now = [datetime]'2026-09-29T05:00:00Z'
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
     Initialize-TestBenchEvidence
+    $confirmationWriter = (Get-Command Write-RouterCadenceConfirmationVerdicts).ScriptBlock
+    $confirmationRoster = (Read-RouterRoster).roster
+    $confirmationRoster.approved=$true; $confirmationRoster.approved_at='2026-11-28T01:00:00Z'
+    $confirmationRoster.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{first=[pscustomobject]@{model='gpt-5.6-sol';vendor='codex'}}})
+    Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $confirmationRoster
+    $confirmationReadings = Join-Path $temp 'readings'; [void][IO.Directory]::CreateDirectory($confirmationReadings)
+    $confirmationRows = @('one','two') | ForEach-Object { [pscustomobject]@{benchmark=$_;version='1';harness='h';effort_class='medium';independent=$true;results=@([pscustomobject]@{model='gpt-6.2-sol';score=80;margin=1},[pscustomobject]@{model='gpt-5.6-sol';score=50;margin=1},[pscustomobject]@{model='claude-opus-5-5';score=99;margin=1})} }
+    Write-RouterJsonAtomic (Join-Path $confirmationReadings 'ui-frontend.json') ([pscustomobject]@{readings=@($confirmationRows)})
+    $confirmationItem = [pscustomobject]@{categories=@('ui-frontend')}
+    & $confirmationWriter -Item $confirmationItem -PassId 'confirmation-fixture'
+    & $confirmationWriter -Item $confirmationItem -PassId 'confirmation-fixture'
+    $confirmationRecords = @(Get-Content (Join-Path $temp 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    $uiRecord = @($confirmationRecords | Where-Object { $_.slot -eq 'first' -and $_.category -eq 'ui-frontend' })
+    Assert-True ($confirmationRecords.Count -eq 6 -and $uiRecord.Count -eq 1 -and $uiRecord[0].holder -eq 'gpt-5.6-sol' -and $uiRecord[0].result -eq 'gpt-6.2-sol') 'confirmation writer records effective category holder, respects pin and deduplicates'
+    $confirmationRoster.jobs.coder.PSObject.Properties.Remove('category_overrides')
+    Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $confirmationRoster
+    Remove-Item -LiteralPath (Join-Path $confirmationReadings 'ui-frontend.json')
     $script:cadenceFakeBench = { param($r) Add-TestBenchEvidence ([pscustomobject]@{raw_gate='pass';gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=[pscustomobject]@{markdown='synthetic'}}) }
     $script:RouterModelCheckFetcher = { param($vendor) if ($vendor.id -eq 'openai') { 'gpt-6.1-sol' } else { 'claude-opus-5-5' } }
     [void](Invoke-RouterModelCheck -Force -Now $now -BenchInvoker $script:cadenceFakeBench)
@@ -44,7 +61,7 @@ try {
 
     function Get-RouterStaleReadingModels { param($Months,$Now) return @('gpt-6.1-sol') }
     @([pscustomobject]@{model='gpt-6.1-sol';job='coder';marked_at=$now.ToString('o')}) | ConvertTo-Json -AsArray | Set-Content -LiteralPath (Join-Path $temp 'drift-marks.json')
-    $readDir = Join-Path $temp 'readings'; New-Item -ItemType Directory -Path $readDir | Out-Null
+    $readDir = Join-Path $temp 'readings'
     $old = [pscustomobject]@{benchmark='bench';version='1';date=$now.ToString('o');results=@([pscustomobject]@{model='gpt-6.1-sol'})}
     $new = [pscustomobject]@{benchmark='bench';version='2';date=$now.ToString('o');results=@([pscustomobject]@{model='claude-opus-5-5'})}
     [pscustomobject]@{category='complex-coding';readings=@($old,$new)} | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $readDir 'complex-coding.json')
@@ -76,7 +93,7 @@ try {
         param($Item,$PassId)
         if ($script:confirmationWinner) {
             $dir = Join-Path $temp 'roster-proposals'; New-Item -ItemType Directory -Path $dir -Force | Out-Null
-            $verdict = [pscustomobject]@{pass_id=$PassId;job='coder';slot='first';result='gpt-6-new'}
+            $verdict = [pscustomobject]@{pass_id=$PassId;job='coder';slot='first';category='complex-coding';result='gpt-6-new';holder='gpt-6.1-sol'}
             [IO.File]::AppendAllText((Join-Path $dir 'verdicts.jsonl'),(($verdict | ConvertTo-Json -Compress) + "`n"))
         }
     }
@@ -112,10 +129,22 @@ try {
     $followups = @(Read-RouterJsonArray -Path $queuePath | Where-Object trigger -ne 'followup')
     Use-RouterQueueMutex -StateDir $temp -Action { Write-RouterJsonAtomic -Path $queuePath -Value $followups }
     [IO.File]::AppendAllText((Join-Path $temp 'roster-proposals/verdicts.jsonl'),((([pscustomobject]@{pass_id='older';job='deep-thinker';slot='backup';result='gpt-6-new'}) | ConvertTo-Json -Compress) + "`n"))
-    function Write-RouterCadenceConfirmationVerdicts { param($Item,$PassId) [IO.File]::AppendAllText((Join-Path $temp 'roster-proposals/verdicts.jsonl'),((([pscustomobject]@{pass_id=$PassId;job='writer';slot='first';result='gpt-6-new'}) | ConvertTo-Json -Compress) + "`n")) }
+    function Write-RouterCadenceConfirmationVerdicts { param($Item,$PassId) [IO.File]::AppendAllText((Join-Path $temp 'roster-proposals/verdicts.jsonl'),((([pscustomobject]@{pass_id=$PassId;job='writer';slot='first';category='long-form-writing';result='gpt-6-new';holder='claude-opus-5-5'}) | ConvertTo-Json -Compress) + "`n")) }
     [void](Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger confirmation -Categories @('long-form-writing') -DueAt $now -Reason 'confirmation-new-job')
     [void](Invoke-RouterCadence -Now $now)
     Assert-True (@(Read-RouterJsonArray -Path $queuePath | Where-Object trigger -eq 'followup').Count -eq 1) 'first win in a new job queues a followup even after a win in another job'
+    $retained = @(Read-RouterJsonArray $queuePath | Where-Object trigger -ne 'followup')
+    Write-RouterJsonAtomic $queuePath $retained
+    [IO.File]::AppendAllText((Join-Path $temp 'roster-proposals/verdicts.jsonl'), (([pscustomobject]@{pass_id='legacy-ui';job='coder';slot='first';result='gpt-6-new'} | ConvertTo-Json -Compress)+"`n"))
+    function Write-RouterCadenceConfirmationVerdicts { param($Item,$PassId) [IO.File]::AppendAllText((Join-Path $temp 'roster-proposals/verdicts.jsonl'),((([pscustomobject]@{pass_id=$PassId;job='coder';slot='first';category='ui-frontend';result='gpt-6-new';holder='gpt-6.1-sol'}) | ConvertTo-Json -Compress) + "`n")) }
+    [void](Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger confirmation -Categories @('ui-frontend') -DueAt $now -Reason 'new-category')
+    [void](Invoke-RouterCadence -Now $now)
+    Assert-True (@(Read-RouterJsonArray $queuePath | Where-Object trigger -eq 'followup').Count -eq 1) 'first win in another category queues followup despite same-job and legacy wins'
+    $retained = @(Read-RouterJsonArray $queuePath | Where-Object trigger -ne 'followup')
+    Write-RouterJsonAtomic $queuePath $retained
+    [void](Add-RouterResearchQueueItem -Model 'gpt-6-new' -Trigger confirmation -Categories @('ui-frontend') -DueAt $now -Reason 'repeat-category')
+    [void](Invoke-RouterCadence -Now $now)
+    Assert-True (@(Read-RouterJsonArray $queuePath | Where-Object trigger -eq 'followup').Count -eq 0) 'earlier win in same job slot category suppresses first-win followup'
     $script:modelChecks = 0
     function Invoke-RouterModelCheck { param([switch]$Force,$Now) $script:modelChecks++; return [pscustomobject]@{new_models=@()} }
     [void](Invoke-RouterCadence -Now $now)
@@ -148,12 +177,12 @@ try {
     Initialize-TestBenchEvidence
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Seed | Out-Null
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Approve | Out-Null
-    # This legacy scenario intentionally exercises an unpinned cross-vendor swap.
+    # The builder also restores the mandatory pin on an older approved roster.
     $twoPassRoster = (Read-RouterRoster).roster
     $twoPassRoster.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
     Write-RouterJsonAtomic (Join-Path $twoPassState 'roster.json') $twoPassRoster
     $twoPassReadings = Join-Path $twoPassState 'readings'; [IO.Directory]::CreateDirectory($twoPassReadings) | Out-Null
-    $rows = @(@('bench-one','bench-two') | ForEach-Object { [pscustomobject]@{benchmark=$_;version='1';harness='h';effort_class='medium';independent=$true;results=@([pscustomobject]@{model='claude-opus-5-5';score=80;margin=1},[pscustomobject]@{model='gpt-6.1-sol';score=50;margin=1})} })
+    $rows = @(@('bench-one','bench-two') | ForEach-Object { [pscustomobject]@{benchmark=$_;version='1';harness='h';effort_class='medium';independent=$true;results=@([pscustomobject]@{model='gpt-6.2-sol';score=80;margin=1},[pscustomobject]@{model='gpt-6.1-sol';score=50;margin=1})} })
     [pscustomobject]@{category='complex-coding';readings=$rows} | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $twoPassReadings 'complex-coding.json')
     . (Join-Path $PSScriptRoot '../build-roster.ps1')
     $script:cadenceRealBuilder = (Get-Command Build-RouterRosterProposal).ScriptBlock
@@ -168,8 +197,8 @@ try {
         return $record
     }
     function Write-RouterCadenceConfirmationVerdicts { param($Item,$PassId) }
-    [void](Add-RouterResearchQueueItem -Model 'claude-opus-5-5' -Trigger confirmation -Categories @('complex-coding') -DueAt $now -Reason 'first-win')
-    [void](Add-RouterResearchQueueItem -Model 'claude-opus-5-5' -Trigger release -Categories @('complex-coding') -DueAt $now.AddSeconds(1) -Reason 'second-win')
+    [void](Add-RouterResearchQueueItem -Model 'gpt-6.2-sol' -Trigger confirmation -Categories @('complex-coding') -DueAt $now -Reason 'first-win')
+    [void](Add-RouterResearchQueueItem -Model 'gpt-6.2-sol' -Trigger release -Categories @('complex-coding') -DueAt $now.AddSeconds(1) -Reason 'second-win')
     $twoPass = Invoke-RouterCadence -Now $now.AddSeconds(2)
     $latest = Read-RouterJsonObject -Path (Join-Path $twoPassState 'roster-proposals/latest.json')
     $twoPassProposal = if ($latest) { Read-RouterJsonObject -Path ([string]$latest.proposal) } else { $null }

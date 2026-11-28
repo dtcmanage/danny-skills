@@ -44,14 +44,128 @@ function Test-EffortFloorComparisons {
 }
 function Add-Pass { param([string]$Id,[string[]]$Categories=@('complex-coding'))
     Initialize-TestBenchEvidence
-    # These legacy proposal scenarios intentionally exercise unpinned vendor flips.
-    $legacyRoster = (Read-RouterRoster).roster
-    if ($legacyRoster.jobs.coder.PSObject.Properties['first_vendor_pin']) {
-        $legacyRoster.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
-        $legacyRoster.approved = $true; $legacyRoster.approved_at = [datetimeoffset]::UtcNow.ToString('o')
-        Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $legacyRoster
-    }
     [IO.File]::AppendAllText((Join-Path $script:readDir 'passes.jsonl'),((ConvertTo-Json -InputObject ([pscustomobject]@{pass_id=$Id;categories=$Categories}) -Compress) + "`n"))
+}
+function New-CategoryScenario {
+    param([string]$Name)
+    $env:DT_MODEL_ROUTER_STATE = Join-Path $temp $Name
+    $script:readDir = Join-Path $env:DT_MODEL_ROUTER_STATE 'readings'
+    [void][IO.Directory]::CreateDirectory($script:readDir)
+    Initialize-TestBenchEvidence
+    $fixture = Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+    $fixture.approved=$true; $fixture.approved_at='2026-11-28T01:00:00Z'
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $fixture
+    return $fixture
+}
+function Invoke-CategoryFixtureBuild {
+    param([string]$Pass, [string[]]$Categories, [switch]$FailBackup)
+    Add-Pass $Pass $Categories
+    $notification = [pscustomobject]@{alert=$null}
+    $staged = Build-RouterRosterProposalLocked -Notification $notification -StageOnly
+    $script:lastRequests = @($staged.requests)
+    $results = @{}
+    foreach ($request in $staged.requests) {
+        $bench = & $script:fakeBench $request
+        if ($FailBackup -and $request.key -like '*/backup/*') { $bench.gate = 'fail' }
+        $results[$request.key] = $bench
+    }
+    return Build-RouterRosterProposalLocked -Notification $notification -BenchResults $results -RosterIdentity $staged.identity
+}
+function Save-CategoryWin {
+    param([string]$Category, [string]$Winner='gpt-6.2-sol', [string]$Holder='gpt-6.1-sol')
+    Save-Category $Category @((New-Reading 'independent-one' $Winner 80 $Holder 50),(New-Reading 'independent-two' $Winner 80 $Holder 50))
+}
+function Test-CategoryProposals {
+    $fixture = New-CategoryScenario 'category-split'
+    # An unpinned older roster gains the mandatory pin in its proposal.
+    $fixture.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
+    $fixture.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'routine-coding'=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'}}})
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $fixture
+    $untouched = ConvertTo-Json $fixture.jobs.coder.backup_efforts -Compress
+    $writerBefore = ConvertTo-Json $fixture.jobs.writer -Compress -Depth 20
+    foreach ($category in @('complex-coding','analysis','long-form-writing')) { Save-CategoryWin $category }
+    # A cross-vendor decoy has more leads, but cannot enter the pinned first slot.
+    $data = Read-RouterJsonObject (Join-Path $script:readDir 'complex-coding.json')
+    foreach ($row in $data.readings) { $row.results += [pscustomobject]@{model='claude-opus-5-5';score=99;margin=1} }
+    Write-RouterJsonAtomic (Join-Path $script:readDir 'complex-coding.json') $data
+    Save-Category ui-frontend @((New-Reading 'ui-trail' 'gpt-6.2-sol' 40 'gpt-6.1-sol' 50))
+    $dir = Join-Path $env:DT_MODEL_ROUTER_STATE 'roster-proposals'; [void][IO.Directory]::CreateDirectory($dir)
+    $legacy = [pscustomobject]@{pass_id='split-one';job='coder';slot='first';result='gpt-6.2-sol'}
+    [IO.File]::WriteAllText((Join-Path $dir 'verdicts.jsonl'),(($legacy | ConvertTo-Json -Compress)+"`n"))
+    $one = Invoke-CategoryFixtureBuild split-one @('complex-coding','analysis','long-form-writing')
+    Assert-True (-not $one.changed) 'legacy job-wide record neither deduplicates nor confirms a category win'
+    $two = Invoke-CategoryFixtureBuild split-two @('complex-coding','analysis','long-form-writing')
+    $proposal = Read-RouterJsonObject $two.proposal
+    Assert-True ($proposal.jobs.coder.first -eq 'gpt-6.2-sol' -and $proposal.jobs.coder.category_overrides.'ui-frontend'.first.model -eq 'gpt-6.1-sol') 'primary-won default preserves trailing UI holder as exception'
+    Assert-True ($proposal.jobs.coder.first_vendor_pin -eq 'codex' -and @($proposal.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' -and $_.to -like 'claude-*' }).Count -eq 0) 'every proposal adds coder Codex pin and filters cross-vendor default candidates'
+    Assert-True (-not $proposal.jobs.coder.category_overrides.PSObject.Properties['routine-coding']) 'exception equal to new default is dropped'
+    Assert-True ((ConvertTo-Json $proposal.jobs.coder.backup_efforts -Compress) -ceq $untouched) 'untouched slot efforts byte-identical'
+    Assert-True (-not $proposal.over_cap -and (Get-RouterRosterModelCounts $proposal).job_defaults -eq 5 -and (Get-RouterRosterModelCounts $proposal).all_models -eq 6 -and @($proposal.validation_errors).Count -eq 0) 'exceptions can add a sixth model while job-default cap fits'
+    Assert-True (-not $proposal.approved -and $proposal.dimension_framework -eq 'provisional') 'category proposal remains unapproved and records framework state'
+    $report = Get-Content $two.report -Raw
+    Assert-True ($report -match '## Per-category changes' -and $report -match '## Category exceptions' -and $report -match 'Distinct models \(job defaults only\): 5' -and $report -match 'Distinct models \(all models including exceptions\): 6' -and $report -match 'Cap fit:' -and $report -match 'No single-job approval fits the five-model cap' -and $report -match 'Skipped below slot effort') 'report includes category evidence, exceptions, both counts and single-job cap fit'
+    $records = @(Get-Content (Join-Path $dir 'verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    $categoryRecords = @($records | Where-Object { $_.PSObject.Properties['category'] })
+    Assert-True (@($categoryRecords | Where-Object { $_.job -eq 'coder' -and $_.category -eq 'routine-coding' -and $_.slot -eq 'first' -and $_.holder -eq 'gpt-6.2-sol' }).Count -eq 2 -and @($categoryRecords | Group-Object pass_id,job,slot,category | Where-Object Count -gt 1).Count -eq 0) 'category record shape carries effective holder and deduplicates staging/finalization'
+
+    $fixture = New-CategoryScenario 'category-majority'
+    $fixture.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{backup=[pscustomobject]@{model='claude-sonnet-5';vendor='claude'}}})
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $fixture
+    $backupBefore = ConvertTo-Json $fixture.jobs.coder.category_overrides.'ui-frontend'.backup -Compress
+    Save-CategoryWin routine-coding; Save-CategoryWin ui-frontend
+    $null = Invoke-CategoryFixtureBuild majority-one @('routine-coding','ui-frontend')
+    $two = Invoke-CategoryFixtureBuild majority-two @('routine-coding','ui-frontend')
+    $proposal = Read-RouterJsonObject $two.proposal
+    Assert-True ($proposal.jobs.coder.first -eq 'gpt-6.2-sol' -and $proposal.jobs.coder.category_overrides.'complex-coding'.first.model -eq 'gpt-6.1-sol') 'most categories becomes default when primary did not change'
+    Assert-True ((ConvertTo-Json $proposal.jobs.writer -Compress -Depth 20) -ceq $writerBefore) 'untouched job retains byte-identical stored shape'
+    Assert-True ((ConvertTo-Json $proposal.jobs.coder.category_overrides.'ui-frontend'.backup -Compress) -ceq $backupBefore -and $proposal.jobs.coder.backup -ceq $fixture.jobs.coder.backup) 'first-slot normalization preserves untouched backup exception byte-for-byte'
+    Assert-True (@($script:lastRequests | Where-Object { $_.key -eq 'coder/first/gpt-6.2-sol/gpt-6.1-sol' }).Count -eq 1) 'bench keys deduplicated across categories sharing target and holder'
+
+    $fixture = New-CategoryScenario 'category-tie'
+    $fixture.jobs.'deep-thinker' | Add-Member backup_vendor_pin codex
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $fixture
+    foreach ($category in @('code-review','planning','math')) { Save-CategoryWin $category }
+    $null = Invoke-CategoryFixtureBuild tie-one @('math')
+    $two = Invoke-CategoryFixtureBuild tie-two @('math')
+    $proposal = Read-RouterJsonObject $two.proposal
+    Assert-True ($proposal.jobs.'deep-thinker'.backup -eq 'gpt-6.1-sol' -and @($proposal.jobs.'deep-thinker'.category_overrides.PSObject.Properties).Count -eq 3) 'three-of-six tie keeps incumbent default and writes category exceptions'
+    Assert-True (@($proposal.jobs.'deep-thinker'.category_overrides.PSObject.Properties | Where-Object { $_.Value.backup.vendor -ne 'codex' }).Count -eq 0) 'generic pinned backup filters every category exception'
+
+    $fixture = New-CategoryScenario 'category-failed-backup'
+    Save-CategoryWin math 'gpt-6.1-sol' 'claude-opus-5-5'
+    $null = Invoke-CategoryFixtureBuild failed-one @('math')
+    $two = Invoke-CategoryFixtureBuild failed-two @('math') -FailBackup
+    $proposal = Read-RouterJsonObject $two.proposal
+    Assert-True (@($proposal.changes).Count -eq 0 -and @($proposal.conflicts).Count -eq 1 -and $proposal.conflicts[0].category -eq 'math' -and $proposal.conflicts[0].evidence -match 'withdrawn') 'failed backup bench withdraws the first category change into Conflicts'
+    Assert-True ((ConvertTo-Json $proposal.jobs.'deep-thinker' -Compress -Depth 20) -ceq (ConvertTo-Json $fixture.jobs.'deep-thinker' -Compress -Depth 20) -and @($proposal.validation_errors).Count -eq 0) 'withdrawal restores original shape and valid other-vendor pairs'
+
+    $fixture = New-CategoryScenario 'category-pin-conflict'
+    $fixture.jobs.'deep-thinker' | Add-Member backup_vendor_pin codex
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $fixture
+    Save-CategoryWin math 'gpt-6.1-sol' 'claude-opus-5-5'
+    $null = Invoke-CategoryFixtureBuild pin-one @('math')
+    $two = Invoke-CategoryFixtureBuild pin-two @('math')
+    $proposal = Read-RouterJsonObject $two.proposal
+    $records = @(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+    Assert-True (@($proposal.changes).Count -eq 0 -and $proposal.conflicts[0].category -eq 'math' -and @($records | Where-Object { $_.pass_id -eq 'pin-two' -and $_.job -eq 'deep-thinker' -and $_.slot -eq 'backup' -and $_.category -eq 'math' -and $_.result -eq 'keep' }).Count -eq 1) 'backup pin blocks a conflicting vendor flip and still records the category verdict'
+
+    $fixture = New-CategoryScenario 'category-pinned-exception'
+    Save-CategoryWin ui-frontend
+    $data = Read-RouterJsonObject (Join-Path $script:readDir 'ui-frontend.json')
+    foreach ($row in $data.readings) { $row.results += [pscustomobject]@{model='claude-opus-5-5';score=99;margin=1} }
+    Write-RouterJsonAtomic (Join-Path $script:readDir 'ui-frontend.json') $data
+    $null = Invoke-CategoryFixtureBuild pinned-one @('ui-frontend')
+    $two = Invoke-CategoryFixtureBuild pinned-two @('ui-frontend')
+    $proposal = Read-RouterJsonObject $two.proposal
+    Assert-True ($proposal.jobs.coder.first -eq 'gpt-6.1-sol' -and $proposal.jobs.coder.category_overrides.'ui-frontend'.first.model -eq 'gpt-6.2-sol' -and $proposal.jobs.coder.category_overrides.'ui-frontend'.first.vendor -eq 'codex') 'pinned slot excludes a stronger cross-vendor exception candidate'
+
+    $history = @(
+        [pscustomobject]@{pass_id='a';job='coder';slot='first';category='ui-frontend';result='gpt-6.2-sol'},
+        [pscustomobject]@{pass_id='b';job='coder';slot='first';category='ui-frontend';result='keep'}
+    )
+    Assert-True (-not (Get-RouterProposalCategoryTarget $history coder first ui-frontend 'gpt-6.1-sol')) 'holder keep breaks consecutive category wins'
+    $history[1].result='gpt-6.1-sol'; $history[0].result='gpt-6.1-sol'
+    Assert-True (-not (Get-RouterProposalCategoryTarget $history coder first ui-frontend 'gpt-6.1-sol')) 'two results naming current holder do not fire'
 }
 $priorState=$env:DT_MODEL_ROUTER_STATE; $priorAlert=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT; $priorSessions=$env:DT_MODEL_ROUTER_CODEX_SESSIONS
 $temp=Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N')); [IO.Directory]::CreateDirectory($temp) | Out-Null
@@ -153,20 +267,30 @@ try {
     foreach ($row in $multi[0..1]) { $row.results += [pscustomobject]@{model='claude-sonnet-5';score=70;margin=$null} }
     $multiRead=@{'complex-coding'=[pscustomobject]@{readings=$multi}}
     Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'most primary independent leads wins'
+    Assert-True ((Get-RouterProposalCategoryVerdict -Job coder -Category complex-coding -Slot first -Holder 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'category challenger ordering prioritizes independent leads'
     $multi[2].results += [pscustomobject]@{model='claude-sonnet-5';score=70;margin=$null}
     Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-sonnet-5') 'equal leads use lower price'
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'low-trail' 'claude-sonnet-5' 40 'gpt-6.1-sol' 50 -Effort Low))
+    Assert-True ((Get-RouterProposalCategoryVerdict -Job coder -Category complex-coding -Slot first -Holder 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-sonnet-5') 'category challenger ordering uses lower price for equal leads'
+    $samePrice = $prices | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $samePrice.models.'claude-sonnet-5'.prices_usd_per_mtok = $samePrice.models.'claude-opus-5-5'.prices_usd_per_mtok
+    Assert-True ((Get-RouterProposalCategoryVerdict -Job coder -Category complex-coding -Slot first -Holder 'gpt-6.1-sol' -Readings $multiRead -Prices $samePrice -Frontier $frontier).result -eq 'claude-opus-5-5') 'category challenger ordering uses model id for equal leads and price'
+    foreach ($case in @(@('gpt-6-luna',$false),@('gpt-6-astra',$false),@('gpt-5.6-sol',$true))) {
+        $candidateData = @{'complex-coding'=[pscustomobject]@{readings=@((New-Reading 'one' $case[0] 99 'gpt-6.1-sol' 50),(New-Reading 'two' $case[0] 99 'gpt-6.1-sol' 50))}}
+        $verdict = Get-RouterProposalCategoryVerdict -Job coder -Category complex-coding -Slot first -Holder 'gpt-6.1-sol' -Readings $candidateData -Prices $prices -Frontier $frontier
+        Assert-True (($verdict.result -eq $case[0]) -eq $case[1]) "category lower-tier/frontier exclusion and older quality rule: $($case[0])"
+    }
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'low-trail' 'gpt-6.2-sol' 40 'gpt-6.1-sol' 50 -Effort Low))
     Add-Pass 'p1'; $one=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:00')
     Assert-True (-not $one.changed -and $script:alerts.Count -eq 0) 'one pass no proposal or alert'
     $created=@(Get-ChildItem -LiteralPath (Join-Path $temp 'roster-proposals') -File | Select-Object -ExpandProperty Name)
     Assert-True ($created.Count -eq 1 -and $created[0] -ceq 'verdicts.jsonl') 'no-change run writes verdicts only'
     $same=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:01')
     $records=@(Get-Content (Join-Path $temp 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
-    Assert-True (-not $same.changed -and @($records | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' }).Count -eq 1) 'same pass adds no verdict'
+    Assert-True (-not $same.changed -and @($records | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' }).Count -eq 3 -and @($records | Group-Object pass_id,job,slot,category | Where-Object Count -gt 1).Count -eq 0) 'same pass adds no per-category verdict'
     Add-Pass 'p2'; $two=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True ($two.changed -and $script:alerts.Count -eq 1 -and (Test-Path $two.report)) 'two passes propose and alert once'
     Assert-True (@($two.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' -and $_.evidence -match 'skipped 1' }).Count -eq 1) 'proposal caller passes slot floor and change evidence includes skipped count'
-    Assert-True (@($two.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'backup' -and $_.to -eq 'gpt-6.1-sol' }).Count -eq 1) 'vendor flip re-chooses backup from opposite vendor'
+    Assert-True (@($two.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'backup' }).Count -eq 0) 'same-vendor change keeps backup'
     $repeat=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True (-not $repeat.changed -and $script:alerts.Count -eq 1) 'repeat sends no alert'
     $proposal=Get-Content -LiteralPath $two.proposal -Raw | ConvertFrom-Json -Depth 30
@@ -178,29 +302,29 @@ try {
     Assert-True ($null -eq $proposal.jobs.illustrator.backup -and $null -eq $proposal.jobs.illustrator.backup_vendor) 'illustrator backup remains null'
     $scenario=Join-Path $temp 'scenario-ne'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50))
     Add-Pass 'ne-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Save-Category -Category complex-coding -Rows @()
     Add-Pass 'ne-p2'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50))
     Add-Pass 'ne-p3'; $afterGap=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True ($afterGap.changed) 'winner then not-enough-evidence then winner changes'
     $scenario=Join-Path $temp 'scenario-switch'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50))
     Add-Pass 'switch-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'gpt-5.6-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'gpt-5.6-sol' 70 'gpt-6.1-sol' 50))
     Add-Pass 'switch-p2'; $switched=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True (-not $switched.changed) 'winner A then winner B does not change'
     $scenario=Join-Path $temp 'scenario-coverage'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50))
     Add-Pass 'u1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Add-Pass 'u2' @('mechanical'); $uncov=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     $records=@(Get-Content (Join-Path $scenario 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-True (-not $uncov.changed -and @($records | Where-Object { $_.pass_id -eq 'u2' -and $_.job -eq 'coder' }).Count -eq 0) 'uncovered pass records no coder verdict or proposal'
     Add-Pass 'u3'; $covered=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
-    Assert-True ($covered.changed -and @($covered.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' -and $_.to -eq 'claude-opus-5-5' }).Count -eq 1) 'two coder-covered passes confirm change despite intervening mechanical pass'
+    Assert-True ($covered.changed -and @($covered.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' -and $_.to -eq 'gpt-6.2-sol' }).Count -eq 1) 'two coder-covered passes confirm change despite intervening mechanical pass'
     $coverageAlertKey=$script:alerts[-1].key; $coverageEvidence=$covered.changes[0].evidence
     $scenario=Join-Path $temp 'scenario-analysis'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
@@ -213,19 +337,19 @@ try {
     Assert-True (-not $legacy.changed) 'pass record without categories covers no job and does not throw'
     $scenario=Join-Path $temp 'scenario-flip'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50))
-    Add-Pass 'flip-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
-    $p2Row=New-Reading 'c1' 'claude-opus-5-5' 70 'gpt-6.1-sol' 50
-    $p2Row.results += [pscustomobject]@{model='claude-sonnet-5';score=60;margin=$null}
-    Save-Category -Category complex-coding -Rows @($p2Row)
-    Add-Pass 'flip-p2'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    Save-Category -Category math -Rows @((New-Reading 'c1' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50),(New-Reading 'c2' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50))
+    Add-Pass 'flip-p1' @('math'); $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    $p2Row=New-Reading 'c1' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50
+    $p2Row.results += [pscustomobject]@{model='gpt-5.6-sol';score=60;margin=$null}
+    Save-Category -Category math -Rows @($p2Row)
+    Add-Pass 'flip-p2' @('math'); $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     $p2Records=@(Get-Content (Join-Path $scenario 'roster-proposals/verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
-    Assert-True (@($p2Records | Where-Object { $_.pass_id -eq 'flip-p2' -and $_.job -eq 'coder' -and $_.slot -eq 'backup' -and $_.result -eq 'keep' }).Count -eq 1) 'intervening pass records backup keep'
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50),(New-Reading 'c3' 'claude-opus-5-5' 80 'gpt-6.1-sol' 50))
-    Add-Pass 'flip-p3'; $flipped=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    Assert-True (@($p2Records | Where-Object { $_.pass_id -eq 'flip-p2' -and $_.job -eq 'deep-thinker' -and $_.slot -eq 'backup' -and $_.result -eq 'keep' }).Count -eq 1) 'intervening pass records backup keep'
+    Save-Category -Category math -Rows @((New-Reading 'c1' 'gpt-6.1-sol' 80 'claude-opus-5-5' 50),(New-Reading 'c2' 'gpt-6.1-sol' 80 'claude-opus-5-5' 50),(New-Reading 'c3' 'gpt-6.1-sol' 80 'claude-opus-5-5' 50))
+    Add-Pass 'flip-p3' @('math'); $flipped=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     $flipProposal=Get-Content -LiteralPath $flipped.proposal -Raw | ConvertFrom-Json -Depth 30
-    Assert-True ($flipped.changed -and $flipProposal.jobs.coder.first -eq 'claude-opus-5-5' -and $flipProposal.jobs.coder.backup -eq 'gpt-6.1-sol' -and @($flipProposal.validation_errors).Count -eq 0) 'confirmed vendor flip immediately recomputes valid other-vendor backup'
-    Assert-True ($script:alerts[-1].key -eq $coverageAlertKey -and $flipped.changes[0].evidence -ne $coverageEvidence) 'alert key depends on job slot and models rather than evidence'
+    Assert-True ($flipped.changed -and $flipProposal.jobs.'deep-thinker'.category_overrides.math.first.model -eq 'gpt-6.1-sol' -and $flipProposal.jobs.'deep-thinker'.category_overrides.math.backup.model -eq 'claude-opus-5-5' -and @($flipProposal.validation_errors).Count -eq 0) 'confirmed category vendor flip immediately recomputes valid other-vendor backup override'
+    Assert-True ($script:alerts[-1].message -match 'deep-thinker/math') 'alert identifies changed category'
     $scenario=Join-Path $temp 'scenario-dated-fast'; [IO.Directory]::CreateDirectory($scenario) | Out-Null
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     $roster=(Read-RouterRoster).roster
@@ -240,10 +364,11 @@ try {
     $env:DT_MODEL_ROUTER_STATE=$scenario; $script:readDir=Join-Path $scenario 'readings'; [IO.Directory]::CreateDirectory($script:readDir) | Out-Null
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Seed | Out-Null
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot '../approve-roster.ps1') -Approve | Out-Null
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50))
     Add-Pass 'seed-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Add-Pass 'seed-p2'; $seedTwo=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True ($seedTwo.changed -and (Test-Path -LiteralPath $seedTwo.proposal)) 'approved seed accepts two covered passes without optional pass_id'
+    Test-CategoryProposals
     Write-Output "TOTAL PASS: $script:passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE=$priorState; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT=$priorAlert; $env:DT_MODEL_ROUTER_CODEX_SESSIONS=$priorSessions

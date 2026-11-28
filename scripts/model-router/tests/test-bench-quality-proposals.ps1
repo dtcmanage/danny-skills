@@ -92,11 +92,11 @@ try {
     $readDir=Join-Path $root 'readings';[void][IO.Directory]::CreateDirectory($readDir)
     [IO.File]::WriteAllText((Join-Path $readDir 'passes.jsonl'),'{"pass_id":"quality-pass","categories":["routine-coding"]}'+"`n")
     $dir=Join-Path $root 'roster-proposals';[void][IO.Directory]::CreateDirectory($dir)
-    $incumbent=$roster.jobs.coder.first;$target=$roster.jobs.fast.first
-    [IO.File]::WriteAllText((Join-Path $dir 'verdicts.jsonl'),(@{pass_id='previous';job='coder';slot='first';result=$target}|ConvertTo-Json -Compress)+"`n"+(@{pass_id='quality-pass';job='coder';slot='first';result=$target}|ConvertTo-Json -Compress)+"`n")
-    function Get-RouterProposalJobVerdict {
-        param($Job,$Incumbent,$Vendor,$Readings,$Prices,$Frontier)
-        [pscustomobject]@{result=$(if(-not $Vendor -and $Job -eq 'coder'){$target}else{'keep'});evidence='Synthetic independent research';tradeoffs=@()}
+    $incumbent=$roster.jobs.coder.first;$target='gpt-6.2-sol'
+    [IO.File]::WriteAllText((Join-Path $dir 'verdicts.jsonl'),(@{pass_id='previous';job='coder';slot='first';category='routine-coding';holder=$incumbent;result=$target}|ConvertTo-Json -Compress)+"`n"+(@{pass_id='quality-pass';job='coder';slot='first';category='routine-coding';holder=$incumbent;result=$target}|ConvertTo-Json -Compress)+"`n")
+    function Get-RouterProposalCategoryVerdict {
+        param($Job,$Category,$Slot,$Holder,$Vendor,$Readings,$Prices,$Frontier,$FloorEffort)
+        [pscustomobject]@{result=$(if($Slot -eq 'first' -and $Job -eq 'coder' -and $Category -eq 'routine-coding'){$target}else{'keep'});evidence='Synthetic independent research';tradeoffs=@()}
     }
     foreach($verdict in @('incumbent_better','candidate_better','no_difference','null')) {
         $tiers=@(foreach($tier in @('standard','hard')) {
@@ -111,6 +111,7 @@ try {
         if($built.changed -and $verdict -ne 'null') {
             $change=(Read-RouterJsonObject $built.proposal).changes[0]
             Assert (@($change.quality_evidence).Count -eq 2 -and $change.quality_evidence[1].tier -ceq 'hard') 'Swap must record quality from both measured tiers'
+            Assert ($change.category -ceq 'routine-coding' -and (Get-RouterEffectiveSlots (Read-RouterJsonObject $built.proposal).jobs.coder routine-coding).first -ceq $target) 'Quality-gated swap applies to its category exception'
         }
     }
 

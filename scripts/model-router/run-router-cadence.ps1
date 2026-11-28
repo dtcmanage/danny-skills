@@ -94,15 +94,26 @@ function Write-RouterCadenceConfirmationVerdicts {
     $verdictDir = Join-Path $state 'roster-proposals'
     New-Item -ItemType Directory -Path $verdictDir -Force | Out-Null
     $verdictPath = Join-Path $verdictDir 'verdicts.jsonl'
+    $history = @(if (Test-Path -LiteralPath $verdictPath) { Get-Content -LiteralPath $verdictPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
     foreach ($job in @($Item.categories | ForEach-Object { Get-RouterCategoryJob $_ } | Sort-Object -Unique)) {
         foreach ($slot in @('first','backup')) {
             if ($job -eq 'illustrator' -and $slot -eq 'backup') { continue }
             $entry = $roster.jobs.$job
-            $vendor = if ($slot -eq 'backup') { if ($entry.first_vendor -eq 'codex') {'claude'} else {'codex'} } else { $null }
             $floorEffort = Get-RouterTierEffort -Entry $entry -Slot $slot -Difficulty standard
-            $verdict = Get-RouterProposalJobVerdict -Job $job -Incumbent $entry.$slot -Vendor $vendor -Readings $readings -Prices $prices -Frontier $frontier -FloorEffort $floorEffort
-            $record = [pscustomobject]@{pass_id=$PassId;job=$job;slot=$slot;result=$verdict.result}
-            [IO.File]::AppendAllText($verdictPath,(($record | ConvertTo-Json -Compress) + "`n"),[Text.UTF8Encoding]::new($false))
+            foreach ($category in @(Get-RouterProposalCategories $job)) {
+                $effective = Get-RouterEffectiveSlots -Entry $entry -Category $category
+                $vendor = if ($slot -eq 'backup') { if ($effective.first_vendor -eq 'codex') {'claude'} else {'codex'} } else { $null }
+                $pin = $entry.PSObject.Properties["${slot}_vendor_pin"]
+                if ($pin) { $vendor = [string]$pin.Value }
+                if ($job -eq 'coder' -and $slot -eq 'first') { $vendor = 'codex' }
+                if ($job -in @('fast','illustrator')) {
+                    $verdict = Get-RouterProposalJobVerdict -Job $job -Incumbent $effective.$slot -Vendor $vendor -Readings $readings -Prices $prices -Frontier $frontier -FloorEffort $floorEffort
+                } else {
+                    $verdict = Get-RouterProposalCategoryVerdict -Job $job -Category $category -Slot $slot -Holder $effective.$slot -Vendor $vendor -Readings $readings -Prices $prices -Frontier $frontier -FloorEffort $floorEffort
+                }
+                $record = Write-RouterProposalCategoryRecord -Path $verdictPath -History $history -PassId $PassId -Job $job -Slot $slot -Category $category -Result $verdict.result -Holder $effective.$slot
+                if ($record) { $history += $record }
+            }
         }
     }
 }
@@ -208,8 +219,8 @@ function Invoke-RouterCadence {
                     if ($item.trigger -eq 'confirmation') {
                         $verdictPath = Join-Path $state 'roster-proposals/verdicts.jsonl'
                         $verdicts = @(if (Test-Path -LiteralPath $verdictPath) { Get-Content -LiteralPath $verdictPath | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 } })
-                        $current = @($verdicts | Where-Object { $_.pass_id -ceq $record.pass_id -and $_.result -ceq $item.model })
-                        $firstWins = @($current | Where-Object { $win = $_; -not @($verdicts | Where-Object { $_.pass_id -cne $record.pass_id -and $_.result -ceq $item.model -and $_.job -ceq $win.job -and $_.slot -ceq $win.slot }).Count })
+                        $current = @($verdicts | Where-Object { $_.PSObject.Properties['category'] -and $_.pass_id -ceq $record.pass_id -and $_.result -ceq $item.model })
+                        $firstWins = @($current | Where-Object { $win = $_; -not @($verdicts | Where-Object { $_.PSObject.Properties['category'] -and $_.pass_id -cne $record.pass_id -and $_.result -ceq $item.model -and $_.job -ceq $win.job -and $_.slot -ceq $win.slot -and $_.category -ceq $win.category }).Count })
                         if ($firstWins.Count) {
                             if (Add-RouterResearchQueueItem -Model $item.model -Trigger followup -Categories @($item.categories) -DueAt $Now.AddDays(7) -Reason 'first-conclusive-confirmation' -Automatic) { $added++ }
                         }
