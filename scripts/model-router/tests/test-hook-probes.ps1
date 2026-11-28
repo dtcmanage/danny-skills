@@ -21,6 +21,10 @@ try {
     @'
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($env:M02_FAKE_CASE -eq 'preflight-failure') {
+    if ($args -contains '--version') { [Console]::Error.Write('fixture version stderr'); exit 19 }
+    if ($args -contains '--help') { [Console]::Error.Write('fixture help stderr'); exit 23 }
+}
 if ($args -contains '--version') { [Console]::Write('fake-claude 1.0'); exit 0 }
 if ($args -contains '--help') { [Console]::Write('--no-session-persistence'); exit 0 }
 function ArgValue([string]$Name) { $i = [array]::IndexOf($argsCopy, $Name); return $argsCopy[$i + 1] }
@@ -43,7 +47,8 @@ if ($promptText.Contains('The real dispatch guard must deny')) {
     $decision = ($payload | ConvertTo-Json -Depth 10 -Compress) | & pwsh -NoProfile -File $hookPath | ConvertFrom-Json
     if ($decision.hookSpecificOutput.permissionDecision -ne 'deny') { throw 'Real guard did not deny' }
     $retry = [regex]::Match($promptText, 'pwsh -NoProfile -File "([^"\\]+/retry-dispatch\.ps1)"')
-    if (-not $retry.Success -or $retry.Value.Length -gt 180 -or $promptText.Contains('-EncodedCommand')) { throw 'Short literal retry missing' }
+    # The literal script call is short; an absolute temp-root prefix has no fixed length.
+    if (-not $retry.Success -or $promptText.Contains('-EncodedCommand')) { throw 'Short literal retry missing' }
     $retryPath = $retry.Groups[1].Value
     $body = Get-Content $retryPath -Raw
     $dispatchPath = [IO.Path]::GetFullPath((Join-Path $env:M05_TEST_SCRIPTS '../dispatch.ps1'))
@@ -148,6 +153,13 @@ exit 0
         }
     }
     . (Join-Path $PSScriptRoot 'probe-native-hooks.ps1')
+    Check 'preflight reports exact failed exits and stderr' {
+        $env:M02_FAKE_CASE = 'preflight-failure'
+        $detail = ''
+        try { Get-ProbeCliInfo $fake $root | Out-Null } catch { $detail = $_.Exception.Message }
+        Assert ($detail -ceq 'Probe CLI version/help preflight failed. --version exit=19; stderr=fixture version stderr; --help exit=23; stderr=fixture help stderr') 'Preflight diagnostics lost exit or stderr'
+        $env:M02_FAKE_CASE = ''
+    }
     Check 'output candidates exact, identity and literal deny' {
         $r = Invoke-ClaudeOutputProbe $fake (Join-Path $root 'output')
         Assert (-not $r.probe_error) ($r | ConvertTo-Json -Depth 8 -Compress)

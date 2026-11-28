@@ -216,6 +216,9 @@ try {
     $roster = $savedRoster | ConvertFrom-Json -Depth 30; Save-Roster
     . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
     $project = Join-Path $fixture.root 'Synthetic Workstation/synthetic-repo'
+    # Legacy provenance uses the source path's owning workstation, not its claimed field.
+    # A temp root inside a real _Claude-Workspace inherits that outer workstation.
+    $expectedWorkstation = if ($project -match '[/\\]_Claude-Workspace[/\\]([^/\\]+)') { $Matches[1] } else { 'Synthetic Workstation' }
     $runFolder = Join-Path $project '.dt-build/tier-fixture/milestones/M04'
     [void][IO.Directory]::CreateDirectory($runFolder)
     $provenance = Join-Path $runFolder 'builder.provenance.json'
@@ -224,7 +227,7 @@ try {
     Write-RouterJsonAtomic $sources @($project)
     Update-RouterOutcomes -SourcesPath $sources | Out-Null
     $indexed = @(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.PSObject.Properties['provenance_path'] })
-    Check ($indexed.Count -eq 1 -and $indexed[0].provenance_path -eq $provenance -and $indexed[0].workstation -eq 'Synthetic Workstation') 'outcome collector indexes provenance for workstation cost split'
+    Check ($indexed.Count -eq 1 -and $indexed[0].provenance_path -eq $provenance -and $indexed[0].workstation -eq $expectedWorkstation) 'outcome collector indexes provenance for workstation cost split'
     foreach ($job in @('coder','deep-thinker')) {
         foreach ($slot in @('first','backup')) { $roster.jobs.$job.PSObject.Properties.Remove("${slot}_efforts") }
     }

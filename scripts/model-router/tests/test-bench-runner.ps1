@@ -294,6 +294,12 @@ if($streamInput -ge 0 -and $args[$streamInput+1] -eq 'stream-json') {
     $env:BENCH_FAKE_SLEEP='yes'
     try {Invoke-BenchCli -Request $claudeRequest -ClaudeResolver {$fakeClaude} -TimeoutMs 800;throw 'accepted timeout'} catch {Assert ($_.Exception.Message.Contains('Claude timeout')) 'Wrong timeout error'}
     $evidence=Get-Content $env:BENCH_FAKE_EVIDENCE -Raw | ConvertFrom-Json
+    # Kill(true)/Dispose can return before the OS has reaped this recorded fixture PID.
+    # Only observe it: a process still present after the bound remains a leak.
+    $timeoutProcess=Get-Process -Id $evidence.pid -ErrorAction SilentlyContinue
+    if ($timeoutProcess) {
+        try { [void]$timeoutProcess.WaitForExit(5000) } finally { $timeoutProcess.Dispose() }
+    }
     Assert (-not (Get-Process -Id $evidence.pid -ErrorAction SilentlyContinue) -and -not (Test-Path $evidence.cwd)) 'Claude timeout process/temp leaked'
     Remove-Item Env:BENCH_FAKE_SLEEP
     try {Invoke-BenchCli -Request $claudeRequest -ClaudeResolver {Join-Path $root 'claude.cmd'};throw 'accepted shim'} catch {Assert ($_.Exception.Message.Contains('cmd shim unsupported')) 'Resolver shim not fail closed'}

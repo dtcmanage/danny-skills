@@ -1,6 +1,7 @@
 """Read-only installed-guard smoke."""
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -45,7 +46,7 @@ def test_installed_guard(name: str, codex: bool, settings: dict[str, str], denie
                "tool_input": {"file_path": str(big)}, "cwd": str(tmp_path),
                "transcript_path": str(tmp_path / "transcript.jsonl")}
     if codex:
-        payload.update(turn_id="t1", tool_name="Bash", tool_input={"command": "cat " + str(big)})
+        payload.update(turn_id="t1", tool_name="Bash", tool_input={"command": "cat " + shlex.quote(str(big))})
     result = subprocess.run([sys.executable, "-B", str(guard)], input=json.dumps(payload),
                             capture_output=True, text=True, env=env, timeout=60)
     assert result.returncode == 0, (name, result.stderr)

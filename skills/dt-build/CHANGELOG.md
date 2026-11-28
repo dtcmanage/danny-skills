@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.71.1
+
+- Quote installed router read-guard fixture paths so the smoke test works with spaced temp roots.
+
 ## 2.71.0
 
 - Require capability/path/hash-checked canonical operator controls; reject unsupported arguments, preserve decision/reason/actor history, withdraw declined queued approvals, and isolate orchestration fixtures from live directors.

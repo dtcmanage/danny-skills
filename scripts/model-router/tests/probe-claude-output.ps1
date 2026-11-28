@@ -115,7 +115,9 @@ function Get-ProbeCliInfo {
     param([string]$Cli, [string]$Root)
     $version = Invoke-ProbeCli $Cli @('--version') '' $Root
     $help = Invoke-ProbeCli $Cli @('--help') '' $Root
-    if ($version.exit_code -ne 0 -or $help.exit_code -ne 0) { throw 'Probe CLI version/help preflight failed.' }
+    if ($version.exit_code -ne 0 -or $help.exit_code -ne 0) {
+        throw ('Probe CLI version/help preflight failed. --version exit={0}; stderr={1}; --help exit={2}; stderr={3}' -f $version.exit_code, $version.stderr, $help.exit_code, $help.stderr)
+    }
     return @{ version = $version.stdout.Trim(); no_persistence = ($help.stdout -match '--no-session-persistence') }
 }
 
