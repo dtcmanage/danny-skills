@@ -182,7 +182,7 @@ throw 'Unexpected fake transport request'
         foreach($raw in @('fail','unknown','pass')) {
             Fresh-State "research-$job-$raw"
             $live=Read-RouterJsonObject (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json')
-            $candidate=if($job -eq 'fast'){'gpt-6-luna'}elseif($job -eq 'coder'){'claude-opus-5-5'}else{'gpt-6.1-sol'}
+            $candidate=if($job -eq 'fast'){'gpt-6-luna'}elseif($job -eq 'coder'){'gpt-6.2-sol'}else{'gpt-6.1-sol'}
             if($job -eq 'fast'){
                 $live.jobs.fast.first='claude-haiku-4-5-20251001';$live.jobs.fast.first_vendor='claude'
                 $live.jobs.fast.backup='gpt-6.1-sol';$live.jobs.fast.backup_vendor='codex'

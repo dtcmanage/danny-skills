@@ -1418,22 +1418,28 @@ def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> lis
         else:
             lines.append(f"a proposed change to the model list is waiting for your OK. Review it: `{cmd}`")
     jobs = _live_roster_jobs(state_dir)
+    roster = _load_json_object(state_dir / "roster.json") or {}
+    category_jobs = roster.get("category_jobs") or (_load_json_object(DEFAULT_ROSTER_PATH) or {}).get("category_jobs", {})
     for mark in compute_active_drift_marks(state_dir):
         job = mark.get("job")
         first = mark.get("model")
-        backup = (jobs.get(job) or {}).get("backup")
         entry = jobs.get(job) or {}
         overrides = entry.get("category_overrides") or {}
-        if first != entry.get("first"):
-            for picks in overrides.values():
-                if (picks.get("first") or {}).get("model") == first:
-                    backup = (picks.get("backup") or {}).get("model", backup)
-                    break
-        if not backup:
+        backups = set()
+        for category, category_job in category_jobs.items():
+            if category_job != job:
+                continue
+            picks = overrides.get(category) or {}
+            if (picks.get("first") or {}).get("model", entry.get("first")) == first:
+                backup = (picks.get("backup") or {}).get("model", entry.get("backup"))
+                if backup:
+                    backups.add(backup)
+        if not backups:
             continue
+        backup_names = ", ".join(friendly_model_name(model) for model in sorted(backups))
         cmd = f'pwsh -NoProfile -File "{approve_script}" -DeclineDrift -Job {job}'
         lines.append(
-            f"the {job} job is on its backup ({friendly_model_name(backup)}) because "
+            f"the {job} job is on its backup ({backup_names}) because "
             f"{friendly_model_name(first)} has been underperforming. Decide: `{cmd}`"
         )
     lines.extend(research_episodes(state_dir, repo_root)[1])

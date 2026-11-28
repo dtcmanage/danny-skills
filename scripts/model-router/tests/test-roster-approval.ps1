@@ -112,10 +112,16 @@ try {
         $proposal.jobs.coder | Add-Member category_overrides ([pscustomobject]@{$category=[pscustomobject]@{backup=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'}}}) -Force
         Write-RouterJsonAtomic $latest.proposal $proposal
         $options = if ($mode -eq 'full') { @('-Approve') } else { @('-Approve','-Jobs','coder') }
+        $keptMarks = @([pscustomobject]@{job='coder';model=$proposal.jobs.coder.first;marked_at='2026-11-28T00:00:00Z'})
+        $keptDeclines = @([pscustomobject]@{job='coder';model=$proposal.jobs.coder.first;declined_at='2026-11-27T00:00:00Z'})
+        Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') $keptMarks
+        Write-RouterJsonAtomic (Join-Path $temp 'drift-declines.json') $keptDeclines
         $null = Invoke-Approval -Options $options
         $retained = (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder
         Assert-True ($LASTEXITCODE -eq 0 -and $retained.tie_evidence.run_id -ceq 'synthetic') "$mode approval retains unchanged pair tie"
         Assert-True ($retained.category_overrides.$category.backup.model -ceq 'gpt-6.2-sol') "$mode approval applies backup-only exception change"
+        Assert-True ((ConvertTo-Json -InputObject @(Read-RouterJsonArray (Join-Path $temp 'drift-marks.json')) -Compress) -ceq (ConvertTo-Json -InputObject $keptMarks -Compress)) "$mode backup-only approval retains drift marks"
+        Assert-True ((ConvertTo-Json -InputObject @(Read-RouterJsonArray (Join-Path $temp 'drift-declines.json')) -Compress) -ceq (ConvertTo-Json -InputObject $keptDeclines -Compress)) "$mode backup-only approval retains drift declines"
     }
     foreach ($field in @('first','backup','first_effort','backup_effort')) {
         foreach ($mode in @('full','subset')) {

@@ -368,6 +368,17 @@ try {
     Add-Pass 'seed-p1'; $null=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Add-Pass 'seed-p2'; $seedTwo=Build-RouterRosterProposal -BenchInvoker $script:fakeBench
     Assert-True ($seedTwo.changed -and (Test-Path -LiteralPath $seedTwo.proposal)) 'approved seed accepts two covered passes without optional pass_id'
+    # A previous approval retains proposal metadata on the source roster.
+    $fixture = New-CategoryScenario 'prior-proposal-envelope'
+    foreach ($field in @('changes','over_cap','conflicts','pass_id','dimension_framework','validation_errors')) {
+        $fixture | Add-Member -Force -NotePropertyName $field -NotePropertyValue 'stale-envelope'
+    }
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $fixture
+    Save-CategoryWin complex-coding
+    Add-Pass 'envelope-p1'; $null = Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    Add-Pass 'envelope-p2'; $replacement = Build-RouterRosterProposal -BenchInvoker $script:fakeBench
+    $envelope = Read-RouterJsonObject $replacement.proposal
+    Assert-True ($replacement.changed -and $envelope.pass_id -eq 'envelope-p2' -and $envelope.dimension_framework -eq 'provisional' -and $envelope.over_cap -is [bool] -and @($envelope.validation_errors | Where-Object { $_ -eq 'stale-envelope' }).Count -eq 0 -and @($envelope.changes | Where-Object { $_.to -eq 'gpt-6.2-sol' }).Count -gt 0 -and @($envelope.conflicts | Where-Object { $_ -is [string] }).Count -eq 0) 'prior approval envelope is replaced with current proposal results'
     Test-CategoryProposals
     Write-Output "TOTAL PASS: $script:passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;

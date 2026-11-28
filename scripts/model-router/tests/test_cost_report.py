@@ -892,8 +892,22 @@ def test_drift_default_holder_uses_default_backup_with_backup_only_exception(tmp
             "math": {"backup": {"model": "gpt-6.2-sol", "vendor": "codex"}}}}}})
     _write_json(tmp_path / "drift-marks.json", [{"job": "deep-thinker", "model": "claude-opus-5-5"}])
     lines = cr.compute_needs_you_lines(tmp_path)
-    assert any("the deep-thinker job is on its backup (gpt-6.1-sol) because Opus 5.5" in line for line in lines)
-    assert not any("gpt-6.2-sol" in line for line in lines)
+    assert any("the deep-thinker job is on its backup (gpt-6.1-sol, gpt-6.2-sol) because Opus 5.5" in line for line in lines)
+
+
+def test_drift_default_holder_omits_unused_default_backup(tmp_path):
+    _write_json(tmp_path / "roster.json", {"approved": True,
+        "category_jobs": {"planning": "deep-thinker", "math": "deep-thinker", "analysis": "deep-thinker"},
+        "jobs": {"deep-thinker": {
+            "first": "claude-opus-5-5", "backup": "gpt-6.1-sol", "category_overrides": {
+                "planning": {"backup": {"model": "gpt-6.2-sol", "vendor": "codex"}},
+                "analysis": {"backup": {"model": "gpt-6-sol", "vendor": "codex"}},
+                "math": {"first": {"model": "gpt-6.2-sol", "vendor": "codex"},
+                         "backup": {"model": "claude-sonnet-5", "vendor": "claude"}}}}}})
+    _write_json(tmp_path / "drift-marks.json", [{"job": "deep-thinker", "model": "claude-opus-5-5"}])
+    line = next(line for line in cr.compute_needs_you_lines(tmp_path) if "underperforming" in line)
+    assert "gpt-6.2-sol" in line and "GPT-6 Sol" in line
+    assert "gpt-6.1-sol" not in line and "Sonnet 5" not in line
 
 
 def test_drift_names_exception_holders_effective_backup(tmp_path):

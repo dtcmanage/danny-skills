@@ -339,13 +339,13 @@ function Build-RouterRosterProposalLocked {
     $capLine = (@($capFits | ForEach-Object { "$($_.job) alone: $(if ($_.fits) {'fits'} else {'exceeds'}) the five-model cap ($($_.count) job-default models)." }) -join ' ')
     if (-not $capFits.Count) { $capLine = 'No model changes remain after conflicts.' }
     if ($capFits.Count -and -not @($capFits | Where-Object fits).Count) { $capLine += ' No single-job approval fits the five-model cap.' }
-    $proposed | Add-Member -NotePropertyName changes -NotePropertyValue @($changes)
-    $proposed | Add-Member -NotePropertyName over_cap -NotePropertyValue $overCap
-    $proposed | Add-Member -NotePropertyName conflicts -NotePropertyValue $conflicts
-    $proposed | Add-Member -NotePropertyName pass_id -NotePropertyValue $passId
-    $proposed | Add-Member -NotePropertyName dimension_framework -NotePropertyValue provisional
+    $proposed | Add-Member -Force -NotePropertyName changes -NotePropertyValue @($changes)
+    $proposed | Add-Member -Force -NotePropertyName over_cap -NotePropertyValue $overCap
+    $proposed | Add-Member -Force -NotePropertyName conflicts -NotePropertyValue $conflicts
+    $proposed | Add-Member -Force -NotePropertyName pass_id -NotePropertyValue $passId
+    $proposed | Add-Member -Force -NotePropertyName dimension_framework -NotePropertyValue provisional
     $errors = @(Test-RouterRoster $proposed)
-    $proposed | Add-Member -NotePropertyName validation_errors -NotePropertyValue $errors
+    $proposed | Add-Member -Force -NotePropertyName validation_errors -NotePropertyValue $errors
     if ($errors.Count -and -not $overCap) { throw "PROPOSAL_INVALID: $($errors -join '; ')" }
     $stem = $Now.ToString('yyyy-MM-ddTHHmmss'); $jsonPath = Join-Path $dir ($stem + '.json'); $reportPath = Join-Path $dir ($stem + '.md')
     [IO.File]::WriteAllText($jsonPath,($proposed | ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new($false))
