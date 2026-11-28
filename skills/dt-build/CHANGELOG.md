@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.68.3
+
+- Fix model router bench lock IO classification and safely reclaim proven orphan runtime nonce files.
+
 ## 2.68.2
 
 - Scale runtime tests to host load, serialize sessions safely, attribute reader writes and move detail into references.

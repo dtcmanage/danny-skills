@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.19.4 (2026-11-27): Fix model router bench lock IO classification.
+
 - 1.19.3 (2026-11-27): Tolerate loaded-host fixture startup and report shared router disk-full failures accurately.
 
 - 1.19.2 (2026-11-27): Deduplicate model router vendor errors for one rolling hour and clear recovered probe alerts on a successful real preflight.

@@ -1,5 +1,7 @@
 # dt-writing-edit changelog
 
+- 0.4.4 (2026-11-27): Fix model router bench lock IO classification.
+
 - 0.4.3 (2026-11-27): Report shared model router outcome disk-full failures directly.
 
 - 0.4.2 (2026-11-27): Deduplicate model router vendor errors for one rolling hour and clear recovered probe alerts on a successful real preflight.

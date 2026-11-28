@@ -66,6 +66,33 @@ try {
         try { Use-RouterOutcomeMutex -StateDir $state -Action { throw 'must not enter action' } } catch { $diskMessage = $_.Exception.Message }
         Assert-True ($script:openAttempts -eq 1 -and $diskMessage -match 'ROUTER_OUTCOME_IO_ERROR.*disk-full' -and $watch.Elapsed.TotalSeconds -lt 5) 'disk-full opening mutex fails once immediately, without contention retry'
     } finally { Set-Item Function:Open-RouterOutcomeMutexHandle -Value $originalOpen }
+    $originalBenchOpen = (Get-Item Function:Open-RouterBenchLockHandle).ScriptBlock
+    try {
+        $benchErrors = @([int]([long]-2147024896 + $(if ($IsWindows) { 112 } else { 28 })), -2147024883)
+        if (-not $IsWindows) { $benchErrors += 28 }
+        foreach ($hresult in $benchErrors) {
+            $script:benchAttempts = 0
+            $script:benchError = $hresult
+            Set-Item Function:Open-RouterBenchLockHandle -Value { param($Path); $script:benchAttempts++; throw [IO.IOException]::new('injected bench open failure', $script:benchError) }
+            $watch.Restart(); $message = ''
+            try { Enter-RouterBenchLock -StateDir $state -Owner @{} -TimeoutMs 10000 } catch { $message = $_.Exception.Message }
+            $kind = if (($hresult -band 0xffff) -eq 13) { 'io-error' } else { 'disk-full' }
+            Assert-True ($script:benchAttempts -eq 1 -and $message -match "ROUTER_BENCH_IO_ERROR.*$kind" -and $watch.Elapsed.TotalSeconds -lt 1) "bench $kind open fails immediately without retry"
+        }
+        $script:benchAttempts = 0
+        Set-Item Function:Open-RouterBenchLockHandle -Value {
+            param($Path)
+            $script:benchAttempts++
+            if ($script:benchAttempts -eq 1) {
+                $code = if ($IsWindows) { 32 } elseif ($IsMacOS) { 35 } else { 11 }
+                throw [IO.IOException]::new('injected contention', [int]([long]-2147024896 + $code))
+            }
+            & $originalBenchOpen -Path $Path
+        }
+        $bench = Enter-RouterBenchLock -StateDir $state -Owner @{} -TimeoutMs 5000
+        try { Assert-True ($script:benchAttempts -eq 2) 'bench retries genuine contention then acquires' }
+        finally { Exit-RouterBenchLock $bench }
+    } finally { Set-Item Function:Open-RouterBenchLockHandle -Value $originalBenchOpen }
     $routerDir = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     $worker = @'
 param([string]$Mode, [string]$Argument)

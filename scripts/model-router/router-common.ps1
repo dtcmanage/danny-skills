@@ -370,6 +370,11 @@ function Test-RouterEffortDeclined {
     return $false
 }
 
+function Open-RouterBenchLockHandle {
+    param([string]$Path)
+    [IO.FileStream]::new($Path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+}
+
 function Enter-RouterBenchLock {
     # One comparison at a time per state root. The research cadence's comparisons (3:33 to 8:26 AM ET on 2026-10-07)
     # overlapped a manual deep-thinker run and both paid in Claude timeouts. A waiter blocks, with a notice on stderr,
@@ -382,8 +387,10 @@ function Enter-RouterBenchLock {
     $watch = [Diagnostics.Stopwatch]::StartNew(); $nextNotice = 0
     $handle = $null
     while ($null -eq $handle) {
-        try { $handle = [IO.FileStream]::new($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        try { $handle = Open-RouterBenchLockHandle -Path $path }
         catch [IO.IOException] {
+            $kind = Get-RouterIOExceptionKind -Exception $_.Exception
+            if ($kind -ne 'contention') { throw "ROUTER_BENCH_IO_ERROR ($kind) opening ${path}: $($_.Exception.Message)" }
             $holder = Read-RouterJsonObject $infoPath
             $description = if ($holder) { "$($holder.trigger) $($holder.job) ($($holder.candidate) vs $($holder.incumbent)) in process $($holder.pid) since $($holder.started_at_utc)" } else { 'another comparison' }
             if ($watch.ElapsedMilliseconds -ge $TimeoutMs) { throw "ROUTER_BENCH_LOCK_TIMEOUT: waited $([int][Math]::Ceiling($watch.ElapsedMilliseconds / 60000)) min for $description" }

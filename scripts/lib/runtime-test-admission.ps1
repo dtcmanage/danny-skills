@@ -91,6 +91,48 @@ function Test-RuntimeLeaseHandleBusy {
     } finally { if ($probe) { $probe.Dispose() } }
 }
 
+function Test-RuntimeLinuxOwnerGone {
+    param([int]$OwnerId, [string]$Start)
+    if (-not $IsLinux -or $OwnerId -le 0 -or $Start -cnotmatch '^linux:[0-9]+$') { return $false }
+    try {
+        $stat = [IO.File]::ReadAllText("/proc/$OwnerId/stat")
+        if ($stat -notmatch '^\d+ \(.*\) ') { return $false }
+        $fields = $stat.Substring($stat.LastIndexOf(')') + 2).Split(' ')
+        if ($fields.Count -lt 20 -or $fields[19] -notmatch '^[0-9]+$') { return $false }
+        return "linux:$($fields[19])" -cne $Start
+    } catch [IO.FileNotFoundException] { return [IO.Directory]::Exists('/proc/self') }
+    catch [IO.DirectoryNotFoundException] { return [IO.Directory]::Exists('/proc/self') }
+    catch { return $false }
+}
+
+function Remove-RuntimeOrphanProofs {
+    # Caller holds the suite mutex. Never unlink that mutex. Old empty proofs
+    # and partial/unknown receipts cannot prove ownership and must be retained.
+    param([string]$Path)
+    if (-not $IsLinux) { return }
+    foreach ($candidate in [IO.Directory]::EnumerateFiles([IO.Path]::GetDirectoryName($Path))) {
+        $prefix = "$Path."
+        if (-not $candidate.StartsWith($prefix, [StringComparison]::Ordinal)) { continue }
+        $suffix = $candidate.Substring($prefix.Length)
+        if ($suffix -cnotmatch '^([0-9a-f]{32})\.lease$') { continue }
+        $nonce = $Matches[1]; $probe = $null; $reader = $null
+        try {
+            if (([IO.File]::GetAttributes($candidate) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+            # Exclusive open protects a live proof even during publication races.
+            $probe = [IO.FileStream]::new($candidate, 'Open', 'ReadWrite', 'None')
+            $reader = [IO.StreamReader]::new($probe, [Text.Encoding]::UTF8, $true, 1024, $true)
+            $receipt = $reader.ReadToEnd() | ConvertFrom-Json -ErrorAction Stop
+            if ($receipt.path -cne $Path -or $receipt.nonce -cne $nonce -or
+                [string]$receipt.pid -notmatch '^[1-9][0-9]*$' -or $receipt.start -cnotmatch '^linux:[0-9]+$') { continue }
+            if (Test-RuntimeLinuxOwnerGone -OwnerId ([int]$receipt.pid) -Start $receipt.start) {
+                # Delete while the exclusive proof handle is still held (Linux).
+                [IO.File]::Delete($candidate)
+            }
+        } catch { } # Busy, unreadable, malformed, or unverifiable: retain.
+        finally { if ($reader) { $reader.Dispose() }; if ($probe) { $probe.Dispose() } }
+    }
+}
+
 function Enter-RuntimeTestSuite {
     param([string]$LockPath)
     $root = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'danny-skills/test-locks'
@@ -141,6 +183,7 @@ function Enter-RuntimeTestSuite {
             $nonce = [guid]::NewGuid().ToString('N')
             $proofPath = "$path.$nonce.lease"
             try {
+                Remove-RuntimeOrphanProofs -Path $path
                 $proof = [IO.FileStream]::new($proofPath, 'CreateNew', 'ReadWrite', 'None')
                 $script:RuntimeTestLease = [DtRuntimeTestLeaseHandle]::new($mutex,$proof,$nonce,$proofPath)
             } catch { $mutex.Dispose(); throw }
@@ -150,7 +193,12 @@ function Enter-RuntimeTestSuite {
             $env:DT_RUNTIME_TEST_OWNER_PATH = $path
             $env:DT_RUNTIME_TEST_OWNER_NONCE = $nonce
             $receipt = @{pid=$env:DT_RUNTIME_TEST_OWNER;start=$env:DT_RUNTIME_TEST_OWNER_START;path=$path;nonce=$env:DT_RUNTIME_TEST_OWNER_NONCE} | ConvertTo-Json -Compress
-            try { [IO.File]::WriteAllText("$path.lease.json", $receipt) }
+            try {
+                $bytes = [Text.Encoding]::UTF8.GetBytes($receipt)
+                $proof.Write($bytes, 0, $bytes.Length)
+                $proof.Flush()
+                [IO.File]::WriteAllText("$path.lease.json", $receipt)
+            }
             catch { $script:RuntimeTestLease.Dispose(); throw }
             return
         } catch [IO.IOException] {
