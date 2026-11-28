@@ -1,6 +1,6 @@
 # dt-build host adapter: Codex
 
-For Codex coordinators (interactive Codex CLI, `codex exec`). Shared rules: `SKILL.md`. Coordinator verbs use `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder> -CoordinatorId <id>`. Operator approve/decline/hold/note/delegate/resume use `invoke-dt-job-control.ps1` as required below.
+For Codex coordinators (interactive Codex CLI, `codex exec`). Shared rules: `SKILL.md`. `dt-job`: `pwsh -NoProfile -File "<skill>/scripts/dt-job.ps1" -Verb <verb> -RunFolder <run-folder>`. For coordinator calls, pass `-CoordinatorId <id>` on every `dt-job` call except `approve` and `resume`.
 
 ## Dispatch
 
@@ -54,7 +54,7 @@ Transcript discovery for `mark-bootstrap`: `resume-bootstrap-measurement.md`.
 - `DT_BUILD_COORDINATOR_ID` is launcher-only. Never export it in an interactive shell; pass `-CoordinatorId <id>` instead.
 - Before power-off/reboot stops, name other builds' running jobs and finish times (`dt-job status`).
 - At approval boundaries: `dt-job await-danny -CoordinatorId <id> -Operation <op> -Message "<decision>" -WaitMinutes 7.5 -CallStartedUtc <call-start-utc> -Json`, foreground tool timeout `600000`. For live directors, block with lease renewal. On `decision=approved`, read the receipt and continue in this SAME coordinator; otherwise checkpoint/end. Never re-wait or self-approve. No director returns immediately; `-AlwaysNotify` follows routing.
-- Director commands: `/dt-build approve <RUN_ID> <operation>`, `/dt-build resume <RUN_ID>`. Approve promptly within authority. `approve -Decline`/`hold -Reason "<why>"` wake without approval; escalate in your chat. All operator approve/decline/hold/note/delegate/resume calls MUST use `<skill>/scripts/invoke-dt-job-control.ps1` from the loaded canonical skill link; it automatically validates target capabilities, resolved path and hash on every call. Never invoke operator controls directly on dt-job or a plugin snapshot (`scripts/dt-job-usage.md`). Follow `operator_notes`; details: `managed-resume.md`.
+- Director: `/dt-build approve <RUN_ID> <operation>`, `/dt-build resume <RUN_ID>`. Approve within authority. Operators MUST use canonical `<skill>/scripts/invoke-dt-job-control.ps1` (capability/path/hash preflight). Decline/hold wakes without approval; escalate in chat. Follow `operator_notes`; see `<skill>/scripts/dt-job-usage.md`.
 
 ## Evidence
 

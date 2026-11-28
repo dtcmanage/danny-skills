@@ -16,7 +16,7 @@ New-Item -ItemType Directory -Path $root -Force | Out-Null
 $evidence = if ($EvidenceDir) { [IO.Path]::GetFullPath($EvidenceDir) } else { Join-Path $root 'evidence' }
 New-Item -ItemType Directory -Path $evidence -Force | Out-Null
 $saved = @{}
-$envNames = @('CODEX_HOME','CLAUDE_CONFIG_DIR','DT_BUILD_STATE_DIR','DT_BUILD_COORDINATOR_ID','DT_BUILD_COORDINATOR_LOCK_HELD','DT_JOB_ID','DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_BUILD_COORDINATOR_LAUNCHER','DT_BUILD_VENDOR_LIMITS_SCRIPT','DT_BUILD_WATCHER_NOW_UTC','DT_BUILD_CTX_SOFT_MARGIN','DT_BUILD_CTX_HARD_MARGIN','DT_BUILD_CTX_CEILING','GIT_INDEX_FILE','DT_SCENARIO_ROOT','DT_SCENARIO_BLOCKED','DT_SCENARIO_FAIL')
+$envNames = @('CODEX_HOME','CLAUDE_CONFIG_DIR','DT_BUILD_HEADLESS','DT_BUILD_STATE_DIR','DT_BUILD_COORDINATOR_ID','DT_BUILD_COORDINATOR_LOCK_HELD','DT_JOB_ID','DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_BUILD_COORDINATOR_LAUNCHER','DT_BUILD_VENDOR_LIMITS_SCRIPT','DT_BUILD_WATCHER_NOW_UTC','DT_BUILD_CTX_SOFT_MARGIN','DT_BUILD_CTX_HARD_MARGIN','DT_BUILD_CTX_CEILING','GIT_INDEX_FILE','DT_SCENARIO_ROOT','DT_SCENARIO_BLOCKED','DT_SCENARIO_FAIL')
 foreach ($name in $envNames) { $saved[$name] = [Environment]::GetEnvironmentVariable($name); [Environment]::SetEnvironmentVariable($name, $null) }
 # Scenarios were written against 40k/70k context margins; pin them (restored with the rest at the end).
 $env:DT_BUILD_CTX_SOFT_MARGIN = '40000'; $env:DT_BUILD_CTX_HARD_MARGIN = '70000'
@@ -24,6 +24,8 @@ $env:CODEX_HOME = Join-Path $root 'codex'
 $env:CLAUDE_CONFIG_DIR = Join-Path $root 'claude'
 $env:DT_MODEL_ROUTER_STATE = Join-Path $root 'router'
 $env:DT_SCENARIO_ROOT = $root
+# Disposable runs must not inherit the interactive session launching this fixture.
+$env:DT_BUILD_HEADLESS = '1'
 $script:commands = 0
 $script:passed = 0
 $script:failed = 0
@@ -693,6 +695,9 @@ function Stop-WatcherProcessTree { param(`$ProcessId) `$script:alive = `$false }
         1..3 | ForEach-Object { Tick }
         Assert ((Launches $r) -eq 0 -and (Dms) -eq $dmBefore) 'consumed event repeated'
         $r = New-Run s10-approval
+        $approvalRegistry = [IO.File]::ReadAllText((Join-Path $env:DT_BUILD_STATE_DIR 'active-runs.json')) | ConvertFrom-Json
+        $approvalRuns = @($approvalRegistry.runs | Where-Object { $_.run_id -ceq $r.id })
+        Assert ($approvalRuns.Count -eq 1 -and $null -eq $approvalRuns[0].director) 'approval fixture registration inherited a director'
         $dmBefore = Dms
         Job @('await-danny','-RunFolder',$r.folder,'-Operation','merge','-Message','Synthetic approval boundary') | Out-Null
         Assert-Dms ($dmBefore + 1) 'expected exactly one approval DM'
