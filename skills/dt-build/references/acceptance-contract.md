@@ -59,6 +59,10 @@ it cannot resolve the recorded commit. `-RunTests` is an explicit current-state 
 `build-acceptance-revalidation.{md,html}`, not the normal finalization path. Missing rows or missing
 commit SHAs are `BLOCKED`, never inferred as implemented. Only the exact stored status `PASS` is a clean
 pass; compound labels such as `PASS_WITH_RUN_STOP` remain `BLOCKED` until a fresh acceptance row supersedes them.
+When a row names a dispatch, missing, unfinished, unreadable or mismatched provenance makes router acceptance
+unknown and blocks a clean PASS in both ledger modes. Retain the reason in both rendered formats and the
+console summary. Revalidation never writes a dispatch verdict. Keep verifier stderr in a separate retained
+log: baseline failures can emit diagnostics while the candidate and its structured result pass.
 
 ## Acceptance row schema
 

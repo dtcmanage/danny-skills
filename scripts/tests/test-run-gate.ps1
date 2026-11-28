@@ -18,13 +18,33 @@ foreach ($suite in @(
 }
 $cheap = @($all | Where-Object Skill -eq '*')
 $build = @(Select-GateSteps -ChangedPaths @('skills/dt-build/scripts/a.ps1'))
-Assert-Gate ($build.Count -eq $cheap.Count + 6) 'dt-build selects its six suites and every cheap check'
+Assert-Gate ($build.Count -eq $cheap.Count + 7) 'dt-build selects its seven suites and every cheap check'
 Assert-Gate (@($build | Where-Object { $_.Skill -notin @('*','dt-build') }).Count -eq 0) 'dt-build excludes unrelated suites'
+foreach ($path in @(
+    'skills/dt-build/scripts/build-acceptance-ledger.ps1',
+    'skills/dt-build/scripts/verify-milestone-acceptance.ps1',
+    'skills/dt-build/scripts/acceptance-baseline.ps1',
+    'skills/dt-build/scripts/acceptance-row-schema.ps1',
+    'skills/dt-build/scripts/invoke-codex-chunk.ps1',
+    'skills/dt-build/scripts/invoke-claude-chunk.ps1',
+    'scripts/model-router/dispatch-evidence.ps1',
+    'scripts/model-router/tests/dispatch-evidence-cases.ps1',
+    'scripts/lib/command-extractor.ps1'
+)) {
+    $selected = @(Select-GateSteps -ChangedPaths @($path))
+    $dispatch = @($selected | Where-Object Name -eq 'router-dispatch')
+    Assert-Gate ($dispatch.Count -eq 1 -and $dispatch[0].Command -match 'test-dispatch.ps1') "dispatch aggregate selected once for $path"
+}
+$dispatchSource = [IO.File]::ReadAllText((Join-Path $repo 'scripts/model-router/tests/test-dispatch.ps1'))
+Assert-Gate ($dispatchSource.Contains("'test-dispatch-real-wrappers.ps1'") -and $dispatchSource.Contains("'test_dispatch_read_guard.py'")) 'dispatch aggregate runs real wrappers and read guard'
+foreach ($consumer in @('dt-review','dt-image-gen','dt-writing-draft','dt-writing-edit')) {
+    Assert-Gate (@(Select-GateSteps -ChangedPaths @("skills/$consumer/SKILL.md") | Where-Object Name -eq 'router-dispatch').Count -eq 1) "shared dispatch consumer $consumer selects aggregate"
+}
 foreach ($path in @('scripts/a.ps1','references/a.md','tools/a.ps1','.ship.json','.claude-plugin/unknown.json','README.md','skills/unknown/a.ps1')) {
     Assert-Gate (@(Select-GateSteps -ChangedPaths @($path)).Count -eq $all.Count) "full gate for shared/unknown $path"
 }
 Assert-Gate (@(Select-GateSteps -ChangedPaths @()).Count -eq $cheap.Count) 'empty diff keeps cheap checks'
-Assert-Gate (@(Select-GateSteps -ChangedPaths @('skills/dt-review/SKILL.md')).Count -eq $cheap.Count + 2) 'review selects both suites'
+Assert-Gate (@(Select-GateSteps -ChangedPaths @('skills/dt-review/SKILL.md')).Count -eq $cheap.Count + 3) 'review selects both suites and shared dispatch coverage'
 Assert-Gate (@(Select-GateSteps -ChangedPaths @('skills/dt-build/a') -Full).Count -eq $all.Count) 'Full overrides selection'
 
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('gate-tests-' + [guid]::NewGuid().ToString('N'))

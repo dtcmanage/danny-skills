@@ -232,7 +232,7 @@ generated_at_utc: 2026-07-12T00:00:00Z
         $code=$LASTEXITCODE; $summary=[IO.File]::ReadAllText($log)
         $stem=if ($revalidate) {'build-acceptance-revalidation'} else {'build-acceptance-ledger'}
         $md=[IO.File]::ReadAllText((Join-Path $outDir ($stem+'.md'))); $html=[IO.File]::ReadAllText((Join-Path $outDir ($stem+'.html')))
-        Check ($code -eq 0 -and $md -match '\| PASS \|' -and $md -match 'router_acceptance: unknown \(provenance_path missing\)' -and $html -match 'router_acceptance: unknown \(provenance_path missing\)' -and $summary -match 'Router acceptance: unknown for dispatch-without-path: provenance_path missing') "acceptance ledger: RunTests=$revalidate PASS has unknown note and summary"
+        Check ($code -eq 1 -and $md -match '\| BLOCKED \|' -and $md -notmatch '\| PASS \|' -and $md -match 'router_acceptance: unknown \(provenance_path missing\)' -and $html -match 'router_acceptance: unknown \(provenance_path missing\)' -and $summary -match 'Router acceptance: unknown for dispatch-without-path: provenance_path missing') "acceptance ledger: RunTests=$revalidate unknown provenance blocks acceptance with note and summary"
     }
     foreach ($shape in 'foreign-main','missing-main-foreign-sidecar') { foreach ($revalidate in $false,$true) {
         $provenance=Join-Path $temp "identity-ledger-$shape-$revalidate.json"
@@ -248,6 +248,20 @@ generated_at_utc: 2026-07-12T00:00:00Z
         $md=[IO.File]::ReadAllText((Join-Path $outDir ($stem+'.md'))); $html=[IO.File]::ReadAllText((Join-Path $outDir ($stem+'.html')))
         $htmlEvidence=if ($revalidate) { $html -match 'router_acceptance: unknown \(dispatch_id mismatch\)' } else { $html -match 'DISPATCH_ACCEPTANCE_ID_MISMATCH' -and $html -match 'BLOCKED' }
         Check ($md -match 'router_acceptance: unknown \(dispatch_id mismatch\)' -and $htmlEvidence -and $summary -match 'Router acceptance: unknown for expected-dispatch: dispatch_id mismatch') "acceptance ledger: $shape RunTests=$revalidate identity mismatch has unknown note and summary"
-        Check ($(if ($revalidate) { $code -eq 0 -and $md -match '\| PASS \|' } else { $code -eq 1 -and $md -match '\| BLOCKED \|' -and $md -match 'DISPATCH_ACCEPTANCE_ID_MISMATCH' })) "acceptance ledger: $shape RunTests=$revalidate retains final identity rejection"
+        Check ($code -eq 1 -and $md -match '\| BLOCKED \|' -and $md -notmatch '\| PASS \|' -and ($revalidate -or $md -match 'DISPATCH_ACCEPTANCE_ID_MISMATCH')) "acceptance ledger: $shape RunTests=$revalidate retains identity rejection"
     } }
+    foreach ($revalidate in $false,$true) {
+        $provenance=Join-Path $temp "verified-ledger-$revalidate.json"
+        New-EvidenceRecord 'verified-dispatch' | ConvertTo-Json | Set-Content $provenance
+        @{milestone_id='M01';status='PASS';commit_sha=(& git -C $repo rev-parse HEAD).Trim();tests='1 fixture passed';dispatch_id='verified-dispatch';provenance_path=$provenance} | ConvertTo-Json -Compress | Set-Content (Join-Path $run 'acceptance-rows.jsonl')
+        $before=[IO.File]::ReadAllText($provenance)
+        $outDir=Join-Path $temp "verified-ledger-$revalidate"
+        $args=@{RoadmapPath=$road;WorkingTree=$repo;OutDir=$outDir;RunFolder=$run;RunTests=$revalidate}
+        & pwsh -NoProfile -File (Join-Path $env:M04_REPO_ROOT 'skills/dt-build/scripts/build-acceptance-ledger.ps1') @args *> ($outDir+'.log')
+        $code=$LASTEXITCODE
+        $stem=if ($revalidate) {'build-acceptance-revalidation'} else {'build-acceptance-ledger'}
+        $md=[IO.File]::ReadAllText((Join-Path $outDir ($stem+'.md'))); $html=[IO.File]::ReadAllText((Join-Path $outDir ($stem+'.html')))
+        Check ($code -eq 0 -and $md -match '\| PASS \|' -and $html -match '>PASS</span>' -and $md -notmatch 'unknown|unparseable' -and $html -notmatch 'unknown|unparseable') "acceptance ledger: RunTests=$revalidate verified dispatch PASS has no unknown note"
+        Check ($(if ($revalidate) { [IO.File]::ReadAllText($provenance) -ceq $before } else { (Read-RouterDispatchEvidence $provenance).independent_acceptance -eq $true })) "acceptance ledger: RunTests=$revalidate preserves verdict write boundary"
+    }
 } finally { $env:DT_MODEL_ROUTER_STATE=$evidenceState }

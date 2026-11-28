@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.71.4
+
+- Keep verifier diagnostics outside ledger JSON, block PASS with unknown dispatch provenance, and cover baseline rendering and dispatch gate selection.
+
 ## 2.71.3
 
 - Honor category-specific coder and reviewer routing, effective backups and effort-aware proposals through the shared model router.

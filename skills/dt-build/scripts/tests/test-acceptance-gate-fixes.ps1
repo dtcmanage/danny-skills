@@ -12,6 +12,17 @@ function Gate {
     $script:gateExit = $LASTEXITCODE
     return ($raw -join "`n" | ConvertFrom-Json)
 }
+function Ledger([string]$Name) {
+    $out = Join-Path $root $Name
+    $summary = & pwsh -NoProfile -File (Join-Path $scripts 'build-acceptance-ledger.ps1') -RoadmapPath "$run/roadmap.md" -WorkingTree $tree -RunFolder $run -OutDir $out -RunTests
+    $script:ledgerExit = $LASTEXITCODE
+    [pscustomobject]@{
+        summary=($summary -join "`n")
+        markdown=[IO.File]::ReadAllText("$out/build-acceptance-revalidation.md")
+        html=[IO.File]::ReadAllText("$out/build-acceptance-revalidation.html")
+        diagnostics=[IO.File]::ReadAllText("$out/verify-M01.stderr.log")
+    }
+}
 try {
     & git -C $tree init -b main -q
     & git -C $tree config user.email fixture@example.test
@@ -37,9 +48,18 @@ try {
     Check (@(Get-AcceptanceRowSchemaErrors $row).Count -eq 0) 'ledger writer accepts evidenced baseline floor'
     $r.command_results[0].baseline.baseline_fingerprint = '0'*64
     Check (@(Get-AcceptanceRowSchemaErrors $row).Count -gt 0) 'ledger refuses a mismatched baseline fingerprint'
+    @{milestone_id='M01';status='PASS';commit_sha=(& git -C $tree rev-parse HEAD).Trim();tests='baseline checks passed'} | ConvertTo-Json -Compress | Set-Content "$run/acceptance-rows.jsonl"
+    $ledger = Ledger identical
+    Check ($ledgerExit -eq 0 -and $ledger.markdown -match '\| PASS \|' -and $ledger.html -match '\[baseline-identical exit=7; main [0-9a-f]{40}\]') 'ledger renders baseline-floor PASS with raw exit and default-branch commit'
+    Check ($ledger.diagnostics -match 'FAILED COMMAND \(exit=7\)' -and $ledger.markdown -notmatch 'unparseable|unknown' -and $ledger.summary -notmatch 'unknown') 'baseline diagnostics retained separately without contaminating PASS or JSON'
+    [IO.File]::WriteAllText("$tree/scripts/check.ps1", "'PASS'; exit 0")
+    $ledger = Ledger repaired
+    Check ($ledgerExit -eq 0 -and $ledger.markdown -match '\| PASS \|' -and $ledger.html -match '\[exit=0\]' -and $ledger.diagnostics -match 'FAILED COMMAND \(exit=7\)') 'candidate improvement passes despite baseline failure diagnostics'
     [IO.File]::WriteAllText("$tree/scripts/check.ps1", "'ASSERT_FAIL: changed failure'; exit 7")
     $r = Gate
     Check ($gateExit -eq 1 -and -not $r.accepted -and -not $r.command_results[0].baseline.identical_failure) 'changed failure blocks end to end'
+    $ledger = Ledger changed
+    Check ($ledgerExit -eq 1 -and $ledger.markdown -match '\| BLOCKED \|' -and $ledger.markdown -match 'verification command failed' -and $ledger.html -notmatch '\[baseline-identical') 'ledger remains fail closed for changed failures after separating diagnostics'
     [IO.File]::WriteAllText("$tree/scripts/check.ps1", "'ASSERT_FAIL: existing failure'; 'ASSERT_FAIL: new failure'; exit 7")
     $r = Gate
     Check ($gateExit -eq 1 -and -not $r.accepted) 'additional failure blocks end to end'

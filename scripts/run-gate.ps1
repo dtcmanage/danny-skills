@@ -24,6 +24,9 @@ function Get-GateSteps {
         @{ Name='dt-job'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-dt-job.ps1'; Slots=6 }
         @{ Name='context-guard'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-context-guard.ps1' }
         @{ Name='build-regressions'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/test-dt-build-regressions.ps1'; Slots=6 }
+        # Dispatch's aggregate includes the real-wrapper ledger fixtures and the
+        # read guard. Acceptance and wrapper consumers live under dt-build.
+        @{ Name='router-dispatch'; Skill='dt-build'; Consumers=@('dt-review','dt-image-gen','dt-writing-draft','dt-writing-edit'); Command='& ./scripts/model-router/tests/test-dispatch.ps1'; Slots=4 }
         @{ Name='versioning-tests'; Skill=''; Command='& ./scripts/test-versioning-policy.ps1' }
         @{ Name='review'; Skill='dt-review'; Command='& ./skills/dt-review/tests/run-tests.ps1' }
         @{ Name='host-adapters'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-host-adapters.ps1' }
@@ -95,7 +98,10 @@ function Select-GateSteps {
         elseif ($path -like '.claude-plugin/*' -and (Test-GateReleaseMetadataOnly -Path $path -BaseRef $BaseRef)) { continue }
         else { $Full = $true } # Shared and unknown paths both require the full gate.
     }
-    @($all | Where-Object { $Full -or $_.Skill -eq '*' -or $skills.ContainsKey($_.Skill) })
+    @($all | Where-Object {
+        $Full -or $_.Skill -eq '*' -or $skills.ContainsKey($_.Skill) -or
+        ($_.ContainsKey('Consumers') -and @($_.Consumers | Where-Object { $skills.ContainsKey($_) }).Count -gt 0)
+    })
 }
 
 function Get-GateChangedPaths {

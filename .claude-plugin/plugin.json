@@ -1,6 +1,6 @@
 {
   "name": "danny-skills",
-  "version": "1.4.11",
+  "version": "1.4.12",
   "description": "Personal skill pack. Pipeline: dt-plan -> dt-visualize-plan -> optional dt-prototype -> dt-review -> dt-roadmap -> dt-build, with dt-visualize-design rendering finalized designs. Authoring: dt-tune (approval-gated SKILL.md amendments). Session hygiene: dt-session-audit (autonomous end-of-session capture across CLAUDE.md / MEMORY.md / CONTEXT.md / glossary.md), dt-memory-hygiene (periodic bloat cleanup), dt-handoff (single-use session continuity). Writing: dt-writing-draft and dt-writing-edit (sourced drafting and editing for letters, papers, copy). Visual: dt-image-gen (raster image generation via Codex's built-in gpt-image-2 engine, no API key). Git: start-work (tier-classified branch/worktree setup), git-sync-features, git-merge-feature (trunk-based feature workflow shared with Codex).",
   "author": {
     "name": "Danny Thai",
@@ -26,6 +26,7 @@
   ],
   "metadata": {
     "changelog": [
+      "1.4.12 dt-build 2.71.4: repair acceptance ledger diagnostic transport and refuse unknown dispatch PASS; model router regression coverage; ship gate selects dispatch suites for dt-build and shared consumers.",
       "1.4.11 1.4.11 dt-build 2.71.3; dt-review 1.19.6; dt-image-gen 0.4.6; dt-writing-draft 0.3.6; dt-writing-edit 0.4.6; shared model router: per-category exceptions, vendor pins, effort-floor comparisons, per-category proposals and truthful downstream reporting; six distinct job-default model cap excludes exception-only models; drift swaps honor vendor pins; version policy declares shared component ownership.",
       "1.4.10 dt-build 2.71.2: evidenced baseline floor, explicit authority resume, reliable job gates and cache-only scratch; dt-roadmap 1.5.4: explicit verification-command extraction.",
       "1.4.9 dt-build 2.71.1: quote router read-guard smoke fixture paths; model router: stabilize timeout and spaced-path tests, expose probe preflight exit/stderr diagnostics; checkout freshness: accept an exited procfs child in the timeout test",

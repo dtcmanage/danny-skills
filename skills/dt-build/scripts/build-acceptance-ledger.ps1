@@ -365,9 +365,11 @@ foreach ($mid in $milestoneIds) {
     # acceptance. Identity remains on the rendered row, never on this evaluator.
     # Moved paths were checked at original acceptance. Today's tree includes
     # later milestones, so it cannot be used to recheck that historical diff.
-    $jsonText = & pwsh -NoProfile @args 2>&1
-    # If the script wrote a usage error to stderr it still exits nonzero; capture
-    # whatever it produced and best-effort parse JSON. Skip rows that fail to parse.
+    # A failed baseline command is expected even when the candidate passes.
+    # Keep its diagnostics as evidence, outside the verifier's JSON protocol.
+    $verifyErrorPath = Join-Path $OutDir ("verify-$mid.stderr.log")
+    $jsonText = & pwsh -NoProfile @args 2> $verifyErrorPath
+    $verifyExitCode = $LASTEXITCODE
     try {
         $verifyResult = $jsonText | ConvertFrom-Json
     } catch {
@@ -392,6 +394,10 @@ foreach ($mid in $milestoneIds) {
     $status = $verifyResult.status
     $blockers = New-Object System.Collections.Generic.List[string]
     foreach ($b in @($verifyResult.blockers)) { $blockers.Add([string]$b) | Out-Null }
+    if ($verifyExitCode -ne 0 -and $status -eq 'PASS') {
+        $blockers.Add("verifier exited $verifyExitCode despite PASS output; diagnostics: $verifyErrorPath") | Out-Null
+        $status = 'BLOCKED'
+    }
     if (-not $implemented) {
         $blockers.Add("implementation evidence invalid for ${mid}: $($commitEvidence.reason)") | Out-Null
         $status = "BLOCKED"
@@ -512,6 +518,13 @@ if ($RunFolder) {
             $ledgerRow | Add-Member -Force -NotePropertyName router_acceptance -NotePropertyValue 'unknown'
             $ledgerRow | Add-Member -Force -NotePropertyName router_acceptance_reason -NotePropertyValue $unknownReason
             $ledgerRow.stored_notes += "router_acceptance: unknown ($unknownReason)"
+            # A known dispatch needs verifiable identity before this ledger can
+            # advertise acceptance, including in current-state revalidation.
+            if ($ledgerRow.status -eq 'PASS') {
+                $ledgerRow.blockers += "router_acceptance: unknown ($unknownReason)"
+                $ledgerRow.status = 'BLOCKED'
+                $ledgerRow.accepted = $false
+            }
             # Final acceptance still runs its existing identity rejection below.
             if ($RunTests -or -not $idMismatch) { continue }
         }
