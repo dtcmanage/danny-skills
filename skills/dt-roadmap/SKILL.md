@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork or Claude Code CLI; requires danny-skills repo present."
 metadata:
-  version: 1.5.3
+  version: 1.5.4
   changelog: "Full changelog relocated to skills/dt-roadmap/CHANGELOG.md (newest first)."
 ---
 
@@ -52,17 +52,19 @@ Do NOT fire for:
 
 The producer is deterministic and filename-agnostic (the design path is passed as `-DesignPath`;
 `design-final-<slug>.md`, legacy `design-final.md`, and `plan-draft.md` all work). It reads three named
-sections from the design and fails closed if a milestone has no runnable command to lift.
+sections from the design and fails closed on unsupported command wrappers; the validator fails any milestone left without an executable command.
 
 1. **Milestone source** — primary: `## Implementation Sequence` (also accepted: `## Implementation Order`, `## Build Sequence`, `## Build Order`, `## Milestone Sequence`). Each top-level numbered list item (`1. ...`, `2. ...`) becomes one milestone, numbered M01, M02, ... in source order. The first sentence of the line becomes the milestone name. If the line leads with a bold title (`**Title.**  detail...`), that bolded title (<= 80 chars) becomes the name instead — so an author may write either a plain lead sentence or a `**Bold title.**` lead and both yield a clean short name. Fallbacks, in order: (a) the first `##`/`###` heading naming a milestone plan (milestone, phase, sequence, build order, implementation plan) — its numbered list, else its child headings; (b) legacy `### Phase ...` / `### Contract Freeze Gate ...` / `### Value Review ...` headings (pre-1.1.0 behavior); (c) numbered top-level deliverable sections (`## 1. <deliverable>`), skipping framing sections such as Overview or Risks. When none yields a milestone, the producer prints `NO_MILESTONES_DERIVABLE: No milestones derivable from design ...` naming every heading it looked for and exits 2 — an explanatory stop, never a stack trace.
 
-2. **Verification commands** — `## Validation Gates` (also accepted: `## Acceptance Tests`, `## Milestone Acceptance Commands`). Each bullet must be tagged with a milestone-id and contain at least one backticked runnable command. The producer lifts every backticked entry verbatim into the verification manifest's `procedure` cell for that milestone. Accepted bullet shapes (ASCII only):
+2. **Verification commands** — `## Validation Gates` (also accepted: `## Acceptance Tests`, `## Milestone Acceptance Commands`). Each bullet must be tagged with a milestone-id and contain at least one backticked direct command. The producer lifts every backticked command or file path verbatim into the verification manifest's `procedure` cell for that milestone. Accepted bullet shapes (ASCII only):
    ```
    - M01: <description>. `pytest tests/backend/test_x.py`
-   - M02 - <description>. `python scripts/foo.py`
-   - [M03] <description>. `pytest tests/test_y.py`
+   - M02 - <description>. `python3 scripts/foo.py`
+   - [M03] <description>. `bash "gate dir/check.sh" --fast`
    ```
-   A "runnable command" is anything `<danny-skills>/scripts/extract-named-artifacts.ps1` returns as an `artifact` or a `command` (see `references/roadmap-schema.md` for the canonical definition). Milestones with no lifted command appear under `## Producer Warnings` in the emitted roadmap; the validator hard-fails them with `VERIFICATION_NAMES_NO_RUNNABLE` so the gap is surfaced before dt-build runs. The producer lifts a wider runner set than the extractor (`python3`/`python3.N`, `bash`, `sh`, `./<path>`, `uv`, `npx`, `pnpm`, `make`, `go`, `cargo`, `.sh` paths) so the command reaches the manifest verbatim; until the shared extractor and dt-build's inline copy accept the same set, pair such a command with a recognized one or a backticked test-file path (for example `python -m pytest tests/test_x.py`) or the validator still fails the milestone.
+   An executable command is a backticked string the shared extractor `<danny-skills>/scripts/extract-named-artifacts.ps1` returns as a `command`: it begins with `pytest`, `python`, `python3`, `python3.N`, `pwsh`, `powershell`, `node`, `npm`, `npx`, `pnpm`, `bun`, `bash`, `sh`, `uv`, `make`, `go` or `cargo` followed by a space or the end, or with `./<path>`. dt-build's acceptance gate runs each one verbatim through PowerShell from the milestone working-tree root, so quoted paths with spaces survive as written. Only commands in a milestone's `procedure` cells run; a file path is presence evidence and never counts as the milestone's command. Milestones with no executable command appear under `## Producer Warnings`; the validator fails them with `VERIFICATION_NO_EXECUTABLE_COMMAND` (plus `VERIFICATION_NAMES_NO_RUNNABLE` when nothing runnable is named).
+
+   Write the command itself, never a wrapper. Tool-call wrappers (`Bash(...)`, `Shell(...)`, `Bash("pytest -q")`), shell preambles (`cd backend && pytest`, `source .venv/bin/activate; pytest`), and env, `sudo` or `$ ` prompt prefixes are not executed by the gate, and the producer never unwraps or rewrites them. It stops with `UNSUPPORTED_COMMAND_WRAPPER` and exits 2, naming each offending milestone and snippet, even when a valid sibling command or file path sits in the same bullet. Prose identifiers in backticks (`tag_clusters`, `parse(rows)`) are ignored. Runners outside the list above (for example `dotnet test`) are not lifted; use a recognized runner such as `bash scripts/test.sh`.
 
 The producer does NOT infer test paths, assign milestones to gates by prose matching, or invent commands. The design author owns concrete test file paths.
 

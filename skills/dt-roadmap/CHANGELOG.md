@@ -1,5 +1,9 @@
 # dt-roadmap Changelog
 
+## 1.5.4
+
+- Reject unsupported verification wrappers at production and intake; require executable procedure commands and prove quoted paths with disposable fixtures.
+
 ## 1.5.3
 
 - Record the exact final release gateCommand and source per milestone; forbid test-runner subsets.

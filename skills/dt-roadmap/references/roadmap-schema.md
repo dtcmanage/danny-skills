@@ -10,7 +10,7 @@ Single canonical schema for the Phase-6 roadmap contract consumed by Phase-7 dt-
 ## Version header
 
 ```yaml
-producer_current_version: 1.2.0
+producer_current_version: 1.3.0
 schema_version: 1
 ```
 
@@ -110,20 +110,22 @@ decisions at build intake before dispatch. Do not treat a legacy sequential chai
 - `MILESTONE_INDEPENDENCE_VIOLATION`: duplicate ids, unknown dependency ids, or milestone lacks chunk coverage.
 - `CHUNK_PARALLELISM_FEASIBILITY_VIOLATION`: invalid chunk routing/entitlement or chunk table cannot support parallel chunk execution.
 - `VERIFICATION_NAMES_NO_RUNNABLE`: a milestone's combined verification surface (its `acceptance-checks` cell in `## Milestones` plus the `procedure` cell of every `chk-*` row whose `milestone-id` matches it in `## Verification Manifest`) names no runnable artifact. Added 1.1.0 to keep the producer in lock-step with the dt-build per-milestone acceptance gate (`<danny-skills>/skills/dt-build/scripts/verify-milestone-acceptance.ps1`).
+- `VERIFICATION_NO_EXECUTABLE_COMMAND`: no `procedure` cell of a `chk-*` row matching the milestone names an executable command. File paths and commands that appear only in `acceptance-checks` do not count: dt-build's gate executes only procedure-cell commands and, with `-RunTests`, blocks a commandless milestone as `NO_COMMAND_NAMED`.
+- `VERIFICATION_UNSUPPORTED_COMMAND_WRAPPER`: an `acceptance-checks` or matching `procedure` cell names command-like text the gate will not execute as written: a tool-call wrapper (`Bash(...)`, `Shell(...)`, or any `Name(...)` around a recognized command), a shell preamble (`cd`/`pushd`/`source`/`export`/`set` followed by `&&`, `||`, `;` or `|`), a control-operator chain whose first part is not a recognized command, or an env assignment, `sudo`, `time`, `nohup`, `exec`, `command`, `env` or `$ `/`> ` prompt prefix in front of one. Reported even when a supported sibling command or artifact masks it, and for unbackticked wrappers whose inner `pytest` the extractor's inline pass would otherwise lift. Never unwrapped.
 
 ## Runnable artifact definition (added 1.1.0)
 
-A "runnable artifact" is anything the shared extractor `<danny-skills>/scripts/extract-named-artifacts.ps1` (byte-identical to the inline `Extract-NamedArtifacts` function inside `<danny-skills>/skills/dt-build/scripts/verify-milestone-acceptance.ps1`) returns as either an `artifacts` entry or a `commands` entry. Concretely, at least one of the following must appear in the milestone's combined verification surface:
+A "runnable artifact" is anything the shared extractor `<danny-skills>/scripts/extract-named-artifacts.ps1` (byte-identical to the inline `Extract-NamedArtifacts` function inside `<danny-skills>/skills/dt-build/scripts/verify-milestone-acceptance.ps1`) returns as either an `artifacts` entry or a `commands` entry:
 
-- A backtick-quoted file path with at least one directory component and an extension in `{py, ts, js, ps1, md, yaml, yml, json, html, sql}`. Example: `` `tests/backend/test_durability_fresh_create_v11.py` ``.
-- A backtick-quoted command beginning with one of `pytest`, `python`, `pwsh`, `powershell`, `node`, `npm`, `bun`. Example: `` `pytest tests/backend/test_durability_populated_v10_to_v11.py` ``.
-- An inline (no-backtick) `pytest <args>` invocation. Example: `Run pytest tests/backend/test_x.py to ...`.
-- An inline (no-backtick) `python <path>` invocation where `<path>` starts with `scripts/`, `backend/`, `workers/`, or `tests/` and ends in `.py`.
+- **Command:** a backtick-quoted string beginning with `pytest`, `python`, `python3`, `python3.N`, `pwsh`, `powershell`, `node`, `npm`, `npx`, `pnpm`, `bun`, `bash`, `sh`, `uv`, `make`, `go` or `cargo` followed by whitespace or the end, or beginning with `./<path>`. Example: `` `python3 -m pytest tests/backend/test_durability_populated_v10_to_v11.py` ``. Also an inline (no-backtick) `pytest <args>` invocation, or `python <path>` where `<path>` starts with `scripts/`, `backend/`, `workers/` or `tests/` and ends in `.py`.
+- **Artifact:** a backtick-quoted file path with at least one directory component and an extension in `{py, ts, js, ps1, sh, md, yaml, yml, json, html, sql}`, or a `tests/`, `scripts/`, `backend/`, `workers/`, `policy/` or `classifier/` path named inside a command. Example: `` `tests/backend/test_durability_fresh_create_v11.py` ``.
 
-The shared extractor is the source-of-truth definition. dt-build's gate consumes the inline copy; dt-roadmap's validator dot-sources the shared helper. Both must remain byte-identical.
+`VERIFICATION_NAMES_NO_RUNNABLE` needs at least one of either on the combined surface. `VERIFICATION_NO_EXECUTABLE_COMMAND` additionally needs a **command** in a matching `procedure` cell, because that is the only text the gate executes. Artifacts stay useful as supplemental evidence: the gate checks every named path is present in the working tree. The gate runs each procedure command verbatim with `pwsh -EncodedCommand` from the working-tree root (`pytest ...` is run as `python -m pytest ...`), so single- or double-quoted paths with spaces survive as written; commands that need another directory name it in their arguments rather than through a `cd` preamble.
+
+The shared extractor is the source-of-truth definition. dt-build's gate consumes the inline copy; dt-roadmap's validator and producer dot-source the shared helper through `scripts/command-intake.ps1`, which adds the wrapper checks without a second runner list. Both extractor copies must remain byte-identical.
 
 ## Compatibility policy
 
 - **Breaking change** (renamed/removed columns, table restructure, changed required semantics): bump `schema_version` major and `producer_current_version` major.
-- **Non-breaking additive change** (new optional column/section, or tightening an existing required cell with an additional check): keep `schema_version` major, bump `producer_current_version` minor. `VERIFICATION_NAMES_NO_RUNNABLE` (1.1.0) is additive enforcement on cells that were already required: any roadmap whose verification surface already named a runnable artifact passes unchanged.
+- **Non-breaking additive change** (new optional column/section, or tightening an existing required cell with an additional check): keep `schema_version` major, bump `producer_current_version` minor. `VERIFICATION_NAMES_NO_RUNNABLE` (1.1.0) is additive enforcement on cells that were already required: any roadmap whose verification surface already named a runnable artifact passes unchanged. `VERIFICATION_NO_EXECUTABLE_COMMAND` and `VERIFICATION_UNSUPPORTED_COMMAND_WRAPPER` tighten the same cells: a roadmap that passed only through a file path, an acceptance-checks-only command or a wrapper now fails at intake, matching what dt-build `-RunTests` already blocked as `NO_COMMAND_NAMED`.
 - dt-build reads this file directly by repo-relative path and must not keep a second copy.

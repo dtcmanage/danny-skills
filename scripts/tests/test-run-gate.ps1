@@ -54,11 +54,11 @@ try {
     '{"name":"fixture","metadata":{"version":"1.0.1"},"plugins":[{"name":"fixture","version":"1.0.1"}]}' | Set-Content (Join-Path $fixture '.claude-plugin/marketplace.json')
     $releasePaths = @('skills/dt-roadmap/SKILL.md','skills/dt-roadmap/CHANGELOG.md','.claude-plugin/plugin.json','.claude-plugin/marketplace.json')
     $roadmap = @(Select-GateSteps -ChangedPaths $releasePaths)
-    Assert-Gate ($roadmap.Count -eq $cheap.Count + 3 -and @($roadmap | Where-Object { $_.Skill -notin @('*','dt-roadmap') }).Count -eq 0) 'roadmap plus plugin release selects its three suites and cheap checks only'
-    Assert-Gate ((@($roadmap | Where-Object Skill -eq 'dt-roadmap').Command -join ' ') -match 'test-hardware-roadmap.ps1' -and (@($roadmap | Where-Object Skill -eq 'dt-roadmap').Command -join ' ') -match 'test-design-coverage.ps1' -and (@($roadmap | Where-Object Skill -eq 'dt-roadmap').Command -join ' ') -match 'test-milestone-sources.ps1') 'catalog includes every roadmap suite'
+    Assert-Gate ($roadmap.Count -eq $cheap.Count + 4 -and @($roadmap | Where-Object { $_.Skill -notin @('*','dt-roadmap') }).Count -eq 0) 'roadmap plus plugin release selects its four suites and cheap checks only'
+    Assert-Gate ((@($roadmap | Where-Object Skill -eq 'dt-roadmap').Command -join ' ') -match 'test-hardware-roadmap.ps1' -and (@($roadmap | Where-Object Skill -eq 'dt-roadmap').Command -join ' ') -match 'test-design-coverage.ps1' -and (@($roadmap | Where-Object Skill -eq 'dt-roadmap').Command -join ' ') -match 'test-milestone-sources.ps1' -and (@($roadmap | Where-Object Skill -eq 'dt-roadmap').Command -join ' ') -match 'test-command-intake.ps1') 'catalog includes every roadmap suite'
     & git -C $fixture add .claude-plugin
     & git -C $fixture commit -qm release
-    Assert-Gate (@(Select-GateSteps -ChangedPaths $releasePaths).Count -eq $cheap.Count + 3) 'committed release fields use merge base too'
+    Assert-Gate (@(Select-GateSteps -ChangedPaths $releasePaths).Count -eq $cheap.Count + 4) 'committed release fields use merge base too'
     '{"name":"changed","version":"1.0.1"}' | Set-Content (Join-Path $fixture '.claude-plugin/plugin.json')
     Assert-Gate (@(Select-GateSteps -ChangedPaths $releasePaths).Count -eq $all.Count) 'plugin non-version field change forces full'
     & git -C $fixture checkout -- .claude-plugin/plugin.json

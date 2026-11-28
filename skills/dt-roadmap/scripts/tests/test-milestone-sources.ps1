@@ -37,7 +37,10 @@ try {
     Check ($r.exit -eq 0) "runner design builds (stderr: $($r.stderr))"
     foreach ($cmd in $runners) { Check ($r.roadmap.Contains('`' + $cmd + '`')) "runner lifted into procedure: $cmd" }
     Check (-not $r.roadmap.Contains('`tag_clusters`')) 'prose backticks stay out of procedure cells'
-    Check ($r.roadmap -notmatch '(?s)Producer Warnings.*no runnable command') 'no missing-command producer warning for Linux runners'
+    # Every runner milestone names an executable command; the path-only `scripts/check.sh` (M12) is
+    # still lifted as supplemental evidence but is the only milestone flagged as missing a command.
+    Check ($r.roadmap -match '(?s)## Producer Warnings.*no executable command[^\n]*\n\n- M12\n(?!- M)') "only the path-only milestone M12 gets the missing-command producer warning"
+    Check ($r.roadmap -match '(?m)^- milestones-missing-commands: 1$') 'producer metadata counts one milestone missing an executable command'
 
     # Fix 2a: a `## Milestones` section with a numbered list.
     $r = Invoke-Builder 'milestones' @'

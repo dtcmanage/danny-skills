@@ -30,6 +30,7 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 . (Join-Path $repoRoot 'scripts\security\redact-secrets.ps1')
 . (Join-Path $repoRoot 'scripts\visualize\mermaid-wrap.ps1')
 . (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1')
+. (Join-Path $scriptDir 'command-intake.ps1')
 . (Join-Path $scriptDir 'design-coverage.ps1')
 . (Join-Path $scriptDir 'dependency-analysis.ps1')
 
@@ -278,20 +279,44 @@ function Parse-MilestonesFromNumberedSections {
 }
 
 function Test-IsRunnableBackticked {
-    # Filters backticked content to only entries the shared extractor
+    # Keeps only backticked entries the shared extractor
     # (scripts/extract-named-artifacts.ps1, which dt-build's gate also uses)
-    # would recognize as a runnable command or named file artifact. Keeps
-    # the producer from lifting prose backticks like `tag_clusters` or
-    # `discovery_active` into procedure cells as if they were commands.
+    # returns as a command or named file artifact, so prose backticks like
+    # `tag_clusters` stay out of procedure cells. Delegates to the extractor
+    # through command-intake.ps1 instead of keeping a second runner regex.
     param([string]$Candidate)
-    if ([string]::IsNullOrWhiteSpace($Candidate)) { return $false }
-    # Runners end at whitespace or end of string, so `python3` / `python3.12` match
-    # (a bare `\b` after `python` cannot sit before the `3`).
-    if ($Candidate -match '^(?:pytest|python(?:3(?:\.\d+)?)?|pwsh|powershell|node|npm|npx|pnpm|bun|bash|sh|uv|make|go|cargo)(?=\s|$)') { return $true }
-    # Path-invoked executables such as `./scripts/check.sh --fast`.
-    if ($Candidate -match '^\./[A-Za-z0-9_./-]+(?=\s|$)') { return $true }
-    if ($Candidate -match '^(?:[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.(?:py|ts|js|ps1|sh|md|yaml|yml|json|html|sql)$') { return $true }
-    return $false
+    return (Test-IsNamedRunnable $Candidate)
+}
+
+function Add-ValidationGateBullet {
+    # Lifts one milestone bullet's runnable backticks and records every
+    # unsupported command wrapper in it. A wrapper fails the build even when a
+    # supported sibling command or artifact in the same bullet would otherwise
+    # mask it; wrappers are never unwrapped or rewritten.
+    param(
+        [hashtable]$Result,
+        [string]$MilestoneId,
+        [string]$Bullet,
+        [System.Collections.Generic.List[string]]$WrapperErrors
+    )
+    if ([string]::IsNullOrWhiteSpace($MilestoneId) -or [string]::IsNullOrWhiteSpace($Bullet)) { return }
+    if ($null -ne $WrapperErrors) {
+        foreach ($w in (Get-UnsupportedCommandWrappers $Bullet)) {
+            $WrapperErrors.Add(('{0}: {1}' -f $MilestoneId, $w)) | Out-Null
+        }
+    }
+    $backticks = [regex]::Matches($Bullet, '`([^`]+)`')
+    if ($backticks.Count -eq 0) { return }
+    if (-not $Result.ContainsKey($MilestoneId)) {
+        $Result[$MilestoneId] = New-Object System.Collections.Generic.List[string]
+    }
+    foreach ($bm in $backticks) {
+        $val = $bm.Groups[1].Value.Trim()
+        if ($val.Length -gt 0 -and (Test-IsUnsupportedWrapperCandidate $val)) { continue }
+        if ($val.Length -gt 0 -and (Test-IsRunnableBackticked -Candidate $val) -and -not $Result[$MilestoneId].Contains($val)) {
+            [void]$Result[$MilestoneId].Add($val)
+        }
+    }
 }
 
 function Parse-ValidationGates {
@@ -301,11 +326,15 @@ function Parse-ValidationGates {
     # or
     #   - M<NN> - <description>. `<command-or-path>`
     # Backticked content inside each bullet is filtered through
-    # Test-IsRunnableBackticked (which mirrors the dt-build extractor's
-    # definition) and only runnable entries are collected for that milestone.
+    # Test-IsRunnableBackticked (the shared extractor's definition) and only
+    # runnable entries are collected for that milestone. Unsupported command
+    # wrappers are appended to -WrapperErrors as "M<NN>: <snippet>".
     # Returns a hashtable: milestone-id -> array of backticked strings (in
     # source order, deduplicated).
-    param([string]$Text)
+    param(
+        [string]$Text,
+        [System.Collections.Generic.List[string]]$WrapperErrors
+    )
 
     $section = Get-SectionBody -Text $Text -Headers @(
         'Validation Gates',
@@ -325,21 +354,7 @@ function Parse-ValidationGates {
         # Accept `- M01:`, `- M01 -`, `- [M01]`, `- (M01)`. Plain ASCII only.
         $bulletMatch = [regex]::Match($line, '^\s*[-*]\s+(?:\[)?(?:\()?\s*(M\d+)\s*(?:\])?(?:\))?\s*[:\-]\s*(.+)$')
         if ($bulletMatch.Success) {
-            # Flush previous bullet.
-            if (-not [string]::IsNullOrWhiteSpace($currentMid) -and -not [string]::IsNullOrWhiteSpace($bulletBuffer)) {
-                $backticks = [regex]::Matches($bulletBuffer, '`([^`]+)`')
-                if ($backticks.Count -gt 0) {
-                    if (-not $result.ContainsKey($currentMid)) {
-                        $result[$currentMid] = New-Object System.Collections.Generic.List[string]
-                    }
-                    foreach ($bm in $backticks) {
-                        $val = $bm.Groups[1].Value.Trim()
-                        if ($val.Length -gt 0 -and (Test-IsRunnableBackticked -Candidate $val) -and -not $result[$currentMid].Contains($val)) {
-                            [void]$result[$currentMid].Add($val)
-                        }
-                    }
-                }
-            }
+            Add-ValidationGateBullet -Result $result -MilestoneId $currentMid -Bullet $bulletBuffer -WrapperErrors $WrapperErrors
             $currentMid = $bulletMatch.Groups[1].Value.ToUpperInvariant()
             $bulletBuffer = $bulletMatch.Groups[2].Value
             continue
@@ -351,40 +366,14 @@ function Parse-ValidationGates {
         }
         # Blank line or non-tagged top-level bullet: flush + reset.
         if ($line -match '^\s*$' -or $line -match '^\s*[-*]\s+') {
-            if (-not [string]::IsNullOrWhiteSpace($currentMid) -and -not [string]::IsNullOrWhiteSpace($bulletBuffer)) {
-                $backticks = [regex]::Matches($bulletBuffer, '`([^`]+)`')
-                if ($backticks.Count -gt 0) {
-                    if (-not $result.ContainsKey($currentMid)) {
-                        $result[$currentMid] = New-Object System.Collections.Generic.List[string]
-                    }
-                    foreach ($bm in $backticks) {
-                        $val = $bm.Groups[1].Value.Trim()
-                        if ($val.Length -gt 0 -and (Test-IsRunnableBackticked -Candidate $val) -and -not $result[$currentMid].Contains($val)) {
-                            [void]$result[$currentMid].Add($val)
-                        }
-                    }
-                }
-            }
+            Add-ValidationGateBullet -Result $result -MilestoneId $currentMid -Bullet $bulletBuffer -WrapperErrors $WrapperErrors
             $currentMid = $null
             $bulletBuffer = ''
             continue
         }
     }
     # Final flush.
-    if (-not [string]::IsNullOrWhiteSpace($currentMid) -and -not [string]::IsNullOrWhiteSpace($bulletBuffer)) {
-        $backticks = [regex]::Matches($bulletBuffer, '`([^`]+)`')
-        if ($backticks.Count -gt 0) {
-            if (-not $result.ContainsKey($currentMid)) {
-                $result[$currentMid] = New-Object System.Collections.Generic.List[string]
-            }
-            foreach ($bm in $backticks) {
-                $val = $bm.Groups[1].Value.Trim()
-                if ($val.Length -gt 0 -and (Test-IsRunnableBackticked -Candidate $val) -and -not $result[$currentMid].Contains($val)) {
-                    [void]$result[$currentMid].Add($val)
-                }
-            }
-        }
-    }
+    Add-ValidationGateBullet -Result $result -MilestoneId $currentMid -Bullet $bulletBuffer -WrapperErrors $WrapperErrors
 
     return $result
 }
@@ -402,7 +391,8 @@ function Format-ProcedureCell {
         return ('Run ' + ($quoted -join '; ') + ' for ' + $MilestoneId + ' and capture PASS/FAIL evidence.')
     }
     # Stub: no commands found. dt-roadmap's validator will fail with
-    # VERIFICATION_NAMES_NO_RUNNABLE so the design author sees the gap.
+    # VERIFICATION_NAMES_NO_RUNNABLE and VERIFICATION_NO_EXECUTABLE_COMMAND
+    # so the design author sees the gap.
     return ('Run acceptance checks for ' + $MilestoneId + ' and capture PASS/FAIL evidence.')
 }
 
@@ -459,7 +449,17 @@ if ($milestones.Count -eq 0) {
     exit 2
 }
 
-$gatesByMilestone = Parse-ValidationGates -Text $redacted
+$gateWrapperErrors = New-Object System.Collections.Generic.List[string]
+$gatesByMilestone = Parse-ValidationGates -Text $redacted -WrapperErrors $gateWrapperErrors
+if ($gateWrapperErrors.Count -gt 0) {
+    # Explanatory stop before any output is written: dt-build runs only direct
+    # commands, so a wrapped command would be skipped (or a different inner
+    # command run) at acceptance. Never unwrap; the design author rewrites it.
+    [Console]::Error.WriteLine(("UNSUPPORTED_COMMAND_WRAPPER: design {0} ## Validation Gates names command-like text dt-build will not execute as written:`n- {1}`n" +
+        "Fix: replace each with the direct command the gate should run, starting with a recognized runner (pytest, python/python3/python3.N, pwsh, powershell, node, npm, npx, pnpm, bun, bash, sh, uv, make, go, cargo) or ./<path>; " +
+        "no Bash(...)/tool-call wrappers, cd/source/export preambles or env/sudo/prompt prefixes. Commands run from the milestone working tree root. Then rerun.") -f @($DesignPath, ($gateWrapperErrors -join "`n- ")))
+    exit 2
+}
 
 # Decisions are authored, never guessed from milestone order or suite names.
 $throughput = Get-SectionBody -Text $redacted -Headers @('Throughput and hardware')
@@ -522,8 +522,10 @@ $surfaceBody = if ($surfaceSection) { $surfaceSection.Body.Trim() } else { 'UNRE
 $dependencyCauses = @($dependencyAnalysis.edges | ForEach-Object { "| $($_.milestone) | $($_.prerequisite) | $($_.cause) |" }) -join "`n"
 
 # Track milestones with no commands so we can surface the gap in the producer
-# output (validator will hard-fail VERIFICATION_NAMES_NO_RUNNABLE on these).
-$milestonesMissingCommands = @($milestonesAugmented | Where-Object { @($_.commands).Count -eq 0 } | ForEach-Object { $_.id })
+# output (validator will hard-fail VERIFICATION_NO_EXECUTABLE_COMMAND on these).
+# A milestone whose lifted entries are only file paths names no executable
+# command; dt-build -RunTests would block it with NO_COMMAND_NAMED.
+$milestonesMissingCommands = @($milestonesAugmented | Where-Object { @(@($_.commands) | Where-Object { Test-IsExecutableCommand $_ }).Count -eq 0 } | ForEach-Object { $_.id })
 
 $chunkRows = New-Object System.Collections.Generic.List[object]
 $milestoneRows = New-Object System.Collections.Generic.List[string]
@@ -586,7 +588,7 @@ $generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
 $chunkRowsMarkdown = ($chunkRows | ForEach-Object { "| $($_.'chunk-slug') | $($_.'milestone-id') | $($_.'model-routing') | $($_.'reference-pack-entitlement') | $($_.execution) | $($_.'test-execution') |" }) -join "`n"
 
 $gapNote = if ($milestonesMissingCommands.Count -gt 0) {
-    "`n## Producer Warnings`n`nThe following milestones have no runnable command lifted from design ## Validation Gates and will fail dt-roadmap's VERIFICATION_NAMES_NO_RUNNABLE check until the design author adds milestone-tagged backticked commands for them:`n`n- " + ($milestonesMissingCommands -join "`n- ") + "`n"
+    "`n## Producer Warnings`n`nThe following milestones have no executable command lifted from design ## Validation Gates (file paths alone are not executed) and will fail dt-roadmap's VERIFICATION_NO_EXECUTABLE_COMMAND check (and VERIFICATION_NAMES_NO_RUNNABLE when nothing runnable is named) until the design author adds milestone-tagged backticked direct commands for them:`n`n- " + ($milestonesMissingCommands -join "`n- ") + "`n"
 } else { "" }
 if ($throughputWarnings.Count) {
     if (-not $gapNote) { $gapNote = "`n## Producer Warnings`n" }

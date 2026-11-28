@@ -32,6 +32,7 @@ function Get-GateSteps {
         @{ Name='roadmap-hardware'; Skill='dt-roadmap'; Command='& ./skills/dt-roadmap/scripts/tests/test-hardware-roadmap.ps1' }
         @{ Name='roadmap-coverage'; Skill='dt-roadmap'; Command='& ./skills/dt-roadmap/scripts/tests/test-design-coverage.ps1' }
         @{ Name='roadmap-sources'; Skill='dt-roadmap'; Command='& ./skills/dt-roadmap/scripts/tests/test-milestone-sources.ps1' }
+        @{ Name='roadmap-command-intake'; Skill='dt-roadmap'; Command='& ./skills/dt-roadmap/scripts/tests/test-command-intake.ps1' }
         @{ Name='merge-feature'; Skill='git-merge-feature'; Command='& ./skills/git-merge-feature/scripts/tests/test-merge-feature.ps1' }
         @{ Name='ship-live-jobs'; Skill='dt-ship'; Command='& ./skills/dt-ship/tests/test-ship-live-jobs.ps1' }
         @{ Name='release-triage'; Skill=''; Command='& ./scripts/tests/test-release-triage.ps1' }

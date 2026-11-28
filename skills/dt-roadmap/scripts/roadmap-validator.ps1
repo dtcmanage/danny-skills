@@ -112,6 +112,7 @@ if ($resolved) { $skillRoot = $resolved.FullName }
 $repoRoot = Split-Path -Parent (Split-Path -Parent $skillRoot)
 
 . (Join-Path $repoRoot 'scripts\extract-named-artifacts.ps1')
+. (Join-Path $scriptDir 'command-intake.ps1')
 . (Join-Path $scriptDir 'design-coverage.ps1')
 . (Join-Path $scriptDir 'dependency-analysis.ps1')
 
@@ -361,7 +362,33 @@ foreach ($m in $milestones) {
     $commandCount = @($extracted.commands).Count
 
     if ($artifactCount -eq 0 -and $commandCount -eq 0) {
-        $errors.Add("VERIFICATION_NAMES_NO_RUNNABLE: milestone '$mid' names no runnable artifact (no backticked file path, no backticked or inline pytest/python/pwsh/node/npm/bun command) across acceptance-checks + matching verification-manifest procedures. dt-build's per-milestone acceptance gate will reject this milestone with 'roadmap verification check names no concrete test file or command'.")
+        $errors.Add("VERIFICATION_NAMES_NO_RUNNABLE: milestone '$mid' names no runnable artifact (no backticked file path and no backticked or inline command with a recognized runner; see roadmap-schema.md) across acceptance-checks + matching verification-manifest procedures. dt-build's per-milestone acceptance gate will reject this milestone with 'roadmap verification check names no concrete test file or command'.")
+    }
+
+    # VERIFICATION_UNSUPPORTED_COMMAND_WRAPPER: dt-build runs only commands the
+    # shared extractor returns. A tool wrapper (`Bash(...)`), shell preamble
+    # (`cd x && pytest`) or env/sudo/prompt prefix is skipped there, or worse,
+    # only an inner command is lifted and run from a different directory. Fail
+    # it here even when a supported sibling command or artifact masks it.
+    $surfaces = @([pscustomobject]@{ where = 'acceptance-checks'; text = $acceptanceText })
+    foreach ($row in @($manifest | Where-Object { ([string]$_.'milestone-id').Trim() -eq $mid.Trim() })) {
+        $surfaces += [pscustomobject]@{ where = ("procedure of '{0}'" -f [string]$row.'check-id'); text = [string]$row.procedure }
+    }
+    foreach ($surface in $surfaces) {
+        foreach ($wrapper in (Get-UnsupportedCommandWrappers $surface.text)) {
+            $errors.Add("VERIFICATION_UNSUPPORTED_COMMAND_WRAPPER: milestone '$mid' $($surface.where) names '$wrapper', which dt-build's acceptance gate will not execute as written. Replace it with the direct command (recognized runner or ./<path>, run from the working tree root); wrappers are not unwrapped.")
+        }
+    }
+
+    # VERIFICATION_NO_EXECUTABLE_COMMAND: dt-build -RunTests executes only
+    # commands named in matching Verification Manifest procedure cells. File
+    # paths are presence evidence, and acceptance-checks commands are never run,
+    # so neither can stand in for a procedure command (gate: NO_COMMAND_NAMED).
+    # Extract per row, exactly as the gate does.
+    $procedureCommandCount = 0
+    foreach ($procedure in $matchingProcedures) { $procedureCommandCount += @((Extract-NamedArtifacts -Text $procedure).commands).Count }
+    if ($procedureCommandCount -eq 0) {
+        $errors.Add("VERIFICATION_NO_EXECUTABLE_COMMAND: milestone '$mid' has no executable command in any matching verification-manifest procedure (found $(@($matchingProcedures).Count) procedure row(s)). Artifact paths and acceptance-checks-only commands are not executed; dt-build -RunTests would block with NO_COMMAND_NAMED. Name a direct command in a chk-* procedure.")
     }
 }
 
