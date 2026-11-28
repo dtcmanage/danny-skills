@@ -246,7 +246,10 @@ function Get-RouterNonComparableModels {
 function Get-RouterStaleReadingModels {
     param([int]$Months = 6, [datetime]$Now = (Get-Date))
     $roster = (Read-RouterRoster).roster
-    $models = @($roster.jobs.PSObject.Properties | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ } | Sort-Object -Unique)
+    $models = @($roster.jobs.PSObject.Properties | ForEach-Object {
+        @($_.Value.first,$_.Value.backup)
+        if ($_.Value.PSObject.Properties['category_overrides']) { $_.Value.category_overrides.PSObject.Properties | ForEach-Object { $_.Value.PSObject.Properties | ForEach-Object { $_.Value.model } } }
+    } | Where-Object { $_ } | Sort-Object -Unique)
     $dir = Join-Path (Get-RouterStateDir) 'readings'
     foreach ($model in $models) {
         $dates = @()
@@ -410,7 +413,8 @@ function Invoke-RouterCategoryResearch {
                     $temporary = [pscustomobject]@{ category=$category; readings=@($combined.ToArray()) }
                     $roster = (Read-RouterRoster).roster
                     $job = Get-RouterCategoryJob -Category $category
-                    $rosterModels = @(@($roster.jobs.$job.first, $roster.jobs.$job.backup) | Where-Object { $_ -and $_ -cne $NewModel } | Sort-Object -Unique)
+                    $effective = Get-RouterEffectiveSlots $roster.jobs.$job $category
+                    $rosterModels = @(@($effective.first, $effective.backup) | Where-Object { $_ -and $_ -cne $NewModel } | Sort-Object -Unique)
                     $keys = @($combined | ForEach-Object { "$($_.benchmark)`n$($_.version)`n$($_.harness)" })
                     $missing = @(Get-RouterNonComparableModels -Category $category -NewModel $NewModel -RosterModels $rosterModels -NewReadings $temporary)
                     if ($missing.Count -and $keys.Count) { $pending += @{ models=@($NewModel) + $missing; benchmarks=@($combined | ForEach-Object benchmark | Sort-Object -Unique) } }

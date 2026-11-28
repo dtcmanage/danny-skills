@@ -105,7 +105,9 @@ try {
                         # Approval writes roster.json, not the source proposal. Keep partial approvals open.
                         $remaining = @($changes | Where-Object {
                             $entry = Get-ProposalValue (Get-ProposalValue $roster 'jobs') $_.job
-                            (Get-ProposalValue $entry $_.slot) -cne $_.to
+                            $category = Get-ProposalValue $_ 'category'
+                            $slots = if ($category) { Get-RouterEffectiveSlots -Entry $entry -Category $category } else { $entry }
+                            (Get-ProposalValue $slots $_.slot) -cne $_.to
                         })
                         $approvedAt = Get-ProposalValue $roster 'approved_at'
                         if ($approvedAt -and [datetimeoffset]$approvedAt -ge [datetimeoffset]$at -and (($changes.Count -gt 0 -and $remaining.Count -eq 0) -or ($changes.Count -eq 0 -and (Get-ProposalValue $roster 'generated_at') -eq (Get-ProposalValue $p 'generated_at')))) {

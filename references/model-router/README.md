@@ -570,3 +570,30 @@ Past reset causes remain unknown. For a separately verified historical vendor en
 `collected_at_utc`, `provenance: "backfill"`, optional explicit `owner_profile`, and
 `data` in the original endpoint shape. It is bounded to that envelope and idempotent;
 it cannot rewrite a newer baseline. Do not recursively scan or hash session trees.
+
+## Category exceptions and vendor pins
+
+Jobs keep their `first` and `backup` defaults. Coder and deep-thinker may also carry
+`category_overrides.<category>.<slot> = {"model": "…", "vendor": "codex|claude"}`.
+Only the named category and slot change; efforts and difficulty tiers come from
+the default slot. Each effective first/backup pair must use different vendors.
+Old rosters without exceptions remain valid.
+
+Optional `first_vendor_pin` and `backup_vendor_pin` constrain both the default
+and every exception on that slot. Coder proposals keep `first_vendor_pin: codex`.
+Approval (including `-Jobs`) and publication retain exceptions and pins verbatim.
+The distinct-model cap counts job defaults only; exception-only models do not
+consume cap space. Proposal reports show both default-only and all-model counts.
+
+`approve-roster.ps1 -Show` lists exceptions and pins. Changing an effective first
+clears that job's drift decisions; `-DeclineDrift -Job <job>` declines every model
+currently marked for that job and records nothing when no mark exists.
+With exceptions, drift uses category-specific backups without proposing a job-wide
+swap; the next research pass decides. Bench a category's effective first with
+`bench/run-bench.ps1 -Category <category> -Models <challenger>`.
+
+Validation reports `ROSTER_OVERRIDE_JOB`, `ROSTER_OVERRIDE_CATEGORY`,
+`ROSTER_OVERRIDE_SHAPE`, `ROSTER_OVERRIDE_FRONTIER`, `ROSTER_OVERRIDE_REDUNDANT`,
+`ROSTER_OVERRIDE_VENDOR`, or `ROSTER_VENDOR_PIN` with the affected job/slot/category.
+`ROSTER_MODEL_CAP` reports when the distinct job-default models exceed the cap.
+See `roster-schema.md` for the exact shape and boundaries.

@@ -298,6 +298,36 @@ try {
         Assert-True ($m02.Count -eq 1 -and $m02[0].independent_acceptance -eq $true) 'legacy acceptance row without status never overrides producer acceptance with a rejection'
         Assert-True ($m06.Count -eq 1 -and $m06[0].pass -eq $true -and $legacyRows.Count -eq 2) 'three rows with one dispatch_id count as one outcome'
     } finally { $env:DT_MODEL_ROUTER_STATE=$stateBeforeLegacy }
+    $script:state = Join-Path $temp 'exception-state'
+    $script:repo = Join-Path $temp 'exception-repo'
+    [IO.Directory]::CreateDirectory($script:repo) | Out-Null
+    $env:DT_MODEL_ROUTER_STATE = $script:state
+    ConvertTo-Json -InputObject @($script:repo) | Set-Content $script:sources
+    $exceptionRoster = Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+    $exceptionRoster.approved = $true
+    $exceptionRoster.approved_at = '2026-11-28T00:00:00Z'
+    $exceptionRoster.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'}}})
+    Write-RouterJsonAtomic (Join-Path $script:state 'roster.json') $exceptionRoster
+    foreach ($category in @('complex-coding','ui-frontend')) {
+        $model = (Get-RouterEffectiveSlots $exceptionRoster.jobs.coder $category).first
+        for ($i=1; $i -le 10; $i++) {
+            Write-Provenance "exception-prior-$category-$i" 'M01' 1 $model $true '2026-08-01T12:00:00Z' 'standard' '' $category
+            Write-Provenance "exception-recent-$category-$i" 'M01' 1 $model ($i -le 5) '2026-09-25T12:00:00Z' 'standard' '' $category
+        }
+    }
+    # Successful outcomes for the exception model in a category it does not hold
+    # must not dilute its UI drift group.
+    for ($i=1; $i -le 10; $i++) { Write-Provenance "exception-other-$i" 'M01' 1 'gpt-6.2-sol' $true '2026-09-25T12:00:00Z' 'standard' '' 'complex-coding' }
+    $result=Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -BenchInvoker { throw 'Exception jobs must not request a bench' }
+    $marks=@(Read-RouterJsonArray (Join-Path $script:state 'drift-marks.json'))
+    Assert-True ($marks.Count -eq 2 -and @($marks | Where-Object { $_.recent_rate -eq 0.5 -and $_.job -eq 'coder' }).Count -eq 2) 'drift groups separate effective holders by model vendor and held categories'
+    Assert-True ($result.requests.Count -eq 0 -and -not $result.proposal -and @($result.alerts | Where-Object message -match 'no swap proposed, the next research pass decides').Count -eq 2) 'all holders on exception job alert without bench or swap'
+    $staged=[pscustomobject]@{identity=(ConvertTo-Json $exceptionRoster.jobs -Compress -Depth 30)}
+    $proposal=Complete-RouterDriftBench -Staged $staged -BenchResults @{coder=[pscustomobject]@{raw_gate='pass';gate='pass';tied=$false;better=$exceptionRoster.jobs.coder.backup}} -Now $script:now
+    Assert-True (-not $proposal) 'completion refuses default and exception marks on job with overrides'
+    $aliasRoster = $exceptionRoster | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $aliasRoster.jobs.coder.category_overrides.'ui-frontend' | Add-Member backup ([pscustomobject]@{model='claude-sonnet-5';vendor='claude'})
+    Assert-True ((ConvertTo-RouterOutcomeModel 'sonnet' $aliasRoster) -ceq 'claude-sonnet-5') 'alias discovery includes override-only models'
     Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $saved

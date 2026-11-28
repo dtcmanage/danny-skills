@@ -18,7 +18,10 @@ function ConvertTo-RouterOutcomeModel {
     $Model = $Model -replace '\s*\(.*$',''
     $Model = $Model -replace '\s*\[\d+[kKmM]\]$',''
     if ($Model -notin @('opus','sonnet','haiku')) { return $Model }
-    $ids = @($Roster.jobs.PSObject.Properties | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ -match "^claude-$Model-" } | Sort-Object -Unique)
+    $ids = @($Roster.jobs.PSObject.Properties | ForEach-Object {
+        @($_.Value.first,$_.Value.backup)
+        if ($_.Value.PSObject.Properties['category_overrides']) { $_.Value.category_overrides.PSObject.Properties | ForEach-Object { $_.Value.PSObject.Properties | ForEach-Object { $_.Value.model } } }
+    } | Where-Object { $_ -match "^claude-$Model-" } | Sort-Object -Unique)
     if ($ids.Count) { return [string]$ids[0] }
     return $Model
 }
@@ -285,30 +288,38 @@ function Update-RouterOutcomesLocked {
     $newMarks = 0
     foreach ($job in @(Get-RouterJobs)) {
         $entry = $roster.jobs.$job
-        $categories = @($roster.category_jobs.PSObject.Properties | Where-Object { $_.Value -eq $job } | ForEach-Object Name)
-        $group = @($eligible | Where-Object { $_.model -eq $entry.first -and $_.category -in $categories -and $_.lane -eq $entry.first_vendor })
-        $recent = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-30) -and ([datetime]$_.at) -le $nowUtc })
-        $prior = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-120) -and ([datetime]$_.at) -lt $nowUtc.AddDays(-30) })
-        $drifting = $false
-        $recentRate = if ($recent.Count -ge 10) { @($recent | Where-Object pass).Count / $recent.Count } else { $null }
-        if ($recent.Count -ge 10 -and $prior.Count -ge 10) {
-            $priorRate = @($prior | Where-Object pass).Count / $prior.Count
-            $drifting = (($priorRate - $recentRate) -ge (0.15 - 1e-9))
-        }
-        $declined = @($priorDeclines | Where-Object { $_.job -eq $job -and $_.model -eq $entry.first })
-        if ($declined.Count -and $drifting) { $declines.Add($declined[0]); continue }
-        $old = @($priorMarks | Where-Object { $_.job -eq $job -and $_.model -eq $entry.first })
-        if (-not $drifting) {
-            if ($old.Count -and ($recent.Count -lt 10 -or (($old[0].prior_rate - $recentRate) -ge (0.15 - 1e-9)))) { $marks.Add($old[0]) }
-            continue
-        }
-        $marks.Add([pscustomobject]@{ model=$entry.first; job=$job; marked_at=$(if ($old.Count) { $old[0].marked_at } else { $nowUtc.ToString('o') }); recent_rate=$recentRate; prior_rate=$priorRate })
-        if (-not $old.Count) {
-            $newMarks++
-            $key = "drift:$($entry.first):${job}:$($nowUtc.ToString('yyyyMM'))"
-            if ($entry.backup) {
-                $alerts.Add([pscustomobject]@{key=$key;message="Model $($entry.first) is drifting for $job. The job now uses its backup $($entry.backup). Proposed change: swap first and backup."})
-            } else { $alerts.Add([pscustomobject]@{key=$key;message="Model $($entry.first) is drifting for $job. No backup is approved; the first choice remains in use."}) }
+        $jobCategories = @($roster.category_jobs.PSObject.Properties | Where-Object { $_.Value -eq $job } | ForEach-Object Name)
+        $hasOverrides = $entry.PSObject.Properties['category_overrides'] -and @($entry.category_overrides.PSObject.Properties).Count -gt 0
+        $holders = @($jobCategories | ForEach-Object { (Get-RouterEffectiveSlots $entry $_).first } | Sort-Object -Unique)
+        foreach ($holder in $holders) {
+            $categories = @($jobCategories | Where-Object { (Get-RouterEffectiveSlots $entry $_).first -ceq $holder })
+            $effective = Get-RouterEffectiveSlots $entry $categories[0]
+            $group = @($eligible | Where-Object { $_.model -eq $holder -and $_.category -in $categories -and $_.lane -eq $effective.first_vendor })
+            $recent = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-30) -and ([datetime]$_.at) -le $nowUtc })
+            $prior = @($group | Where-Object { ([datetime]$_.at) -ge $nowUtc.AddDays(-120) -and ([datetime]$_.at) -lt $nowUtc.AddDays(-30) })
+            $drifting = $false
+            $recentRate = if ($recent.Count -ge 10) { @($recent | Where-Object pass).Count / $recent.Count } else { $null }
+            if ($recent.Count -ge 10 -and $prior.Count -ge 10) {
+                $priorRate = @($prior | Where-Object pass).Count / $prior.Count
+                $drifting = (($priorRate - $recentRate) -ge (0.15 - 1e-9))
+            }
+            $declined = @($priorDeclines | Where-Object { $_.job -eq $job -and $_.model -eq $holder })
+            if ($declined.Count -and $drifting) { $declines.Add($declined[0]); continue }
+            $old = @($priorMarks | Where-Object { $_.job -eq $job -and $_.model -eq $holder })
+            if (-not $drifting) {
+                if ($old.Count -and ($recent.Count -lt 10 -or (($old[0].prior_rate - $recentRate) -ge (0.15 - 1e-9)))) { $marks.Add($old[0]) }
+                continue
+            }
+            $marks.Add([pscustomobject]@{ model=$holder; job=$job; marked_at=$(if ($old.Count) { $old[0].marked_at } else { $nowUtc.ToString('o') }); recent_rate=$recentRate; prior_rate=$priorRate })
+            if (-not $old.Count) {
+                $newMarks++
+                $key = "drift:${holder}:${job}:$($nowUtc.ToString('yyyyMM'))"
+                if ($hasOverrides) {
+                    $alerts.Add([pscustomobject]@{key=$key;message="Model $holder is drifting for $job. The job uses its backup for $($categories -join ', '); no swap proposed, the next research pass decides."})
+                } elseif ($entry.backup) {
+                    $alerts.Add([pscustomobject]@{key=$key;message="Model $($entry.first) is drifting for $job. The job now uses its backup $($entry.backup). Proposed change: swap first and backup."})
+                } else { $alerts.Add([pscustomobject]@{key=$key;message="Model $($entry.first) is drifting for $job. No backup is approved; the first choice remains in use."}) }
+            }
         }
     }
     foreach ($old in $priorMarks) {
@@ -323,7 +334,11 @@ function Update-RouterOutcomesLocked {
         $latest = Read-RouterJsonObject $latestPath
         if ($latest -and $latest.PSObject.Properties['proposal'] -and [string]$latest.proposal -like '*-drift.json') { Remove-Item -LiteralPath $latestPath -Force }
     }
-    $requests = @($marks | Where-Object { $newMarks -gt 0 -and $roster.jobs.($_.job).backup } | ForEach-Object {
+    $requests = @($marks | Where-Object {
+        $entry = $roster.jobs.($_.job)
+        $newMarks -gt 0 -and $entry.backup -and $_.model -ceq $entry.first -and
+        (-not $entry.PSObject.Properties['category_overrides'] -or @($entry.category_overrides.PSObject.Properties).Count -eq 0)
+    } | ForEach-Object {
         $entry = $roster.jobs.($_.job)
         [pscustomobject]@{job=$_.job;candidate=$entry.backup;incumbent=$entry.first;effort=$entry.first_effort}
     })
@@ -341,6 +356,9 @@ function Complete-RouterDriftBench {
     $declines = @(Read-RouterJsonArray (Join-Path $state 'drift-declines.json'))
     $marks = @(Read-RouterJsonArray (Join-Path $state 'drift-marks.json') | Where-Object {
         $mark = $_
+        $entry = $roster.jobs.($_.job)
+        $_.model -ceq $entry.first -and
+        (-not $entry.PSObject.Properties['category_overrides'] -or @($entry.category_overrides.PSObject.Properties).Count -eq 0) -and
         -not @($declines | Where-Object { $_.job -eq $mark.job -and $_.model -eq $mark.model }).Count -and
         $BenchResults.ContainsKey($_.job) -and $BenchResults[$_.job].raw_gate -ne 'unknown' -and $BenchResults[$_.job].gate -notin @('fail','unknown') -and -not ($_.job -in @('fast','coder','deep-thinker') -and $BenchResults[$_.job].raw_gate -eq 'fail') -and -not $BenchResults[$_.job].tied -and $BenchResults[$_.job].better -eq $roster.jobs.($_.job).backup
     })

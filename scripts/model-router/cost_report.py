@@ -1223,7 +1223,7 @@ def compute_pending_roster_proposal(state_dir: Path) -> bool:
         for job in ROUTER_JOBS:
             p = proposal_jobs.get(job) or {}
             entry = live_jobs.get(job) or {}
-            if any(p.get(field) != entry.get(field) for field in ("first", "backup", "first_effort", "backup_effort", "first_efforts", "backup_efforts")):
+            if any(p.get(field) != entry.get(field) for field in ("first", "backup", "first_effort", "backup_effort", "first_efforts", "backup_efforts", "category_overrides", "first_vendor_pin", "backup_vendor_pin")):
                 return True
         return False
     except Exception:
@@ -1422,6 +1422,13 @@ def compute_needs_you_lines(state_dir: Path, repo_root: Path = REPO_ROOT) -> lis
         job = mark.get("job")
         first = mark.get("model")
         backup = (jobs.get(job) or {}).get("backup")
+        entry = jobs.get(job) or {}
+        overrides = entry.get("category_overrides") or {}
+        if first != entry.get("first"):
+            for picks in overrides.values():
+                if (picks.get("first") or {}).get("model") == first:
+                    backup = (picks.get("backup") or {}).get("model", backup)
+                    break
         if not backup:
             continue
         cmd = f'pwsh -NoProfile -File "{approve_script}" -DeclineDrift -Job {job}'

@@ -22,7 +22,7 @@ function Publish-RouterRoster {
         $snapshot.jobs = [ordered]@{}
         foreach ($job in @(Get-RouterJobs)) {
             $entry = [ordered]@{}
-            foreach ($field in @('first','first_vendor','backup','backup_vendor','first_effort','backup_effort','first_efforts','backup_efforts')) {
+            foreach ($field in @('first','first_vendor','backup','backup_vendor','first_effort','backup_effort','first_efforts','backup_efforts','category_overrides','first_vendor_pin','backup_vendor_pin')) {
                 if ($roster.jobs.$job.PSObject.Properties[$field]) { $entry[$field] = $roster.jobs.$job.$field }
             }
             if ($roster.jobs.$job.PSObject.Properties['tie_evidence']) { $entry.tie_evidence = $roster.jobs.$job.tie_evidence }

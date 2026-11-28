@@ -164,6 +164,17 @@ if ($Show) {
     "Current roster ($($current.source)):" | Write-Output
     @(Get-RouterJobs | ForEach-Object { [pscustomobject]@{ job=$_; first_effort=$current.roster.jobs.$_.first_effort; backup_effort=$current.roster.jobs.$_.backup_effort; tiers=$(if ($_ -in @('coder','deep-thinker') -and -not $current.roster.jobs.$_.PSObject.Properties['first_efforts'] -and -not $current.roster.jobs.$_.PSObject.Properties['backup_efforts']) { 'tiers not set' } else { $null }); first=$current.roster.jobs.$_.first; first_standard=(Get-RouterTierEffort $current.roster.jobs.$_ first standard); first_hard=$(if ($_ -in @('coder','deep-thinker')) { Get-RouterTierEffort $current.roster.jobs.$_ first hard } else { $null }); backup=$current.roster.jobs.$_.backup; backup_standard=(Get-RouterTierEffort $current.roster.jobs.$_ backup standard); backup_hard=$(if ($_ -in @('coder','deep-thinker')) { Get-RouterTierEffort $current.roster.jobs.$_ backup hard } else { $null }) } }) | Format-Table -AutoSize | Out-String -Width 400 | Write-Output
     $tieDir = Join-Path $state 'tie-proposals'
+    foreach ($name in @(Get-RouterJobs)) {
+        $entry = $current.roster.jobs.$name
+        foreach ($slot in @('first','backup')) {
+            if ($entry.PSObject.Properties["${slot}_vendor_pin"]) { "$name ${slot}_vendor_pin: $($entry."${slot}_vendor_pin")" | Write-Output }
+        }
+        if ($entry.PSObject.Properties['category_overrides']) {
+            foreach ($category in $entry.category_overrides.PSObject.Properties) {
+                foreach ($slot in $category.Value.PSObject.Properties) { "$name $($category.Name): $($slot.Name) $($slot.Value.model) ($($slot.Value.vendor))" | Write-Output }
+            }
+        }
+    }
     if (Test-Path -LiteralPath $tieDir) {
         foreach ($file in @(Get-ChildItem -LiteralPath $tieDir -Filter '*.json')) {
             $tie = Read-RouterJsonObject $file.FullName
@@ -349,7 +360,13 @@ if ($Show) {
     if ($errors.Count) { throw "Invalid roster proposal: $($errors -join '; ')" }
     Write-RouterApprovalJson $rosterPath $proposal
     Publish-RouterRoster
-    $changed = @(Get-RouterJobs | Where-Object { $before.jobs.$_.first -ne $proposal.jobs.$_.first })
+    $changed = @(Get-RouterJobs | Where-Object {
+        $name = $_
+        $categories = @($before.category_jobs.PSObject.Properties | Where-Object Value -eq $name | ForEach-Object Name)
+        $before.jobs.$name.first -cne $proposal.jobs.$name.first -or @($categories | Where-Object {
+            (Get-RouterEffectiveSlots $before.jobs.$name $_).first -cne (Get-RouterEffectiveSlots $proposal.jobs.$name $_).first
+        }).Count -gt 0
+    })
     if ($changed.Count) {
         Write-RouterApprovalJson $marksPath @((Read-RouterJsonArray -Path $marksPath) | Where-Object { $_.job -notin $changed })
         Write-RouterApprovalJson $declinesPath @((Read-RouterJsonArray -Path $declinesPath) | Where-Object { $_.job -notin $changed })
@@ -364,9 +381,9 @@ if ($Show) {
     'Roster approval cleared. Routing falls back to the default roster with an alert.' | Write-Output
 } else {
     $current = Read-RouterRoster
-    $model = [string]$current.roster.jobs.$Job.first
-    $declines = @((Read-RouterJsonArray -Path $declinesPath) | Where-Object { $_.job -ne $Job -or $_.model -ne $model })
-    $declines += [pscustomobject]@{model=$model;job=$Job;declined_at=(Get-Date).ToUniversalTime().ToString('o')}
+    $models = @((Read-RouterJsonArray -Path $marksPath) | Where-Object job -eq $Job | ForEach-Object model | Sort-Object -Unique)
+    $declines = @((Read-RouterJsonArray -Path $declinesPath) | Where-Object { $_.job -ne $Job -or $_.model -notin $models })
+    foreach ($model in $models) { $declines += [pscustomobject]@{model=$model;job=$Job;declined_at=(Get-Date).ToUniversalTime().ToString('o')} }
     Write-RouterApprovalJson $declinesPath $declines
     Write-RouterApprovalJson $marksPath @((Read-RouterJsonArray -Path $marksPath) | Where-Object { $_.job -ne $Job })
     "Drift declined for $Job." | Write-Output

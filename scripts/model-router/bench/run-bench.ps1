@@ -1,4 +1,4 @@
-param([string[]]$Jobs, [string[]]$Models,
+param([string[]]$Jobs, [string[]]$Models, [string]$Category,
     [ValidateSet('new-model','research','drift','manual')][string]$Trigger='manual',
     [string]$StateDir, [switch]$NoAlerts, [switch]$Json,
     [scriptblock]$Limits, [scriptblock]$CliInvoker)
@@ -475,11 +475,18 @@ if($MyInvocation.InvocationName -ne '.') {
     function Get-RouterStateDir {return $script:cliBenchStateRoot}
     function Get-RouterStatePath {param([string]$Platform) return $script:cliBenchStateRoot}
     $read=Read-RouterRoster
+    if($Category){
+        if($Category -cnotin @(Get-RouterDispatchCategories)){throw "Unknown bench category: $Category"}
+        $categoryJob=Get-RouterCategoryJob $Category
+        if($Jobs -and @($Jobs | Where-Object {$_ -cne $categoryJob}).Count){throw 'Bench category must belong to the selected job.'}
+        $Jobs=@($categoryJob)
+    }
     if(-not $Jobs){$Jobs=Get-RouterJobs}
     $results=foreach($job in $Jobs){
         $entry=$read.roster.jobs.$job
-        $candidates=if($Models){$Models}else{@($entry.first)}
-        foreach($model in $candidates){Invoke-RouterBench -Job $job -Candidate $model -Incumbent $entry.first -Trigger $Trigger -StateDir $StateDir -Limits $Limits -CliInvoker $CliInvoker -NoAlerts:$NoAlerts}
+        $incumbent=if($Category){(Get-RouterEffectiveSlots $entry $Category).first}else{$entry.first}
+        $candidates=if($Models){$Models}else{@($incumbent)}
+        foreach($model in $candidates){Invoke-RouterBench -Job $job -Candidate $model -Incumbent $incumbent -Trigger $Trigger -StateDir $StateDir -Limits $Limits -CliInvoker $CliInvoker -NoAlerts:$NoAlerts}
     }
     if($Json){$results | ConvertTo-Json -Depth 40}else{$results}
 }

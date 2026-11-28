@@ -73,6 +73,8 @@ try {
     @([pscustomobject]@{model='gpt-6.1-sol';job='coder';marked_at='2026-09-28T00:00:00Z'},[pscustomobject]@{model='gpt-6-luna';job='fast';marked_at='2026-09-28T00:00:00Z'}) | ConvertTo-Json -AsArray | Set-Content -LiteralPath (Join-Path $temp 'drift-marks.json')
     $proposal = Read-Seed
     $proposal.jobs.coder.first = 'claude-opus-5-5'; $proposal.jobs.coder.first_vendor = 'claude'
+    # This legacy default-pair swap explicitly opts out of the coder vendor pin.
+    $proposal.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
     $proposal.jobs.coder.backup = 'gpt-6.1-sol'; $proposal.jobs.coder.backup_vendor = 'codex'
     $proposal | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $latest.proposal
     $null = Invoke-Approval -Options @('-Approve')
@@ -106,11 +108,14 @@ try {
     foreach ($mode in @('full','subset')) {
         $proposal = Read-RouterJsonObject (Join-Path $temp 'roster.json')
         $proposal.jobs.coder.PSObject.Properties.Remove('tie_evidence')
+        $category = if ($mode -eq 'full') { 'ui-frontend' } else { 'complex-coding' }
+        $proposal.jobs.coder | Add-Member category_overrides ([pscustomobject]@{$category=[pscustomobject]@{backup=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'}}}) -Force
         Write-RouterJsonAtomic $latest.proposal $proposal
         $options = if ($mode -eq 'full') { @('-Approve') } else { @('-Approve','-Jobs','coder') }
         $null = Invoke-Approval -Options $options
         $retained = (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder
         Assert-True ($LASTEXITCODE -eq 0 -and $retained.tie_evidence.run_id -ceq 'synthetic') "$mode approval retains unchanged pair tie"
+        Assert-True ($retained.category_overrides.$category.backup.model -ceq 'gpt-6.2-sol') "$mode approval applies backup-only exception change"
     }
     foreach ($field in @('first','backup','first_effort','backup_effort')) {
         foreach ($mode in @('full','subset')) {
@@ -214,50 +219,58 @@ try {
     # explicit medium configurations measured by the triggered comparison.
     . (Join-Path $PSScriptRoot '../build-roster.ps1')
     . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
-    function Get-RouterProposalJobVerdict {
-        param($Job,$Incumbent,$Vendor,$Readings,$Prices,$Frontier)
-        [pscustomobject]@{result=$(if($Job -eq 'coder' -and -not $Vendor){$script:researchTarget}else{'keep'});evidence='Synthetic independent research';tradeoffs=@()}
+    function Get-RouterProposalCategoryVerdict {
+        param($Job,$Category,$Slot,$Holder,$Vendor,$Readings,$Prices,$Frontier,$FloorEffort)
+        [pscustomobject]@{result=$(if($Job -eq 'deep-thinker'){if($Slot -eq 'first'){$script:researchTarget}else{$script:researchIncumbent}}else{'keep'});evidence='Synthetic independent research';tradeoffs=@()}
     }
     $readingDir=Join-Path $temp 'readings';[void][IO.Directory]::CreateDirectory($readingDir)
-    [IO.File]::WriteAllText((Join-Path $readingDir 'passes.jsonl'),'{"pass_id":"swap-efforts","categories":["routine-coding"]}'+"`n")
+    [IO.File]::WriteAllText((Join-Path $readingDir 'passes.jsonl'),'{"pass_id":"swap-efforts","categories":["code-review","planning","deep-research","math","analysis","classification-escalation"]}'+"`n")
     foreach($mode in @('drift','research','mismatch')) {
         $swapRoster=$qualityRoster | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
-        $swapRoster.jobs.coder.backup_effort='low'
-        $swapRoster.jobs.coder.backup_efforts.standard='low'
-        $swapRoster.jobs.coder.backup_efforts.hard='medium'
+        $swapRoster.jobs.'deep-thinker'.backup_effort='low'
+        $swapRoster.jobs.'deep-thinker'.backup_efforts.standard='low'
+        $swapRoster.jobs.'deep-thinker'.backup_efforts.hard='medium'
         Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $swapRoster
-        $script:researchTarget=$swapRoster.jobs.coder.backup
+        $script:researchTarget=$swapRoster.jobs.'deep-thinker'.backup
+        $script:researchIncumbent=$swapRoster.jobs.'deep-thinker'.first
         $swapRun=Join-Path $temp "bench/runs/swap-$mode";[void][IO.Directory]::CreateDirectory($swapRun)
         $tiers=@(foreach($tier in @('standard','hard')) {
-            $configs=[pscustomobject]@{candidate=[pscustomobject]@{model=$swapRoster.jobs.coder.backup;effort='medium'};incumbent=[pscustomobject]@{model=$swapRoster.jobs.coder.first;effort='medium'}}
-            $record=[pscustomobject]@{job='coder';tier=$tier;verdict='candidate_better';configurations=$configs;run_id="swap-$mode"}
+            $configs=[pscustomobject]@{candidate=[pscustomobject]@{model=$swapRoster.jobs.'deep-thinker'.backup;effort='medium'};incumbent=[pscustomobject]@{model=$swapRoster.jobs.'deep-thinker'.first;effort='medium'}}
+            $record=[pscustomobject]@{job='deep-thinker';tier=$tier;verdict='candidate_better';configurations=$configs;run_id="swap-$mode"}
             $verdict=$record | ConvertTo-Json -Depth 20 | ConvertFrom-Json
             $verdict | Add-Member -NotePropertyName tasks -NotePropertyValue @([pscustomobject]@{candidate_wins=1;incumbent_wins=0;reps=@()})
-            [pscustomobject]@{job='coder';tier=$tier;configurations=$configs;quality_evidence=$record;quality_verdict=$verdict}
+            [pscustomobject]@{job='deep-thinker';tier=$tier;configurations=$configs;quality_evidence=$record;quality_verdict=$verdict}
         })
-        $bench=Add-TestBenchEvidence ([pscustomobject]@{raw_gate='pass';gate='pass';shadow=$false;tied=$false;better=$swapRoster.jobs.coder.backup;shortfall_tasks=0;tiers=$tiers;report_paths=[pscustomobject]@{markdown='synthetic-swap.md'}})
+        $bench=Add-TestBenchEvidence ([pscustomobject]@{raw_gate='pass';gate='pass';shadow=$false;tied=$false;better=$swapRoster.jobs.'deep-thinker'.backup;shortfall_tasks=0;tiers=$tiers;report_paths=[pscustomobject]@{markdown='synthetic-swap.md'}})
         Write-RouterJsonAtomic (Join-Path $swapRun 'report.json') $bench
         if($mode -eq 'drift') {
-            Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @([pscustomobject]@{job='coder';model=$swapRoster.jobs.coder.first;prior_rate=1;recent_rate=0.5})
+            Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @([pscustomobject]@{job='deep-thinker';model=$swapRoster.jobs.'deep-thinker'.first;prior_rate=1;recent_rate=0.5})
             $staged=[pscustomobject]@{identity=(ConvertTo-Json $swapRoster.jobs -Compress -Depth 30)}
-            $swapPath=Complete-RouterDriftBench -Staged $staged -BenchResults @{coder=$bench} -Now (Get-Date)
+            $swapPath=Complete-RouterDriftBench -Staged $staged -BenchResults @{'deep-thinker'=$bench} -Now (Get-Date)
         } else {
             $history=Join-Path $temp 'roster-proposals/verdicts.jsonl'
-            [IO.File]::WriteAllText($history,(@{pass_id='previous-swap';job='coder';slot='first';result=$script:researchTarget}|ConvertTo-Json -Compress)+"`n"+(@{pass_id='swap-efforts';job='coder';slot='first';result=$script:researchTarget}|ConvertTo-Json -Compress)+"`n")
-            $key="coder/first/$($swapRoster.jobs.coder.backup)/$($swapRoster.jobs.coder.first)"
+            $historyRows=@(foreach($pass in @('previous-swap','swap-efforts')) {
+                foreach($category in @(Get-RouterProposalCategories 'deep-thinker')) {
+                    foreach($slot in @('first','backup')) {
+                        @{pass_id=$pass;job='deep-thinker';slot=$slot;category=$category;result=$(if($slot -eq 'first'){$script:researchTarget}else{$script:researchIncumbent})} | ConvertTo-Json -Compress
+                    }
+                }
+            })
+            [IO.File]::WriteAllText($history,($historyRows -join "`n")+"`n")
+            $key="deep-thinker/first/$($swapRoster.jobs.'deep-thinker'.backup)/$($swapRoster.jobs.'deep-thinker'.first)"
             # The other-vendor slot also has its own measured comparison.
             $reverse=$bench | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
-            $reverse.better=$swapRoster.jobs.coder.first
+            $reverse.better=$swapRoster.jobs.'deep-thinker'.first
             foreach($tierResult in $reverse.tiers) {
                 foreach($configs in @($tierResult.configurations,$tierResult.quality_verdict.configurations,$tierResult.quality_evidence.configurations)) {
-                    $configs.candidate.model=$swapRoster.jobs.coder.first
-                    $configs.incumbent.model=$swapRoster.jobs.coder.backup
+                    $configs.candidate.model=$swapRoster.jobs.'deep-thinker'.first
+                    $configs.incumbent.model=$swapRoster.jobs.'deep-thinker'.backup
                 }
                 $tierResult.quality_evidence.run_id="swap-$mode-reverse"
             }
             $reverseRun=Join-Path $temp "bench/runs/swap-$mode-reverse";[void][IO.Directory]::CreateDirectory($reverseRun)
             Write-RouterJsonAtomic (Join-Path $reverseRun 'report.json') $reverse
-            $reverseKey="coder/backup/$($swapRoster.jobs.coder.first)/$($swapRoster.jobs.coder.backup)"
+            $reverseKey="deep-thinker/backup/$($swapRoster.jobs.'deep-thinker'.first)/$($swapRoster.jobs.'deep-thinker'.backup)"
             $built=Build-RouterRosterProposalLocked -Now (Get-Date) -BenchResults @{$key=$bench;$reverseKey=$reverse} -Notification ([pscustomobject]@{alert=$null})
             $swapPath=$built.proposal
         }
@@ -271,13 +284,41 @@ try {
             Write-RouterJsonAtomic (Join-Path $swapRun 'report.json') $badReport
         }
         $before=[IO.File]::ReadAllText((Join-Path $temp 'roster.json'))
-        $output=@(Invoke-Approval -Options @('-Approve','-Jobs','coder')) -join "`n"
+        $output=@(Invoke-Approval -Options @('-Approve','-Jobs','deep-thinker')) -join "`n"
         if($mode -eq 'mismatch') {
             Assert-True ($LASTEXITCODE -ne 0 -and $output -match 'measured tier' -and [IO.File]::ReadAllText((Join-Path $temp 'roster.json')) -ceq $before) 'Swap mismatching actual measured configuration refuses without mutation'
         } else {
-            Assert-True ($LASTEXITCODE -eq 0 -and (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.coder.first -ceq $swapRoster.jobs.coder.backup) "$mode swap to current backup approves with differing tier efforts: $output"
+            Assert-True ($LASTEXITCODE -eq 0 -and (Read-RouterJsonObject (Join-Path $temp 'roster.json')).jobs.'deep-thinker'.first -ceq $swapRoster.jobs.'deep-thinker'.backup) "$mode swap to current backup approves with differing tier efforts: $output"
         }
     }
+    # Start these approval cases from a clean seed, not the preceding mismatched bench evidence.
+    $null = Invoke-Approval -Options @('-Seed')
+    $latest = Read-RouterJsonObject (Join-Path $temp 'roster-proposals/latest.json')
+    foreach ($options in @(@('-Approve'), @('-Approve','-Jobs','coder'))) {
+        $baseline = Read-Seed
+        $baseline.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
+        $baseline.approved = $true
+        $baseline.approved_at = '2026-11-28T00:00:00Z'
+        Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $baseline
+        $proposal = Read-Seed
+        $proposal.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'}}})
+        Write-RouterJsonAtomic $latest.proposal $proposal
+        Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @(@{job='coder';model=$baseline.jobs.coder.first},@{job='writer';model=$baseline.jobs.writer.first})
+        Write-RouterJsonAtomic (Join-Path $temp 'drift-declines.json') @(@{job='coder';model='gpt-6.2-sol'})
+        $output = @(Invoke-Approval -Options $options) -join "`n"
+        $approved = Read-RouterJsonObject (Join-Path $temp 'roster.json')
+        Assert-True ($LASTEXITCODE -eq 0 -and $approved.jobs.coder.category_overrides.'ui-frontend'.first.model -ceq 'gpt-6.2-sol' -and $approved.jobs.coder.first_vendor_pin -ceq 'codex') "exceptions and pins travel with approval $options : $output"
+        $shared = Read-RouterJsonObject (Join-Path (Get-RouterSharedDir) 'roster.json')
+        Assert-True (($shared.jobs.coder.category_overrides | ConvertTo-Json -Compress -Depth 10) -ceq ($approved.jobs.coder.category_overrides | ConvertTo-Json -Compress -Depth 10) -and $shared.jobs.coder.first_vendor_pin -ceq 'codex') 'publication preserves exceptions and pins verbatim'
+        Assert-True (@(Read-RouterJsonArray (Join-Path $temp 'drift-marks.json') | Where-Object job -eq coder).Count -eq 0 -and @(Read-RouterJsonArray (Join-Path $temp 'drift-declines.json')).Count -eq 0) 'exception-only effective first change clears job drift marks and declines'
+        Assert-True (@(Read-RouterJsonArray (Join-Path $temp 'drift-marks.json') | Where-Object job -eq writer).Count -eq 1) 'other job drift remains'
+        $show = @(Invoke-Approval -Options @('-Show')) -join "`n"
+        Assert-True ($show -match 'coder ui-frontend: first gpt-6.2-sol' -and $show -match 'coder first_vendor_pin: codex') 'show names category exceptions and pins'
+    }
+    Write-RouterJsonAtomic (Join-Path $temp 'drift-marks.json') @(@{job='coder';model='gpt-6.1-sol'},@{job='coder';model='gpt-6.2-sol'},@{job='writer';model='claude-opus-5-5'})
+    $null = Invoke-Approval -Options @('-DeclineDrift','-Job','coder')
+    $declined = @(Read-RouterJsonArray (Join-Path $temp 'drift-declines.json') | Where-Object job -eq coder)
+    Assert-True ($declined.Count -eq 2 -and 'gpt-6.1-sol' -in $declined.model -and 'gpt-6.2-sol' -in $declined.model) 'decline every marked holder of job'
     Write-Output "PASS: $script:passed tests"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState

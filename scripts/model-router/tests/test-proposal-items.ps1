@@ -171,6 +171,20 @@ try {
     Sync-RouterProposalItems -StateDir $state
     Assert-True ($global:LASTEXITCODE -eq 37) 'best-effort hook preserves caller exit code'
     $env:DT_PROPOSAL_CC_FAIL = ''
+    Write-RouterJsonAtomic (Join-Path $state 'drift-declines.json') @()
+    $proposal.pass_id='category-pass'
+    $proposal.changes=@([pscustomobject]@{job='coder';category='ui-frontend';slot='first';from='gpt-6.1-sol';to='gpt-6.2-sol'})
+    $current.jobs.coder.first='gpt-6.2-sol'
+    $current.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6.1-sol';vendor='codex'}}}) -Force
+    Write-RouterJsonAtomic $target $proposal
+    Write-RouterJsonAtomic (Join-Path $state 'roster.json') $current
+    $result=Invoke-Sync
+    Assert-True ($result.added.Count -eq 1) 'matching default does not settle unapplied category change'
+    $current.jobs.coder.category_overrides.'ui-frontend'.first.model='gpt-6.2-sol'
+    $current.jobs.coder.first='gpt-6.1-sol'
+    Write-RouterJsonAtomic (Join-Path $state 'roster.json') $current
+    $result=Invoke-Sync
+    Assert-True ($result.closed.Count -eq 1 -and $result.closed[0].note -like 'Approved * ET.') 'effective exception settles category change while default differs'
     Write-Output "All $script:passed proposal item tests passed."
 } finally {
     Exit-RouterTestCodexHome $fixture

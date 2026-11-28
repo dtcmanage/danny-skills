@@ -860,6 +860,52 @@ def test_needs_you_active_drift_mark_names_job_and_backup(tmp_path):
     assert "-DeclineDrift -Job coder" in lines[1]
 
 
+def test_pending_proposal_compares_category_exceptions(tmp_path):
+    jobs = {"coder": {"first": "gpt-6.2-sol", "backup": "claude-opus-5-5"}}
+    proposal = tmp_path / "roster-proposals" / "next.json"
+    _write_json(tmp_path / "roster.json", {"approved": True, "jobs": jobs})
+    jobs["coder"]["category_overrides"] = {
+        "ui-frontend": {"first": {"model": "gpt-6.1-sol", "vendor": "codex"}}}
+    _write_json(proposal, {"jobs": jobs})
+    _write_json(tmp_path / "roster-proposals" / "latest.json", {"proposal": str(proposal)})
+    assert cr.compute_pending_roster_proposal(tmp_path)
+    _write_json(tmp_path / "roster.json", {"approved": True, "jobs": jobs})
+    assert not cr.compute_pending_roster_proposal(tmp_path)
+
+
+@pytest.mark.parametrize("field,vendor", [("first_vendor_pin", "codex"), ("backup_vendor_pin", "claude")])
+def test_pending_proposal_compares_vendor_pins(tmp_path, field, vendor):
+    jobs = {"coder": {"first": "gpt-6.2-sol", "backup": "claude-opus-5-5"}}
+    proposal = tmp_path / "roster-proposals" / "next.json"
+    _write_json(tmp_path / "roster.json", {"approved": True, "jobs": jobs})
+    jobs["coder"][field] = vendor
+    _write_json(proposal, {"jobs": jobs})
+    _write_json(tmp_path / "roster-proposals" / "latest.json", {"proposal": str(proposal)})
+    assert cr.compute_pending_roster_proposal(tmp_path)
+    _write_json(tmp_path / "roster.json", {"approved": True, "jobs": jobs})
+    assert not cr.compute_pending_roster_proposal(tmp_path)
+
+
+def test_drift_default_holder_uses_default_backup_with_backup_only_exception(tmp_path):
+    _write_json(tmp_path / "roster.json", {"approved": True, "jobs": {"deep-thinker": {
+        "first": "claude-opus-5-5", "backup": "gpt-6.1-sol", "category_overrides": {
+            "math": {"backup": {"model": "gpt-6.2-sol", "vendor": "codex"}}}}}})
+    _write_json(tmp_path / "drift-marks.json", [{"job": "deep-thinker", "model": "claude-opus-5-5"}])
+    lines = cr.compute_needs_you_lines(tmp_path)
+    assert any("the deep-thinker job is on its backup (gpt-6.1-sol) because Opus 5.5" in line for line in lines)
+    assert not any("gpt-6.2-sol" in line for line in lines)
+
+
+def test_drift_names_exception_holders_effective_backup(tmp_path):
+    _write_json(tmp_path / "roster.json", {"approved": True, "jobs": {"deep-thinker": {
+        "first": "claude-opus-5-5", "backup": "gpt-6.1-sol", "category_overrides": {
+            "math": {"first": {"model": "gpt-6.2-sol", "vendor": "codex"},
+                     "backup": {"model": "claude-sonnet-5", "vendor": "claude"}}}}}})
+    _write_json(tmp_path / "drift-marks.json", [{"job": "deep-thinker", "model": "gpt-6.2-sol"}])
+    lines = cr.compute_needs_you_lines(tmp_path)
+    assert any("Sonnet 5" in line and "gpt-6.2-sol" in line for line in lines)
+
+
 def test_needs_you_declined_drift_mark_is_excluded(tmp_path):
     state = tmp_path / "state"
     _write_json(state / "drift-marks.json", [{"model": "gpt-6-sol", "job": "coder", "marked_at": "2026-09-28T00:00:00Z"}])

@@ -201,6 +201,14 @@ try {
         [void](Resolve-CodexModel -Category mechanical -CachePath $cachePath -Strict)
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:DT_MODEL_ROUTER_STATE 'research-queue.json'))) 'Resolve-CodexModel lookup does not check for releases'
     } finally { $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $transportPath }
+    $exceptionRoster = Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+    $exceptionRoster.approved = $true
+    $exceptionRoster.approved_at = '2026-11-28T00:00:00Z'
+    $exceptionRoster.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{backup=[pscustomobject]@{model='claude-sonnet-5';vendor='claude'}}})
+    Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $exceptionRoster
+    $script:comparisonJobs.Clear()
+    $count = Invoke-RouterNewModelComparisons -Model 'claude-sonnet-5' -Categories @('routine-coding','ui-frontend','long-form-writing')
+    Assert-True ($count -eq 1 -and $script:comparisonJobs.Count -eq 1 -and $script:comparisonJobs[0] -like 'new-model/writer/*') 'override holder skips whole job but still compares other jobs'
     Write-Output "SUMMARY: $script:passed passed"
 } finally {
     $env:DT_MODEL_ROUTER_CLAUDE_CREDENTIALS = $priorClaudeCredentials

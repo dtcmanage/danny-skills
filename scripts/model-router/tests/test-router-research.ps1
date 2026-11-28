@@ -378,6 +378,29 @@ if($args -contains '--fail'){[Console]::Error.Write($text);exit 9}
     $eligible = @(Get-Content $qualityPath | ConvertFrom-Json | Where-Object { $_.category -eq 'complex-coding' -and $_.attempt -eq 1 -and $_.failure_category -notin @('environment','tooling') -and ([datetime]$_.at) -ge [datetime]'2026-09-02T12:00:00Z' })
     Assert-True ($eligible.Count -eq 10 -and @($eligible | Where-Object pass).Count -eq 9) 'quality denominator excludes diagnosed research failures exactly: 9 of 10'
     Assert-True ((Update-RouterOutcomes -Now ([datetime]'2026-10-02T12:00:00Z') -SourcesPath $sourcesPath).new_records -eq 0 -and @(Get-Content $qualityPath | ConvertFrom-Json | Where-Object source -eq 'research').Count -eq 2) 'idempotent outcomes import retains both research failures'
+    $exceptionState=Join-Path $temp 'exception-research'
+    $env:DT_MODEL_ROUTER_STATE=$exceptionState
+    $exceptionRoster=Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+    $exceptionRoster.approved=$true
+    $exceptionRoster.approved_at='2026-11-28T00:00:00Z'
+    $exceptionRoster.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'}}})
+    Write-RouterJsonAtomic (Join-Path $exceptionState 'roster.json') $exceptionRoster
+    Assert-True ('gpt-6.2-sol' -in @(Get-RouterStaleReadingModels -Now ([datetime]'2027-05-01'))) 'stale readings include override-only model'
+    $script:releaseCalls.Clear()
+    $script:RouterResearchInvoker={param($category,$lane,$prompt)
+        $script:releaseCalls.Add([pscustomobject]@{lane=$lane;prompt=$prompt})
+        Fixture $category 'gpt-new' '2026-10-06' 91 | ConvertTo-Json -Depth 20
+    }
+    $null=Invoke-RouterCategoryResearch -Categories @('ui-frontend') -Models @('gpt-new') -NewModel 'gpt-new' -Trigger release -Lane claude
+    Assert-True ($script:releaseCalls.Count -eq 2 -and $script:releaseCalls[1].prompt -match 'gpt-6.2-sol' -and $script:releaseCalls[1].prompt -notmatch 'gpt-6.1-sol') 'release comparability follows effective category models'
+    . (Join-Path $PSScriptRoot '../run-router-cadence.ps1')
+    Assert-True ('routine-coding' -in @(Get-RouterCadenceJobCategories -Model gpt-6.2-sol -Roster $exceptionRoster)) 'override holder belongs to entire job for cadence'
+    $script:queuedModels=@()
+    function Invoke-RouterModelCheck { [pscustomobject]@{new_models=@()} }
+    function Invoke-RouterCategoryResearch {param($Categories,$Models,$NewModel,$Trigger,$Lane,$Now) $script:queuedModels=@($Models); return $null}
+    Write-RouterJsonAtomic (Join-Path $exceptionState 'research-queue.json') @(@{id='exception-queue';model='gpt-new';trigger='release';categories=@('routine-coding');due_at='2026-09-01T00:00:00Z';reason='test'})
+    $null=Invoke-RouterCadence -Now ([datetime]'2026-10-02T05:00:00Z')
+    Assert-True ('gpt-6.2-sol' -in $script:queuedModels -and $exceptionRoster.jobs.coder.first -in $script:queuedModels) 'queue includes exception and default models for participating jobs'
     Write-Output "SUMMARY: PASS ($script:passed checks)"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $priorState; $env:DT_MODEL_ROUTER_ALERT_TRANSPORT = $priorAlerts; $env:DT_MODEL_ROUTER_CODEX_SESSIONS = $priorSessions

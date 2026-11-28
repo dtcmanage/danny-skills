@@ -320,6 +320,12 @@ if($streamInput -ge 0 -and $args[$streamInput+1] -eq 'stream-json') {
     Assert ($defaults.Count -eq 1 -and $defaults[0].configurations.candidate.model -eq 'gpt-6.1-sol' -and $defaults[0].configurations.incumbent.model -eq 'gpt-6.1-sol') 'CLI StateDir default model ignored'
     $full=@(& $runner -StateDir $root -Models gpt-6-luna -Limits {param($v) @{blocked=$true}} -NoAlerts)
     Assert ($full.Count -eq 5) 'CLI full bank job scope'
+    $roster.jobs.coder | Add-Member category_overrides ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{first=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'}}}) -Force
+    Write-RouterJsonAtomic (Join-Path $root 'roster.json') $roster
+    $categoryRows=@(& $runner -StateDir $root -Category ui-frontend -Models gpt-6.1-sol -Limits {param($v) @{blocked=$true}} -NoAlerts)
+    Assert ($categoryRows.Count -eq 1 -and $categoryRows[0].configurations.incumbent.model -ceq 'gpt-6.2-sol') 'Category CLI benches effective first of inferred job'
+    $ordinaryRows=@(& $runner -StateDir $root -Category routine-coding -Models gpt-6.2-sol -Limits {param($v) @{blocked=$true}} -NoAlerts)
+    Assert ($ordinaryRows[0].configurations.incumbent.model -ceq $roster.jobs.coder.first) 'Category without exception benches default first'
     try {& $runner -StateDir $root -Trigger monthly;throw 'accepted monthly'} catch {Assert ($_.Exception.Message.Contains('monthly')) 'Monthly validation'}
     try {Invoke-RouterBench -Job fast -Candidate gpt-6-astra -Incumbent gpt-6-luna -Trigger research -StateDir $root;throw 'accepted frontier'} catch {Assert ($_.Exception.Message.Contains('Frontier candidates')) 'Automatic frontier validation'}
     $manual=Invoke-RouterBench -Job fast -Candidate gpt-6-astra -Incumbent gpt-6-luna -Trigger manual -StateDir $root -Limits {param($v) @{blocked=$true}} -NoAlerts

@@ -203,6 +203,7 @@ function Invoke-RouterNewModelComparisons {
     foreach ($job in @($Categories | ForEach-Object { Get-RouterCategoryJob $_ } | Sort-Object -Unique)) {
         $entry = $snapshot.jobs.$job
         if ($Model -ceq $entry.first -or $Model -ceq $entry.backup) { continue }  # Already on the roster for this job.
+        if ($entry.PSObject.Properties['category_overrides'] -and @($entry.category_overrides.PSObject.Properties | ForEach-Object { $_.Value.PSObject.Properties | Where-Object { $_.Value.model -ceq $Model } }).Count) { continue }
         $request = [pscustomobject]@{job=$job;candidate=$Model;incumbent=$entry.first;effort=$entry.first_effort}
         $bench = Invoke-RouterTriggeredComparison -Request $request -Trigger new-model -BenchInvoker $BenchInvoker
         $count++

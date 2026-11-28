@@ -56,7 +56,12 @@ function Add-RouterResearchQueueItem {
 
 function Get-RouterCadenceJobCategories {
     param([Parameter(Mandatory)][string]$Model, [Parameter(Mandatory)][object]$Roster)
-    $jobs = @($Roster.jobs.PSObject.Properties | Where-Object { $_.Value.first -ceq $Model -or $_.Value.backup -ceq $Model } | ForEach-Object Name)
+    $jobs = @($Roster.jobs.PSObject.Properties | Where-Object {
+        $entry = $_.Value
+        $models = @($entry.first,$entry.backup)
+        if ($entry.PSObject.Properties['category_overrides']) { $models += @($entry.category_overrides.PSObject.Properties | ForEach-Object { $_.Value.PSObject.Properties | ForEach-Object { $_.Value.model } }) }
+        $Model -cin $models
+    } | ForEach-Object Name)
     return @($Roster.category_jobs.PSObject.Properties | Where-Object { $jobs -contains [string]$_.Value } | ForEach-Object Name | Sort-Object -Unique)
 }
 
@@ -157,7 +162,10 @@ function Invoke-RouterCadence {
             try {
                 if (@(Get-RouterStoppedResearchFiles -Model $item.model -Categories @($item.categories)).Count) { continue }
                 $jobNames = @($item.categories | ForEach-Object { Get-RouterCategoryJob $_ } | Sort-Object -Unique)
-                $models = @($item.model) + @($roster.jobs.PSObject.Properties | Where-Object { $jobNames -contains $_.Name } | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ -and $_ -cne $item.model } | Sort-Object -Unique)
+                $models = @($item.model) + @($roster.jobs.PSObject.Properties | Where-Object { $jobNames -contains $_.Name } | ForEach-Object {
+                    @($_.Value.first,$_.Value.backup)
+                    if ($_.Value.PSObject.Properties['category_overrides']) { $_.Value.category_overrides.PSObject.Properties | ForEach-Object { $_.Value.PSObject.Properties | ForEach-Object { $_.Value.model } } }
+                } | Where-Object { $_ -and $_ -cne $item.model } | Sort-Object -Unique)
                 $usage = Get-RouterCodexUsage
                 $lane = if ($usage -and [double]$usage.used_percent -gt 50) { 'claude' } else { 'codex' }
                 $passPath = Join-Path $state 'readings/passes.jsonl'
