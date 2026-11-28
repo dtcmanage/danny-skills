@@ -1,5 +1,7 @@
 # dt-review changelog
 
+- 1.19.5 (2026-11-28): Shared model router outcomes: legacy acceptance rows without status no longer count as rejections; rows sharing one dispatch_id stay one outcome.
+
 - 1.19.4 (2026-11-27): Fix model router bench lock IO classification.
 
 - 1.19.3 (2026-11-27): Tolerate loaded-host fixture startup and report shared router disk-full failures accurately.

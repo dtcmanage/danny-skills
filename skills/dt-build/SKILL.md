@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.69.0
+  version: 2.70.0
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -199,7 +199,7 @@ until its rehearsal milestone has a current PASS; preserve this gate in worker b
   Run each pass to the end past failures; fix everything in one bundled fix and rerun the failed and touched checks until clean (`references/review-fix-loop.md`).
   A milestone that depends on the real target host (tmux, OS paths, systemd, deploy config) includes a short end-to-end smoke on that host here, added if the roadmap lacks it (`references/review-fix-loop.md` section 6).
 - f. **Run the downgrade-language scan.** `<skill>/scripts/check-downgrade-language.ps1 -Path <run-folder>/milestones/<mid> -Recurse -Json` — must return exit 0. Any unapproved match is a blocker unless Danny adds `downgrade_approved_by: danny` with a short rationale to the milestone's `build-decision-log` entry.
-- g. **Append the acceptance row** to `<run-folder>/acceptance-rows.jsonl`. Include commit SHA, requested and
+- g. **Append the acceptance row** through `<skill>/scripts/append-acceptance-row.ps1 -RunFolder <run-folder> -RowPath <row.json> -Json`, which refuses a row that fails the schema (`references/acceptance-contract.md`, "Acceptance row schema") and never rewrites earlier lines. Include `status` (`PASS`, `APPROVED_DOWNGRADE` or `BLOCKED`), `tests` text or `checks` records, full commit SHA, requested and
   resolved model, `category`, `escalated` (true when the accepted attempt used `-EscalateFrom`), selection reason, disclosure line, effort, CLI version, prompt/provenance hashes, verifier result, command results, artifact hashes,
   and downgrade status. Obtain `dispatch_id` and `provenance_path` from the builder report's provenance: pass `-BuilderReportPath <builder-report>` to `verify-milestone-acceptance.ps1` and copy both returned fields verbatim into this row. Record the builder's `attempt` and `logical_task_id` too. A failed or downgraded acceptance records `accepted: false`; execution success alone never supplies acceptance. Legacy rows with neither identity field remain unknown to dispatch outcomes and must not create another row for the same attempt. This append-only row is the final ledger's source of truth.
 - h. **Update the integration branch** from `build-plan.md` via compare-and-swap through `<skill>/scripts/branch-cas-update.ps1 -RepoPath <project repo>` after milestone acceptance.

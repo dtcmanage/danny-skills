@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.4.5 (2026-11-28): Shared model router outcomes: legacy acceptance rows without status no longer count as rejections; rows sharing one dispatch_id stay one outcome.
+
 - 0.4.4 (2026-11-27): Fix model router bench lock IO classification.
 
 - 0.4.3 (2026-11-27): Report shared model router outcome disk-full failures directly.

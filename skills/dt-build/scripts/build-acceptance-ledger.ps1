@@ -73,6 +73,7 @@ function Status-Badge-Html {
         "PASS"                { "#1f7a3a" }
         "APPROVED_DOWNGRADE"  { "#b08820" }
         "BLOCKED"             { "#a02020" }
+        "RECORD_INCOMPLETE"   { "#5a4fa0" }
         default               { "#6c757d" }
     }
     return "<span style=`"display:inline-block;padding:2px 8px;border-radius:10px;background:$color;color:white;font-weight:600;font-size:11px;`">$Status</span>"
@@ -220,6 +221,7 @@ if ($RunFolder -and (Test-Path -LiteralPath $RunFolder)) {
     $logPath = Join-Path $RunFolder "build-decision-log.md"
     $approvals = Parse-ApprovalSection -Path $logPath
 }
+. (Join-Path $scriptsDir 'acceptance-row-schema.ps1')
 $acceptanceRows = @{}
 if ($RunFolder -and (Test-Path -LiteralPath $RunFolder)) {
     $acceptanceRows = Parse-AcceptanceRows -Path (Join-Path $RunFolder "acceptance-rows.jsonl")
@@ -318,6 +320,14 @@ foreach ($mid in $milestoneIds) {
 
         if (-not $implemented -or -not $testedEvidence) { $status = 'BLOCKED' }
         if ($blockers.Count -gt 0 -and $status -eq 'PASS') { $status = 'BLOCKED' }
+        # A legacy row (written before `status` joined the writer contract) is a
+        # record-format gap, not a failed milestone: report it as such and never
+        # turn it into a router rejection or an inferred acceptance.
+        if ($implemented -and -not $testedEvidence -and (Test-AcceptanceRowLegacy $stored)) {
+            $status = 'RECORD_INCOMPLETE'
+            $blockers = New-Object System.Collections.Generic.List[string]
+            $blockers.Add((Get-LegacyRowEvidenceNote -Row $stored -RunFolder $RunFolder -MilestoneId $mid)) | Out-Null
+        }
 
         $ledgerRows += [pscustomobject]@{
             dispatch_id         = $dispatchId
@@ -505,6 +515,11 @@ if ($RunFolder) {
             if ($RunTests -or -not $idMismatch) { continue }
         }
         if ($RunTests) { continue }
+        if ($ledgerRow.status -eq 'RECORD_INCOMPLETE') {
+            $ledgerRow | Add-Member -Force -NotePropertyName router_acceptance -NotePropertyValue 'unknown'
+            $ledgerRow | Add-Member -Force -NotePropertyName router_acceptance_reason -NotePropertyValue 'legacy acceptance row; provenance left unchanged'
+            continue
+        }
         try {
             Set-RouterDispatchAcceptance -ProvenancePath $path -DispatchId $id -Accepted ([bool]$ledgerRow.accepted)
          } catch {
@@ -557,8 +572,10 @@ $mdLines += ""
 $totalPass = @($ledgerRows | Where-Object { $_.status -eq "PASS" }).Count
 $totalApproved = @($ledgerRows | Where-Object { $_.status -eq "APPROVED_DOWNGRADE" }).Count
 $totalBlocked = @($ledgerRows | Where-Object { $_.status -eq "BLOCKED" }).Count
+$totalIncomplete = @($ledgerRows | Where-Object { $_.status -eq "RECORD_INCOMPLETE" }).Count
 $summaryParts = @("$totalPass PASS")
 if ($totalApproved -gt 0) { $summaryParts += "$totalApproved APPROVED_DOWNGRADE" }
+if ($totalIncomplete -gt 0) { $summaryParts += "$totalIncomplete RECORD_INCOMPLETE" }
 $summaryParts += "$totalBlocked BLOCKED"
 $mdLines += "**Summary:** $($summaryParts -join ', ') (of $($ledgerRows.Count) total)."
 if ($knownIssues.Count) {
@@ -608,6 +625,7 @@ foreach ($r in $ledgerRows) {
 }
 $summaryHtml = "$totalPass PASS"
 if ($totalApproved -gt 0) { $summaryHtml += " &middot; $totalApproved APPROVED_DOWNGRADE" }
+if ($totalIncomplete -gt 0) { $summaryHtml += " &middot; $totalIncomplete RECORD_INCOMPLETE" }
 $summaryHtml += " &middot; $totalBlocked BLOCKED &middot; of $($ledgerRows.Count) total"
 
 # Per-milestone verification-check detail. One sub-table per milestone whose
@@ -722,6 +740,7 @@ Write-Output ("  {0}" -f $mdPath)
 Write-Output ("  {0}" -f $htmlPath)
 $summaryStr = "{0} PASS" -f $totalPass
 if ($totalApproved -gt 0) { $summaryStr += ", {0} APPROVED_DOWNGRADE" -f $totalApproved }
+if ($totalIncomplete -gt 0) { $summaryStr += ", {0} RECORD_INCOMPLETE" -f $totalIncomplete }
 $summaryStr += ", {0} BLOCKED of {1} total." -f $totalBlocked, $ledgerRows.Count
 Write-Output ("Summary: " + $summaryStr)
 if ($knownIssues.Count) { Write-Output ("Known issues shipped: {0} ({1})" -f $knownIssues.Count, (($knownIssues | ForEach-Object { $_.key }) -join ', ')) }
@@ -729,4 +748,4 @@ foreach ($unknown in @($ledgerRows | Where-Object { $_.PSObject.Properties['rout
     Write-Output ("Router acceptance: unknown for {0}: {1}" -f $unknown.dispatch_id, $unknown.router_acceptance_reason)
 }
 
-if ($totalBlocked -gt 0) { exit 1 } else { exit 0 }
+if (($totalBlocked + $totalIncomplete) -gt 0) { exit 1 } else { exit 0 }

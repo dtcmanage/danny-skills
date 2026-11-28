@@ -56,6 +56,26 @@ it cannot resolve the recorded commit. `-RunTests` is an explicit current-state 
 commit SHAs are `BLOCKED`, never inferred as implemented. Only the exact stored status `PASS` is a clean
 pass; compound labels such as `PASS_WITH_RUN_STOP` remain `BLOCKED` until a fresh acceptance row supersedes them.
 
+## Acceptance row schema
+
+Write every row with `scripts/append-acceptance-row.ps1`; it validates, then appends one line, and refuses
+invalid rows. Required: `milestone_id`; full 40/64-hex `commit_sha`; boolean `accepted`; `status` of `PASS`,
+`APPROVED_DOWNGRADE` or `BLOCKED` (accepted true only with PASS/APPROVED_DOWNGRADE, and the reverse);
+`tests` text or `checks` records; non-empty `command_results`, all exit 0 when `status` is `PASS`; and
+`dispatch_id` with `provenance_path` together or neither. Plus the provenance fields listed in SKILL.md step 6.g.
+`-Audit` reports each existing line as `current`, `legacy` or `invalid` without writing.
+
+The file is append-only history. A correction appends a superseding row; earlier rows stay byte-for-byte.
+The ledger and router outcomes read the last row per milestone or dispatch, so several rows carrying one
+`dispatch_id` and the same evidence count as one result, never several.
+
+A **legacy row** lacks `status` (written before `status` joined the writer contract). The ledger renders it
+`RECORD_INCOMPLETE`, not PASS and not a test failure, and names the missing fields plus what the original
+gate output (`milestones/<mid>/acceptance.json`) says, with its hash. It never infers acceptance from that
+output or from the current release, and it never writes a router verdict into the builder's provenance for
+that row; router outcomes treat the row as unknown. Resolve by appending a schema-valid row built from the
+original evidence, or leave it incomplete. A milestone with no row at all stays `BLOCKED`.
+
 ## Milestone scope lock and discovered enhancements
 
 The scope contract is symmetric: a milestone must produce everything the roadmap names (the gate above) and

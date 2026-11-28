@@ -180,6 +180,11 @@ function Update-RouterOutcomesLocked {
                     }
                     if ($acceptanceId) {
                         $dispatchKey = 'dispatch:' + $acceptanceId
+                        # A legacy row without `status` predates the writer contract: it is a
+                        # record-format gap, not a rejection, so it leaves the dispatch's
+                        # producer-recorded acceptance untouched. Rows sharing one dispatch_id
+                        # collapse onto that one outcome, so re-recorded evidence never inflates counts.
+                        if ($records.Contains($dispatchKey) -and -not $item.PSObject.Properties['status']) { continue }
                         if ($records.Contains($dispatchKey)) {
                             $accepted = (Get-DispatchValue $item 'status') -eq 'PASS' -and
                                 (Get-DispatchValue $item 'accepted') -ne $false -and

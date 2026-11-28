@@ -271,6 +271,31 @@ try {
         $splitRows=@(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
         Assert-True ($splitRows.Count -eq 1 -and $splitRows[0].key -eq ('dispatch:'+$ctx.dispatch_id) -and $split.first_attempt.total -eq 0) 'main legacy acceptance never duplicates linked-worktree dispatch on first update'
     } finally { $env:DT_MODEL_ROUTER_STATE=$stateBeforeSplit }
+    $stateBeforeLegacy=$env:DT_MODEL_ROUTER_STATE
+    try {
+        $env:DT_MODEL_ROUTER_STATE=Join-Path $temp 'legacy-state'
+        $repo=Join-Path $temp 'legacy-repo';[void][IO.Directory]::CreateDirectory($repo)
+        $run=Join-Path $repo '.dt-build/run-legacy';[void][IO.Directory]::CreateDirectory($run)
+        $ids=@{}
+        foreach ($name in @('m02','m06')) {
+            $ctx=New-RouterDispatchContext -Project $repo -Category ui-frontend -LogicalTaskId ("run-legacy:$name-build")
+            $p=Join-Path $run "$name.provenance.json"
+            Write-RouterDispatchEvidence $p ([pscustomobject]@{lane='codex'}) $ctx -ExitCode 0
+            Set-RouterDispatchAcceptance -ProvenancePath $p -DispatchId $ctx.dispatch_id -Accepted $true
+            $ids[$name]=@{ id=$ctx.dispatch_id; path=$p }
+        }
+        # Legacy keyed row (no status) beside one result re-recorded three times.
+        $lines=@((@{milestone_id='M02';accepted=$true;dispatch_id=$ids.m02.id;provenance_path=$ids.m02.path;attempt=1} | ConvertTo-Json -Compress))
+        foreach ($i in 1..3) { $lines+=(@{milestone_id='M06';accepted=$true;status='PASS';dispatch_id=$ids.m06.id;provenance_path=$ids.m06.path;attempt=1} | ConvertTo-Json -Compress) }
+        $lines | Set-Content (Join-Path $run 'acceptance-rows.jsonl')
+        $legacySources=Join-Path $temp 'legacy-sources.json';ConvertTo-Json -InputObject @($repo) | Set-Content $legacySources
+        [void](Update-RouterOutcomes -SourcesPath $legacySources -Now (Get-Date))
+        $legacyRows=@(Get-Content (Join-Path $env:DT_MODEL_ROUTER_STATE 'outcomes.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
+        $m02=@($legacyRows | Where-Object { $_.key -eq ('dispatch:'+$ids.m02.id) })
+        $m06=@($legacyRows | Where-Object { $_.key -eq ('dispatch:'+$ids.m06.id) })
+        Assert-True ($m02.Count -eq 1 -and $m02[0].independent_acceptance -eq $true) 'legacy acceptance row without status never overrides producer acceptance with a rejection'
+        Assert-True ($m06.Count -eq 1 -and $m06[0].pass -eq $true -and $legacyRows.Count -eq 2) 'three rows with one dispatch_id count as one outcome'
+    } finally { $env:DT_MODEL_ROUTER_STATE=$stateBeforeLegacy }
     Write-Output "SUMMARY: $script:passed passed"
 } finally { Exit-RouterTestCodexHome $fixtureCodexHome;
     $env:DT_MODEL_ROUTER_STATE = $saved
