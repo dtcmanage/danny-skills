@@ -61,6 +61,18 @@ function ConvertTo-RouterOutcomeAttempt {
     return 2
 }
 
+function Test-RouterDriftSwapAllowed {
+    param([object]$Entry)
+    if (-not $Entry.backup) { return $false }
+    if ($Entry.PSObject.Properties['category_overrides'] -and @($Entry.category_overrides.PSObject.Properties).Count) { return $false }
+    foreach ($slot in @('first','backup')) {
+        $pin = $Entry.PSObject.Properties["${slot}_vendor_pin"]
+        $other = if ($slot -eq 'first') { 'backup' } else { 'first' }
+        if ($pin -and $pin.Value -cne $Entry."${other}_vendor") { return $false }
+    }
+    return $true
+}
+
 function Update-RouterOutcomesLocked {
     param([datetime]$Now = (Get-Date), [string]$SourcesPath, [switch]$SendAlerts, [scriptblock]$BenchInvoker)
     $state = Get-RouterStateDir
@@ -314,7 +326,7 @@ function Update-RouterOutcomesLocked {
             if (-not $old.Count) {
                 $newMarks++
                 $key = "drift:${holder}:${job}:$($nowUtc.ToString('yyyyMM'))"
-                if ($hasOverrides) {
+                if ($hasOverrides -or ($entry.backup -and -not (Test-RouterDriftSwapAllowed $entry))) {
                     $alerts.Add([pscustomobject]@{key=$key;message="Model $holder is drifting for $job. The job uses its backup for $($categories -join ', '); no swap proposed, the next research pass decides."})
                 } elseif ($entry.backup) {
                     $alerts.Add([pscustomobject]@{key=$key;message="Model $($entry.first) is drifting for $job. The job now uses its backup $($entry.backup). Proposed change: swap first and backup."})
@@ -336,8 +348,7 @@ function Update-RouterOutcomesLocked {
     }
     $requests = @($marks | Where-Object {
         $entry = $roster.jobs.($_.job)
-        $newMarks -gt 0 -and $entry.backup -and $_.model -ceq $entry.first -and
-        (-not $entry.PSObject.Properties['category_overrides'] -or @($entry.category_overrides.PSObject.Properties).Count -eq 0)
+        $newMarks -gt 0 -and $_.model -ceq $entry.first -and (Test-RouterDriftSwapAllowed $entry)
     } | ForEach-Object {
         $entry = $roster.jobs.($_.job)
         [pscustomobject]@{job=$_.job;candidate=$entry.backup;incumbent=$entry.first;effort=$entry.first_effort}
@@ -358,7 +369,7 @@ function Complete-RouterDriftBench {
         $mark = $_
         $entry = $roster.jobs.($_.job)
         $_.model -ceq $entry.first -and
-        (-not $entry.PSObject.Properties['category_overrides'] -or @($entry.category_overrides.PSObject.Properties).Count -eq 0) -and
+        (Test-RouterDriftSwapAllowed $entry) -and
         -not @($declines | Where-Object { $_.job -eq $mark.job -and $_.model -eq $mark.model }).Count -and
         $BenchResults.ContainsKey($_.job) -and $BenchResults[$_.job].raw_gate -ne 'unknown' -and $BenchResults[$_.job].gate -notin @('fail','unknown') -and -not ($_.job -in @('fast','coder','deep-thinker') -and $BenchResults[$_.job].raw_gate -eq 'fail') -and -not $BenchResults[$_.job].tied -and $BenchResults[$_.job].better -eq $roster.jobs.($_.job).backup
     })
@@ -395,6 +406,14 @@ function Complete-RouterDriftBench {
             if ($quality.Count) { $changes[-1] | Add-Member -NotePropertyName quality_evidence -NotePropertyValue $quality }
         }
         $proposal | Add-Member -NotePropertyName changes -NotePropertyValue $changes -Force
+        $validationErrors = @(Test-RouterRoster -Roster $proposal)
+        if ($validationErrors.Count) {
+            $Staged.alerts += [pscustomobject]@{
+                key="drift-validation:$($nowUtc.ToString('yyyyMMddTHHmmss'))"
+                message="Drift proposal failed validation; no proposal saved: $($validationErrors -join '; ')"
+            }
+            return $null
+        }
         $dir = Join-Path $state 'roster-proposals'; [IO.Directory]::CreateDirectory($dir) | Out-Null
         $stem = $nowUtc.ToString('yyyy-MM-ddTHHmmss') + '-drift'
         $proposalPath = Join-Path $dir ($stem + '.json'); $reportPath = Join-Path $dir ($stem + '.md')

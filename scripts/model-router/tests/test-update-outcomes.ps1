@@ -298,6 +298,58 @@ try {
         Assert-True ($m02.Count -eq 1 -and $m02[0].independent_acceptance -eq $true) 'legacy acceptance row without status never overrides producer acceptance with a rejection'
         Assert-True ($m06.Count -eq 1 -and $m06[0].pass -eq $true -and $legacyRows.Count -eq 2) 'three rows with one dispatch_id count as one outcome'
     } finally { $env:DT_MODEL_ROUTER_STATE=$stateBeforeLegacy }
+    foreach ($pins in @('first','backup','both','validation')) {
+        $script:state = Join-Path $temp "pin-$pins-state"
+        $script:repo = Join-Path $temp "pin-$pins-repo"
+        [IO.Directory]::CreateDirectory($script:repo) | Out-Null
+        $env:DT_MODEL_ROUTER_STATE = $script:state
+        ConvertTo-Json -InputObject @($script:repo) | Set-Content $script:sources
+        $pinnedRoster = Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json') -Raw | ConvertFrom-Json -Depth 30
+        $pinnedRoster.approved = $true; $pinnedRoster.approved_at = '2026-09-27T00:00:00Z'
+        if ($pins -in @('backup','validation')) { $pinnedRoster.jobs.coder.PSObject.Properties.Remove('first_vendor_pin') }
+        if ($pins -in @('backup','both')) { $pinnedRoster.jobs.coder | Add-Member backup_vendor_pin 'claude' }
+        Write-RouterJsonAtomic (Join-Path $script:state 'roster.json') $pinnedRoster
+        $approvedHash = (Get-FileHash (Join-Path $script:state 'roster.json')).Hash
+        $latestPath = Join-Path $script:state 'roster-proposals/latest.json'
+        Write-RouterJsonAtomic $latestPath ([pscustomobject]@{proposal='pending-category.json';report='pending-category.md'})
+        $latestHash = (Get-FileHash $latestPath).Hash
+        for ($i=1; $i -le 10; $i++) {
+            Write-Provenance "pin-prior-$i" 'M01' 1 'gpt-6.1-sol' $true '2026-08-01T12:00:00Z' 'standard' '' 'complex-coding'
+            Write-Provenance "pin-recent-$i" 'M01' 1 'gpt-6.1-sol' ($i -le 5) '2026-09-25T12:00:00Z' 'standard' '' 'complex-coding'
+        }
+        if ($pins -eq 'validation') {
+            # Fault injection: the approved roster passes, but the completed swap fails validation.
+            Initialize-TestBenchEvidence
+            $result = Update-RouterOutcomesLocked -Now $script:now -SourcesPath $script:sources
+            $bench = Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$pinnedRoster.jobs.coder.backup;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})
+            $originalValidator = ${function:Test-RouterRoster}
+            try {
+                function Test-RouterRoster {
+                    param([object]$Roster)
+                    if (-not $Roster.approved -and $Roster.jobs.coder.first -eq 'claude-opus-5-5') { return 'ROSTER_TEST_REJECTION: completed drift swap' }
+                    & $originalValidator -Roster $Roster
+                }
+                $result.proposal = Complete-RouterDriftBench -Staged $result -BenchResults @{coder=$bench} -Now $script:now
+            } finally { ${function:Test-RouterRoster} = $originalValidator }
+            Assert-True ($result.requests.Count -eq 1 -and @($result.alerts | Where-Object message -match 'ROSTER_TEST_REJECTION: completed drift swap').Count -eq 1) 'invalid completed drift proposal returns validation alert'
+            Send-RouterAlerts -Alerts @($result.alerts) | Out-Null
+            Assert-True ((Get-Content (Join-Path $script:state 'deliveries.log') -Raw) -match 'ROSTER_TEST_REJECTION') 'validation error alert delivered through synthetic transport'
+        } else {
+            $result = Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -SendAlerts -BenchInvoker { throw 'Pinned jobs must not request a bench' }
+            Assert-True ($result.requests.Count -eq 0) "$pins vendor pin prevents bench request"
+            Assert-True (@($result.alerts | Where-Object { $_.message -match 'job uses its backup' -and $_.message -match 'no swap proposed, the next research pass decides' }).Count -eq 1) "$pins vendor pin returns backup alert"
+            Assert-True ((Get-Content (Join-Path $script:state 'deliveries.log') -Raw) -match 'no swap proposed, the next research pass decides') "$pins vendor pin delivers backup alert"
+            $staged = [pscustomobject]@{identity=(ConvertTo-Json $pinnedRoster.jobs -Compress -Depth 30)}
+            $completion = Complete-RouterDriftBench -Staged $staged -BenchResults @{coder=[pscustomobject]@{raw_gate='pass';gate='pass';tied=$false;better=$pinnedRoster.jobs.coder.backup}} -Now $script:now
+            Assert-True (-not $completion) "$pins vendor pin prevents completion swap"
+            $repeat = Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -BenchInvoker { throw 'Repeated pinned drift must not request a bench' }
+            Assert-True ($repeat.requests.Count -eq 0 -and $repeat.alerts.Count -eq 0 -and -not $repeat.proposal) "$pins vendor pin remains protected on repeat update"
+        }
+        Assert-True (-not $result.proposal -and @(Get-ChildItem (Split-Path $latestPath) -Filter '*-drift.*').Count -eq 0) "$pins drift writes no proposal or report"
+        Assert-True ((Get-FileHash $latestPath).Hash -eq $latestHash) "$pins drift preserves pending category latest pointer byte for byte"
+        Assert-True ((Get-FileHash (Join-Path $script:state 'roster.json')).Hash -eq $approvedHash) "$pins drift leaves approved roster unchanged"
+    }
+
     $script:state = Join-Path $temp 'exception-state'
     $script:repo = Join-Path $temp 'exception-repo'
     [IO.Directory]::CreateDirectory($script:repo) | Out-Null
