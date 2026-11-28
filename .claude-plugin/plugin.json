@@ -26,7 +26,7 @@
   ],
   "metadata": {
     "changelog": [
-      "1.4.9 dt-build 2.71.1: quote router read-guard smoke fixture paths; model router: stabilize timeout and spaced-path tests, expose probe preflight exit/stderr diagnostics",
+      "1.4.9 dt-build 2.71.1: quote router read-guard smoke fixture paths; model router: stabilize timeout and spaced-path tests, expose probe preflight exit/stderr diagnostics; checkout freshness: accept an exited procfs child in the timeout test",
       "1.4.8 dt-build 2.71.0: reject unsupported controls and stale dt-job copies through mandatory operator preflight, preserve decision/reason/actor receipts, and isolate notification fixtures.",
       "1.4.7 dt-build 2.70.0, dt-review 1.19.5, dt-image-gen 0.4.5, dt-writing-draft 0.3.5, dt-writing-edit 0.4.5: acceptance-row schema, RECORD_INCOMPLETE legacy rows; model router outcomes stop counting legacy rows as rejections.",
       "1.4.6 dt-build 2.69.0: model router bounded read/extract lane with soft size targets, tool/turn/input caps, retained partial output and repeated artifact-edit finalization.",

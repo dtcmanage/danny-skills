@@ -177,7 +177,7 @@ def test_timeout_kills_fetch_children(checkout: tuple, tmp_path: Path, monkeypat
     while True:
         try:
             state = child.read_text().split()[2]
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             break
         if state == 'Z':
             break
