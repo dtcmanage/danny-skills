@@ -1,6 +1,10 @@
 #Requires -Version 7.0
+# Strict binding (AI-139): an unknown parameter or an extra positional token fails before any write.
+# Only the verb binds by position; every other value is named.
+[CmdletBinding(PositionalBinding = $false)]
 param(
-    [ValidateSet('start', 'requeue', 'status', 'wait', 'cancel', 'reconcile', 'stall-ack', 'lease', 'register-run', 'unregister-run', 'pin', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse')]
+    [Parameter(Position = 0)]
+    [ValidateSet('start', 'requeue', 'status', 'wait', 'cancel', 'reconcile', 'stall-ack', 'lease', 'register-run', 'unregister-run', 'pin', 'consume', 'request-continuation', 'await-danny', 'approve', 'delegate', 'hold', 'note', 'resume', 'finish', 'mark-bootstrap', 'irreversible', 'tree-hash', 'can-reuse', 'capabilities')]
     [string]$Verb,
 
     [string]$RunFolder,
@@ -134,6 +138,23 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'powershell-startup.ps1')
 Disable-DtPowerShellStartupProfile
+
+# Control contract (AI-139). 1 = strict binding, approve -Decline, persisted trimmed -Reason, decision echo.
+# Copies older than contract 1 lack the `capabilities` verb, so the preflight fails on them without writing.
+$script:DtJobControlContract = 1
+# Control parameters that change a decision, and the only verbs that read them. Checked before any write.
+$script:DtJobControlParamVerbs = [ordered]@{
+    Reason    = @('approve', 'hold', 'request-continuation', 'stall-ack')
+    Decline   = @('approve')
+    NoteId    = @('note')
+    Evidence  = @('note')
+    Clear     = @('delegate', 'hold', 'note', 'pin')
+    Delegate  = @('delegate', 'register-run')
+    Message   = @('await-danny', 'note')
+    Operation = @('approve', 'await-danny', 'hold', 'irreversible')
+    Seq       = @('consume')
+    Until     = @('stall-ack')
+}
 
 $script:DtJobStatuses = @('queued', 'running', 'succeeded', 'failed', 'timeout', 'orphaned', 'cancelled', 'blocked')
 $script:DtJobActive = @('queued', 'running')
@@ -2159,6 +2180,18 @@ function Get-DtJobHostConflictAlert {
     return "`nOther builds still have running jobs on this machine: $($jobs -join '; '). Wait for them before powering off or rebooting."
 }
 
+function Get-DtJobAwaitDecisionReason {
+    # The waiter reads the operator's reason (the chosen option) straight from the persisted receipt.
+    param([string]$RunFolder, [long]$AwaitSeq, [string]$Decision)
+    if ($Decision -notin @('approved', 'declined')) { return $null }
+    $a = Get-DtJobApprovals -RunFolder $RunFolder
+    $receipt = if ($Decision -eq 'approved') {
+        @($a.approvals | Where-Object { $_.PSObject.Properties['await_seq'] -and $_.await_seq -eq $AwaitSeq -and $_.operation -ceq $Operation }) | Select-Object -Last 1
+    } elseif ($a.awaiting -and $a.awaiting.PSObject.Properties['declined']) { $a.awaiting.declined } else { $null }
+    if ($null -ne $receipt -and $receipt.PSObject.Properties['reason'] -and $receipt.reason) { return [string]$receipt.reason }
+    return $null
+}
+
 function Invoke-DtJobAwaitDanny {
     if (-not $Operation -or -not $Message) { throw 'DT_JOB_USAGE: await-danny requires -Operation and -Message.' }
     $ctx = Resolve-DtJobRunContext -RunFolder $RunFolder -BuildStatePath $BuildStatePath -RunId $RunId
@@ -2213,7 +2246,8 @@ function Invoke-DtJobAwaitDanny {
     $alert = if (Test-DtJobDirectorAlive $director) { 'delegated' } else { Send-DtJobDelegateEscalation -RunFolder $RunFolder -RunId $ctx.run_id }
     $waiter = $boundary.waiter
     $decision = if ($waiter) { Wait-DtJobApproval -Context $ctx -AwaitSeq $awaitSeq -Waiter $waiter } else { 'unanswered' }
-    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ operation = $Operation; alert = $alert; await_seq = $awaitSeq; decision = $decision; message = $(if ($decision -eq 'approved') { 'Approved; continue in this coordinator.' } else { 'End this coordinator; the boundary remains stopped.' }) }) -AsJson:$Json
+    $decisionReason = Get-DtJobAwaitDecisionReason -RunFolder $RunFolder -AwaitSeq $awaitSeq -Decision $decision
+    Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra @{ operation = $Operation; alert = $alert; await_seq = $awaitSeq; decision = $decision; reason = $decisionReason; message = $(if ($decision -eq 'approved') { 'Approved; continue in this coordinator.' } else { 'End this coordinator; the boundary remains stopped.' }) }) -AsJson:$Json
 }
 
 function Test-DtJobApprovalWaiter {
@@ -2353,6 +2387,34 @@ function Receive-DtJobQueuedApproval {
     }
 }
 
+function Get-DtJobDecisionEcho {
+    # The operator sees exactly what was persisted: decision, boundary, trimmed reason and who recorded it.
+    param([Parameter(Mandatory)][string]$Decision, [Parameter(Mandatory)]$Receipt, [hashtable]$Extra = @{})
+    $echo = @{
+        decision = $Decision
+        operation = [string]$Receipt.operation
+        await_seq = $(if ($Receipt.PSObject.Properties['await_seq']) { $Receipt.await_seq } else { $null })
+        reason = $(if ($Receipt.PSObject.Properties['reason'] -and -not [string]::IsNullOrWhiteSpace([string]$Receipt.reason)) { [string]$Receipt.reason } else { $null })
+        actor = $(if ($Receipt.PSObject.Properties['requested_by']) { [string]$Receipt.requested_by } else { $null })
+        actor_pid = $(if ($Receipt.PSObject.Properties['requested_pid']) { $Receipt.requested_pid } else { $null })
+        recorded_utc = $(if ($Receipt.PSObject.Properties['requested_utc']) { [string]$Receipt.requested_utc } else { $null })
+    }
+    foreach ($key in $Extra.Keys) { $echo[$key] = $Extra[$key] }
+    return $echo
+}
+
+function Assert-DtJobSameReason {
+    # A repeat with a different reason would silently drop the new choice; refuse it instead.
+    param([Parameter(Mandatory)]$Recorded, [string]$NewReason, [string]$What)
+    # [string] binds a missing reason as ''; no new reason means a plain repeat.
+    if ([string]::IsNullOrEmpty($NewReason)) { return }
+    $old = if ($Recorded.PSObject.Properties['reason'] -and $Recorded.reason) { ([string]$Recorded.reason).Trim() } else { $null }
+    if ($old -cne $NewReason) {
+        $shown = if ($null -eq $old) { '(none)' } else { "'$old'" }
+        throw "DT_JOB_APPROVE_CONFLICT: the recorded $What for '$($Recorded.operation)' has reason $shown, not '$NewReason'; nothing recorded. Decline first to withdraw a queued approval, then approve again."
+    }
+}
+
 function Invoke-DtJobApprove {
     if (-not $Operation) { throw 'DT_JOB_USAGE: approve requires -Operation.' }
     Assert-DtJobOperator -VerbName 'approve' -RunFolder $RunFolder -AllowLiveCoordinator
@@ -2362,11 +2424,15 @@ function Invoke-DtJobApprove {
       Invoke-DtJobLocked -RunFolder $RunFolder -Action {
         $approvals = Get-DtJobApprovals -RunFolder $RunFolder
         $queuePath = Join-Path $RunFolder 'approval-queued.json'
+        $newReason = if ([string]::IsNullOrWhiteSpace($Reason)) { $null } else { $Reason.Trim() }
         if ($null -eq $approvals.awaiting) {
             $history = @($approvals.approvals)
             if ($history.Count -gt 0 -and $history[-1].operation -ceq $Operation -and
                 (Get-DtJobRunState -BuildStatePath $ctx.build_state_path).run_status -eq 'runnable') {
-                return @{ approved = $Operation }
+                # A repeat is idempotent only when it asks for the same thing; never let it look like a decline or a new choice.
+                if ($Decline) { throw "DT_JOB_ALREADY_APPROVED: run $($ctx.run_id) already approved '$Operation'; a decline cannot be recorded after the approval" }
+                Assert-DtJobSameReason -Recorded $history[-1] -NewReason $newReason -What 'approval'
+                return (Get-DtJobDecisionEcho -Decision 'approved' -Receipt $history[-1] -Extra @{ approved = $Operation; duplicate = $true })
             }
             throw "DT_JOB_NOT_AWAITING: run $($ctx.run_id) is not waiting on an approval"
         }
@@ -2381,11 +2447,24 @@ function Invoke-DtJobApprove {
         $delegatedTo = if ($approvals.awaiting.PSObject.Properties['delegated_to']) { [string]$approvals.awaiting.delegated_to } else { $null }
         $receipt = [pscustomobject][ordered]@{ operation = $Operation; await_seq = $approvals.awaiting.seq; run_id = $ctx.run_id; build_state_path = $ctx.build_state_path; requested_by = [Environment]::UserName; requested_pid = $PID; requested_utc = [DateTime]::UtcNow.ToString('o'); delegated_to = $delegatedTo }
         # FS-124: keep the approver's reason (the chosen option of a multi-option stop) on the record.
-        if (-not [string]::IsNullOrWhiteSpace($Reason)) { $receipt | Add-Member -NotePropertyName reason -NotePropertyValue $Reason.Trim() }
+        if ($null -ne $newReason) { $receipt | Add-Member -NotePropertyName reason -NotePropertyValue $newReason }
+        $receipt | Add-Member -NotePropertyName control_contract -NotePropertyValue $script:DtJobControlContract
         if ($Decline) {
+            $prior = if ($approvals.awaiting.PSObject.Properties['declined'] -and $approvals.awaiting.declined) { $approvals.awaiting.declined } else { $null }
+            if ($null -ne $prior) { $receipt | Add-Member -NotePropertyName superseded_decline -NotePropertyValue $prior }
+            # A queued approval for this boundary must never apply after a decline: withdraw it, keeping it on the record.
+            if (Test-Path -LiteralPath $queuePath) {
+                $q = Read-DtJobText -Path $queuePath | ConvertFrom-DtJobJsonText
+                if ($q.status -eq 'queued' -and $q.operation -ceq $receipt.operation -and $q.await_seq -eq $receipt.await_seq) {
+                    $receipt | Add-Member -NotePropertyName withdrew_queued_approval -NotePropertyValue ([pscustomobject]@{ requested_utc = $q.requested_utc; requested_by = $q.requested_by; reason = $(if ($q.PSObject.Properties['reason']) { $q.reason } else { $null }) })
+                    $q.status = 'withdrawn'
+                    $q | Add-Member -NotePropertyName withdrawn_by_decline_utc -NotePropertyValue $receipt.requested_utc -Force
+                    Write-DtJobAtomic -Path $queuePath -Content ($q | ConvertTo-Json -Depth 6)
+                }
+            }
             $approvals.awaiting | Add-Member -NotePropertyName declined -NotePropertyValue $receipt -Force
             Save-DtJobApprovals -RunFolder $RunFolder -Approvals $approvals
-            return @{ declined = $Operation }
+            return (Get-DtJobDecisionEcho -Decision 'declined' -Receipt $receipt -Extra @{ declined = $Operation })
         }
         if ($approvals.awaiting.PSObject.Properties['declined'] -and $approvals.awaiting.declined) {
             $receipt | Add-Member -NotePropertyName overruled_decline -NotePropertyValue $approvals.awaiting.declined
@@ -2397,7 +2476,8 @@ function Invoke-DtJobApprove {
             if (Test-Path -LiteralPath $queuePath) {
                 $q = Read-DtJobText -Path $queuePath | ConvertFrom-DtJobJsonText
                 if ($q.status -eq 'queued' -and $q.operation -ceq $receipt.operation -and $q.await_seq -eq $receipt.await_seq -and $q.coordinator_id -ceq $lease.coordinator_id -and (Test-DtJobSameInstant $q.coordinator_start_utc $lease.pid_start_utc)) {
-                    return @{ approval_queued = $Operation; message = "approval queued; applies when coordinator $($q.coordinator_pid) exits" }
+                    Assert-DtJobSameReason -Recorded $q -NewReason $newReason -What 'queued approval'
+                    return (Get-DtJobDecisionEcho -Decision 'approval_queued' -Receipt $q -Extra @{ approval_queued = $Operation; duplicate = $true; message = "approval queued; applies when coordinator $($q.coordinator_pid) exits" })
                 }
             }
             $receipt | Add-Member -NotePropertyName status -NotePropertyValue 'queued'
@@ -2405,10 +2485,10 @@ function Invoke-DtJobApprove {
             $receipt | Add-Member -NotePropertyName coordinator_pid -NotePropertyValue $lease.pid
             $receipt | Add-Member -NotePropertyName coordinator_start_utc -NotePropertyValue $lease.pid_start_utc
             Write-DtJobAtomic -Path $queuePath -Content ($receipt | ConvertTo-Json -Depth 6)
-            return @{ approval_queued = $Operation; message = "approval queued; applies when coordinator $($lease.pid) exits" }
+            return (Get-DtJobDecisionEcho -Decision 'approval_queued' -Receipt $receipt -Extra @{ approval_queued = $Operation; message = "approval queued; applies when coordinator $($lease.pid) exits" })
         }
         Complete-DtJobApproval -Context $ctx -Approvals $approvals -Receipt $receipt -Waiting:$waiting
-        return @{ approved = $Operation }
+        return (Get-DtJobDecisionEcho -Decision 'approved' -Receipt $receipt -Extra @{ approved = $Operation })
       }
     }
     Write-DtJobOutput -Object (Get-DtJobRunSummary -Context $ctx -Extra $result) -AsJson:$Json
@@ -2963,8 +3043,57 @@ function Test-DtJobCanReuse {
     catch { return (& $no ("cannot decide: " + $_.Exception.Message)) }
 }
 
+function Assert-DtJobControlParameters {
+    # A decision-changing parameter given to a verb that never reads it would be ignored; refuse before any write.
+    param([string]$VerbName, [string[]]$Bound)
+    foreach ($name in $script:DtJobControlParamVerbs.Keys) {
+        if ($Bound -contains $name -and $script:DtJobControlParamVerbs[$name] -notcontains $VerbName) {
+            throw "DT_JOB_USAGE: -$name applies only to $($script:DtJobControlParamVerbs[$name] -join ', '); '$VerbName' does not read it, so nothing was recorded."
+        }
+    }
+}
+
+function Get-DtJobCapabilities {
+    # Read-only self-description for the operator preflight: which copy runs and what it supports.
+    $path = [System.IO.Path]::GetFullPath((Join-Path $DtJobSkillRoot 'scripts/dt-job.ps1'))
+    try { $target = (Get-Item -LiteralPath $path).ResolveLinkTarget($true); if ($target) { $path = $target.FullName } } catch { }
+    $read = {
+        param($file, $pattern)
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+        $m = [regex]::Match((Get-Content -Raw -LiteralPath $file), $pattern)
+        if ($m.Success) { $m.Groups[1].Value } else { $null }
+    }
+    $head = $null
+    if (Test-Path -LiteralPath (Join-Path $DtJobRepoRoot '.git')) {
+        $out = @(& git -C $DtJobRepoRoot rev-parse HEAD 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $out) { $head = [string]$out[0] }
+    }
+    $paramNames = @((Get-Command -Name $path).Parameters.Keys)
+    return [pscustomobject][ordered]@{
+        control_contract = $script:DtJobControlContract
+        script_path = $path
+        sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        skill_root = $DtJobSkillRoot
+        dt_build_version = (& $read (Join-Path $DtJobSkillRoot 'SKILL.md') '(?m)^\s*version:\s*(\S+)')
+        plugin_version = (& $read (Join-Path $DtJobRepoRoot '.claude-plugin/plugin.json') '"version"\s*:\s*"([^"]+)"')
+        git_head = $head
+        strict_binding = $true
+        decline = ($paramNames -contains 'Decline')
+        persists_reason = $true
+        decision_echo = $true
+    }
+}
+
 # Dot-sourcing (the runner does) loads the functions only.
 if ($MyInvocation.InvocationName -eq '.') { return }
+
+# Before any verb touches the filesystem.
+Assert-DtJobControlParameters -VerbName $Verb -Bound @($PSBoundParameters.Keys)
+if ($Verb -eq 'capabilities') {
+    $caps = Get-DtJobCapabilities
+    if ($Json) { $caps | ConvertTo-Json -Compress } else { $caps | Format-List | Out-String }
+    exit 0
+}
 
 # Worker-side verbs: no run folder, lease, or context line.
 if ($Verb -eq 'tree-hash') {

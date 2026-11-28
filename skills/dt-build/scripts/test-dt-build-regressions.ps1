@@ -69,6 +69,8 @@ try {
     if ($Shard -in @(0,6)) {
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-job-stalls.ps1')
         Assert-True ($LASTEXITCODE -eq 0) 'job stalls interrupt waits and escalate independently through the watcher'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-control-compatibility.ps1')
+        Assert-True ($LASTEXITCODE -eq 0) 'control calls refuse unsupported input before writes, echo persisted decisions, and stale copies fail the preflight'
     }
     # Independent helper suites run once, outside the wrapper fixture shards.
     if ($Shard -in @(0,5)) {

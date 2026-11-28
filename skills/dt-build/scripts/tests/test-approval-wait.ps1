@@ -138,6 +138,7 @@ try {
                     $cpu = $p.TotalProcessorTime.TotalSeconds
                     $approval = Call-Job @('approve','-RunFolder',$folder,'-BuildStatePath',$state,'-Operation','review','-Reason','Fixture approved.')
                     Check ($approval.approved -eq 'review' -and -not $approval.PSObject.Properties['approval_queued']) 'operator applies approval before coordinator exits'
+                    Check ($approval.decision -eq 'approved' -and $approval.reason -ceq 'Fixture approved.' -and $approval.actor -ceq [Environment]::UserName) 'immediate approval echoes persisted decision, reason and actor'
                     $repeat = Call-Job @('approve','-RunFolder',$folder,'-BuildStatePath',$state,'-Operation','review')
                     Check ($repeat.approved -eq 'review' -and (Get-DtJobApprovals $folder).approvals.Count -eq 1) 'repeated immediate approval is idempotent'
                 } elseif ($case -eq 'declined') {
@@ -162,6 +163,9 @@ try {
             $r = [IO.File]::ReadAllText($resultPath) | ConvertFrom-Json
             $expected = if ($case -in @('timeout','setup-delay','coordinator-gone','no-director','director-gone')) { 'unanswered' } else { $case }
             Check ($r.decision -eq $expected) "$case returns $expected"
+            # AI-139: the waiter reads the persisted operator reason (the chosen option) with the decision.
+            if ($case -eq 'approved') { Check ($r.reason -ceq 'Fixture approved.') 'approved waiter receives the persisted approval reason' }
+            if ($case -eq 'declined') { Check ($r.reason -ceq 'Do not proceed.') 'declined waiter receives the persisted decline reason' }
             if ($case -eq 'approved') {
                 Wait-Until { Test-Path (Join-Path $folder 'continued') }
                 Check (-not $p.HasExited -and [int]([IO.File]::ReadAllText((Join-Path $folder 'continued'))) -eq $p.Id) 'same coordinator PID continues after approval'

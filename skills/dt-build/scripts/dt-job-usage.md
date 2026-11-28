@@ -129,10 +129,11 @@ class. Each note is capped at 2,000 characters.
 cd "<project path>"
 $dtJob = "<repo>/skills/dt-build/scripts/dt-job.ps1"
 $run = "<run folder>"
-pwsh -NoProfile -File $dtJob note -RunFolder $run -Evidence -Message 'The fixture test recorded 42 passing checks.' -Json
+$control = "<skill>/scripts/invoke-dt-job-control.ps1"
+pwsh -NoProfile -File $control note -RunFolder $run -Evidence -Message 'The fixture test recorded 42 passing checks.' -Json
 pwsh -NoProfile -File $dtJob status -RunFolder $run -Json
-pwsh -NoProfile -File $dtJob note -RunFolder $run -Evidence -Clear -NoteId e-001 -Json
-pwsh -NoProfile -File $dtJob note -RunFolder $run -Evidence -Clear -Json
+pwsh -NoProfile -File $control note -RunFolder $run -Evidence -Clear -NoteId e-001 -Json
+pwsh -NoProfile -File $control note -RunFolder $run -Evidence -Clear -Json
 ```
 
 Clearing evidence notes leaves operator notes intact.
@@ -160,6 +161,22 @@ Coordinators call `await-danny -CoordinatorId <id> -Operation <op> -Message "<de
 Operator `approve -Decline -Reason "<why>"` returns `decision=declined` to the waiter and leaves the boundary stopped. `hold -Reason "<decision awaiting Danny>"` wakes it with `decision=held`; raise the reserved decision in the director chat. Neither grants permission. No live director, its death, timeout (`decision=unanswered`), or replacement boundary (`superseded`) means checkpoint and end as before. Do not re-wait a boundary. A later approval uses the normal relaunch flow; no timeout escalates a live director. Waiter identity, boundary sequence, process start time and deadline fence immediate approval. Coordinator/job self-approval guards still apply.
 
 Capture `CallStartedUtc` before launching PowerShell (bash: `-CallStartedUtc "$(date -u +%FT%TZ)"`; PowerShell: `-CallStartedUtc ([DateTime]::UtcNow)`). Startup and lock waits consume this budget; run-lock acquisition is capped at caller start + 7.75 minutes, leaving return margin below eight minutes. A missing argument uses PowerShell process start time for compatibility. Dead coordinator identity invalidates its helper immediately; approval then requests continuation.
+
+## Operator control calls and stale copies
+
+Run every operator control (`approve`, `decline`, `hold`, `note`, `delegate`, `resume`) through `<skill>/scripts/invoke-dt-job-control.ps1`, where `<skill>` is the dt-build folder the session loaded (on the session host `/home/danny/Claude/skills/dt-build`, a link to the `danny-skills` checkout). The wrapper resolves the skill link and defaults to its canonical sibling `dt-job.ps1`. Never run operator controls directly against dt-job, a copy found by searching, or a copy under `plugins/marketplaces/` or `plugins/cache/`: those installer snapshots do not update with the checkout.
+
+The supported entry performs a read-only capabilities preflight automatically on EVERY call, before forwarding any operator arguments:
+
+```bash
+pwsh -NoProfile -File "<skill>/scripts/invoke-dt-job-control.ps1" approve -RunFolder "<run>" -Operation "<operation>" -Decline -Reason "<exact choice and why>" -Json
+```
+
+The probe receives only `capabilities -Json`, requires exit 0, `control_contract >= 1`, true `decline`, `persists_reason` and `strict_binding`, and matching resolved `script_path` and SHA256 (rechecked after probing). Failure refuses the request before running the control. A separate manual probe is diagnostic only. Copies older than contract 1 do not know `capabilities`; plugin 0.24.63 silently turned direct `approve -Decline` into approval and dropped `-Reason`. `-TargetPath` exists only for disposable compatibility tests and receives the identical mandatory preflight; it cannot bypass capabilities or operator authority.
+
+Only the verb is positional; all other arguments are named. Common operator arguments are `-RunFolder`, `-Json` and the existing disposable-test `-AllowTempRunFolder`; context selectors `-RunId` and `-BuildStatePath` apply to every operator verb except note, which uses only the run folder. Approve/decline accept `-Operation` and `-Reason` (`approve` also accepts `-Decline`); hold requires `-Operation` and either `-Reason` or `-Clear`; note accepts `-Message` or `-Clear [-NoteId]`, plus `-Evidence`; delegate accepts `-Delegate` or `-Clear`; resume has no verb-specific arguments. Unknown names, extra tokens, arguments for another verb and clear/set combinations fail before writes. Reasons and choices are forwarded as bound values without shell interpretation. The target retains all operator, worker and coordinator authority checks and its raw receipts/history.
+
+From contract 1, binding is strict: only the verb is positional. Unknown parameters, extra tokens (quote multi-word `-Reason` values) and a control parameter given to a verb that never reads it (for example `-Decline` on anything but `approve`) fail before any write. `approve`, `approve -Decline` and queued approvals echo what was persisted: `decision` (`approved`, `declined` or `approval_queued`), `operation`, `await_seq`, the trimmed `reason`, `actor` and `recorded_utc`; check them against what Danny chose. A repeat with the same or no reason is idempotent and echoes the original record (`duplicate=true`). A repeat with a different reason is refused (`DT_JOB_APPROVE_CONFLICT`), and a decline after an applied approval is refused (`DT_JOB_ALREADY_APPROVED`). A decline withdraws a matching queued approval so it never applies when the coordinator exits; a later explicit approval still overrules a decline and keeps it as `overruled_decline`. Receipts carry `control_contract`; receipts without it were written by an older copy and may lack the operator's reason. `await-danny` returns the receipt's `reason` with `approved` and `declined`.
 
 ## Stalls and escalation
 

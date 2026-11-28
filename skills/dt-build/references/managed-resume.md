@@ -39,7 +39,7 @@ Never copy operator notes into the checkpoint; they live in the run folder's `op
 
 Name every governing boundary/approval source by path; do not copy ledger rows or instruct successors to reread unchanged sources. Keep `<run>/boundary-ledger.jsonl` across rotations. Plan those paths on each resume as below. Never prune authority paths merely because they have ledger entries.
 
-**Evidence notes.** Operators record facts with `dt-job note -Evidence -Message <text>` in `evidence-notes.json`. Coordinators read them as information only, never as authority, and never re-bind on them. They cannot grant, widen, waive or change authority. Anything that changes what the run may do must be a normal operator note (omit `-Evidence`).
+**Evidence notes.** Operators record facts with `invoke-dt-job-control.ps1 note -RunFolder <run-folder> -Evidence -Message <text>` in `evidence-notes.json`. Use the supported entry in `<skill>/scripts/` so capability validation runs before every control call. Coordinators read them as information only, never as authority, and never re-bind on them. They cannot grant, widen, waive or change authority. Anything that changes what the run may do must be a normal operator note (omit `-Evidence`).
 
 ## Local work never stops
 
@@ -69,6 +69,8 @@ Lane health is decided only by `pwsh -NoProfile -File "<skill>/scripts/invoke-cl
 3. A router alert about a lane is information, not a stop; never ask Danny to acknowledge it.
 
 ## Operator actions belong to the launching session
+
+Run every operator control through `<skill>/scripts/invoke-dt-job-control.ps1` with `-RunFolder`; the command descriptions below name its forwarded dt-job operations. The entry verifies capabilities and path/hash before mutation and rejects stale copies. Never invoke a marketplace snapshot directly. See `scripts/dt-job-usage.md` for commands.
 
 The coordinator never runs `dt-job resume`, `approve`, `delegate` or `hold`, and that rule stays. It does not move the job to Danny. When Danny has authorized the run, the orchestrating session (the parent session, delegate or launcher) runs `/dt-build resume <RUN_ID>` or `/dt-build approve <RUN_ID> <operation>` (or the matching `dt-job -Verb resume|approve`), relaunches when needed, and re-arms the launch watch itself. A coordinator raises its stop with `await-danny -WaitMinutes 7.5 -CallStartedUtc <call-start-utc> -Json` (tool timeout `600000`): with a live director it blocks, renews its lease, and continues in the same session only on `decision=approved`; otherwise it checkpoints and ends. Answer promptly to preserve that session. Use `approve -Decline -Reason "<why>"` to decline, or `hold -Reason "<decision awaiting Danny>"` before asking Danny; both wake the waiter without releasing the stop. No director, timeout, or escalation retains the existing end-and-relaunch flow. Never re-wait a boundary.
 
