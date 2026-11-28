@@ -29,6 +29,7 @@
     "coder": {
       "first": "gpt-6.1-sol",
       "first_vendor": "codex",
+      "first_vendor_pin": "codex",
       "backup": "claude-opus-5-5",
       "backup_vendor": "claude",
       "first_effort": "medium",

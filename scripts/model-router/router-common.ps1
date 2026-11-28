@@ -123,6 +123,54 @@ function Test-RouterDifficulty {
     } elseif ($DifficultyReason) { throw 'DIFFICULTY_REASON_REFUSED: a reason is only allowed for hard.' }
 }
 
+function Get-RouterEffectiveSlots {
+    param([Parameter(Mandatory)][object]$Entry, [Parameter(Mandatory)][string]$Category)
+    # Entries come from a validated roster: outside-job categories have no override.
+    # In particular, protected mechanical work remapped to coder keeps the defaults.
+    $result = [pscustomobject]@{ first=$Entry.first; first_vendor=$Entry.first_vendor; backup=$Entry.backup; backup_vendor=$Entry.backup_vendor; override_slots=@() }
+    $overrides = $Entry.PSObject.Properties['category_overrides']
+    if ($Category -cnotin @(Get-RouterDispatchCategories) -or (Get-RouterCategoryJob $Category) -notin @('coder','deep-thinker') -or -not $overrides) { return $result }
+    $exception = $overrides.Value.PSObject.Properties[$Category]
+    if ($exception) {
+        foreach ($slot in @('first','backup')) {
+            $pick = $exception.Value.PSObject.Properties[$slot]
+            if ($pick) {
+                $result.$slot = $pick.Value.model
+                $result."${slot}_vendor" = $pick.Value.vendor
+                $result.override_slots += $slot
+            }
+        }
+    }
+    return $result
+}
+
+function Get-RouterRosterModelCounts {
+    param([Parameter(Mandatory)][object]$Roster)
+    $defaults = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $all = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($job in @(Get-RouterJobs)) {
+        $property = $Roster.jobs.PSObject.Properties[$job]
+        if (-not $property -or $property.Value -isnot [pscustomobject]) { continue }
+        $entry = $property.Value
+        foreach ($slot in @('first','backup')) {
+            $model = $entry.PSObject.Properties[$slot]
+            if ($model -and $model.Value -is [string] -and -not [string]::IsNullOrWhiteSpace($model.Value)) { [void]$defaults.Add($model.Value); [void]$all.Add($model.Value) }
+        }
+        $overrides = $entry.PSObject.Properties['category_overrides']
+        if (-not $overrides -or $overrides.Value -isnot [pscustomobject]) { continue }
+        foreach ($category in $overrides.Value.PSObject.Properties) {
+            if ($category.Value -isnot [pscustomobject]) { continue }
+            foreach ($slot in @('first','backup')) {
+                $pick = $category.Value.PSObject.Properties[$slot]
+                if (-not $pick -or $pick.Value -isnot [pscustomobject]) { continue }
+                $model = $pick.Value.PSObject.Properties['model']
+                if ($model -and $model.Value -is [string] -and -not [string]::IsNullOrWhiteSpace($model.Value)) { [void]$all.Add($model.Value) }
+            }
+        }
+    }
+    return [pscustomobject]@{ job_defaults=$defaults.Count; all_models=$all.Count }
+}
+
 function Test-RouterRoster {
     param([Parameter(Mandatory)][object]$Roster)
     $errors = [System.Collections.Generic.List[string]]::new()
@@ -149,7 +197,6 @@ function Test-RouterRoster {
         foreach ($name in $Roster.category_jobs.PSObject.Properties.Name) { if ($name -notin $categories) { $errors.Add("ROSTER_CATEGORY_EXTRA: $name") } }
     }
     if ($Roster.jobs -isnot [pscustomobject]) { $errors.Add('ROSTER_JOBS: expected object'); return $errors.ToArray() }
-    $models = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $frontier = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json
     foreach ($job in @(Get-RouterJobs)) {
         $p = $Roster.jobs.PSObject.Properties[$job]
@@ -187,14 +234,47 @@ function Test-RouterRoster {
         foreach ($slot in @('first','backup')) {
             $id = $entry.$slot
             if ($id -isnot [string] -or -not $id) { continue }
-            [void]$models.Add($id)
             $vendor = $entry."${slot}_vendor"
             if (($id -like 'claude-*' -and $vendor -ne 'claude') -or ($id -like 'gpt-*' -and $vendor -ne 'codex') -or ($id -notlike 'claude-*' -and $id -notlike 'gpt-*')) { $errors.Add("ROSTER_MODEL_VENDOR: $job/$slot") }
             if ($frontier.codex_models -contains $id -or @($frontier.claude_patterns | Where-Object { $id -like $_ }).Count) { $errors.Add("ROSTER_FRONTIER: $job/$slot") }
         }
+        foreach ($slot in @('first','backup')) {
+            $pin = $entry.PSObject.Properties["${slot}_vendor_pin"]
+            if ($pin -and ($pin.Value -isnot [string] -or $pin.Value -cnotin @('codex','claude') -or $entry."${slot}_vendor" -cne $pin.Value)) { $errors.Add("ROSTER_VENDOR_PIN: $job/$slot") }
+        }
+        $firstPin = $entry.PSObject.Properties['first_vendor_pin']
+        $backupPin = $entry.PSObject.Properties['backup_vendor_pin']
+        if ($firstPin -and $backupPin -and $firstPin.Value -cin @('codex','claude') -and $firstPin.Value -ceq $backupPin.Value) { $errors.Add("ROSTER_VENDOR_PIN: $job/backup") }
+        $overrides = $entry.PSObject.Properties['category_overrides']
+        if (-not $overrides) { continue }
+        if ($job -notin @('coder','deep-thinker')) { $errors.Add("ROSTER_OVERRIDE_JOB: $job") }
+        if ($overrides.Value -isnot [pscustomobject]) { $errors.Add("ROSTER_OVERRIDE_SHAPE: $job"); continue }
+        foreach ($categoryProperty in $overrides.Value.PSObject.Properties) {
+            $category = $categoryProperty.Name
+            $mapped = if ($Roster.category_jobs -is [pscustomobject]) { $Roster.category_jobs.PSObject.Properties[$category] } else { $null }
+            if ($category -cnotin @(Get-RouterDispatchCategories) -or -not $mapped -or $mapped.Value -cne $job -or (Get-RouterCategoryJob $category) -cne $job) { $errors.Add("ROSTER_OVERRIDE_CATEGORY: $job/$category") }
+            $exception = $categoryProperty.Value
+            if ($exception -isnot [pscustomobject]) { $errors.Add("ROSTER_OVERRIDE_SHAPE: $job/$category"); continue }
+            $slots = @($exception.PSObject.Properties | ForEach-Object { $_.Name })
+            if (-not $slots.Count -or @($slots | Where-Object { $_ -cnotin @('first','backup') }).Count) { $errors.Add("ROSTER_OVERRIDE_SHAPE: $job/$category") }
+            $vendors = @{ first=$entry.first_vendor; backup=$entry.backup_vendor }
+            foreach ($slot in @('first','backup')) {
+                $slotProperty = $exception.PSObject.Properties[$slot]
+                if (-not $slotProperty) { continue }
+                $pick = $slotProperty.Value
+                if ($pick -isnot [pscustomobject]) { $errors.Add("ROSTER_OVERRIDE_SHAPE: $job/$category/$slot"); continue }
+                if ((@($pick.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object) -join ',') -cne 'model,vendor' -or $pick.model -isnot [string] -or [string]::IsNullOrWhiteSpace($pick.model) -or $pick.vendor -cnotin @('codex','claude') -or ($pick.model -like 'claude-*' -and $pick.vendor -cne 'claude') -or ($pick.model -like 'gpt-*' -and $pick.vendor -cne 'codex') -or ($pick.model -notlike 'claude-*' -and $pick.model -notlike 'gpt-*')) { $errors.Add("ROSTER_OVERRIDE_SHAPE: $job/$category/$slot"); continue }
+                $vendors[$slot] = $pick.vendor
+                if (Test-RouterFrontierModel -Model $pick.model -Frontier $frontier) { $errors.Add("ROSTER_OVERRIDE_FRONTIER: $job/$category/$slot") }
+                if ($pick.model -eq $entry.$slot) { $errors.Add("ROSTER_OVERRIDE_REDUNDANT: $job/$category/$slot") }
+                $pin = $entry.PSObject.Properties["${slot}_vendor_pin"]
+                if ($pin -and $pick.vendor -cne $pin.Value) { $errors.Add("ROSTER_VENDOR_PIN: $job/$slot/$category") }
+            }
+            if ($vendors.first -eq $vendors.backup) { $errors.Add("ROSTER_OVERRIDE_VENDOR: $job/$category") }
+        }
     }
     foreach ($name in $Roster.jobs.PSObject.Properties.Name) { if ($name -notin @(Get-RouterJobs)) { $errors.Add("ROSTER_JOB_EXTRA: $name") } }
-    if ($models.Count -gt 5) { $errors.Add('ROSTER_MODEL_CAP: maximum 5 distinct models') }
+    if ((Get-RouterRosterModelCounts -Roster $Roster).job_defaults -gt 5) { $errors.Add('ROSTER_MODEL_CAP: maximum 5 distinct models') }
     return $errors.ToArray()
 }
 

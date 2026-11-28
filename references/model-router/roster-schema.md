@@ -4,7 +4,31 @@
 
 Categories and jobs: `mechanical` -> `fast`; `routine-coding`, `complex-coding`, `ui-frontend` -> `coder`; `code-review`, `planning`, `deep-research`, `math`, `analysis`, `classification-escalation` -> `deep-thinker`; `long-form-writing` -> `writer`; `image-generation` -> `illustrator`.
 
-Validation requires every category and job, with no extra keys. Each populated model slot has a matching vendor. First and backup use different vendors. Only `illustrator` may have a null backup, and its backup must be null. No model matched by `frontier-models.json` may occupy a slot. At most five distinct model IDs may appear across all slots. Validation errors have stable named prefixes.
+Validation requires every category and job, with no extra keys. Each populated model slot has a matching vendor. First and backup use different vendors. Only `illustrator` may have a null backup, and its backup must be null. No model matched by `frontier-models.json` may occupy a slot. `ROSTER_MODEL_CAP` limits distinct job-default model IDs (first/backup defaults) to five; models appearing only in category exceptions do not count. Validation errors have stable named prefixes.
+
+## Category exceptions and vendor pins
+
+Coder and deep-thinker may carry an optional `category_overrides` object, keyed by dispatch categories mapped to that job by `category_jobs`. Each category value is a nonempty object containing `first`, `backup`, or both. Each slot value has exactly `model` (a nonempty string) and `vendor` (`codex` or `claude`), with a matching model prefix (`gpt-*` or `claude-*`). An empty map `{}` means no exceptions; an absent map retains legacy behavior. Fast, writer and illustrator cannot carry the field, even if empty. Schema version stays 1.
+
+For example: `"category_overrides": {"ui-frontend": {"first": {"model": "gpt-6.2-sol", "vendor": "codex"}}}`. The effective slot uses the category exception when present and the job default otherwise. `Get-RouterEffectiveSlots -Entry <validated job entry> -Category <category>` returns `first`, `first_vendor`, `backup`, `backup_vendor` and an array `override_slots` (first then backup). Categories outside the job, including protected mechanical work remapped to coder, use defaults. Exceptions inherit the slot's scalar and tier efforts unchanged. Their effective first/backup pair must use different vendors. Without a pin, a category can swap both vendors relative to defaults.
+
+Every job slot may carry an optional `first_vendor_pin` or `backup_vendor_pin`, with the exact string `codex` or `claude`. Its default vendor and every exception on that slot must equal the pin. Both slots cannot be pinned to the same vendor. An absent pin keeps legacy behavior; pins constrain roster contents and do not change dispatch. The default roster pins coder's first slot to `codex`.
+
+`Get-RouterRosterModelCounts -Roster <roster>` returns `job_defaults` (the cap count) and `all_models` (including category exceptions). Counts deduplicate model IDs case-insensitively and exclude null backups.
+
+| Prefix | Rejected condition |
+| --- | --- |
+| `ROSTER_OVERRIDE_JOB: <job>` | Overrides present on fast, writer or illustrator. |
+| `ROSTER_OVERRIDE_SHAPE: <job>` | Override map is not an object. |
+| `ROSTER_OVERRIDE_CATEGORY: <job>/<category>` | Unknown dispatch category or category assigned to another job. Mechanical on coder is rejected. |
+| `ROSTER_OVERRIDE_SHAPE: <job>/<category>` | Category value is not an object, is empty or has keys other than first/backup. |
+| `ROSTER_OVERRIDE_SHAPE: <job>/<category>/<slot>` | Slot is not an object, has keys other than exactly model/vendor, has an empty/non-string model, an unknown vendor or a mismatched model prefix. |
+| `ROSTER_OVERRIDE_FRONTIER: <job>/<category>/<slot>` | Exception uses a frontier model. |
+| `ROSTER_OVERRIDE_REDUNDANT: <job>/<category>/<slot>` | Exception model equals that slot's default. |
+| `ROSTER_OVERRIDE_VENDOR: <job>/<category>` | Effective first and backup use the same vendor. |
+| `ROSTER_VENDOR_PIN: <job>/<slot>` | Unknown pin value, off-pin default vendor or both slots pinned to the same vendor (reported on backup). |
+| `ROSTER_VENDOR_PIN: <job>/<slot>/<category>` | Exception vendor differs from that slot's pin. |
+| `ROSTER_MODEL_CAP: maximum 5 distinct models` | More than five distinct job-default models, excluding exception-only models. |
 
 
 ## Approved quota ties

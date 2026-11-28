@@ -15,6 +15,13 @@ function Save-Category { param([string]$Category,[array]$Rows)
 }
 function Add-Pass { param([string]$Id,[string[]]$Categories=@('complex-coding'))
     Initialize-TestBenchEvidence
+    # These legacy proposal scenarios intentionally exercise unpinned vendor flips.
+    $legacyRoster = (Read-RouterRoster).roster
+    if ($legacyRoster.jobs.coder.PSObject.Properties['first_vendor_pin']) {
+        $legacyRoster.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
+        $legacyRoster.approved = $true; $legacyRoster.approved_at = [datetimeoffset]::UtcNow.ToString('o')
+        Write-RouterJsonAtomic (Join-Path $env:DT_MODEL_ROUTER_STATE 'roster.json') $legacyRoster
+    }
     [IO.File]::AppendAllText((Join-Path $script:readDir 'passes.jsonl'),((ConvertTo-Json -InputObject ([pscustomobject]@{pass_id=$Id;categories=$Categories}) -Compress) + "`n"))
 }
 $priorState=$env:DT_MODEL_ROUTER_STATE; $priorAlert=$env:DT_MODEL_ROUTER_ALERT_TRANSPORT; $priorSessions=$env:DT_MODEL_ROUTER_CODEX_SESSIONS
