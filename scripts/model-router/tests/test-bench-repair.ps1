@@ -47,6 +47,9 @@ try {
     $null=Invoke-RouterBench -Job fast -Candidate gpt-6-luna -Incumbent gpt-6.1-sol -StateDir $a -CliInvoker $stale -Limits {param($v) @{blocked=$false}} -NoAlerts
     Check (-not(Test-Path (Join-Path $a 'effort-proposals/fast.json'))) 'F1 stale dispatch'
     $env:DT_MODEL_ROUTER_STATE=$a; Write-RouterJsonAtomic (Join-Path $a 'roster.json') $roster
+    # These drift fixtures test raw gates and proposal delivery, independently of pins.
+    $roster.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
+    Write-RouterJsonAtomic (Join-Path $a 'roster.json') $roster
     foreach($job in @('fast','coder','deep-thinker','writer')) {
         foreach($raw in @('fail','unknown')) {
             $mark=[pscustomobject]@{job=$job;model=$roster.jobs.$job.first;prior_rate=1;recent_rate=0}

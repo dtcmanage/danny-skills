@@ -334,6 +334,32 @@ try {
             Assert-True ($result.requests.Count -eq 1 -and @($result.alerts | Where-Object message -match 'ROSTER_TEST_REJECTION: completed drift swap').Count -eq 1) 'invalid completed drift proposal returns validation alert'
             Send-RouterAlerts -Alerts @($result.alerts) | Out-Null
             Assert-True ((Get-Content (Join-Path $script:state 'deliveries.log') -Raw) -match 'ROSTER_TEST_REJECTION') 'validation error alert delivered through synthetic transport'
+            # Repeat through the public entry point so alert propagation cannot be
+            # concealed by manually calling the sender above. Only validation is injected.
+            Remove-Item -LiteralPath (Join-Path $script:state 'drift-marks.json')
+            Remove-Item -LiteralPath (Join-Path $script:state 'deliveries.log')
+            $originalCompletion = ${function:Complete-RouterDriftBench}
+            $script:validationBenchCalls = 0
+            try {
+                function Complete-RouterDriftBench {
+                    param($Staged, $BenchResults, [datetime]$Now)
+                    function Test-RouterRoster {
+                        param([object]$Roster)
+                        if (-not $Roster.approved -and $Roster.jobs.coder.first -eq 'claude-opus-5-5') { return 'ROSTER_TEST_REJECTION: end-to-end drift swap' }
+                        & $originalValidator -Roster $Roster
+                    }
+                    & $originalCompletion @PSBoundParameters
+                }
+                # A fresh timestamp gives this validation alert its own delivery key.
+                $result = Update-RouterOutcomes -Now ($script:now.AddMinutes(1)) -SourcesPath $script:sources -SendAlerts -BenchInvoker {
+                    param($r)
+                    $script:validationBenchCalls++
+                    Add-TestBenchEvidence ([pscustomobject]@{gate='pass';raw_gate='pass';better=$r.candidate;tied=$false;shortfall_tasks=0;report_paths=@{markdown='synthetic'};effort_down_qualified=$false})
+                }
+            } finally { ${function:Complete-RouterDriftBench} = $originalCompletion }
+            Assert-True ($script:validationBenchCalls -eq 1 -and $result.requests.Count -eq 1 -and @($result.alerts | Where-Object message -match 'ROSTER_TEST_REJECTION: end-to-end drift swap').Count -eq 1) 'public update returns completed-swap validation alert'
+            Assert-True ((Get-Content (Join-Path $script:state 'deliveries.log') -Raw) -match 'ROSTER_TEST_REJECTION: end-to-end drift swap') 'public update sends validation alert through synthetic transport'
+            Assert-True (-not (Test-Path (Join-Path $script:state 'effort-proposals/coder-standard.json'))) 'rejected public update writes no effort proposal'
         } else {
             $result = Update-RouterOutcomes -Now $script:now -SourcesPath $script:sources -SendAlerts -BenchInvoker { throw 'Pinned jobs must not request a bench' }
             Assert-True ($result.requests.Count -eq 0) "$pins vendor pin prevents bench request"

@@ -117,6 +117,9 @@ try {
 
     # The drift swap publisher must also retain the same quality veto and record.
     . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
+    # Exercise swap quality independently of the default coder vendor pin.
+    $roster.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
+    Write-RouterJsonAtomic (Join-Path $root 'roster.json') $roster
     $entry=$roster.jobs.coder
     Write-RouterJsonAtomic (Join-Path $root 'drift-marks.json') @([pscustomobject]@{job='coder';model=$entry.first;prior_rate=1;recent_rate=0.5})
     $staged=[pscustomobject]@{identity=(ConvertTo-Json $roster.jobs -Compress -Depth 30)}
