@@ -326,7 +326,7 @@ function Build-RouterRosterProposalLocked {
         }
     }
     $counts = Get-RouterRosterModelCounts -Roster $proposed
-    $overCap = $counts.job_defaults -gt 5
+    $overCap = $counts.job_defaults -gt 6
     $priorIds = @($current.jobs.PSObject.Properties | ForEach-Object { @($_.Value.first,$_.Value.backup) } | Where-Object { $_ } | Sort-Object -Unique)
     if ($overCap) { $conflicts += @($changes | Where-Object { $priorIds -notcontains $_.to } | ForEach-Object { [pscustomobject]@{job=$_.job;slot=$_.slot;category=$_.category;from=$_.from;to=$_.to;evidence=$_.evidence} }) }
     $capFits = @()
@@ -334,11 +334,11 @@ function Build-RouterRosterProposalLocked {
         $partial = $current | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
         $partial.jobs.$job = $proposed.jobs.$job
         $partialCount = (Get-RouterRosterModelCounts -Roster $partial).job_defaults
-        $capFits += [pscustomobject]@{job=$job;fits=($partialCount -le 5);count=$partialCount}
+        $capFits += [pscustomobject]@{job=$job;fits=($partialCount -le 6);count=$partialCount}
     }
-    $capLine = (@($capFits | ForEach-Object { "$($_.job) alone: $(if ($_.fits) {'fits'} else {'exceeds'}) the five-model cap ($($_.count) job-default models)." }) -join ' ')
+    $capLine = (@($capFits | ForEach-Object { "$($_.job) alone: $(if ($_.fits) {'fits'} else {'exceeds'}) the six-model cap ($($_.count) job-default models)." }) -join ' ')
     if (-not $capFits.Count) { $capLine = 'No model changes remain after conflicts.' }
-    if ($capFits.Count -and -not @($capFits | Where-Object fits).Count) { $capLine += ' No single-job approval fits the five-model cap.' }
+    if ($capFits.Count -and -not @($capFits | Where-Object fits).Count) { $capLine += ' No single-job approval fits the six-model cap.' }
     $proposed | Add-Member -Force -NotePropertyName changes -NotePropertyValue @($changes)
     $proposed | Add-Member -Force -NotePropertyName over_cap -NotePropertyValue $overCap
     $proposed | Add-Member -Force -NotePropertyName conflicts -NotePropertyValue $conflicts
@@ -381,7 +381,7 @@ function Build-RouterRosterProposalLocked {
     $alertMessage = "Model list change proposed: $($first.job)/$($first.category) $($first.from) -> $($first.to). Report: $reportPath Cap fit: $capLine"
     if ($overCap) {
         $jobs = @($conflicts | ForEach-Object job | Sort-Object -Unique) -join ','
-        $alertMessage += " Over the 5-model cap; choose which of these jobs to change: $jobs. Approve your pick with approve-roster.ps1 -Approve -Jobs <job,...> (the full list exceeds the cap)."
+        $alertMessage += " Over the 6-model cap; choose which of these jobs to change: $jobs. Approve your pick with approve-roster.ps1 -Approve -Jobs <job,...> (the full list exceeds the cap)."
     }
     $Notification.alert = [pscustomobject]@{key="roster-proposal:$hash";message=$alertMessage}
     return [pscustomobject]@{changed=$true;pass_id=$passId;changes=@($changes);proposal=$jsonPath;report=$reportPath;over_cap=$overCap;conflicts=$conflicts;validation_errors=$errors}

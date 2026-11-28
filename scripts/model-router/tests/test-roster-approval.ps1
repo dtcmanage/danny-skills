@@ -44,6 +44,8 @@ try {
     $revoked = Get-Content -LiteralPath (Join-Path $temp 'roster.json') -Raw | ConvertFrom-Json
     Assert-True ($revoked.approved -eq $false -and (Resolve-RouterModel -Category complex-coding -SkipModelCheck -Catalog $catalog).roster_source -eq 'default') 'revoke clears approval and resolver uses default roster'
     $proposal = Read-Seed
+    # Writer adds two defaults to the five-model seed; fast-only still fits.
+    $proposal.jobs.writer.first = 'claude-sonnet-4-6'
     $proposal.jobs.fast.backup = 'claude-sonnet-5'
     $proposal.jobs.writer.backup = 'gpt-5.6-sol'
     $proposal | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $latest.proposal

@@ -111,7 +111,7 @@ try {
     $r = Copy-Roster; $r.jobs.coder.PSObject.Properties.Remove('first_vendor_pin')
     Set-Overrides $r ([pscustomobject]@{'ui-frontend'=[pscustomobject]@{first=[pscustomobject]@{model='claude-sonnet-4-6';vendor='claude'};backup=[pscustomobject]@{model='gpt-6.2-sol';vendor='codex'}}})
     Check-Valid $r 'unpinned exceptions can swap vendors'
-    # Five defaults, six including an exception: passes; move the sixth to a default: fails.
+    # Six defaults pass; an exception-only seventh does not count until made a default.
     $r = Copy-Roster
     Check-Valid $r 'five distinct defaults accepted'
     Set-Overrides $r ([pscustomobject]@{'ui-frontend'=(New-Exception)})
@@ -119,9 +119,15 @@ try {
     Check ($counts.job_defaults -eq 5 -and $counts.all_models -eq 6) 'cap helper reports both counts'
     Check-Valid $r 'exception-only sixth model accepted'
     $r.jobs.writer.backup = 'gpt-6.2-sol'
-    Expect-Error $r 'ROSTER_MODEL_CAP: maximum 5 distinct models'
+    Check-Valid $r 'six distinct defaults accepted'
     $counts = Get-RouterRosterModelCounts $r
     Check ($counts.job_defaults -eq 6 -and $counts.all_models -eq 6) 'sixth default counted once'
+    $r.jobs.coder.category_overrides.'ui-frontend'.first.model = 'gpt-5.6-sol'
+    Check-Valid $r 'exception-only seventh model accepted'
+    $counts = Get-RouterRosterModelCounts $r
+    Check ($counts.job_defaults -eq 6 -and $counts.all_models -eq 7) 'exception-only seventh excluded from cap count'
+    $r.jobs.'deep-thinker'.backup = 'gpt-5.6-sol'
+    Expect-Error $r 'ROSTER_MODEL_CAP: maximum 6 distinct models'
     $r = Copy-Roster
     $counts = Get-RouterRosterModelCounts $r
     Check ($counts.job_defaults -eq 5 -and $counts.all_models -eq 5) 'shared defaults deduplicated and null backup excluded'

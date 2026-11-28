@@ -4,7 +4,7 @@
 
 Categories and jobs: `mechanical` -> `fast`; `routine-coding`, `complex-coding`, `ui-frontend` -> `coder`; `code-review`, `planning`, `deep-research`, `math`, `analysis`, `classification-escalation` -> `deep-thinker`; `long-form-writing` -> `writer`; `image-generation` -> `illustrator`.
 
-Validation requires every category and job, with no extra keys. Each populated model slot has a matching vendor. First and backup use different vendors. Only `illustrator` may have a null backup, and its backup must be null. No model matched by `frontier-models.json` may occupy a slot. `ROSTER_MODEL_CAP` limits distinct job-default model IDs (first/backup defaults) to five; models appearing only in category exceptions do not count. Validation errors have stable named prefixes.
+Validation requires every category and job, with no extra keys. Each populated model slot has a matching vendor. First and backup use different vendors. Only `illustrator` may have a null backup, and its backup must be null. No model matched by `frontier-models.json` may occupy a slot. `ROSTER_MODEL_CAP` limits distinct job-default model IDs (first/backup defaults) to six; models appearing only in category exceptions do not count. Validation errors have stable named prefixes.
 
 ## Category exceptions and vendor pins
 
@@ -28,7 +28,7 @@ Every job slot may carry an optional `first_vendor_pin` or `backup_vendor_pin`, 
 | `ROSTER_OVERRIDE_VENDOR: <job>/<category>` | Effective first and backup use the same vendor. |
 | `ROSTER_VENDOR_PIN: <job>/<slot>` | Unknown pin value, off-pin default vendor or both slots pinned to the same vendor (reported on backup). |
 | `ROSTER_VENDOR_PIN: <job>/<slot>/<category>` | Exception vendor differs from that slot's pin. |
-| `ROSTER_MODEL_CAP: maximum 5 distinct models` | More than five distinct job-default models, excluding exception-only models. |
+| `ROSTER_MODEL_CAP: maximum 6 distinct models` | More than six distinct job-default models, excluding exception-only models. |
 
 
 ## Approved quota ties

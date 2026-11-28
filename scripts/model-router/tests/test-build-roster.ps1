@@ -103,7 +103,7 @@ function Test-CategoryProposals {
     Assert-True (-not $proposal.over_cap -and (Get-RouterRosterModelCounts $proposal).job_defaults -eq 5 -and (Get-RouterRosterModelCounts $proposal).all_models -eq 6 -and @($proposal.validation_errors).Count -eq 0) 'exceptions can add a sixth model while job-default cap fits'
     Assert-True (-not $proposal.approved -and $proposal.dimension_framework -eq 'provisional') 'category proposal remains unapproved and records framework state'
     $report = Get-Content $two.report -Raw
-    Assert-True ($report -match '## Per-category changes' -and $report -match '## Category exceptions' -and $report -match 'Distinct models \(job defaults only\): 5' -and $report -match 'Distinct models \(all models including exceptions\): 6' -and $report -match 'Cap fit:' -and $report -match 'No single-job approval fits the five-model cap' -and $report -match 'Skipped below slot effort') 'report includes category evidence, exceptions, both counts and single-job cap fit'
+    Assert-True ($report -match '## Per-category changes' -and $report -match '## Category exceptions' -and $report -match 'Distinct models \(job defaults only\): 5' -and $report -match 'Distinct models \(all models including exceptions\): 6' -and $report -match 'Cap fit:' -and $report -match 'coder alone: fits the six-model cap' -and $report -match 'Skipped below slot effort') 'report includes category evidence, exceptions, both counts and single-job cap fit'
     $records = @(Get-Content (Join-Path $dir 'verdicts.jsonl') | ForEach-Object { $_ | ConvertFrom-Json })
     $categoryRecords = @($records | Where-Object { $_.PSObject.Properties['category'] })
     Assert-True (@($categoryRecords | Where-Object { $_.job -eq 'coder' -and $_.category -eq 'routine-coding' -and $_.slot -eq 'first' -and $_.holder -eq 'gpt-6.2-sol' }).Count -eq 2 -and @($categoryRecords | Group-Object pass_id,job,slot,category | Where-Object Count -gt 1).Count -eq 0) 'category record shape carries effective holder and deduplicates staging/finalization'
@@ -279,6 +279,11 @@ try {
         $verdict = Get-RouterProposalCategoryVerdict -Job coder -Category complex-coding -Slot first -Holder 'gpt-6.1-sol' -Readings $candidateData -Prices $prices -Frontier $frontier
         Assert-True (($verdict.result -eq $case[0]) -eq $case[1]) "category lower-tier/frontier exclusion and older quality rule: $($case[0])"
     }
+    # Six incumbent defaults; the coder challenger adds the seventh default.
+    $capRoster = Read-RouterJsonObject (Join-Path $PSScriptRoot '../../../references/model-router/default-roster.json')
+    $capRoster.approved = $true; $capRoster.approved_at = '2026-09-28T09:00:00Z'
+    $capRoster.jobs.writer.first = 'claude-sonnet-5'
+    Write-RouterJsonAtomic (Join-Path $temp 'roster.json') $capRoster
     Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'gpt-6.2-sol' 70 'gpt-6.1-sol' 50),(New-Reading 'low-trail' 'gpt-6.2-sol' 40 'gpt-6.1-sol' 50 -Effort Low))
     Add-Pass 'p1'; $one=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:00')
     Assert-True (-not $one.changed -and $script:alerts.Count -eq 0) 'one pass no proposal or alert'

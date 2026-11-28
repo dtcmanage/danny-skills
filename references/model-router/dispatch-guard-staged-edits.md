@@ -388,9 +388,9 @@ The first matching row disposes each hit. Path is relative to `<danny-skills>`; 
 | `<danny-skills>/scripts/model-router/vendor-limits.ps1` | User-Agent | HTTP header for the quota probe, not a native Agent tool launch. |
 | `<danny-skills>/skills/dt-build/references/resume-bootstrap-measurement.md` | excluding subagents | Transcript discovery excludes subagent transcripts; no delegation instruction. |
 | `<danny-skills>/skills/dt-build/references/managed-resume.md` | Never judge a lane by a bare | Prohibits direct CLI launches and requires wrapper preflights for lane health. |
-| `skills/dt-build/references/context-discipline.md` | * | Coordinator read discipline describes worker brief payloads; it does not authorize native dispatch. |
-| `skills/dt-build/scripts/read-coordinator-rulebook.ps1` | * | Reads the canonical worker prompt reference to assemble the coordinator rulebook. |
-| `skills/dt-build/scripts/readonly-worker-evidence.ps1` | * | Parses structured CLI evidence to enforce the read-only worker contract. |
+| `<danny-skills>/skills/dt-build/references/context-discipline.md` | * | Coordinator read discipline describes worker brief payloads; it does not authorize native dispatch. |
+| `<danny-skills>/skills/dt-build/scripts/read-coordinator-rulebook.ps1` | * | Reads the canonical worker prompt reference to assemble the coordinator rulebook. |
+| `<danny-skills>/skills/dt-build/scripts/readonly-worker-evidence.ps1` | * | Parses structured CLI evidence to enforce the read-only worker contract. |
 <!-- dispositions:end -->
 
 ## Grep dispositions: scaffolding

@@ -274,7 +274,7 @@ function Test-RouterRoster {
         }
     }
     foreach ($name in $Roster.jobs.PSObject.Properties.Name) { if ($name -notin @(Get-RouterJobs)) { $errors.Add("ROSTER_JOB_EXTRA: $name") } }
-    if ((Get-RouterRosterModelCounts -Roster $Roster).job_defaults -gt 5) { $errors.Add('ROSTER_MODEL_CAP: maximum 5 distinct models') }
+    if ((Get-RouterRosterModelCounts -Roster $Roster).job_defaults -gt 6) { $errors.Add('ROSTER_MODEL_CAP: maximum 6 distinct models') }
     return $errors.ToArray()
 }
 
