@@ -30,6 +30,11 @@ param(
     [switch]$SingleDispatch,
     [switch]$Preflight,
     [switch]$ReadOnly,
+    [switch]$ReadExtract,
+    [ValidateRange(1,128)][int]$ReadMaxToolCalls = 24,
+    [ValidateRange(1,64)][int]$ReadMaxTurns = 16,
+    [ValidateRange(256,1000000)][int]$ReadMaxInputTokens = 120000,
+    [ValidateRange(100,540000)][int]$ReadMaxMs = 300000,
     [switch]$Scrutiny,
     [switch]$AdHoc,
     [switch]$AllowOutputInProject,
@@ -47,6 +52,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'read-worker-bounds.ps1')
+Assert-ReadWorkerLane -ReadExtract ([bool]$ReadExtract) -AdHoc ([bool]$AdHoc) -ReadOnly ([bool]$ReadOnly) -Preflight ([bool]$Preflight) -Scrutiny ([bool]$Scrutiny) -Parameters $PSBoundParameters
 . (Join-Path $PSScriptRoot 'worker-verification.ps1')
 if ($env:DT_JOB_DIR) {
     $jobRunFolder = Split-Path -Parent (Split-Path -Parent $env:DT_JOB_DIR)
@@ -194,10 +201,10 @@ if (-not $Preflight) {
         catch { throw "CODEX_INVOKE_FAIL: $($_.Exception.Message)" }
     }
     . (Join-Path $PSScriptRoot 'worker-standing-rules.ps1')
-    $fixRoundRule = if (-not $ReadOnly) { Get-WorkerFixRoundRule -MaxFixRounds $MaxFixRounds }
+    $fixRoundRule = if (-not $ReadOnly -and -not $ReadExtract) { Get-WorkerFixRoundRule -MaxFixRounds $MaxFixRounds }
     $hardwareRule = Get-WorkerHardwareRule
     if ($AdHoc) {
-        $promptText += "`n- $(Get-WorkerEnvironmentRule -ReadOnly:$ReadOnly)`n"
+        if (-not $ReadExtract) { $promptText += "`n- $(Get-WorkerEnvironmentRule -ReadOnly:$ReadOnly)`n" }
         $promptFolder = Split-Path -Parent $PromptPath
         # Workers never see where the prompt came from; refuse sibling references that cannot resolve.
         $siblingPattern = '(?i)[`"'']?([\w.-]+\.[a-z0-9]{1,8})[`"'']?\s*\((?:beside|next to|alongside) this prompt\)'
@@ -472,6 +479,11 @@ else {
 }
 $dispatchedPromptSha256 = if ($Preflight) { $promptSha256 } else {
     [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([System.Text.UTF8Encoding]::new($false).GetBytes($prompt))).ToLowerInvariant()
+}
+if ($ReadExtract) {
+    $readResult = Invoke-BoundedReadWorker -Vendor 'codex' -CliPath $codexCli -ProjectPath $projectRoot -OutputPath $OutputPath -Prompt $prompt -PromptPath $PromptPath -Model $resolvedModel -Effort $Effort -TimeoutMs $TimeoutMs -ReadMaxToolCalls $ReadMaxToolCalls -ReadMaxTurns $ReadMaxTurns -ReadMaxInputTokens $ReadMaxInputTokens -ReadMaxMs $ReadMaxMs -Context $DispatchContext -Resolution $routerPick -SelectionReason $SelectionReason
+    if ($Json) { $readResult | ConvertTo-Json -Depth 40 } else { $readResult }
+    return
 }
 $sandbox = if ($Preflight -or $ReadOnly) { 'read-only' } else { 'workspace-write' }
 # Builders (not reviews) run with full access on every platform. Windows has no

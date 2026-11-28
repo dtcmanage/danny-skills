@@ -6,6 +6,11 @@ param(
     [ValidateSet('standard','hard')][string]$Difficulty = 'standard', [string]$DifficultyReason,
     [string]$RetryAtHardFrom, [string]$EscalateFrom, [switch]$Protected,
     [switch]$ReadOnly, [switch]$AdHoc, [switch]$Scrutiny, [switch]$SingleDispatch,
+    [switch]$ReadExtract,
+    [ValidateRange(1,128)][int]$ReadMaxToolCalls = 24,
+    [ValidateRange(1,64)][int]$ReadMaxTurns = 16,
+    [ValidateRange(256,1000000)][int]$ReadMaxInputTokens = 120000,
+    [ValidateRange(100,540000)][int]$ReadMaxMs = 300000,
     [int]$Attempt = 1, [string]$ApprovalOperation, [string]$RunFolder,
     [string]$LogicalTaskId, [string]$PriorDispatchId,
     [int]$TimeoutMs, [switch]$AllowOutputInProject, [switch]$Live, [switch]$Json
@@ -92,6 +97,9 @@ function Invoke-RouterDispatch {
     foreach ($name in @('ProjectPath','Category','PromptPath','OutputPath','SelectionReason','Model','Protected','ReadOnly','AdHoc','Scrutiny','SingleDispatch','Attempt','ApprovalOperation','RunFolder','FrontierRequest','ByNameRequest','TimeoutMs','Difficulty','DifficultyReason','RetryAtHardFrom','EscalateFrom','AllowOutputInProject')) {
         if ($Options.ContainsKey($name)) { $adapter[$name] = $Options[$name] }
     }
+    foreach ($name in @('ReadExtract','ReadMaxToolCalls','ReadMaxTurns','ReadMaxInputTokens','ReadMaxMs')) {
+        if ($Options.ContainsKey($name)) { $adapter[$name] = $Options[$name] }
+    }
     $frontierPick = Assert-RouterDispatchPick -Resolution $pick -Model $Options['Model'] -RequestId $Options['FrontierRequest'] @byName
     if ($frontierPick) { $adapter.SingleDispatch = $true }
     $adapter.Effort = $pick.effort; $adapter.RouterResolution = $pick; $adapter.DispatchContext = $context; $adapter.Json = $true
@@ -121,7 +129,7 @@ function Invoke-RouterDispatch {
     & $invokeAdapter $vendor $adapter
     $row = Read-RouterDispatchEvidence -Path $path
     $backup = Get-DispatchValue $row 'backup_pick'
-    if ($backup -and $backup.status -eq 'ok' -and -not $Options['Lane'] -and -not $Options['SingleDispatch'] -and -not $frontierPick -and -not $env:DT_BUILD_RUN_PIN_VENDOR) {
+    if ($backup -and $backup.status -eq 'ok' -and -not $Options['ReadExtract'] -and -not $Options['Lane'] -and -not $Options['SingleDispatch'] -and -not $frontierPick -and -not $env:DT_BUILD_RUN_PIN_VENDOR) {
         $context.fallback_reason = Get-DispatchValue $row 'failure_category'
         if (-not $context.fallback_reason) { $context.fallback_reason = 'wrapper backup choice' }
         $adapter.RouterResolution = $backup; $adapter.Effort = $backup.effort

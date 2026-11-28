@@ -1,5 +1,48 @@
 # dt-build Subagent Prompts
 
+## Ad hoc read/extract workers
+
+For a single extract, use `dispatch.ps1 -AdHoc -ReadExtract` with an explicit
+absolute `-OutputPath`. The canonical prompt template is
+`/home/danny/Claude/_Claude-Workspace/00_Resources/read-delegation.md`.
+Treat word/character limits as SOFT targets; finish within roughly 10% over.
+The wrapper appends the declared artifact path and tells the worker to finish
+after writing it. `-ReadOnly`, scrutiny, preflight and managed build/coordinator
+jobs are separate lanes; they cannot opt into this artifact-writing lane.
+
+Read defaults are 24 tool calls, 16 assistant turns, 120,000 observed input
+tokens and 300,000 ms. Override per dispatch with `-ReadMaxToolCalls` (1–128),
+`-ReadMaxTurns` (1–64), `-ReadMaxInputTokens` (256–1,000,000), and
+`-ReadMaxMs` (100–540,000). The read deadline is the smaller of ReadMaxMs and
+90% of TimeoutMs, leaving time to finalize before the enclosing wall timeout.
+These parameters are refused without the explicit lane; ordinary multi-file
+builds never receive the read limits.
+
+The first observed cap stops the worker tree. Input accounting includes
+reported cached input. The initial supplied prompt uses UTF-8 bytes as a
+conservative admission bound. Claude assistant usage frames and Codex turn
+usage/live session-correlated rollout token counts supply runtime usage.
+Caps are hard stop conditions on observed telemetry; the CLIs report usage
+after requests, so an in-flight request can exceed the input-token target.
+No exact vendor-billing guarantee is claimed.
+
+Two successive completed mutation calls naming only the declared nonempty
+artifact stop output-only polishing. Other tools or mutations of other files
+reset this sequence. Opaque shell commands are never guessed to be output-only;
+the tool/time caps still bound them. Files retained before dispatch are moved
+to a dispatch-specific `.before-<id>` sibling and never count as fresh output.
+
+Retain extract content, append `READ_EXTRACT_PARTIAL`, the stop reason and
+dispatch/source-prompt provenance when incomplete, and record `partial: true`,
+`pass: false`, and `failure_category: read-partial` in the sidecar. Missing or
+empty artifacts remain explicit failures, even though a partial marker file
+is then written. Save final chat separately as `.final.md`; never replace the
+extract with stdout. Every read dispatch launches at most once; finalization
+does not enter diagnosis, quota recovery or cross-vendor fallback. A partial
+artifact requires the parent to judge coverage before using it.
+
+## Build workers
+
 Execution parity scope:
 - Every builder/fix/verifier brief resolves the default branch and reads live default-branch/HEAD hashes, branch and status at dispatch. Use `Get-WorkerEnvironmentRule` from `worker-standing-rules.ps1`; pass `-ReadOnly` for verifier/read-only/scrutiny briefs and to `assemble-codex-prompt.ps1` when assembling those prompts. Write-mode workers repair their own verification within the fix-round budget; read-only workers report failures without edits. Derive network/SSH allowances from gate commands and fixtures, subject to existing authorization. Do not add blanket offline restrictions.
 - For milestones adding/changing an external API client, the brief points to saved redacted auth and endpoint samples, with reference-pack entitlement; fixture clients from those samples, never invented shapes. Follow `fidelity-gates.md` for read-only live acceptance and named credential residuals.

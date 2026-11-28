@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.69.0
+
+- Add explicit bounded read/extract dispatches: soft size targets, tool/turn/input budgets, preserved partial artifacts and output-only edit finalization.
+
 ## 2.68.3
 
 - Fix model router bench lock IO classification and safely reclaim proven orphan runtime nonce files.

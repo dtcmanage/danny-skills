@@ -168,15 +168,26 @@ exit $r.exit_code
     Assert ($readRule.Contains('network/SSH') -and $readRule.Contains('git symbolic-ref') -and $readRule.Contains('Do not edit or repair') -and -not $readRule.Contains('until green')) 'E read-only verification retains environment rules without repairs'
     foreach ($lane in @('claude','codex')) {
         $wrapper = Get-Content -Raw (Join-Path $scripts "invoke-$lane-chunk.ps1")
-        Assert ($wrapper.Contains('Get-WorkerEnvironmentRule -ReadOnly:$ReadOnly') -and $wrapper.Contains('if (-not $ReadOnly) { Get-WorkerFixRoundRule')) "E $lane wrapper respects read-only and scrutiny mode"
+        Assert ($wrapper.Contains('Get-WorkerEnvironmentRule -ReadOnly:$ReadOnly')) "E $lane wrapper retains read-only environment rules"
         $wrapperAst = [Management.Automation.Language.Parser]::ParseInput($wrapper, [ref]$tokens, [ref]$errors)
+        $ruleAssignments = @($wrapperAst.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -in @('$repairRule', '$fixRoundRule') -and $n.Right.Extent.Text.Contains('Get-WorkerFixRoundRule') }, $true))
+        Assert ($ruleAssignments.Count -eq 1) "E $lane has one fix-rule assignment"
         $append = $wrapperAst.Find({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Extent.Text.Contains('Standing execution rules:') -and $n.Extent.Text.Contains('$hardwareRule') }, $true)
         foreach ($ReadOnly in @($false, $true)) {
+          foreach ($ReadExtract in @($false, $true)) {
             $promptText = ''; $PromptPath = 'fixture.md'; $promptFolder = $root; $hardwareRule = 'hardware fixture'
-            $repairRule = $fixRoundRule = if (-not $ReadOnly) { Get-WorkerFixRoundRule -MaxFixRounds 2 }
+            $repairRule = $fixRoundRule = $null; $MaxFixRounds = 2
+            . ([scriptblock]::Create($ruleAssignments[0].Extent.Text))
+            $actualRule = if ($lane -eq 'claude') { $repairRule } else { $fixRoundRule }
+            if (-not $ReadOnly -and -not $ReadExtract) {
+                Assert ($actualRule -eq (Get-WorkerFixRoundRule -MaxFixRounds 2)) "E $lane builder retains fix rules"
+            } else {
+                Assert ([string]::IsNullOrEmpty($actualRule)) "E $lane omits fix rules for ReadOnly=$ReadOnly ReadExtract=$ReadExtract"
+            }
             . ([scriptblock]::Create($append.Extent.Text))
             Assert ($promptText -notmatch '(?m)^-\s*$' -and $promptText -notmatch 'hardware fixture\r?\n\r?\n') "K $lane omits empty rules"
-            if (-not $ReadOnly) { Assert ($promptText.Contains("- $repairRule`n")) "K $lane repair rule is a bullet" }
+            if ($actualRule) { Assert ($promptText.Contains("- $actualRule`n")) "K $lane repair rule is a bullet" }
+          }
         }
     }
     $book = (& pwsh -NoProfile -File (Join-Path $scripts 'read-coordinator-rulebook.ps1') -Section worker-briefs) -join "`n"
