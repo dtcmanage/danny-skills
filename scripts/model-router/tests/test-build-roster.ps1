@@ -13,6 +13,35 @@ function Save-Category { param([string]$Category,[array]$Rows)
     $payload = [pscustomobject]@{category=$Category;sources_checked=@();readings=$Rows}
     [IO.File]::WriteAllText((Join-Path $script:readDir "$Category.json"),($payload | ConvertTo-Json -Depth 20))
 }
+function Test-EffortFloorComparisons {
+    $floorRows = @(
+        (New-Reading 'floor-at' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50 -Effort medium),
+        (New-Reading 'floor-above' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50 -Effort ' High '),
+        (New-Reading 'floor-below' 'gpt-6.1-sol' 40 'claude-opus-5-5' 50 -Effort Low)
+    )
+    $script:floorData = [pscustomobject]@{readings=$floorRows}
+    $unfiltered = Get-RouterProposalComparison -Data $floorData -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5' -FloorEffort $null
+    Assert-True ($unfiltered.verdict -eq 'trail' -and $unfiltered.skipped -eq 0 -and $unfiltered.skipped_benchmarks.Count -eq 0) 'null floor preserves all comparisons'
+    $filtered = Get-RouterProposalComparison -Data $floorData -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5' -FloorEffort medium
+    Assert-True ($filtered.verdict -eq 'win' -and $filtered.leads -eq 2 -and $filtered.trails -eq 0 -and $filtered.comparable -eq 2 -and $filtered.skipped -eq 1 -and $filtered.skipped_benchmarks[0] -ceq 'floor-below') 'Low trail below floor skipped; at floor and trimmed High lead count'
+    foreach ($label in @('low','medium','high','xhigh','max','High','Max','xHigh')) {
+        $row = New-Reading 'known' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50 -Effort $label
+        $known = Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($row)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5' -FloorEffort max
+        $expectedSkip = if ($label.ToLowerInvariant() -eq 'max') { 0 } else { 1 }
+        Assert-True ($known.skipped -eq $expectedSkip -and $known.comparable -eq (1 - $expectedSkip) -and $known.leads -eq (1 - $expectedSkip)) "known effort ordering $label"
+    }
+    foreach ($label in @('', 'reasoning', 'default', 'max with default fallback', 'high (Opus); max (Sol)', '32K thinking budget', 'mixed', 'unknown')) {
+        $row = New-Reading 'unknown' 'gpt-6.1-sol' 40 'claude-opus-5-5' 50 -Effort $label
+        $unknown = Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($row)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5' -FloorEffort max
+        Assert-True ($unknown.skipped -eq 0 -and $unknown.comparable -eq 1 -and $unknown.trails -eq 1) "unlabelled or non-exact effort still counts: '$label'"
+    }
+    $splitEffort = New-Reading 'raw' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50 -Effort high
+    $splitEffort.results = @($splitEffort.results[0])
+    $otherEffort = New-Reading 'raw' 'gpt-6.1-sol' 70 'claude-opus-5-5' 50 -Effort ' high '
+    $otherEffort.results = @($otherEffort.results[1])
+    $rawGroups = Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($splitEffort,$otherEffort)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5' -FloorEffort medium
+    Assert-True ($rawGroups.comparable -eq 0) 'floor matching does not normalize raw grouping keys'
+}
 function Add-Pass { param([string]$Id,[string[]]$Categories=@('complex-coding'))
     Initialize-TestBenchEvidence
     # These legacy proposal scenarios intentionally exercise unpinned vendor flips.
@@ -35,6 +64,7 @@ $script:alerts=@()
 $fixtureCodexHome = Enter-RouterTestCodexHome
 try {
     Initialize-TestBenchEvidence
+    Test-EffortFloorComparisons
     $a=New-Reading 'b1' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
     $b=New-Reading 'b2' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55
     $comparison=Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,$b)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5'
@@ -63,6 +93,20 @@ try {
     Assert-True ((Get-RouterProposalComparison -Data ([pscustomobject]@{readings=@($a,(New-Reading 'b2' 'gpt-6.1-sol' 60 'claude-opus-5-5' 55),$trail)}) -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5').verdict -eq 'trail') 'any trail vetoes category'
     $prices=Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/api-prices.json') -Raw | ConvertFrom-Json
     $frontier=Get-Content (Join-Path $PSScriptRoot '../../../references/model-router/frontier-models.json') -Raw | ConvertFrom-Json
+    $tierEntry = [pscustomobject]@{first_effort='high';first_efforts=[pscustomobject]@{standard='medium';hard='high'}}
+    $jobFloor = Get-RouterProposalJobVerdict -Job coder -Incumbent 'claude-opus-5-5' -Readings @{'complex-coding'=$floorData} -Prices $prices -Frontier $frontier -FloorEffort (Get-RouterTierEffort -Entry $tierEntry -Slot first -Difficulty standard)
+    Assert-True ($jobFloor.result -eq 'gpt-6.1-sol' -and $jobFloor.evidence -match 'skipped 1') 'job verdict uses standard floor and includes skipped in evidence'
+    foreach ($jobCase in @(
+        @{job='deep-thinker';category='analysis';effort='low';expected=0},
+        @{job='writer';category='long-form-writing';effort='xhigh';expected=3},
+        @{job='illustrator';category='image-generation';effort=$null;expected=0}
+    )) {
+        $slotEntry = [pscustomobject]@{first_effort=$jobCase.effort}
+        $slotFloor = Get-RouterTierEffort -Entry $slotEntry -Slot first -Difficulty standard
+        $slotComparison = Get-RouterProposalComparison -Data $floorData -Challenger 'gpt-6.1-sol' -Incumbent 'claude-opus-5-5' -FloorEffort $slotFloor
+        $slotVerdict = Get-RouterProposalJobVerdict -Job $jobCase.job -Incumbent 'claude-opus-5-5' -Readings @{$jobCase.category=$floorData} -Prices $prices -Frontier $frontier -FloorEffort $slotFloor
+        Assert-True ($slotComparison.skipped -eq $jobCase.expected -and $slotVerdict.evidence -match "skipped $($jobCase.expected)") "$($jobCase.job)/first slot floor"
+    }
     $readings=@{ 'complex-coding'=[pscustomobject]@{readings=@((New-Reading 'b1' 'claude-opus-5-5' 60 'gpt-6.1-sol' 55),(New-Reading 'b2' 'claude-opus-5-5' 60 'gpt-6.1-sol' 55))}; 'routine-coding'=[pscustomobject]@{readings=@((New-Reading 'r1' 'claude-opus-5-5' 40 'gpt-6.1-sol' 55))} }
     Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $readings -Prices $prices -Frontier $frontier).result -eq 'keep') 'primary win with other-category trail keeps incumbent'
     $readings.Remove('routine-coding')
@@ -111,7 +155,7 @@ try {
     Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-opus-5-5') 'most primary independent leads wins'
     $multi[2].results += [pscustomobject]@{model='claude-sonnet-5';score=70;margin=$null}
     Assert-True ((Get-RouterProposalJobVerdict -Job coder -Incumbent 'gpt-6.1-sol' -Readings $multiRead -Prices $prices -Frontier $frontier).result -eq 'claude-sonnet-5') 'equal leads use lower price'
-    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50))
+    Save-Category -Category complex-coding -Rows @((New-Reading 'c1' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'c2' 'claude-sonnet-5' 70 'gpt-6.1-sol' 50),(New-Reading 'low-trail' 'claude-sonnet-5' 40 'gpt-6.1-sol' 50 -Effort Low))
     Add-Pass 'p1'; $one=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:00')
     Assert-True (-not $one.changed -and $script:alerts.Count -eq 0) 'one pass no proposal or alert'
     $created=@(Get-ChildItem -LiteralPath (Join-Path $temp 'roster-proposals') -File | Select-Object -ExpandProperty Name)
@@ -121,6 +165,7 @@ try {
     Assert-True (-not $same.changed -and @($records | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' }).Count -eq 1) 'same pass adds no verdict'
     Add-Pass 'p2'; $two=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True ($two.changed -and $script:alerts.Count -eq 1 -and (Test-Path $two.report)) 'two passes propose and alert once'
+    Assert-True (@($two.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'first' -and $_.evidence -match 'skipped 1' }).Count -eq 1) 'proposal caller passes slot floor and change evidence includes skipped count'
     Assert-True (@($two.changes | Where-Object { $_.job -eq 'coder' -and $_.slot -eq 'backup' -and $_.to -eq 'gpt-6.1-sol' }).Count -eq 1) 'vendor flip re-chooses backup from opposite vendor'
     $repeat=Build-RouterRosterProposal -BenchInvoker $script:fakeBench -Now ([datetime]'2026-09-28T10:00:02')
     Assert-True (-not $repeat.changed -and $script:alerts.Count -eq 1) 'repeat sends no alert'

@@ -99,7 +99,8 @@ function Write-RouterCadenceConfirmationVerdicts {
             if ($job -eq 'illustrator' -and $slot -eq 'backup') { continue }
             $entry = $roster.jobs.$job
             $vendor = if ($slot -eq 'backup') { if ($entry.first_vendor -eq 'codex') {'claude'} else {'codex'} } else { $null }
-            $verdict = Get-RouterProposalJobVerdict -Job $job -Incumbent $entry.$slot -Vendor $vendor -Readings $readings -Prices $prices -Frontier $frontier
+            $floorEffort = Get-RouterTierEffort -Entry $entry -Slot $slot -Difficulty standard
+            $verdict = Get-RouterProposalJobVerdict -Job $job -Incumbent $entry.$slot -Vendor $vendor -Readings $readings -Prices $prices -Frontier $frontier -FloorEffort $floorEffort
             $record = [pscustomobject]@{pass_id=$PassId;job=$job;slot=$slot;result=$verdict.result}
             [IO.File]::AppendAllText($verdictPath,(($record | ConvertTo-Json -Compress) + "`n"),[Text.UTF8Encoding]::new($false))
         }

@@ -27,11 +27,13 @@ function Test-RouterProposalFrontier {
 }
 
 function Get-RouterProposalComparison {
-    param([object]$Data, [string]$Challenger, [string]$Incumbent)
+    param([object]$Data, [string]$Challenger, [string]$Incumbent, [string]$FloorEffort = $null)
+    $effortOrder = @('low','medium','high','xhigh','max')
+    $floorRank = $effortOrder.IndexOf($FloorEffort)
     $groups = @{}
     foreach ($reading in @($Data.readings)) {
         $key = @($reading.benchmark,$reading.version,$reading.harness,$reading.effort_class) -join "`n"
-        if (-not $groups.ContainsKey($key)) { $groups[$key] = [pscustomobject]@{ results=@{}; benchmark=$reading.benchmark } }
+        if (-not $groups.ContainsKey($key)) { $groups[$key] = [pscustomobject]@{ results=@{}; benchmark=$reading.benchmark; effort_class=$reading.effort_class } }
         foreach ($result in @($reading.results)) {
             $model = [string]$result.model
             if (-not $groups[$key].results.ContainsKey($model) -or $reading.independent -or -not $groups[$key].results[$model].independent) {
@@ -39,9 +41,14 @@ function Get-RouterProposalComparison {
             }
         }
     }
-    $leads = 0; $trails = 0; $comparable = 0; $names = @()
+    $leads = 0; $trails = 0; $comparable = 0; $names = @(); $skipped = 0; $skippedNames = @()
     foreach ($key in @($groups.Keys | Sort-Object)) {
         $g = $groups[$key]
+        $effortRank = $effortOrder.IndexOf(([string]$g.effort_class).Trim().ToLowerInvariant())
+        if ($effortRank -ge 0 -and $effortRank -lt $floorRank) {
+            $skipped++; $skippedNames += $g.benchmark
+            continue
+        }
         if (-not $g.results.ContainsKey($Challenger) -or -not $g.results.ContainsKey($Incumbent)) { continue }
         $comparable++
         $a = $g.results[$Challenger].value; $b = $g.results[$Incumbent].value
@@ -52,11 +59,11 @@ function Get-RouterProposalComparison {
         if ($gap -lt -$margin) { $trails++ }
     }
     $verdict = if ($trails) { 'trail' } elseif ($leads -ge 2) { 'win' } else { 'not-enough-evidence' }
-    return [pscustomobject]@{ verdict=$verdict; leads=$leads; trails=$trails; comparable=$comparable; benchmarks=@($names) }
+    return [pscustomobject]@{ verdict=$verdict; leads=$leads; trails=$trails; comparable=$comparable; benchmarks=@($names); skipped=$skipped; skipped_benchmarks=@($skippedNames) }
 }
 
 function Get-RouterProposalJobVerdict {
-    param([string]$Job, [string]$Incumbent, [string]$Vendor, [hashtable]$Readings, [object]$Prices, [object]$Frontier)
+    param([string]$Job, [string]$Incumbent, [string]$Vendor, [hashtable]$Readings, [object]$Prices, [object]$Frontier, [string]$FloorEffort = $null)
     $primary = @{ fast='mechanical'; coder='complex-coding'; 'deep-thinker'='analysis'; writer='long-form-writing'; illustrator='image-generation' }[$Job]
     $categories = @{ fast=@('mechanical'); coder=@('routine-coding','complex-coding','ui-frontend'); 'deep-thinker'=@('code-review','planning','deep-research','math','analysis','classification-escalation'); writer=@('long-form-writing'); illustrator=@('image-generation') }[$Job]
     $models = @($categories | ForEach-Object { if ($Readings.ContainsKey($_)) { $Readings[$_].readings | ForEach-Object { $_.results | ForEach-Object model } } } | Where-Object { $_ -and $_ -ne $Incumbent } | Sort-Object -Unique)
@@ -64,10 +71,11 @@ function Get-RouterProposalJobVerdict {
     foreach ($model in $models) {
         if ($Vendor -and (Get-RouterProposalVendor $model) -ne $Vendor) { continue }
         if (Test-RouterProposalFrontier $model $Frontier) { continue }
-        $comparisons = @{}; $won = @(); $trailed = @()
+        $comparisons = @{}; $won = @(); $trailed = @(); $skipped = 0
         foreach ($category in $categories) {
             if (-not $Readings.ContainsKey($category)) { continue }
-            $comparison = Get-RouterProposalComparison -Data $Readings[$category] -Challenger $model -Incumbent $Incumbent
+            $comparison = Get-RouterProposalComparison -Data $Readings[$category] -Challenger $model -Incumbent $Incumbent -FloorEffort $FloorEffort
+            $skipped += $comparison.skipped
             $comparisons[$category] = $comparison
             if ($comparison.verdict -eq 'win') { $won += $category }
             if ($comparison.verdict -eq 'trail') { $trailed += $category }
@@ -85,7 +93,7 @@ function Get-RouterProposalJobVerdict {
         $floor = $p.comparable -ge 2 -and $p.trails -eq 0
         if ($Job -eq 'fast' -and $floor) { $hasFloorClearer = $true }
         $eligible = if ($Job -eq 'fast') { $floor -and -not $older -and $null -ne $price } else { $quality -and -not $lowerTier }
-        $evidence = "$model`: primary $($p.verdict) ($($p.leads) independent leads, $($p.comparable) comparable); won [$($won -join ', ')]; trailed [$($trailed -join ', ')]"
+        $evidence = "$model`: primary $($p.verdict) ($($p.leads) independent leads, $($p.comparable) comparable); skipped $skipped; won [$($won -join ', ')]; trailed [$($trailed -join ', ')]"
         if ($lowerTier) { $evidence += '; lower same-vendor tier' }
         if ($older -and $Job -eq 'fast') { $evidence += '; older generation cannot win on price' }
         $tradeoffs += $evidence
@@ -142,7 +150,8 @@ function Build-RouterRosterProposalLocked {
             $flipped = $slot -eq 'backup' -and $proposedVendor -ne $currentEntry.first_vendor
             $incumbent = if ($flipped) { $currentEntry.first } else { $currentEntry.$slot }
             $vendor = if ($slot -eq 'backup') { if ($proposedVendor -eq 'codex') {'claude'} else {'codex'} } else { $null }
-            $verdict = Get-RouterProposalJobVerdict -Job $job -Incumbent $incumbent -Vendor $vendor -Readings $readings -Prices $prices -Frontier $frontier
+            $floorEffort = Get-RouterTierEffort -Entry $currentEntry -Slot $slot -Difficulty standard
+            $verdict = Get-RouterProposalJobVerdict -Job $job -Incumbent $incumbent -Vendor $vendor -Readings $readings -Prices $prices -Frontier $frontier -FloorEffort $floorEffort
             if ($flipped -and $verdict.result -in @('keep','not-enough-evidence')) {
                 $verdict.result = $incumbent
                 $verdict.evidence = "Other-vendor incumbent after first-choice flip: $incumbent. $($verdict.evidence)"
