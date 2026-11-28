@@ -1,5 +1,7 @@
 param([ValidateRange(0,6)][int]$Shard = 0, [switch]$Serial)
 
+. (Join-Path $PSScriptRoot '../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 . (Join-Path $PSScriptRoot 'powershell-startup.ps1')
 Disable-DtPowerShellStartupProfile
 . (Join-Path $PSScriptRoot 'regression-fixtures.ps1')
@@ -80,6 +82,8 @@ try {
         Assert-True ($LASTEXITCODE -eq 0) 'moved paths, full failure diagnostics and worker brief regressions pass'
         & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-authority-digest.ps1')
         Assert-True ($LASTEXITCODE -eq 0) 'authority digest preference and full authorization coverage regressions pass'
+        & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-readonly-evidence.ps1')
+        Assert-True ($LASTEXITCODE -eq 0) 'read-only evidence classifies real incident reads, writes, opaque programs and CLI frames'
     }
     if ($Shard -in @(0,4)) {
     & pwsh -NoProfile -File (Join-Path $scriptDir 'tests/test-tooling-hiccups.ps1')
@@ -131,9 +135,15 @@ if ($LASTEXITCODE -ne 0 -or $junctionHash -notmatch '^[0-9a-f]{40}$' -or $juncti
     $authorityStart = $resumeText.IndexOf('## Authority read contract')
     $authorityEnd = $resumeText.IndexOf('## Worker authority scope')
     Assert-True ($rulebook.Contains($resumeText.Substring($authorityStart, $authorityEnd - $authorityStart).Trim())) 'entry retains complete authorization contract verbatim'
-    foreach ($section in @('execution','routing','context','guardrails','adapter','worker-briefs','checkpoint','lane-health','worker-authority','roll-forward','local-work','operator-actions','fast-lane','shared','authority')) {
+    foreach ($section in @('execution','routing','context','guardrails','adapter','worker-briefs','checkpoint','lane-health','worker-authority','roll-forward','local-work','operator-actions','fast-lane','shared','authority','propagation')) {
         $sectionText = (Invoke-TestPwsh -Script (Join-Path $scriptDir 'read-coordinator-rulebook.ps1') -Section $section) -join "`n"
         Assert-True ($LASTEXITCODE -eq 0 -and $sectionText.Length -gt 300) "on-demand section $section resolves from authoritative source"
+        # Relocated rules stay complete through the scripted reader, not only on disk.
+        $relocated = @{ context = 'context-discipline.md'; propagation = 'skill-propagation.md' }
+        if ($relocated.ContainsKey($section)) {
+            $referenceBody = [IO.File]::ReadAllText((Join-Path $skillRoot "references/$($relocated[$section])")).Replace("`r`n", "`n").Trim()
+            Assert-True ($sectionText.Replace("`r`n", "`n").Contains($referenceBody) -and $rulebook.Contains("- ${section}:")) "rulebook section $section renders the complete relocated reference and the entry names its trigger"
+        }
         if ($section -eq 'worker-briefs') {
             Assert-True ($sectionText.Contains('worker-attempt-prompt.ps1') -and $sectionText.Contains('invoke-claude-chunk.ps1') -and $sectionText.Contains('invoke-codex-chunk.ps1')) 'worker briefs render the authoritative shared attempt contract and both wrappers'
         }
@@ -740,9 +750,23 @@ $outPath = if ($outIndex -ge 0) { [string]$args[$outIndex + 1] } else { '' }
 $mode = [string]$env:DT_FAKE_CODEX_MODE
 if ($mode -eq 'hang') { Start-Sleep -Seconds 10; exit 0 }
 $receivedPrompt=[Console]::In.ReadToEnd()
+if ($env:DT_FAKE_PARENT_BARRIER) {
+    Set-Content ($env:DT_FAKE_PARENT_BARRIER + '.ready') 1
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (-not (Test-Path ($env:DT_FAKE_PARENT_BARRIER + '.done'))) {
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'parent barrier timeout' }
+        Start-Sleep -Milliseconds 50
+    }
+}
 if ($env:DT_FAKE_CREATE_UNTRACKED) {
     [IO.File]::WriteAllText((Join-Path (Get-Location) 'worker-created.txt'), 'worker')
     [IO.File]::WriteAllText((Join-Path (Get-Location) 'worker-ignored.txt'), 'ignored')
+}
+if ($env:DT_FAKE_EVIDENCE_MODE -eq 'unknown-command') { [IO.File]::WriteAllText((Join-Path (Get-Location) 'unknown-effect.txt'), 'unattributed') }
+$commandOutput = ''; $commandExit = 0
+if ($env:DT_FAKE_SHELL_COMMAND) {
+    $commandOutput = if ($IsWindows) { (& pwsh -NoProfile -Command $env:DT_FAKE_SHELL_COMMAND 2>&1 | Out-String) } else { (& /bin/bash -lc $env:DT_FAKE_SHELL_COMMAND 2>&1 | Out-String) }
+    $commandExit = $LASTEXITCODE
 }
 if($env:DT_FAKE_UNICODE_PROMPT){[IO.File]::WriteAllText($env:DT_FAKE_UNICODE_PROMPT,$receivedPrompt)}
 if ($env:DT_FAKE_WORKER_REPORT) { [IO.File]::WriteAllText($env:DT_FAKE_WORKER_REPORT, 'FULL WORKER REPORT') }
@@ -782,6 +806,41 @@ if($env:DT_FAKE_UNICODE_TEXT){
     [Console]::Error.WriteLine($env:DT_FAKE_UNICODE_TEXT)
 }
 [Console]::Error.WriteLine('stream ghp_abcdefghijklmnopqrstuvwxyz123456')
+if ($args -contains '--json') {
+    if ($env:DT_FAKE_EVIDENCE_MODE -eq 'missing') { exit 0 }
+    $threadId = 'fixture'
+    if ($env:DT_FAKE_ROLLOUT_SANDBOX) {
+        # Real --json mode: the session id is only the thread.started frame; no stderr banner.
+        $threadId = [guid]::NewGuid().ToString()
+        $sessions = Join-Path $env:CODEX_HOME 'sessions'; [void](New-Item -ItemType Directory -Force $sessions)
+        $cdIndex = [Array]::IndexOf([object[]]$args, '--cd'); $modelIndex = [Array]::IndexOf([object[]]$args, '--model')
+        @(@{type='session_meta';payload=@{id=$threadId;cwd=[string]$args[$cdIndex + 1]}},
+          @{type='turn_context';payload=@{model=[string]$args[$modelIndex + 1];sandbox_policy=@{type=$env:DT_FAKE_ROLLOUT_SANDBOX}}},
+          @{type='event_msg';payload=@{type='token_count';info=@{total_token_usage=@{input_tokens=41;output_tokens=9}}}}) |
+            ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 } | Set-Content -LiteralPath (Join-Path $sessions "rollout-2026-11-27T00-00-00-$threadId.jsonl")
+    }
+    '{"type":"thread.started","thread_id":"' + $threadId + '"}'
+    '{"type":"turn.started"}'
+    if ($env:DT_FAKE_INCOMPLETE_EVENTS) { exit 0 }
+    if ($env:DT_FAKE_RECOVERED_ERROR) { '{"type":"error","message":"stream disconnected before completion; Reconnecting... 1/5"}' }
+    if ($env:DT_FAKE_SHELL_COMMAND) {
+        @{type='item.started';item=@{id='shell';type='command_execution';command=$env:DT_FAKE_SHELL_COMMAND;status='in_progress'}} | ConvertTo-Json -Depth 8 -Compress
+        @{type='item.completed';item=@{id='shell';type='command_execution';command=$env:DT_FAKE_SHELL_COMMAND;status='completed';aggregated_output=$commandOutput;exit_code=$commandExit}} | ConvertTo-Json -Depth 8 -Compress
+    }
+    if ($env:DT_FAKE_EVIDENCE_MODE -eq 'unknown-tool') { '{"type":"item.completed","item":{"id":"unknown","type":"unknown_tool"}}' }
+    if ($env:DT_FAKE_EVIDENCE_MODE -eq 'unknown-command') { '{"type":"item.completed","item":{"id":"unknown","type":"command_execution","command":"custom-tool inspect","aggregated_output":"ok","exit_code":0}}' }
+    if ($env:DT_FAKE_EVIDENCE_MODE -eq 'partial') { '{"type":"item.started","item":{"id":"pending","type":"command_execution","command":"cat parent-concurrent.txt"}}' }
+    if ($env:DT_FAKE_WORKER_MUTATION) { '{"type":"item.completed","item":{"id":"patch","type":"file_change","status":"completed","changes":[{"path":"worker-created.txt","kind":"add"}]}}' }
+    if ($env:DT_FAKE_AGENT_PROSE) { @{type='item.completed';item=@{id='prose';type='agent_message';text=$env:DT_FAKE_AGENT_PROSE}} | ConvertTo-Json -Compress }
+    if ($env:DT_FAKE_TURN_FAILED) {
+        @{type='error';message=$env:DT_FAKE_TURN_FAILED} | ConvertTo-Json -Compress
+        @{type='turn.failed';error=@{message=$env:DT_FAKE_TURN_FAILED}} | ConvertTo-Json -Compress
+        exit 1
+    }
+    '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+    # A real CLI exits 0 after a completed turn whatever its tool commands returned.
+    exit 0
+}
 '@
     $wrapperPrompt = Join-Path $tempRoot 'wrapper-prompt.md'
     Write-Utf8 -Path $wrapperPrompt -Content "RUN_ID: fixture-run`nchunk_id: fixture-chunk`nattempt: 1`nfixture"
@@ -976,6 +1035,169 @@ if($env:DT_FAKE_UNICODE_TEXT){
     Assert-True ((Get-CodexBlockedReportDetail "VERDICT: BLOCKED`nCHANGED_FILES:`nNONE`nUNRESOLVED_BLOCKERS:`nshell CreateProcess rejected by the sandbox") -eq 'sandbox_process_blocked') 'process denial in blockers is still classified'
     Assert-True ((@(Get-CodexReadOnlySandboxArguments -OnWindows $false) -join '|') -eq '--sandbox|read-only|-c|web_search="disabled"') 'non-Windows reviews do not receive a Windows implementation override'
     Remove-Item Env:DT_FAKE_CODEX_ARGS
+
+    # Real wrapper: an independent parent changes the same existing tracked file
+    # while the read-only worker is active. Complete worker evidence attributes no writes.
+    $parentFile = Join-Path $workingTree 'parent-concurrent.txt'
+    $env:DT_FAKE_CODEX_MODE = 'success'
+    Write-Utf8 $parentFile 'baseline'
+    & git -C $workingTree add -- parent-concurrent.txt
+    & git -C $workingTree commit -m 'fixture parent baseline' *> $null
+    $barrier = Join-Path $tempRoot 'parent-barrier'
+    $env:DT_FAKE_PARENT_BARRIER = $barrier
+    $env:DT_FAKE_SHELL_COMMAND = if ($IsWindows) { 'Get-Content parent-concurrent.txt' } else { 'rg ''a > b|->'' parent-concurrent.txt 2>/dev/null; cat parent-concurrent.txt >/dev/null' }
+    $parentCode = @'
+$ErrorActionPreference='Stop'
+$deadline=[DateTime]::UtcNow.AddSeconds(60)
+while (-not (Test-Path '__BARRIER__.ready')) { if ([DateTime]::UtcNow -ge $deadline) { throw 'worker not ready' }; Start-Sleep -Milliseconds 50 }
+Add-Content '__FILE__' 'parent changed existing file'
+Set-Content '__FILE__.untracked' 'parent screenshot'
+Set-Content '__BARRIER__.done' 1
+'@
+    $parentCode = $parentCode.Replace('__BARRIER__',$barrier.Replace("'","''")).Replace('__FILE__',$parentFile.Replace("'","''"))
+    $encodedParent = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($parentCode))
+    $parentProcess = Start-Process (Join-Path $PSHOME 'pwsh') -ArgumentList @('-NoProfile','-EncodedCommand',$encodedParent) -PassThru
+    try {
+        $parentOutput = Join-Path $tempRoot 'parent-concurrent-report.md'
+        & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $parentOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'parent attribution fixture' -ReadOnly -Json *> $null
+        $wrapperExit = $LASTEXITCODE
+        Assert-True ($parentProcess.WaitForExit(30000) -and $parentProcess.ExitCode -eq 0 -and $wrapperExit -eq 0) 'unrelated parent same-existing-file changes do not reject readonly report'
+        Assert-True ((Get-Content -Raw $parentFile) -match 'parent changed existing file') 'parent edit preserved'
+        $parentProv = Get-Content -Raw "$parentOutput.provenance.json" | ConvertFrom-Json
+        Assert-True ($parentProv.readonly_workspace_delta.detected -and $parentProv.readonly_worker_evidence.complete -and $parentProv.readonly_worker_evidence.writes.Count -eq 0) 'actual concurrent workspace delta retained as diagnostics without worker attribution'
+    } finally {
+        if (-not $parentProcess.HasExited) { $parentProcess.Kill($true); $parentProcess.WaitForExit() }
+        $parentProcess.Dispose()
+        Remove-Item Env:DT_FAKE_PARENT_BARRIER -ErrorAction SilentlyContinue
+        Remove-Item Env:DT_FAKE_SHELL_COMMAND -ErrorAction SilentlyContinue
+    }
+    $env:DT_FAKE_WORKER_MUTATION = '1'
+    $env:DT_FAKE_CREATE_UNTRACKED = '1'
+    try {
+        & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $parentOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'mutation attribution fixture' -ReadOnly -Json *> $null
+        $mutationProv = Get-Content -Raw "$parentOutput.provenance.json" | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -ne 0 -and $mutationProv.termination_reason -match 'CODEX_READONLY_VIOLATION') 'actual worker write plus file_change evidence rejected'
+    } finally { Remove-Item Env:DT_FAKE_WORKER_MUTATION, Env:DT_FAKE_CREATE_UNTRACKED -ErrorAction SilentlyContinue }
+
+    if (-not $IsWindows) {
+        $env:DT_FAKE_SHELL_COMMAND = 'python3 -c "open(''worker-shell-only.txt'', ''w'').write(''worker'')"'
+        try {
+            & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $parentOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'shell-only mutation fixture' -ReadOnly -Json *> $null
+            $shellProv = Get-Content -Raw "$parentOutput.provenance.json" | ConvertFrom-Json
+            Assert-True ($LASTEXITCODE -ne 0 -and (Test-Path (Join-Path $workingTree 'worker-shell-only.txt')) -and $shellProv.termination_reason -match 'CODEX_READONLY_VIOLATION' -and ($shellProv.readonly_worker_evidence.writes -join '') -notmatch 'file_change') 'real shell-only worker mutation rejected without file_change event'
+        } finally { Remove-Item Env:DT_FAKE_SHELL_COMMAND -ErrorAction SilentlyContinue }
+    }
+    foreach ($mode in @('missing','partial','unknown-tool','unknown-command')) {
+        $env:DT_FAKE_EVIDENCE_MODE = $mode
+        try {
+            & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $parentOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'unsupported evidence fixture' -ReadOnly -Json *> $null
+            $unsupportedExit = $LASTEXITCODE
+            $unsupportedProv = Get-Content -Raw "$parentOutput.provenance.json" | ConvertFrom-Json
+            if ($mode -eq 'unknown-command') {
+                # A complete record of an opaque program is not missing evidence: the enforced
+                # sandbox bounds it, and another process's workspace delta stays diagnostic.
+                Assert-True ($unsupportedExit -eq 0 -and $unsupportedProv.readonly_worker_evidence.complete -and $unsupportedProv.readonly_workspace_delta.detected -and $unsupportedProv.readonly_worker_evidence.writes.Count -eq 0 -and @($unsupportedProv.readonly_worker_evidence.opaque_commands) -contains 'custom-tool inspect') 'complete opaque command plus unrelated workspace delta is accepted and recorded, not blamed'
+            } else {
+                Assert-True ($unsupportedExit -ne 0 -and $unsupportedProv.termination_reason -match 'CODEX_READONLY_EVIDENCE_INCOMPLETE') "real wrapper rejects $mode evidence"
+            }
+        } finally { Remove-Item Env:DT_FAKE_EVIDENCE_MODE -ErrorAction SilentlyContinue }
+    }
+    $roRun = { param([string]$Reason, [string[]]$Extra = @()) & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $parentOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason $Reason -ReadOnly -Json @Extra *> $null; $code = $LASTEXITCODE; [pscustomobject]@{ exit = $code; prov = (Get-Content -Raw "$parentOutput.provenance.json" | ConvertFrom-Json) } }
+    if (-not $IsWindows) {
+        # Real executions of the worker rule's required bootstrap reads and observed reads.
+        $env:DT_FAKE_SHELL_COMMAND = 'git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null; git branch --show-current; git rev-parse HEAD; git status --short; pwd; env | rg -c ''PATH''; nl -ba parent-concurrent.txt | sed -n ''1,5p''; rg -n "file$" parent-concurrent.txt || true'
+        try {
+            $bootstrap = & $roRun 'bootstrap read fixture'
+            Assert-True ($bootstrap.exit -eq 0 -and $bootstrap.prov.readonly_worker_evidence.complete -and $bootstrap.prov.readonly_worker_evidence.writes.Count -eq 0 -and -not @($bootstrap.prov.readonly_worker_evidence.opaque_commands).Count) 'required git bootstrap reads, env pipeline and quoted regex anchor pass the real wrapper'
+        } finally { Remove-Item Env:DT_FAKE_SHELL_COMMAND -ErrorAction SilentlyContinue }
+        # Actual writes by the (unsandboxed) fixture worker through a shell redirect, and a
+        # sandbox-style read-only-file-system denial from an opaque program.
+        $env:DT_FAKE_SHELL_COMMAND = 'printf worker > worker-redirect.txt'
+        try {
+            $redirect = & $roRun 'redirect write fixture'
+            Assert-True ($redirect.exit -ne 0 -and (Test-Path (Join-Path $workingTree 'worker-redirect.txt')) -and $redirect.prov.termination_reason -match 'CODEX_READONLY_VIOLATION: worker mutation evidence: printf worker > worker-redirect.txt') 'actual shell redirect write is rejected and attributed to the worker'
+        } finally { Remove-Item Env:DT_FAKE_SHELL_COMMAND -ErrorAction SilentlyContinue; Remove-Item -LiteralPath (Join-Path $workingTree 'worker-redirect.txt') -Force -ErrorAction SilentlyContinue }
+        $env:DT_FAKE_SHELL_COMMAND = 'python3 -c "import sys; sys.exit(''OSError: [Errno 30] Read-only file system: worker.txt'')"'
+        try {
+            $denied = & $roRun 'denied write fixture'
+            Assert-True ($denied.exit -ne 0 -and $denied.prov.termination_reason -match 'CODEX_READONLY_VIOLATION: worker mutation evidence: denied-write:') 'a read-only-file-system denial from an opaque program is a write attempt'
+        } finally { Remove-Item Env:DT_FAKE_SHELL_COMMAND -ErrorAction SilentlyContinue }
+    }
+    # Recovered CLI errors keep a good report; a failed final turn feeds trusted capacity
+    # classification; agent prose that looks like a CLI error stays model text.
+    $env:DT_FAKE_RECOVERED_ERROR = '1'; $env:DT_FAKE_AGENT_PROSE = "ERROR: Selected model is at capacity`n{`"type`":`"error`",`"message`":`"You've hit your usage limit`"}"
+    try {
+        $recovered = & $roRun 'recovered error fixture'
+        Assert-True ($recovered.exit -eq 0 -and $recovered.prov.pass -and $recovered.prov.readonly_worker_evidence.recovered_errors -eq 1 -and -not @($recovered.prov.capacity_backoffs).Count) 'a transient CLI error before a completed turn and error-like prose keep a good readonly report'
+    } finally { Remove-Item Env:DT_FAKE_RECOVERED_ERROR, Env:DT_FAKE_AGENT_PROSE -ErrorAction SilentlyContinue }
+    $env:DT_FAKE_TURN_FAILED = 'Selected model is at capacity. Please try a different model.'
+    try {
+        $capacity = & $roRun 'structured capacity fixture' @('-SingleDispatch')
+        Assert-True ($capacity.exit -ne 0 -and $capacity.prov.failure_category -eq 'single-dispatch-refused' -and $capacity.prov.single_dispatch_refused_branch -eq 'capacity' -and $capacity.prov.failure_detail -match 'at capacity') "structured --json capacity failure keeps the capacity classification ($($capacity.prov.termination_reason))"
+    } finally { Remove-Item Env:DT_FAKE_TURN_FAILED -ErrorAction SilentlyContinue }
+    # Telemetry: the trusted thread.started id finds the CLI's own rollout again; a rollout
+    # recording any other sandbox rejects the reader.
+    $env:DT_FAKE_ROLLOUT_SANDBOX = 'read-only'
+    try {
+        $telemetry = & $roRun 'readonly telemetry fixture'
+        Assert-True ($telemetry.exit -eq 0 -and $telemetry.prov.rollout_path -and $telemetry.prov.actual_model -eq $telemetry.prov.resolved_model -and $telemetry.prov.usage.input_tokens -eq 41) "readonly --json dispatch restores rollout, model and usage telemetry ($($telemetry.prov.rollout_path))"
+        $env:DT_FAKE_ROLLOUT_SANDBOX = 'danger-full-access'
+        $unsandboxed = & $roRun 'readonly sandbox mismatch fixture'
+        Assert-True ($unsandboxed.exit -ne 0 -and $unsandboxed.prov.termination_reason -match 'CODEX_READONLY_SANDBOX_MISMATCH') 'a reader the CLI recorded as writable is rejected'
+    } finally { Remove-Item Env:DT_FAKE_ROLLOUT_SANDBOX -ErrorAction SilentlyContinue }
+
+    . (Join-Path $scriptDir 'readonly-worker-evidence.ps1')
+    Assert-True (-not (Get-ReadOnlyWorkerEvidence '{"type":"thread.started"}').complete) 'incomplete worker evidence fails closed'
+    Assert-True (-not (Get-ReadOnlyWorkerEvidence "not JSON").complete) 'malformed worker evidence fails closed'
+    foreach ($badId in @($null,3)) {
+        $badEvents = @(
+            @{type='thread.started';thread_id='fixture'},@{type='turn.started'},
+            @{type='item.completed';item=@{id=$badId;type='command_execution';command='cat x';exit_code=0;aggregated_output=''}},
+            @{type='turn.completed';usage=@{input_tokens=1;output_tokens=1}}
+        ) | ForEach-Object { $_ | ConvertTo-Json -Depth 8 -Compress }
+        Assert-True (-not (Get-ReadOnlyWorkerEvidence ($badEvents -join "`n")).complete) 'malformed item ID is incomplete evidence without throwing'
+    }
+    foreach ($case in @(
+        @{ Command='rg Set-Content source.ps1'; Output='read-only file system'; Exit=0; Complete=$true; Writes=0 },
+        @{ Command='Set-Content source.ps1 changed'; Output='Permission denied'; Exit=1; Complete=$true; Writes=1 },
+        @{ Command='python3 helper.py'; Output='Permission denied'; Exit=1; Complete=$true; Writes=0 },
+        @{ Command='cat source.ps1 2>/dev/null'; Output=''; Exit=0; Complete=$true; Writes=0 },
+        @{ Command='cat source.ps1 >/dev/null'; Output=''; Exit=0; Complete=$true; Writes=0 },
+        @{ Command='rg "a>b|a > b|->" source.ps1'; Output=''; Exit=0; Complete=$true; Writes=0 },
+        @{ Command='/bin/bash -lc ''rg "a>b|->" source.ps1 2>/dev/null'''; Output=''; Exit=0; Complete=$true; Writes=0 },
+        @{ Command='cat source.ps1 >project.txt'; Output='Permission denied'; Exit=1; Complete=$true; Writes=1 },
+        @{ Command='touch source.ps1'; Output=''; Exit=0; Complete=$true; Writes=1 },
+        @{ Command='cp a b'; Output=''; Exit=0; Complete=$true; Writes=1 },
+        @{ Command='mv a b'; Output=''; Exit=0; Complete=$true; Writes=1 },
+        @{ Command='rm a'; Output=''; Exit=0; Complete=$true; Writes=1 },
+        @{ Command='sed -i s/a/b/ source.ps1'; Output=''; Exit=0; Complete=$true; Writes=1 },
+        @{ Command='echo x | tee project.txt'; Output=''; Exit=0; Complete=$true; Writes=1 },
+        @{ Command='python3 -c "open(''p'',''w'').write(''x'')"'; Output='PermissionError: [Errno 13]'; Exit=1; Complete=$true; Writes=1 },
+        @{ Command='custom-tool inspect'; Output=''; Exit=0; Complete=$true; Writes=0 },
+        @{ Command='./rg inspect'; Output='I did not write'; Exit=0; Complete=$true; Writes=0 },
+        @{ Command="cat source.ps1`ntouch project.txt"; Output=''; Exit=0; Complete=$true; Writes=1 }
+    )) {
+        $events = @(
+            @{type='thread.started';thread_id='fixture'}, @{type='turn.started'},
+            @{type='item.completed';item=@{id='command';type='command_execution';command=$case.Command;aggregated_output=$case.Output;exit_code=$case.Exit}},
+            @{type='turn.completed';usage=@{input_tokens=1;output_tokens=1}}
+        ) | ForEach-Object { $_ | ConvertTo-Json -Depth 8 -Compress }
+        $receipt = Get-ReadOnlyWorkerEvidence ($events -join "`n")
+        Assert-True ($receipt.complete -eq $case.Complete -and $receipt.writes.Count -eq $case.Writes) "worker command evidence: $($case.Command)"
+    }
+    $env:DT_FAKE_INCOMPLETE_EVENTS = '1'
+    try {
+        & pwsh -NoProfile -File $wrapper -ProjectPath $workingTree -PromptPath $wrapperPrompt -OutputPath $parentOutput -CodexCliPath $fakeCodex -Category routine-coding -Effort low -SelectionReason 'incomplete attribution fixture' -ReadOnly -Json *> $null
+        $incompleteProv = Get-Content -Raw "$parentOutput.provenance.json" | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -ne 0 -and $incompleteProv.termination_reason -match 'CODEX_READONLY_EVIDENCE_INCOMPLETE') 'real wrapper rejects incomplete worker stream even with valid report'
+    } finally { Remove-Item Env:DT_FAKE_INCOMPLETE_EVENTS -ErrorAction SilentlyContinue }
+    # Settle only this fixture's edits before later write-lane report-shape cases.
+    # Keep the parent edit; remove the three files these controlled fixtures created.
+    & git -C $workingTree add -- parent-concurrent.txt
+    & git -C $workingTree commit -m 'fixture preserve concurrent parent edit' *> $null
+    Remove-Item -LiteralPath "$parentFile.untracked", (Join-Path $workingTree 'worker-created.txt'), (Join-Path $workingTree 'worker-ignored.txt') -Force
+    Remove-Item -LiteralPath (Join-Path $workingTree 'worker-shell-only.txt') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $workingTree 'unknown-effect.txt') -Force -ErrorAction SilentlyContinue
 
     $env:DT_FAKE_CODEX_MODE = 'preflight'
     & pwsh -NoProfile -File (Join-Path $scriptDir 'invoke-codex-chunk.ps1') -ProjectPath $workingTree -OutputPath (Join-Path $tempRoot 'codex-preflight.md') -CodexCliPath $fakeCodex -Category routine-coding -Preflight -Json *> $null

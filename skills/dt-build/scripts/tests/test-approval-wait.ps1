@@ -2,6 +2,8 @@
 # Real processes and the production ledger/lease/operator/watcher code; no model or external service.
 param([string]$EvidencePath)
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $dtJob = Join-Path (Split-Path -Parent $PSScriptRoot) 'dt-job.ps1'
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'dt-build-watcher.ps1')

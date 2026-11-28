@@ -233,7 +233,8 @@ switch ('__MODE__') {
 '@
         Write-Utf8 $failingClaude ($peerBody.Replace('__RECEIPT__', $settingsReceipt.Replace("'", "''")).Replace('__MODE__', $mode))
         $pattern = switch ($mode) { 'prefix' { 'timestamp prefix' }; 'exit' { 'exited 9' }; 'timeout' { 'exceeded' } }
-        Assert-Throws { & $claudeInvoker -ProjectPath $project -Preflight -ClaudeCliPath $failingClaude -TimeoutMs 3000 } $pattern "Claude wrapper accepted $mode peer"
+        $startupBudget = if ($mode -eq 'timeout') { 3000 } else { 30000 }
+        Assert-Throws { & $claudeInvoker -ProjectPath $project -Preflight -ClaudeCliPath $failingClaude -TimeoutMs $startupBudget } $pattern "Claude wrapper accepted $mode peer"
         Assert-True (Test-Path -LiteralPath $settingsReceipt) "$mode peer did not start"
         $temporarySettings = [IO.File]::ReadAllText($settingsReceipt)
         Assert-True (-not (Test-Path -LiteralPath $temporarySettings)) "Claude wrapper leaked settings after $mode"
@@ -335,7 +336,8 @@ switch ('__MODE__') {
 '@
         Write-Utf8 $failingClaude ($roundPeer.Replace('__RECEIPT__', $settingsReceipt.Replace("'", "''")).Replace('__MODE__', $mode))
         $pattern = switch ($mode) { 'prefix' {'timestamp prefix'}; 'exit' {'exit code 9'}; 'timeout' {'exceeded'} }
-        Assert-Throws { & $claudeInvoker -ProjectPath $project -Round 1 -Tier complex -PromptPath $assembly.prompt_path -ClaudeCliPath $failingClaude -TimeoutMs 3000 } $pattern "round path accepted $mode"
+        $startupBudget = if ($mode -eq 'timeout') { 3000 } else { 30000 }
+        Assert-Throws { & $claudeInvoker -ProjectPath $project -Round 1 -Tier complex -PromptPath $assembly.prompt_path -ClaudeCliPath $failingClaude -TimeoutMs $startupBudget } $pattern "round path accepted $mode"
         Assert-True (Test-Path -LiteralPath $settingsReceipt) "round $mode received settings"
         Assert-True (-not (Test-Path -LiteralPath ([IO.File]::ReadAllText($settingsReceipt)))) "round $mode cleaned settings"
         Remove-Item -LiteralPath $settingsReceipt

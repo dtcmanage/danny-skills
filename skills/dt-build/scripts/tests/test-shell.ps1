@@ -2,6 +2,7 @@
 # continue to use pwsh. Never pool runspaces: functions, globals and modules must not leak.
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'powershell-startup.ps1')
 Disable-DtPowerShellStartupProfile
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
 
 if (-not ('DtTestShellHost' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -132,6 +133,8 @@ function Invoke-TestShards {
     $workers = @(); $code = 0
     try {
         foreach ($part in 1..$Count) {
+            $cap = Get-TestWorkerBudget -Limit $(if ($env:DT_TEST_WORKER_LIMIT) { [Math]::Min($Count,[int]$env:DT_TEST_WORKER_LIMIT) } else { $Count })
+            while (@($workers | Where-Object { -not $_.Process.HasExited }).Count -ge $cap) { Start-Sleep -Milliseconds 100 }
             $command = "& '" + $Script.Replace("'", "''") + "' -Shard $part"
             $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
             $out = Join-Path $logs "$part.log"; $err = Join-Path $logs "$part.stderr.log"

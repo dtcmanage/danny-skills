@@ -12,12 +12,14 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repo 'skills/dt-build/scripts/powershell-startup.ps1')
 Disable-DtPowerShellStartupProfile
+. (Join-Path $PSScriptRoot 'lib/runtime-test-admission.ps1')
+$requestedThrottleLimit = $ThrottleLimit
+$ThrottleLimit = Get-TestWorkerBudget -Limit $ThrottleLimit
+$env:DT_TEST_WORKER_LIMIT = [string]$ThrottleLimit
 
 function Get-GateSteps {
     # One catalog owns execution and selection. Always-run steps are the cheap policy gate.
-    # On the 40-thread host, sixteen slots admit both six-worker suites, the
-    # context guard and three other steps. Blocking fixture children leave CPU
-    # headroom; cheap steps finish alongside the slow suites instead of after them.
+    # Slots are upper bounds. Admission and suite shards also account for live load.
     @(
         @{ Name='dt-job'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-dt-job.ps1'; Slots=6 }
         @{ Name='context-guard'; Skill='dt-build'; Command='& ./skills/dt-build/scripts/tests/test-context-guard.ps1' }
@@ -36,7 +38,8 @@ function Get-GateSteps {
         @{ Name='preflight'; Skill='*'; Command='& ./scripts/test-preflight.ps1 -Scope gate' }
         @{ Name='preflight-tests'; Skill='*'; Command='& ./scripts/tests/test-test-preflight.ps1' }
         @{ Name='gate-runner-tests'; Skill='*'; Command='& ./scripts/tests/test-run-gate.ps1' }
-        @{ Name='checkout-freshness'; Skill=''; Command='if ($IsLinux) { & $env:DANNY_SKILLS_TEST_PYTHON -m pytest -n 2 scripts/tests/test_refresh_checkout.py -q; exit $LASTEXITCODE }'; Slots=2 }
+        @{ Name='runtime-admission'; Skill='dt-build'; Command='& ./scripts/tests/test-runtime-admission.ps1' }
+        @{ Name='checkout-freshness'; Skill=''; Command='if ($IsLinux) { & $env:DANNY_SKILLS_TEST_PYTHON -m pytest -n ([Math]::Min(2,[int]$env:DT_TEST_WORKER_LIMIT)) scripts/tests/test_refresh_checkout.py -q; exit $LASTEXITCODE }'; Slots=2 }
         @{ Name='eastern-time'; Skill='*'; Command='& $env:DANNY_SKILLS_TEST_PYTHON -m unittest scripts/tests/test_eastern_time.py; exit $LASTEXITCODE' }
         @{ Name='versioning-policy'; Skill='*'; Command='& ./scripts/verify-versioning-policy.ps1 -BaseRef auto' }
         @{ Name='plugin-validation'; Skill='*'; Command='& ./tools/build-plugin.ps1 -BaseRef auto -ValidateOnly' }
@@ -116,6 +119,9 @@ try {
     $steps = @(Select-GateSteps -ChangedPaths $paths -BaseRef $BaseRef -Full:($Full -or $branch -eq 'main'))
     Write-Output "Gate selection: $($steps.Name -join ', ') (concurrency $ThrottleLimit)"
     if ($List) { exit 0 }
+    # One gate owns the runtime lease; its suite/shard descendants reuse that live
+    # ownership, while other gates and standalone runtime suites wait outside it.
+    if (@($steps | Where-Object Skill -eq 'dt-build').Count) { Enter-RuntimeTestSuite }
     $wall = [Diagnostics.Stopwatch]::StartNew()
     . (Join-Path $PSScriptRoot 'lib/resolve-test-python.ps1')
     $python = Resolve-TestPython
@@ -131,14 +137,15 @@ try {
     $results = [Collections.Generic.List[object]]::new()
     try {
         while ($pending.Count -or $running.Count) {
-            while ($pending.Count -and $running.Count -lt $ThrottleLimit) {
+            $admissionLimit = Get-TestWorkerBudget -Limit $requestedThrottleLimit
+            while ($pending.Count -and $running.Count -lt $admissionLimit) {
                 $occupied = 0
                 foreach ($job in $running) { $occupied += $job.Slots }
                 $next = $pending.Peek()
-                $slots = if ($next.ContainsKey('Slots')) { [Math]::Min([int]$next.Slots,$ThrottleLimit) } else { 1 }
-                if ($occupied + $slots -gt $ThrottleLimit) { break }
+                $slots = if ($next.ContainsKey('Slots')) { [Math]::Min([int]$next.Slots,$admissionLimit) } else { 1 }
+                if ($occupied + $slots -gt $admissionLimit) { break }
                 $step = $pending.Dequeue()
-                if ($step.ContainsKey('Slots') -and $step.Slots -gt $ThrottleLimit) { $step.Command += ' -Serial'; $slots = 1 }
+                $env:DT_TEST_WORKER_LIMIT = [string]$slots
                 $out = Join-Path $LogDirectory ($step.Name + '.log')
                 $err = Join-Path $LogDirectory ($step.Name + '.stderr.log')
                 $code = "`$ErrorActionPreference = 'Stop'; try { $($step.Command) } catch { Write-Error `$_ -ErrorAction Continue; exit 1 }"

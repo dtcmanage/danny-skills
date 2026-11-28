@@ -1,6 +1,8 @@
 # Execute the production runner block. A ledger holder waits for the real child
 # to exit before admitting the write, reproducing the Linux race deterministically.
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $scripts = Split-Path -Parent $PSScriptRoot
 $runner = Get-Content -LiteralPath (Join-Path $scripts 'dt-job-runner.ps1') -Raw

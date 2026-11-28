@@ -1,0 +1,495 @@
+{
+ "source": "Real read-only Codex CLI 0.171.0 rollout 01a21f38-5b48-7843-a9bc-d657cb54e501 (audit auto-close reader, 2026-11-27). Every command_execution, verbatim argv, status and exit code; failing outputs abbreviated.",
+ "commands": [
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "pwd; env | rg 'claude_context_bridge|SESSION|CONTEXT'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat /home/danny/Claude/CLAUDE.md"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "sed -n '1,120p' /home/danny/Claude/CLAUDE.md"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "sed -n '121,240p' /home/danny/Claude/CLAUDE.md"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "ls -la '/home/danny/Claude/_Claude-Workspace/Skill Creation'; rg --files '/home/danny/Claude/_Claude-Workspace/Skill Creation' -g 'CLAUDE.md' -g 'MEMORY.md' -g 'AGENTS.md'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat '/home/danny/Claude/_Claude-Workspace/Skill Creation/CLAUDE.md'; cat '/home/danny/Claude/_Claude-Workspace/Skill Creation/MEMORY.md'; rg --files | rg '(^|/)AGENTS\\.md$'"
+   ],
+   "status": "failed",
+   "exit_code": 1,
+   "aggregated_output": "# Skill Creation Workstation\ncat: '/home/danny/Claude/_Claude-Workspace/Skill Creation/MEMORY.md': No such file or directory\n"
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat '/home/danny/Claude/_Claude-Workspace/Skill Creation/Skill Creation Resources/glossary.md'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat '/home/danny/Claude/_Claude-Workspace/00_Resources/artifact-lifecycle.md'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat '/home/danny/Claude/_Claude-Workspace/00_Resources/git-workflow.md'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat '/home/danny/Claude/_Claude-Workspace/Skill Creation/_audits/audit-auto-close-read-prompt.md'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "git symbolic-ref refs/remotes/origin/HEAD; git branch --format='%(refname:short)' ; git config --get init.defaultBranch; git rev-parse --show-toplevel; git rev-parse HEAD; git branch --show-current; git status --short"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat .ship.json"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat '/home/danny/Claude/_Claude-Workspace/Skill Creation/Skill Creation Resources/dt-pipeline-operations.md'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat references/versioning-policy.md"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg -n -i 'dt-session-audit|session audit' skills -g 'SKILL.md'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "git rev-parse main; git rev-parse HEAD; git branch --show-current; git status --short"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg --files scripts tests skills | sort"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg -n 'test-|pytest|pwsh|ssh|github|network|file.link|dt-session-audit|dt-handoff|dt-ship|version' skills/dt-session-audit skills/dt-handoff skills/dt-ship scripts/run-gate.ps1 scripts/test-versioning-policy.ps1 scripts/test-file-link-format.py scripts/tests/test-run-gate.ps1"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nproc; free -h; rg -n 'pytest|ssh|network|github|host|credential|exclusive_reason|parallel|shard' .ship.json scripts/run-gate.ps1 scripts/test-preflight.ps1 scripts/pytest-lock.ps1 scripts/pytest-lock.py scripts/tests skills/dt-session-audit/scripts/tests skills/dt-handoff/scripts/tests skills/dt-ship/tests"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat scripts/test-preflight.ps1; cat scripts/test-file-link-format.py"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "cat scripts/run-gate.ps1"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "for f in skills/*/SKILL.md; do if rg -qi 'dt-session-audit' \"$f\"; then echo \"===== $f\"; tail -n 45 \"$f\"; fi; done"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba scripts/run-gate.ps1 | sed -n '1,240p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba skills/dt-handoff/SKILL.md | sed -n '128,153p'; nl -ba skills/dt-ship/SKILL.md | sed -n '60,76p'; nl -ba skills/dt-session-audit/SKILL.md | tail -n 75"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg -n -i 'local file|file link|markdown link|absolute path|format|test-file-link|verify-versioning|test-versioning|session-audit|handoff|dt-ship' references skills/dt-handoff skills/dt-session-audit skills/dt-ship scripts/test-file-link-format.py scripts/test-versioning-policy.ps1 scripts/run-gate.ps1"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg --files skills/dt-session-audit skills/dt-handoff skills/dt-ship scripts | rg '(test|verify|run-gate|file-link|version)'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "git symbolic-ref refs/remotes/origin/HEAD; git rev-parse main; git rev-parse HEAD; git branch --show-current; git status --short"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba scripts/test-versioning-policy.ps1 | sed -n '1,220p'; nl -ba scripts/test-file-link-format.py | sed -n '1,240p'; nl -ba scripts/tests/test-run-gate.ps1 | sed -n '1,120p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba skills/dt-session-audit/SKILL.md | sed -n '1,180p'; nl -ba skills/dt-session-audit/SKILL.md | sed -n '360,440p'; nl -ba skills/dt-handoff/scripts/tests/test-handoff-registry.ps1 | sed -n '1,180p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba skills/dt-session-audit/scripts/tests/test-check-ai-item-exits.ps1 | sed -n '1,200p'; nl -ba skills/dt-session-audit/scripts/tests/test-check-directory-drift.ps1 | sed -n '1,200p'; nl -ba skills/dt-session-audit/scripts/check-directory-drift.ps1 | sed -n '1,180p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg -n 'test-file-link-format|test-versioning-policy|verify-versioning-policy|file-link-format|conventions.md' --glob '!**/_log.md'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba scripts/test-preflight.ps1 | sed -n '1,220p'; nl -ba scripts/tests/test-test-preflight.ps1 | sed -n '1,200p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba skills/dt-ship/tests/test-ship-live-jobs.ps1 | sed -n '1,120p'; nl -ba skills/dt-ship/tests/test-ship-scratch.ps1 | sed -n '1,120p'; nl -ba skills/dt-handoff/scripts/handoff-registry.ps1 | sed -n '1,220p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba references/conventions.md | sed -n '1,200p'; nl -ba skills/dt-ship/references/ship-config.md | sed -n '1,100p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg -n 'SUMMARY|PASS|exit|BaseRef|git fetch|git show|git diff|git rev-parse' scripts/test-versioning-policy.ps1 scripts/verify-versioning-policy.ps1"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba scripts/lib/resolve-test-python.ps1 | sed -n '1,200p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg -n 'Test-Path|https?://|ssh|git clone|workspace|Write|New-Item|Remove-Item|PASS|SUMMARY|exit' skills/dt-session-audit/scripts/tests/test-check-ai-item-exits.ps1 skills/dt-session-audit/scripts/tests/test-check-directory-drift.ps1 skills/dt-handoff/scripts/tests/test-handoff-registry.ps1 skills/dt-ship/tests/test-ship-live-jobs.ps1 skills/dt-ship/tests/test-ship-scratch.ps1"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg -n 'ValidateOnly|New-Item|Set-Content|WriteAll|Remove-Item|Build|Destination|Output' tools/build-plugin.ps1"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "rg -n 'file-link-format|test-file-link-format|conventions' .github scripts skills references"
+   ],
+   "status": "failed",
+   "exit_code": 2,
+   "aggregated_output": "rg: .github: No such file or directory (os error 2)\nreferences/shared-component-owners.json:280:  \"references/conventions.md\": {\n"
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "git diff --check"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "python3 scripts/test-file-link-format.py"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "pwsh -NoProfile -File scripts/run-gate.ps1 -BaseRef auto -List"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "pwsh -NoProfile -File scripts/verify-versioning-policy.ps1 -BaseRef auto -Json"
+   ],
+   "status": "failed",
+   "exit_code": 1,
+   "aggregated_output": "{\n  \"pass\": false,\n  \"errors\": [\n    \"PLUGIN_VERSION_NOT_BUMPED: base=1.4.0 current=1.4.0\"\n  ]\n}\n"
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "pwsh -NoProfile -File tools/build-plugin.ps1 -BaseRef auto -ValidateOnly"
+   ],
+   "status": "failed",
+   "exit_code": 1,
+   "aggregated_output": "Exception: tools/build-plugin.ps1:89\n     | Versioning policy gate failed before packaging: {   \"pass\": false }\n"
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba skills/dt-session-audit/SKILL.md | sed -n '428,448p'; rg -l -i 'dt-session-audit' skills/*/SKILL.md"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "git symbolic-ref refs/remotes/origin/HEAD; git rev-parse main; git rev-parse HEAD; git branch --show-current; git status --short; if test -e '/home/danny/Claude/_Claude-Workspace/Skill Creation/_audits/audit-auto-close-read-extract.md'; then ls -l '/home/danny/Claude/_Claude-Workspace/Skill Creation/_audits/audit-auto-close-read-extract.md'; else echo 'extract destination absent'; fi"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba scripts/test-versioning-policy.ps1 | sed -n '1,8p'; nl -ba scripts/verify-versioning-policy.ps1 | sed -n '580,606p'; nl -ba tools/build-plugin.ps1 | sed -n '82,98p'; nl -ba scripts/test-file-link-format.py | sed -n '87,116p'; nl -ba references/versioning-policy.md | sed -n '55,104p'; nl -ba references/conventions.md | sed -n '71,98p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "nl -ba skills/dt-session-audit/scripts/tests/test-check-ai-item-exits.ps1 | sed -n '1,12p'; nl -ba skills/dt-session-audit/scripts/tests/test-check-directory-drift.ps1 | sed -n '1,12p'; nl -ba skills/dt-handoff/scripts/tests/test-handoff-registry.ps1 | sed -n '1,12p'; nl -ba skills/dt-ship/tests/test-ship-live-jobs.ps1 | sed -n '1,12p'; nl -ba skills/dt-ship/tests/test-ship-scratch.ps1 | sed -n '1,12p'; nl -ba scripts/run-gate.ps1 | sed -n '21,43p'"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  },
+  {
+   "argv": [
+    "/bin/bash",
+    "-lc",
+    "test -x /home/danny/.local/share/build-test-venv/bin/python && /home/danny/.local/share/build-test-venv/bin/python -c 'import markdown_it; import zoneinfo; print(\"test venv imports: PASS\")'; cat requirements-test.txt"
+   ],
+   "status": "completed",
+   "exit_code": 0,
+   "aggregated_output": ""
+  }
+ ]
+}

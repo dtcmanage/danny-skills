@@ -6,7 +6,7 @@ user-invocable: true
 allowed-tools: "Bash(git:*) Bash(codex:*) Bash(pwsh:*) Read Write Edit AskUserQuestion"
 compatibility: "Cowork, Claude Code CLI, or Codex CLI (Codex is the most-used orchestrator in practice; its stage-2 hardening is not built); requires danny-skills repo present."
 metadata:
-  version: 2.68.1
+  version: 2.68.2
   changelog: "Changelog moved to CHANGELOG.md (this skill folder); historical entries live there verbatim, newest first."
 ---
 
@@ -85,33 +85,11 @@ Routing lives in the shared model router: `<danny-skills>/scripts/model-router/r
 - **Retry once:** run the dispatch diagnosis before any `-EscalateFrom`; consume the wrapper result first. On `ROUTER_VENDOR_INCIDENT` re-dispatch once on the result's `backup_pick` and print its own `MODEL_SELECTION` line; this retry consumes no attempt, as for `ROUTER_LIMIT`. On `ROUTER_UNEXPLAINED` do not re-dispatch, escalate, or demote; stop the piece (the wrapper already retried once and paged). On `ROUTER_OFFLINE` the piece fails as `environment`; the orchestrator's own resume handles it. For an implementation failure within the two-attempt budget, retry a standard first attempt with `-RetryAtHardFrom <failed model>` and a single-line `-DifficultyReason`; if the first attempt already ran at hard, retry with `-EscalateFrom <failed model> -Difficulty hard -DifficultyReason <reason>`. A category without tiers (unprotected `mechanical`, which routes to the fast job) retries with `-EscalateFrom <failed model>` as before. On `ROUTER_LIMIT` re-resolve without `-Lane`, dispatch once on the returned backup, and print a second line; this retry consumes no attempt. On `status = wait` stop the dispatch, write the result's `resume_after_et` into `_build-state.md`, send one DM with `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/send-router-alert.ps1" -Key "router-wait: <resume_after_et>"`, and tell Danny.
 - **Frontier spend (alert only):** after step 6.i run `pwsh -NoProfile -File "<danny-skills>/scripts/model-router/check-frontier-spend.ps1" -RunStartedAt <run start, ISO> -RunId <RUN_ID> -RemainingMilestones <n> -Json` and relay its `ROUTER_ALERT:` line if any.
 
-Harness terms: `claude-host` is a Claude Code orchestrator; `codex-host` is any other. CLAUDE_DISPATCH is the Claude-lane dispatch above; VERIFY_DISPATCH is a fresh read-only non-builder session on the vendor returned for `code-review`. Run `-Preflight -TimeoutMs 30000` on each wrapper once per category before its first substantive use; substantive calls run as jobs without a time limit. On Windows Codex runs unsandboxed; containment is the scoped worktree plus independent verification; read-only workers fail if the tree changes.
+Harness terms: `claude-host` is a Claude Code orchestrator; `codex-host` is any other. CLAUDE_DISPATCH is the Claude-lane dispatch above; VERIFY_DISPATCH is a fresh read-only non-builder session on the vendor returned for `code-review`. Run `-Preflight -TimeoutMs 30000` on each wrapper once per category before its first substantive use; substantive calls run as jobs without a time limit. On Windows Codex builders run unsandboxed; containment is the scoped worktree plus independent verification. Read-only workers always keep the enforced read-only sandbox. Their reports fail only on the worker's own write evidence or an incomplete, failed or unsupported CLI event record, never on another process's tree changes.
 
 ## Context discipline
 
-These rules are enforced by scripts both hosts must call; the adapter gives each host's exact commands.
-
-- **Claude startup:** `references/managed-resume.md`.
-
-- **Decide throughput.** Read `references/hardware-parallelism.md`. At intake, after state creation,
-  run `<skill>/scripts/measure-build-host.ps1 -RunFolder <folder> [-Kind <kind>]`; it records logical
-  processors, RAM, other heavy jobs and the computed cap in build state. Refresh before heavy dispatch
-  and on resume. Run independent jobs concurrently within that cap and pass worker/shard budgets in
-  briefs. Use safe parallel suites (`pytest -n auto` within a CPU allocation, bounded `-n`, or project
-  sharding); serial requires the plan's named cause. Resolve missing decisions before dispatch.
-  Per-process memory caps for test runners must come from measured peaks, never a guess.
-  FS-58 `exclusive_reason` stays opt-in; never lock unrelated safe work.
-
-- **Run work as jobs.** Workers, tests, builds, and browser checks run as `<skill>/scripts/dt-job.ps1` jobs, never in coordinator foreground. Read only capped `dt-job status|wait -Json` envelopes, checking `report_verdict`/`failure_category`; run state is `run_status`, never event type. Run `dt-job reconcile` at start, resume and `wait_timeout`; handle stalls per `managed-resume.md`, never merely repeat a wait.
-- **Read deeper deliberately.** Open job evidence only through `<skill>/scripts/read-evidence.ps1` (`-Lines a-b` or `-Grep`), never by reading stream logs or output files directly.
-- **Mark bootstrap once.** After the mandatory reads and before the first dispatch, run `dt-job mark-bootstrap`; the context limits are measured from that point.
-- **Rotate on the limit.** On a `checkpoint` context line, reach a safe stopping point and rotate. On a `rotate` line or `ROTATE_REQUIRED`, rotate as the adapter says: rewrite `_build-state.md`, write a handoff note, `dt-job request-continuation`, release the lease, end. Running jobs continue; verification is never skipped or shortened to save context.
-
-The advisory rules below remain in force until the scenario 8 validation passes for each mode.
-
-- **Never pull bulk payloads into the orchestrator.** Read the current milestone by line range and each reference once, when needed; keep only `-Json` verdict fields, redirect anything over about 40 lines to a file under the run folder and read the tail, give the verifier a commit range and subagents paths with sha256 pins, never pasted content: wrappers refuse prompts over 400,000 characters.
-- **Subagents write to files and checkpoint.** Every chunk prompt carries the standing rules `assemble-codex-prompt.ps1` appends (no nested agents, output to files, no idle waits, checkpoint after about 100 tool calls to `<run-folder>/milestones/<mid>/continuation-<n>.md`). A `CONTINUATION_STATE` path means a fresh builder on the same router pick continues as the same attempt with its own `MODEL_SELECTION` line. Never message a builder that has done substantive work; a correction is a fresh dispatch. Size chunks by coherence.
-- **Restart at milestone boundaries.** After step 6.i, past about 150 tool calls since start or last compaction, rotate as above; the watcher relaunches the run, whoever started it.
+Before startup, intake, dispatch, resume, evidence reads or context rotation, read and follow `references/context-discipline.md`. Its job, throughput, bootstrap, checkpoint and rotation obligations apply throughout the run.
 
 ## Usage telemetry (automatic)
 
@@ -279,24 +257,7 @@ until its rehearsal milestone has a current PASS; preserve this gate in worker b
 - Director approves shipping. `await-danny -WaitMinutes 7.5 -CallStartedUtc <call-start-utc>`: continue on approval; otherwise end. Never self-approve. Authority/watches: `references/managed-resume.md`; patches: `references/fast-lane.md`.
 
 8. Skill propagation gate (danny-skills builds only):
-- Fires only when the built repo is the `danny-skills` plugin repo. Detect by reading `<repo>/.claude-plugin/plugin.json` and confirming `name == "danny-skills"` and a top-level `skills/` directory exists. Skip the gate otherwise.
-- Detect new skill folders added by this build run:
-  - Resolve the merge base: `git merge-base <merge_target> <build_branch>`.
-  - List added skill folders: `git diff --name-only --diff-filter=A -M <merge_base> <build_branch> -- skills/`, then keep paths matching `^skills/[^/]+/` and reduce to unique top-level skill names.
-  - A folder rename (old removed, new added) surfaces as a new skill on the new side and an orphan in the propagation report; the build does not auto-clean the orphan.
-  - Do NOT fire for SKILL.md-only or content-only edits where the skill folder name is unchanged.
-- For each new skill name, invoke the repo-level propagator:
-  `pwsh -NoProfile -File <repo>/scripts/verify-skill-junctions.ps1 -RepoRoot <repo> -NewSkills <names...> -Create -Json`
-  It reconciles the four skill-link surfaces named in its header (symlinks on Linux, junctions on Windows). Cowork is auto-propagated by its whole-folder junction and is not touched here.
-- Run this before marking the final checkpoint COMPLETE. Hard fail finalization when any of these surface in the script output:
-  - any row with status `missing`, `wrong_target`, `create_failed`, or `collision_not_junction`,
-  - any entry in `setup_gaps` (a target parent directory does not exist; never auto-create it),
-  - any entry in `orphans` introduced by this run.
-- Append the full propagation JSON to the build-final summary (the always-on record); when Danny has asked for the `build-run-review.html` companion (step 6.5), also surface a "Skill Propagation" panel in it listing per-(skill, location) status, any setup gaps, and any orphans.
-- The same script is callable ad-hoc for retroactive sweeps with no `-NewSkills` (scans all skills in the repo) and without `-Create` (report-only).
-- Before COMPLETE, run repo-level `<danny-skills>/scripts/verify-versioning-policy.ps1 -BaseRef <merge_target> -Json`.
-  Any error in skill SemVer, current-first changelogs, manifest agreement, changed-skill bumps, or the plugin
-  release bump blocks finalization. Persist the validator JSON beside the propagation evidence.
+Before finalizing, read and follow `references/skill-propagation.md` in full, including new-skill discovery, propagation evidence and the versioning gate. Other repositories skip this gate.
 
 ## Required verification
 

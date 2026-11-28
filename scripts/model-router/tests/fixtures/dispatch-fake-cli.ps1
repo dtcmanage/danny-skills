@@ -23,12 +23,21 @@ if ($vendor -eq 'claude') {
 } else {
     $out = $args[[array]::IndexOf($args,'--output-last-message')+1]
     [IO.File]::WriteAllText($out,$report)
+    $sessionId = $null
     if ($env:M04_FAKE_MODE -ne 'no-rollout') {
-        $id = [guid]::NewGuid().ToString()
+        $id = [guid]::NewGuid().ToString(); $sessionId = $id
         $cwd = $args[[array]::IndexOf($args,'--cd')+1]
         $rollout = Join-Path $env:DT_MODEL_ROUTER_CODEX_SESSIONS "rollout-2026-11-05T00-00-00-$id.jsonl"
         @(@{type='session_meta';payload=@{id=$id;cwd=$cwd}},@{type='turn_context';payload=@{model=$model}},@{type='event_msg';payload=@{type='token_count';info=@{total_token_usage=@{input_tokens=31;output_tokens=7}}}}) | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 8 } | Set-Content -LiteralPath $rollout
-        [Console]::Error.WriteLine("session id: $id")
+        # Like the real CLI, --json reports the session only as the thread.started frame.
+        if ($args -notcontains '--json') { [Console]::Error.WriteLine("session id: $id") }
     }
-    'plain final message; unchanged exec stream'
+    if ($args -contains '--json') {
+        '{"type":"thread.started","thread_id":"' + $(if ($sessionId) { $sessionId } else { 'dispatch-fixture' }) + '"}'
+        '{"type":"turn.started"}'
+        if (Get-Variable fixtureWorkerChanged -ErrorAction SilentlyContinue) {
+            '{"type":"item.completed","item":{"id":"write","type":"file_change","status":"completed","changes":[{"path":"worker-change.txt","kind":"add"}]}}'
+        }
+        '{"type":"turn.completed","usage":{"input_tokens":31,"output_tokens":7}}'
+    } else { 'plain final message; unchanged exec stream' }
 }

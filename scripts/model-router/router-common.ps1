@@ -404,6 +404,23 @@ function Exit-RouterBenchLock {
     $Lock.handle.Dispose()
 }
 
+function Get-RouterIOExceptionKind {
+    param([Parameter(Mandatory)][Exception]$Exception, [bool]$OnWindows = $IsWindows, [bool]$OnMacOS = $IsMacOS)
+    while ($Exception.InnerException) { $Exception = $Exception.InnerException }
+    $code = $Exception.HResult -band 0xffff
+    # HRESULT_FROM_WIN32 on Windows; CoreCLR exposes errno in the low word on Unix.
+    if (($OnWindows -and $code -in @(39,112)) -or (-not $OnWindows -and
+        ($code -eq 28 -or ($OnMacOS -and $code -eq 69) -or (-not $OnMacOS -and $code -eq 122)))) { return 'disk-full' }
+    if (($OnWindows -and $code -in @(32,33)) -or (-not $OnWindows -and
+        (($OnMacOS -and $code -eq 35) -or (-not $OnMacOS -and $code -eq 11)))) { return 'contention' }
+    return 'io-error'
+}
+
+function Open-RouterOutcomeMutexHandle {
+    param([string]$Path)
+    [IO.FileStream]::new($Path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+}
+
 function Use-RouterOutcomeMutex {
     # Keep the file in place: unlinking a lock file can let waiters lock different inodes on Unix.
     # The OS releases the exclusive handle on process exit, including a crash.
@@ -413,13 +430,20 @@ function Use-RouterOutcomeMutex {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $handle = $null
     while ($null -eq $handle) {
-        try { $handle = [IO.FileStream]::new($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        try { $handle = Open-RouterOutcomeMutexHandle -Path $path }
         catch [IO.IOException] {
+            $kind = Get-RouterIOExceptionKind -Exception $_.Exception
+            if ($kind -ne 'contention') { throw "ROUTER_OUTCOME_IO_ERROR ($kind) opening ${path}: $($_.Exception.Message)" }
             if ($watch.ElapsedMilliseconds -ge $TimeoutMs) { throw 'ROUTER_OUTCOME_MUTEX_TIMEOUT' }
             Start-Sleep -Milliseconds 50
         }
     }
-    try { & $Action } finally { $handle.Dispose() }
+    try { & $Action }
+    catch [IO.IOException] {
+        $kind = Get-RouterIOExceptionKind -Exception $_.Exception
+        throw "ROUTER_OUTCOME_IO_ERROR ($kind) writing outcomes in ${StateDir}: $($_.Exception.Message)"
+    }
+    finally { $handle.Dispose() }
 }
 
 function Add-RouterOutcome {

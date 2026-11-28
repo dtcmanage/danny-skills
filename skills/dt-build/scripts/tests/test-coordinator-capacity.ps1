@@ -1,6 +1,8 @@
 #Requires -Version 7.0
 # Pure watcher decision fixtures; no Python, model, grader or alert child processes.
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $scripts = Split-Path -Parent $PSScriptRoot
 . (Join-Path $scripts 'dt-build-watcher.ps1')

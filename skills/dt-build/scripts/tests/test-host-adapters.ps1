@@ -5,6 +5,8 @@ param()
 # file list, the hooks adoption target, and the Codex wrapper's error source (fake CLI, no live model calls).
 
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
 
@@ -37,7 +39,7 @@ foreach ($name in @('CODEX_HOME', 'DT_MODEL_ROUTER_STATE', 'DT_MODEL_ROUTER_ALER
     $savedEnv[$name] = [System.Environment]::GetEnvironmentVariable($name)
 }
 
-# 4090 words at dt-build 2.20.6, plus the 400 words this change may add.
+# Preserve the original cap; the separate <=4000 target keeps useful headroom.
 $skillWordCap = 4490
 $adapterWordCap = 1000
 $sections = @('Dispatch', 'Waiting and completion', 'Bootstrap and context', 'Hooks', 'Managed mode and relaunch', 'Evidence')
@@ -116,7 +118,22 @@ try {
     Assert-True ($adapterSection -match 'Claude Code host[^;]*`references/adapter-claude\.md`' -and $adapterSection -match 'Codex host[^.]*`references/adapter-codex\.md`') 'SKILL.md maps each host to its adapter file'
     Assert-True ($adapterSection -match 'everything else in this SKILL\.md is shared') 'SKILL.md says the rest is shared'
     Assert-True ((Get-WordCount $skillText) -le $skillWordCap) "SKILL.md is $(Get-WordCount $skillText) words, over $skillWordCap"
-    Assert-True ($skillText.Contains('measure-build-host.ps1') -and $skillText.Contains('computed cap') -and $skillText.Contains('exclusive_reason') -and $skillText.Contains('plan''s named cause')) 'dt-build requires measured throughput and scoped serial reasons'
+    Assert-True ((Get-WordCount $skillText) -le 4000) 'dt-build leaves headroom under its original 4490 word cap'
+    Assert-True ($skillText.Contains('Before startup, intake, dispatch, resume, evidence reads or context rotation, read and follow `references/context-discipline.md`')) 'dt-build loads context discipline at its original decision point'
+    $contextText = Get-Content -Raw -LiteralPath (Join-Path $refDir 'context-discipline.md')
+    Assert-True ($skillText.Contains('Before finalizing, read and follow `references/skill-propagation.md`')) 'dt-build loads skill propagation before finalization'
+    # Pins are the complete original origin/main blocks, normalized only for CRLF
+    # and surrounding whitespace. No obligation may disappear in the relocation.
+    foreach ($preserved in @(
+        @{Name='context-discipline.md';Start='## Context discipline';Hash='54b5f08ef6136fd5127f73c9256ef02768fb7d3d3c851fbe5a70e395911a902f'},
+        @{Name='skill-propagation.md';Start='8. Skill propagation gate (danny-skills builds only):';Hash='a9baa17e49ef865a4949a2d88eb4c984727ab538b0070cfc8d7f36588b738b13'}
+    )) {
+        $reference = (Get-Content -Raw -LiteralPath (Join-Path $refDir $preserved.Name)).Replace("`r`n","`n")
+        $block = $reference.Substring($reference.IndexOf($preserved.Start)).Trim()
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($block))).ToLowerInvariant()
+        Assert-True ($hash -ceq $preserved.Hash) "$($preserved.Name) preserves every relocated obligation verbatim"
+    }
+    Assert-True ($contextText.Contains('measure-build-host.ps1') -and $contextText.Contains('computed cap') -and $contextText.Contains('exclusive_reason') -and $contextText.Contains('plan''s named cause')) 'dt-build requires measured throughput and scoped serial reasons'
 
     foreach ($stale in @('host-native Agent', 'agent_alias', 'TaskStop', 'Agent-tool dispatch', 'has the Agent tool')) {
         Assert-True (-not $skillText.Contains($stale)) "SKILL.md has no native Agent path: $stale"
@@ -125,7 +142,7 @@ try {
     Assert-True ($skillText -notmatch '(?m)^allowed-tools:.*\bAgent\b') 'SKILL.md does not request the Agent tool'
 
     # SKILL.md: Context discipline carries the script rules and keeps the advisory ones.
-    $discipline = [regex]::Match($skillText, '(?s)## Context discipline\s*(.*?)(?=\r?\n## )').Groups[1].Value
+    $discipline = $contextText
     foreach ($needle in @('dt-job.ps1', 'dt-job status|wait -Json', 'read-evidence.ps1', 'mark-bootstrap', 'ROTATE_REQUIRED', 'request-continuation')) {
         Assert-True ($discipline.Contains($needle)) "Context discipline names $needle"
     }
@@ -174,10 +191,10 @@ try {
     $hooksReadme = Get-Content -Raw -LiteralPath (Join-Path $skillRoot 'hooks\README.md')
     Assert-True ($hooksReadme.Contains('the live user settings file is `/home/danny/Claude/settings.json`') -and $hooksReadme.Contains('Adoption there merges `settings-snippet.json` into that file.')) 'hooks README names the adoption target (Linux session host)'
 
-    # invoke-codex-chunk.ps1: without --json, stdout is model text, so a JSON-looking stdout line never
-    # replaces stderr as the error source.
+    # Only readonly workers use structured stdout for attribution. Builder/refusal
+    # diagnosis still takes stderr, never JSON-looking model prose on stdout.
     $wrapperText = Get-Content -Raw -LiteralPath (Join-Path $scriptDir 'invoke-codex-chunk.ps1')
-    Assert-True (-not $wrapperText.Contains("'--json'")) 'the Codex wrapper does not pass --json'
+    Assert-True ($wrapperText.Contains("if (`$verifyReadOnly) { `$args = @(`$args[0..(`$args.Count - 2)]) + @('--json', '-') }")) 'only readonly attribution requests structured events'
     Assert-True (-not ($wrapperText -match '\$stdout -split')) 'the Codex wrapper no longer parses stdout as JSON event lines'
     $routerState = Join-Path $tempRoot 'router-state'
     Write-Utf8 -Path (Join-Path $routerState 'last-check.json') -Content (@{ checked_at = (Get-Date).ToString('o') } | ConvertTo-Json)

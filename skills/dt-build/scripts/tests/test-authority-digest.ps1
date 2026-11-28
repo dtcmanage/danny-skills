@@ -1,6 +1,8 @@
 #Requires -Version 7.0
 # Fixtures only: no Python, grader, vendor or model processes.
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
 function Assert-True([bool]$Value, [string]$Message) {

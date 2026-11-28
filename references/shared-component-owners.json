@@ -556,5 +556,7 @@
   "scripts/tests/test_refresh_checkout.py": {"consumers": [], "summary_token": "checkout freshness"},
   "references/checkout-freshness.md": {"consumers": [], "summary_token": "checkout freshness"},
   "scripts/run-gate.ps1": {"consumers": [], "summary_token": "ship gate"},
-  "scripts/tests/test-run-gate.ps1": {"consumers": [], "summary_token": "ship gate"}
+  "scripts/tests/test-run-gate.ps1": {"consumers": [], "summary_token": "ship gate"},
+  "scripts/lib/runtime-test-admission.ps1": {"consumers": ["dt-build"], "summary_token": "runtime test admission"},
+  "scripts/tests/test-runtime-admission.ps1": {"consumers": [], "summary_token": "runtime test admission"}
 }

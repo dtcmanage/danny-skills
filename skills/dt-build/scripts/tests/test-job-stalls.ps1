@@ -1,5 +1,7 @@
 # Fast, isolated watcher/CLI integration fixtures; no live builds or external transport.
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $script:passed = 0; $script:failed = 0
 $script:children = [Collections.Generic.List[object]]::new()

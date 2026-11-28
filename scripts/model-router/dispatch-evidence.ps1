@@ -183,12 +183,18 @@ function Undo-RouterFrontierReservation {
 
 function Read-RouterCodexExecutionEvidence {
     # Plain exec output is kept intact. Correlate only a CLI-reported session ID
-    # with its own rollout, never the newest file or the requested model.
-    param([string]$Stream, [string]$Project, [datetime]$StartedAt = (Get-Date))
-    $result = [pscustomobject]@{model=$null;usage=$null;rollout_path=$null}
-    $idMatch = [regex]::Match($Stream, '(?im)^session id:\s*([0-9a-f]{8}-[0-9a-f-]{27,})\s*$')
-    if (-not $idMatch.Success) { return $result }
-    $id = $idMatch.Groups[1].Value
+    # with its own rollout, never the newest file or the requested model. With
+    # --json the CLI reports it only as the thread.started frame on stdout; the
+    # caller passes that trusted frame's id as -SessionId.
+    param([string]$Stream, [string]$Project, [datetime]$StartedAt = (Get-Date), [string]$SessionId)
+    $result = [pscustomobject]@{model=$null;usage=$null;rollout_path=$null;sandbox=$null}
+    $uuid = '[0-9a-f]{8}-[0-9a-f-]{27,}'
+    if ($SessionId -and $SessionId -match "^(?i)$uuid$") { $id = $SessionId.ToLowerInvariant() }
+    else {
+        $idMatch = [regex]::Match($Stream, "(?im)^session id:\s*($uuid)\s*$")
+        if (-not $idMatch.Success) { return $result }
+        $id = $idMatch.Groups[1].Value
+    }
     $sessionRoot = if ($env:DT_MODEL_ROUTER_CODEX_SESSIONS) { $env:DT_MODEL_ROUTER_CODEX_SESSIONS } elseif ($env:CODEX_HOME) { Join-Path $env:CODEX_HOME 'sessions' } else { Join-Path $HOME '.codex/sessions' }
     if (-not (Test-Path -LiteralPath $sessionRoot -PathType Container)) { return $result }
     # UTC/local day and the previous day cover a launch across midnight. Flat
@@ -208,7 +214,7 @@ function Read-RouterCodexExecutionEvidence {
         }
     } catch { return $result }
     if ($files.Count -ne 1) { return $result }
-    $matched = $false; $model = $null; $usage = $null
+    $matched = $false; $model = $null; $usage = $null; $sandbox = $null
     try {
     foreach ($line in [IO.File]::ReadLines($files[0].FullName)) {
         try { $event = $line | ConvertFrom-Json -Depth 40 -DateKind String } catch { continue }
@@ -219,14 +225,19 @@ function Read-RouterCodexExecutionEvidence {
                 $matched = (Get-DispatchValue $payload 'id') -ceq $id -and $cwd -and [IO.Path]::GetFullPath($cwd) -ieq [IO.Path]::GetFullPath($Project)
                 if (-not $matched) { return $result }
             }
-            'turn_context' { $model = Get-DispatchValue $payload 'model' }
+            'turn_context' {
+                $model = Get-DispatchValue $payload 'model'
+                $policyRecord = Get-DispatchValue $payload 'sandbox_policy'
+                $policy = if ($policyRecord -is [string]) { $policyRecord } else { Get-DispatchValue $policyRecord 'type' }
+                if ($policy) { $sandbox = [string]$policy }
+            }
             'event_msg' {
                 if ((Get-DispatchValue $payload 'type') -eq 'token_count') { $usage = Get-DispatchValue (Get-DispatchValue $payload 'info') 'total_token_usage' }
             }
         }
     }
     } catch { return $result } # Telemetry never changes a successful execution.
-    if ($matched) { $result.model=$model; $result.usage=$usage; $result.rollout_path=$files[0].FullName }
+    if ($matched) { $result.model=$model; $result.usage=$usage; $result.rollout_path=$files[0].FullName; $result.sandbox=$sandbox }
     return $result
 }
 

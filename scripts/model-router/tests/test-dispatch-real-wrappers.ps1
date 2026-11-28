@@ -5,7 +5,13 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../dispatch.ps1')
 . (Join-Path $PSScriptRoot '../update-outcomes.ps1')
 . (Join-Path $PSScriptRoot 'fixtures/router-test-codex-home.ps1')
-$temp=Join-Path ([IO.Path]::GetTempPath()) ('dispatch-real-'+[guid]::NewGuid().ToString('N'))
+$wrapperFixtureTempBase=[IO.Path]::GetTempPath()
+# This module tests both known and unknown workstation attribution. A fixture
+# nested in the real Skill Creation workstation cannot represent an unknown one.
+if ($wrapperFixtureTempBase -match '[/\\]_Claude-Workspace[/\\]') {
+    $wrapperFixtureTempBase=if ($IsWindows) { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp' } else { '/var/tmp' }
+}
+$temp=Join-Path $wrapperFixtureTempBase ('dispatch-real-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($temp)
 $saved=@{}; foreach($name in @('DT_MODEL_ROUTER_STATE','DT_MODEL_ROUTER_ALERT_TRANSPORT','DT_BUILD_DISPATCH_SEAMS','M04_FAKE_ARGS','M04_FAKE_MODE','M04_FAKE_REPORT','M04_REPO_ROOT')) { $saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process') }
 $fixture=Enter-RouterTestCodexHome
@@ -155,7 +161,8 @@ if ($args -contains 'exec') {
 '@
             [IO.File]::WriteAllText($fakePath,($release.Replace('__SIGNAL__',$signal.Replace("'","''"))+"`n"+$fakeText))
             $r=Invoke-RouterDispatch $o $real
-            Check (-not $r.pass -and $r.failure_category -eq 'model-output' -and $r.termination_reason -match 'CODEX_READONLY_VIOLATION') 'unreadable to readable transition rejects real wrapper report'
+            $snapshotEvidence = Read-Evidence $o.OutputPath
+            Check ($r.pass -and $snapshotEvidence.readonly_worker_evidence.complete -and $snapshotEvidence.readonly_workspace_delta.detected) 'parent readability transition is diagnostic with complete readonly worker evidence'
         } finally {
             [IO.File]::WriteAllText($fakePath,$fakeText)
             if (-not $holder.HasExited) { $holder.Kill($true); $holder.WaitForExit() }
@@ -175,6 +182,9 @@ if ($args -contains 'exec') {
             $payload=@{hook_event_name='PreToolUse';tool_name='Agent';tool_input=@{subagent_type='Explore'};cwd=$printedRepo} | ConvertTo-Json -Compress
             $reason=(($payload | & python $guardScript) | ConvertFrom-Json).hookSpecificOutput.permissionDecisionReason
             $printed=$reason.Substring($reason.IndexOf('run: ')+5)
+            # AI-133 deliberately requires the caller to choose the category.
+            Check ($printed.Contains('-Category "<category>"')) 'guard requires an explicit category choice'
+            $printed=$printed.Replace('-Category "<category>"','-Category "routine-coding"')
             $printedPrompt=[regex]::Match($printed,'-PromptPath "([^"]+)"').Groups[1].Value
             $printedOutput=[regex]::Match($printed,'-OutputPath "([^"]+)"').Groups[1].Value
             [IO.File]::WriteAllText((Join-Path $printedRepo $printedPrompt),'fixture prompt')
@@ -183,12 +193,16 @@ if ($args -contains 'exec') {
             Check ($printed.Contains($installed) -and $printed.Contains(' -ReadOnly')) 'guard prints the read-only dispatch command'
             $printedScript=Join-Path $temp "printed-$lane-$($case.Write).ps1"
             [IO.File]::WriteAllText($printedScript,$printed.Replace($installed,$publicDispatch)+"`nexit `$LASTEXITCODE")
-            if ($case.Write) { [IO.File]::WriteAllText($fakePath,'[IO.File]::WriteAllText((Join-Path $PWD ''worker-change.txt''),''x'')'+"`n"+$fakeText) }
+            if ($case.Write) { [IO.File]::WriteAllText($fakePath,'[IO.File]::WriteAllText((Join-Path $PWD ''worker-change.txt''),''x''); $fixtureWorkerChanged=$true'+"`n"+$fakeText) }
             [IO.File]::WriteAllText($env:M04_FAKE_ARGS,'')
             $env:DT_BUILD_RUN_PIN_VENDOR=$lane; $env:DT_BUILD_RUN_PIN_MODEL=$(if($lane -eq 'codex'){'gpt-6.1-sol'}else{'claude-opus-5-5'})
             Push-Location -LiteralPath $printedRepo
             try { & pwsh -NoProfile -File $printedScript *> (Join-Path $temp "printed-$lane-$($case.Write).log"); $code=$LASTEXITCODE }
             finally { Pop-Location; Remove-Item Env:DT_BUILD_RUN_PIN_VENDOR,Env:DT_BUILD_RUN_PIN_MODEL -ErrorAction SilentlyContinue; [IO.File]::WriteAllText($fakePath,$fakeText) }
+            if (-not (Test-Path (Join-Path $printedRepo ($printedOutput+'.provenance.json')))) {
+                Get-Content (Join-Path $temp "printed-$lane-$($case.Write).log") | Write-Output
+                throw "Printed dispatch produced no provenance (exit $code): $printed"
+            }
             $printedRow=Read-Evidence (Join-Path $printedRepo $printedOutput)
             if ($case.Write) {
                 Check ($code -ne 0 -and $printedRow.termination_reason -match 'CODEX_READONLY_VIOLATION') 'printed read-only command still rejects a worker that changes the project'
@@ -332,5 +346,6 @@ if ($args -contains 'exec') {
 } finally {
     Exit-RouterTestCodexHome $fixture
     foreach($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name,$saved[$name],'Process') }
-    if([IO.Path]::GetFullPath($temp).StartsWith([IO.Path]::GetTempPath())) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
+    $fixturePrefix=[IO.Path]::GetFullPath($wrapperFixtureTempBase).TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
+    if([IO.Path]::GetFullPath($temp).StartsWith($fixturePrefix)) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
 }

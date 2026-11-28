@@ -1,5 +1,7 @@
 # Regression fixtures own every process, registry and file. No live builds or model calls.
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $scripts = Split-Path -Parent $PSScriptRoot
 . (Join-Path $scripts 'dt-job.ps1')

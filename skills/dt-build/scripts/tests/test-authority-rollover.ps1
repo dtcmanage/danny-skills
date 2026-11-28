@@ -1,6 +1,8 @@
 #Requires -Version 7.0
 # Fixtures only: no model or vendor processes. The independent review is a fixture file with provenance.
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
 function Assert-True([bool]$Value, [string]$Message) {

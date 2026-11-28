@@ -18,7 +18,7 @@ foreach ($suite in @(
 }
 $cheap = @($all | Where-Object Skill -eq '*')
 $build = @(Select-GateSteps -ChangedPaths @('skills/dt-build/scripts/a.ps1'))
-Assert-Gate ($build.Count -eq $cheap.Count + 5) 'dt-build selects its five suites and every cheap check'
+Assert-Gate ($build.Count -eq $cheap.Count + 6) 'dt-build selects its six suites and every cheap check'
 Assert-Gate (@($build | Where-Object { $_.Skill -notin @('*','dt-build') }).Count -eq 0) 'dt-build excludes unrelated suites'
 foreach ($path in @('scripts/a.ps1','references/a.md','tools/a.ps1','.ship.json','.claude-plugin/unknown.json','README.md','skills/unknown/a.ps1')) {
     Assert-Gate (@(Select-GateSteps -ChangedPaths @($path)).Count -eq $all.Count) "full gate for shared/unknown $path"
@@ -85,6 +85,7 @@ function Get-GateSteps {
     $source = $source.Remove($catalog.Extent.StartOffset,$catalog.Extent.Text.Length).Insert($catalog.Extent.StartOffset,$replacement)
     [IO.File]::WriteAllText((Join-Path $fixture 'scripts/run-gate.ps1'),$source)
     Copy-Item (Join-Path $PSScriptRoot '../lib/resolve-test-python.ps1') (Join-Path $fixture 'scripts/lib/')
+    Copy-Item (Join-Path $PSScriptRoot '../lib/runtime-test-admission.ps1') (Join-Path $fixture 'scripts/lib/')
     Copy-Item (Join-Path $originalRepo 'requirements-test.txt') $fixture
     $startupDir = Join-Path $fixture 'skills/dt-build/scripts'
     New-Item -ItemType Directory -Path $startupDir -Force | Out-Null

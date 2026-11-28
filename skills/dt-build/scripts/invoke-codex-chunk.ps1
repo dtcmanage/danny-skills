@@ -481,6 +481,7 @@ $sandbox = if ($Preflight -or $ReadOnly) { 'read-only' } else { 'workspace-write
 # sandbox; the tree check is only a defensive backstop.
 $builderUnsandboxed = (-not $Preflight) -and (-not $ReadOnly)
 $verifyReadOnly = $ReadOnly -and -not $Preflight
+. (Join-Path $PSScriptRoot 'readonly-worker-evidence.ps1')
 $script:readOnlyWarnings = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 if ($builderUnsandboxed) {
     $sandbox = if ($env:OS -eq 'Windows_NT') { 'danger-full-access (windows: codex sandbox removed upstream)' } else { 'danger-full-access (posix builder: git commits and package indexes)' }
@@ -507,6 +508,7 @@ $args = @(
 )
 
 if ($Effort) { $args = @($args[0..($args.Count - 2)]) + @('-c', ('model_reasoning_effort="{0}"' -f $Effort), '-') }
+if ($verifyReadOnly) { $args = @($args[0..($args.Count - 2)]) + @('--json', '-') }
 
 $probeStartedAt = [datetimeoffset]::UtcNow
 $dispatchStarted = [datetimeoffset](& $script:RouterDiagnosisClock)
@@ -638,7 +640,11 @@ try {
     $exitCode = if ($timedOut) { 124 } else { $proc.ExitCode }
     $durationMs = [int][Math]::Round(((Get-Date) - $started).TotalMilliseconds)
     $streamText = Invoke-SecretRedaction -Text (($stdout, $stderr) -join "`n")
-    $executionEvidence = Read-RouterCodexExecutionEvidence -StartedAt $started -Stream $stderr -Project $projectRoot
+    # Read-only workers run with --json: stdout is then only CLI frames, and the session
+    # id arrives as the thread.started frame instead of a stderr banner.
+    $readOnlyEvidence = if ($verifyReadOnly) { Get-ReadOnlyWorkerEvidence -Stream (Invoke-SecretRedaction -Text $stdout) } else { $null }
+    $sessionId = if ($readOnlyEvidence) { $readOnlyEvidence.thread_id } else { $null }
+    $executionEvidence = Read-RouterCodexExecutionEvidence -StartedAt $started -Stream $stderr -Project $projectRoot -SessionId $sessionId
     $actualModel = $executionEvidence.model
     $actualUsage = $executionEvidence.usage
 
@@ -701,8 +707,17 @@ try {
         $failureCategory = 'tooling'
     }
 
-    elseif ($verifyReadOnly -and @($readOnlyChanged).Count -gt 0) {
-        $failureReason = "CODEX_READONLY_VIOLATION: the read-only worker changed files under ${projectRoot}: $($readOnlyChanged -join '; '). Its report is rejected. Redacted stream: $streamPath"
+    elseif ($verifyReadOnly -and $executionEvidence.sandbox -in @('danger-full-access','workspace-write')) {
+        # The CLI's own rollout records the policy it applied; never accept a reader it ran writable.
+        $failureReason = "CODEX_READONLY_SANDBOX_MISMATCH: the CLI recorded sandbox '$($executionEvidence.sandbox)' for a read-only worker. Its report is rejected. Rollout: $($executionEvidence.rollout_path)"
+        $failureCategory = 'environment'
+    }
+    elseif ($verifyReadOnly -and $readOnlyEvidence.writes.Count -gt 0) {
+        $failureReason = "CODEX_READONLY_VIOLATION: worker mutation evidence: $($readOnlyEvidence.writes -join '; '). Its report is rejected. Redacted stream: $streamPath"
+        $failureCategory = 'model-output'
+    }
+    elseif ($verifyReadOnly -and -not $readOnlyEvidence.complete) {
+        $failureReason = "CODEX_READONLY_EVIDENCE_INCOMPLETE: the CLI's structured event stream is malformed, unfinished, failed or names an unsupported tool. Its report is rejected. Redacted stream: $streamPath"
         $failureCategory = 'model-output'
     }
     elseif ([string]::IsNullOrWhiteSpace($lastMessage)) {
@@ -735,8 +750,10 @@ try {
     $limitBlock = $null
     if (-not $timedOut -and $exitCode -ne 0 -and -not $blockedReportDetail) {
         # Without --json, codex exec writes progress and errors to stderr and only the final agent
-        # message to stdout, so stdout is model text and never a source of error events.
-        $codexErrorText = $stderr
+        # message to stdout, so stdout is model text and never a source of error events. Read-only
+        # workers run with --json, where the CLI reports errors only as structured stdout frames:
+        # add those trusted error/turn.failed messages (never item text) ahead of stderr.
+        $codexErrorText = if ($readOnlyEvidence) { (@((Get-ReadOnlyCliErrorText $readOnlyEvidence), $stderr) | Where-Object { $_ }) -join "`n" } else { $stderr }
         $refusal = Test-RouterLimitRefusal -Vendor codex -Text $codexErrorText
         $tooLarge = Test-RouterInputTooLarge -Vendor codex -Text $codexErrorText
         $capacitySignal = Get-CodexCapacitySignal -ErrorText $codexErrorText
@@ -913,6 +930,11 @@ try {
         write_mode = [bool](-not $ReadOnly -and -not $Preflight)
         actual_changed_files = @(if ($changedFileCheck) { $changedFileCheck.actual_changed_files })
         warnings = @(if ($changedFileCheck) { $changedFileCheck.warnings }; $script:readOnlyWarnings | Sort-Object)
+        readonly_worker_evidence = $readOnlyEvidence
+        readonly_workspace_delta = [pscustomobject]@{
+            detected = @($readOnlyChanged).Count -gt 0
+            samples = @($readOnlyChanged | Where-Object { $_ -notlike 'diff:*' } | Select-Object -First 5)
+        }
         rollout_path           = $executionEvidence.rollout_path
         untracked_created      = @($untrackedCreated)
         pass                   = [string]::IsNullOrWhiteSpace($failureReason)

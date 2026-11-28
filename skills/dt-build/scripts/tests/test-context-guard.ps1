@@ -2,6 +2,8 @@
 param([string]$TimingPath)
 
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
 $script:testClock = [Diagnostics.Stopwatch]::StartNew()
@@ -1105,7 +1107,8 @@ try {
     $repeatRun = New-Run -Name 'repeat-reads'
     $repeatFile = Join-Path $fixtures 'repeat-read.json'
     Write-Utf8 -Path $repeatFile -Content ('x' * 20000)
-    $repeatKey = ($repeatFile -replace '[\\/]+', '/').ToLowerInvariant()
+    $repeatKey = $repeatFile -replace '[\\/]+', '/'
+    if (-not $IsLinux) { $repeatKey = $repeatKey.ToLowerInvariant() }
     $repeatLedger = Join-Path $repeatRun.folder 'hook-reads.jsonl'
     Write-Lease -RunFolder $repeatRun.folder -CoordinatorId 'repeat-1' -LeaseHost 'claude' -SessionId 'sess-repeat'
     foreach ($commandText in @(

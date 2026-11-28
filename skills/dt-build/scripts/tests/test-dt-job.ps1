@@ -8,6 +8,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $env:DT_BUILD_HEADLESS = '1' # Fixtures are automation, never borrow the test runner's director.
 $script:passed = 0
 $script:failed = 0
@@ -22,6 +24,8 @@ if ($Shard -eq 0 -and -not $GeneratorDifferentialOnly -and -not $Serial) {
     $wall = [Diagnostics.Stopwatch]::StartNew()
     try {
         foreach ($part in 1..6) {
+            $cap = Get-TestWorkerBudget -Limit $(if ($env:DT_TEST_WORKER_LIMIT) { [Math]::Min(6,[int]$env:DT_TEST_WORKER_LIMIT) } else { 6 })
+            while (@($workers | Where-Object { -not $_.Process.HasExited }).Count -ge $cap) { Start-Sleep -Milliseconds 100 }
             $command = "& '" + $PSCommandPath.Replace("'", "''") + "' -Shard $part"
             if ($GeneratorPath) { $command += " -GeneratorPath '" + $GeneratorPath.Replace("'", "''") + "'" }
             if ($HeadMeasurementPath) { $command += " -HeadMeasurementPath '" + $HeadMeasurementPath.Replace("'", "''") + "'" }
@@ -103,7 +107,7 @@ function Invoke-DtJob {
     param([string[]]$Arguments)
     $result = Invoke-TestShell -File $dtJob -Arguments ($Arguments + @('-AllowTempRunFolder', '-Json'))
     $raw = $result.Output; $LASTEXITCODE = $result.ExitCode
-    if ($LASTEXITCODE -ne 0) { throw "dt-job $($Arguments -join ' ') exited $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "dt-job $($Arguments -join ' ') exited ${LASTEXITCODE}: $($result.ErrorText) $($raw -join ' ')" }
     return (($raw -join "`n") | ConvertFrom-Json)
 }
 
@@ -2067,7 +2071,7 @@ Invoke-DtJobRegisterRun
     $closingRelease = Join-Path $rf 'closing-release'
     $closingScript = Join-Path $rf 'closing.ps1'
     Write-Utf8 $closingScript (New-HeldJobCommand $closingRelease)
-    $closing = Start-Process pwsh -ArgumentList @('-NoProfile','-File', $closingScript) @HiddenWindow -PassThru
+    $closing = Start-Process pwsh -ArgumentList @('-NoProfile','-File', "`"$closingScript`"") @HiddenWindow -PassThru
     $lease = [ordered]@{ coordinator_id = 'closing-fixture'; launched_by = 'watcher'; pid = $closing.Id; pid_start_utc = $closing.StartTime.ToUniversalTime().ToString('o'); released_utc = $null }
     Write-Utf8 (Join-Path $rf 'coordinator.lease') ($lease | ConvertTo-Json)
     foreach ($refusal in @('wrong-operation','coordinator','job','wrong-state')) {

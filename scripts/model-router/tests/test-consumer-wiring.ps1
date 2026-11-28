@@ -186,6 +186,14 @@ if (`$stdin -like '*single word OK*') { [IO.File]::WriteAllText([string]`$args[`
 [IO.File]::WriteAllText([string]`$args[`$outIndex + 1], @'
 $report
 '@)
+if (`$args -contains '--json') {
+    '{"type":"thread.started","thread_id":"wiring-fixture"}'
+    '{"type":"turn.started"}'
+    if (`$env:DT_FAKE_CODEX_MODE -eq 'touch-project') {
+        '{"type":"item.completed","item":{"id":"write","type":"file_change","status":"completed","changes":[{"path":"reviewer-wrote-this.txt","kind":"add"}]}}'
+    }
+    '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'
+}
 "@
     function Get-WrapperEffort([string[]]$Extra) {
         $categoryIndex = [Array]::IndexOf($Extra, '-Category')

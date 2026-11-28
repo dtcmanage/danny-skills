@@ -1,5 +1,7 @@
 # dt-image-gen changelog
 
+- 0.4.3 (2026-11-27): Report shared model router outcome disk-full failures directly.
+
 - 0.4.2 (2026-11-27): Deduplicate model router vendor errors for one rolling hour and clear recovered probe alerts on a successful real preflight.
 
 - 0.4.1 (2026-11-26): model router: "fable" and "astra" resolve to the newest release the router has seen (ladders.json track_latest); ladder lists Fable 5.2 and GPT-6.2 Astra

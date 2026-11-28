@@ -1,6 +1,8 @@
 # Focused runtime regressions. Every process, file root and Git ref is fixture-owned.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $scripts = Split-Path -Parent $PSScriptRoot
 $job = Join-Path $scripts 'dt-job.ps1'
 . (Join-Path $PSScriptRoot 'test-shell.ps1')
@@ -104,14 +106,14 @@ try {
             if ($null -eq $writerFirstActivity) { $writerFirstActivity = [DateTime]$observedWriter.last_activity_utc }
             $writerAdvanced = [DateTime]$observedWriter.last_activity_utc -gt $writerFirstActivity
             $ready = $observedWriter.file_changes -gt 0 -and $writerAdvanced -and
-                ([DateTime]::UtcNow - [DateTime]$observedReader.last_activity_utc).TotalSeconds -ge 3
+                ([DateTime]$observedReader.sampled_utc - [DateTime]$observedReader.last_activity_utc).TotalSeconds -ge 3
         }
         if (-not $ready) { Start-Sleep -Milliseconds 100 }
     } while (-not $ready -and [DateTime]::UtcNow -lt $heartbeatDeadline)
-    $beat = Get-Content -Raw (Join-Path $run "jobs/$($h.job_id)/heartbeat.json") | ConvertFrom-Json
+    $beat = $observedWriter
     Check ($beat.file_changes -gt 0 -and $writerAdvanced) "sibling worktree writes refresh heartbeat from nested launch directory ($($beat | ConvertTo-Json -Compress); $(Get-Content -Raw (Join-Path $run ('jobs/' + $h.job_id + '.json'))))"
-    $readerBeat = Get-Content -Raw (Join-Path $run2 "jobs/$($reader.job_id)/heartbeat.json") | ConvertFrom-Json
-    Check ($readerBeat.file_changes -eq 0 -and ([DateTime]::UtcNow - [DateTime]$readerBeat.last_activity_utc).TotalSeconds -ge 3) 'unrelated worktree writes do not refresh read-only job activity'
+    $readerBeat = $observedReader
+    Check ($ready -and $readerBeat.file_changes -eq 0 -and ([DateTime]$readerBeat.sampled_utc - [DateTime]$readerBeat.last_activity_utc).TotalSeconds -ge 3) 'unrelated worktree writes do not refresh read-only job activity'
     JobCall @('cancel','-RunFolder',$run2,'-JobId',$reader.job_id) | Out-Null
     JobCall @('cancel','-RunFolder',$run,'-JobId',$h.job_id) | Out-Null
     $env:DT_JOB_STALL_SEC = $originalStallSec

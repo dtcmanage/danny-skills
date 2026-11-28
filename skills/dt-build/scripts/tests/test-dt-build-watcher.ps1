@@ -1,6 +1,8 @@
 param()
 
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $env:DT_BUILD_HEADLESS = '1'
 $script:passed = 0

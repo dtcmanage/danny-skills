@@ -168,5 +168,12 @@ try {
     if (-not $resolved.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture cleanup escaped temp root.' }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
+# The backstop that runs this check must consult the full open-item and owner inventory.
+$skillText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../../SKILL.md')).Replace("`r`n", "`n")
+$backstop = [regex]::Match($skillText, '(?s)7\. \*\*Command Center backstop:\*\*.*?(?=\n8\. )').Value
+$ownership = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../../references/hygiene-ownership.md'))
+Assert-Check ($backstop.Contains('references/hygiene-ownership.md') -and $backstop.Contains('cc.ps1" list` (no `--workstation` filter') -and $backstop.Contains('live session owners') -and $backstop.Contains('blocks creation')) 'backstop lists all open items and live owners before any write'
+Assert-Check (-not ($backstop -match 'list --workstation') -and $backstop.Contains('rather than add a duplicate') -and $backstop.Contains('keep its owner') -and $backstop.Contains('to the master once')) 'backstop never narrows its inventory and keeps owner, no-duplicate and once-only rules'
+Assert-Check ($ownership.Contains('SKILL step 7') -and $ownership.Contains('no `--workstation` filter')) 'ownership reference covers the backstop with an unfiltered inventory'
 "SUMMARY: $passed passed; $failed failed"
 if ($failed) { exit 1 }

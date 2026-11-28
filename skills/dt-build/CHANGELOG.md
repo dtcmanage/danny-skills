@@ -1,5 +1,9 @@
 # dt-build — CHANGELOG
 
+## 2.68.2
+
+- Scale runtime tests to host load, serialize sessions safely, attribute reader writes and move detail into references.
+
 ## 2.68.1
 
 - Freeze acceptance baselines and isolate later checks; normalize report layouts while rejecting ambiguous contracts; detach job streams, supply log directories, and refresh authority after owned writes.

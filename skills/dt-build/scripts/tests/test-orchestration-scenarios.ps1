@@ -3,6 +3,8 @@
 # -Live additionally calls both real model wrappers and launches one managed coordinator per host.
 param([switch]$Live, [string]$EvidenceDir, [switch]$KeepEvidence)
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 if ($Live -and -not $EvidenceDir) { throw '-Live requires a caller-named -EvidenceDir.' }
 $scripts = Split-Path -Parent $PSScriptRoot

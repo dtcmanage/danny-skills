@@ -2,7 +2,7 @@
 name: dt-session-audit
 description: "Autonomous end-of-session audit that scans for uncaptured corrections, preferences, decisions, project state, and newly pinned terminology, then routes each finding on two axes - content class (rules / facts / terminology / skill amendment) and scope tier (root / workstation / project) across CLAUDE.md, MEMORY.md, CONTEXT.md, and glossary.md. Checks this session's artifacts and cleans up its own scratch and superseded drafts. Applies deterministic non-conflict writes automatically, escalates only conflicts/uncertainty, and triggers dt-memory-hygiene when deterministic bloat thresholds are exceeded. Closes automatically in the same turn unless Danny has a decision to make or asked to keep the session open. Use this skill whenever you say 'audit this session,' 'session audit,' 'what did we miss,' or 'end of session check.'"
 metadata:
-  version: 0.9.2
+  version: 0.9.3
 ---
 
 `<skill>` is this SKILL.md folder, resolved through links; `<danny-skills>` is the repo root two levels above it (see `../../references/conventions.md`).
@@ -150,6 +150,10 @@ Apply first usable rung:
 If locator form is used, state that in rationale.
 
 ## Execution Pipeline (fixed order)
+
+Before ANY Command Center to-do creation in this audit, read and apply
+`references/hygiene-ownership.md`: list open items AND live session owners, reconcile
+with existing coverage, and update the existing item rather than duplicate it.
 
 Apply in order. Later steps cannot override earlier positive classification; they may only escalate.
 
@@ -386,7 +390,7 @@ When applying:
 5. Enforce MULTI_SCOPE atomic apply contract.
 6. Report what was written and what remains escalated.
 7. **Command Center backstop:** review the session for anything that now needs Danny, is waiting on someone else, has a real deadline, or finished an item on the list.
-   For each workstation touched, run `pwsh -NoProfile -File "<workspace>/_Claude-Workspace/Command Center/cc.ps1" list --workstation "<folder>"` (`<workspace>` is `/home/danny/Claude` on the Linux session host, `~/Claude` on the Mac, `D:\Claude` on a Windows PC; cc.ps1 runs under pwsh on all three); add missing items, update changed ones, and close finished ones with `done <id> --done-note "..."`.
+   Before any add, update or close, read and apply `references/hygiene-ownership.md`. List **all open items** with `pwsh -NoProfile -File "<workspace>/_Claude-Workspace/Command Center/cc.ps1" list` (no `--workstation` filter, so coverage filed under a master's or another workstation is seen; `<workspace>` is `/home/danny/Claude` on the Linux session host, `~/Claude` on the Mac, `D:\Claude` on a Windows PC; cc.ps1 runs under pwsh on all three) and inventory the live session owners as that reference directs. A failed or incomplete inventory blocks creation. For each workstation touched, reconcile against that full inventory: update an existing covering item rather than add a duplicate, keep its owner, add a genuinely missing item only after the reference's immediate recheck, and close finished ones with `done <id> --done-note "..."`. In a child session, report covered or suppressed findings to the master once, never as a new handoff, and write nothing outside the audit's authorized scope.
    Read and follow `<workspace>/_Claude-Workspace/Command Center/CLAUDE.md` § The session write rule: titles without amounts/account numbers, starter prompts usable in a fresh session, workstation = folder path including substation. Never move open items into `MEMORY.md`; move any open-for-Danny item found there to Command Center.
    Report Command Center writes in one line in the audit output.
    Run `pwsh -NoProfile -File <skill>/scripts/check-ai-item-exits.ps1` from the session's own working directory (never `cd` into the skill folder first), or pass `-TranscriptPath <session.jsonl>`. Without `-TranscriptPath` it reads `<session-id>.jsonl` under `$env:CLAUDE_CONFIG_DIR/projects/<cwd with non-alphanumerics as ->`, taking the id from `CLAUDE_SESSION_ID` or `CLAUDE_CODE_SESSION_ID`; with no id it falls back to the newest top-level transcript there and prints a warning naming it. `TRANSCRIPT_NOT_FOUND` (non-zero exit) means the check did not run: report it, never treat it as clean. Route each hit as a Command Center finding, resolving it with one of the three allowed exits printed by the check.
@@ -406,7 +410,11 @@ After apply, run:
 
 `pwsh -NoProfile -File <danny-skills>/skills/dt-memory-hygiene/scripts/detect-memory-bloat.ps1 -RootPath <workspace> -Json`
 
-If `should_run_hygiene=true`, invoke `dt-memory-hygiene` automatically.
+If `should_run_hygiene=true`, first read and apply `references/hygiene-ownership.md`.
+Invoke `dt-memory-hygiene` automatically only within the audit's authorized in-play
+scope. For oversized scaffolds outside that scope, check live owners and open hygiene
+items before any handoff; suppress duplicate work and report once to the master in
+child sessions. This check does not expand audit write authority.
 
 ## Workspace Upload
 

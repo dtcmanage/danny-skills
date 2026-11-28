@@ -38,6 +38,34 @@ function Wait-Worker([Diagnostics.Process]$Process) {
     return $out
 }
 try {
+    foreach ($case in @(
+        @{Code=28;Windows=$false;Kind='disk-full'}, @{Code=69;Windows=$false;Mac=$true;Kind='disk-full'}, @{Code=122;Windows=$false;Kind='disk-full'},
+        @{Code=28;Windows=$false;Mac=$true;Kind='disk-full'},
+        @{Code=122;Windows=$false;Mac=$true;Kind='io-error'}, @{Code=69;Windows=$false;Kind='io-error'},
+        @{Code=112;Windows=$true;Kind='disk-full'}, @{Code=39;Windows=$true;Kind='disk-full'},
+        @{Code=11;Windows=$false;Kind='contention'}, @{Code=35;Windows=$false;Mac=$true;Kind='contention'},
+        @{Code=35;Windows=$false;Kind='io-error'}, @{Code=11;Windows=$false;Mac=$true;Kind='io-error'},
+        @{Code=32;Windows=$true;Kind='contention'}, @{Code=33;Windows=$true;Kind='contention'},
+        @{Code=5;Windows=$true;Kind='io-error'}, @{Code=13;Windows=$false;Kind='io-error'}
+    )) {
+        $hr = [int]([long]-2147024896 + $case.Code)
+        $io = [IO.IOException]::new('injected native error', $hr)
+        $mac = $case.ContainsKey('Mac') -and $case.Mac
+        Assert-True ((Get-RouterIOExceptionKind -Exception $io -OnWindows $case.Windows -OnMacOS $mac) -eq $case.Kind) "actual .NET IOException code $($case.Code) Windows=$($case.Windows) Mac=$mac`: $($case.Kind)"
+    }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $diskMessage = ''
+    try { Use-RouterOutcomeMutex -StateDir $state -Action { throw [IO.IOException]::new('injected ENOSPC', -2147024868) } }
+    catch { $diskMessage = $_.Exception.Message }
+    Assert-True ($diskMessage -match 'ROUTER_OUTCOME_IO_ERROR.*disk-full' -and $watch.Elapsed.TotalSeconds -lt 5) 'disk-full append fails immediately with cause'
+    $originalOpen = (Get-Item Function:Open-RouterOutcomeMutexHandle).ScriptBlock
+    $script:openAttempts = 0
+    try {
+        Set-Item Function:Open-RouterOutcomeMutexHandle -Value { param($Path); $script:openAttempts++; throw [IO.IOException]::new('injected ENOSPC opening mutex', -2147024868) }
+        $watch.Restart(); $diskMessage = ''
+        try { Use-RouterOutcomeMutex -StateDir $state -Action { throw 'must not enter action' } } catch { $diskMessage = $_.Exception.Message }
+        Assert-True ($script:openAttempts -eq 1 -and $diskMessage -match 'ROUTER_OUTCOME_IO_ERROR.*disk-full' -and $watch.Elapsed.TotalSeconds -lt 5) 'disk-full opening mutex fails once immediately, without contention retry'
+    } finally { Set-Item Function:Open-RouterOutcomeMutexHandle -Value $originalOpen }
     $routerDir = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     $worker = @'
 param([string]$Mode, [string]$Argument)

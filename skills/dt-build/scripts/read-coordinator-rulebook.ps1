@@ -2,7 +2,7 @@
 # Render scoped rules from their authoritative sources. Entry is the bootstrap read only.
 param(
     [ValidateSet('codex', 'claude')][string]$CoordinatorHost = 'codex',
-    [ValidateSet('entry','authority','execution','routing','context','guardrails','adapter','worker-briefs','checkpoint','lane-health','worker-authority','roll-forward','local-work','operator-actions','fast-lane','shared')]
+    [ValidateSet('entry','authority','execution','routing','context','guardrails','adapter','worker-briefs','checkpoint','lane-health','worker-authority','roll-forward','local-work','operator-actions','fast-lane','shared','propagation')]
     [string]$Section = 'entry'
 )
 Set-StrictMode -Version Latest
@@ -45,7 +45,7 @@ if ($Section -eq 'entry') {
     $parts.Add((Get-RuleSection $conventions '## Path resolution' '## Frontmatter fields'))
     $parts.Add('On-demand sections: run this same command with -Section <name>; load only when its trigger fires, after mark-bootstrap. This entry grants no permission.')
     foreach ($name in $catalog.Keys) { $parts.Add("- ${name}: $($catalog[$name][2]).") }
-    $parts.Add('- adapter: before dt-job operations after the marker. - worker-briefs: before every builder/fix/verifier brief. - shared: before authoring artifacts or friction notes; full shared conventions (bootstrap path rules already included).')
+    $parts.Add('- adapter: before dt-job operations after the marker. - worker-briefs: before every builder/fix/verifier brief. - shared: before authoring artifacts or friction notes; full shared conventions (bootstrap path rules already included). - propagation: before finalizing a danny-skills build (skill propagation and versioning gate).')
     $parts.Add('Canonical policies: read 00_Resources/git-workflow.md before actual git actions; model-routing.md before dispatch; build-process.md before starting a new build or close-out. None is triggered by merely reading this existing run. Read browser policy before browser work and tech-stack guidance before application-development work. Required authorization originals always load before the marker. Read acceptance-contract.md before an acceptance gate; SKILL.md step 6.5 and close-out gates before completion.')
 } elseif ($Section -eq 'adapter') {
     $parts.Add([IO.File]::ReadAllText((Join-Path $skillRoot "references/adapter-$CoordinatorHost.md")))
@@ -56,6 +56,10 @@ if ($Section -eq 'entry') {
     $parts.Add((Get-RuleSection $briefs 'Shared rules:' '## Approved retries and file reports'))
 } elseif ($Section -eq 'shared') {
     foreach ($policy in @('deterministic-reference-policy.md', 'conventions.md')) { $parts.Add([IO.File]::ReadAllText((Join-Path $repoRoot "references/$policy"))) }
+} elseif ($Section -eq 'context') {
+    $parts.Add([IO.File]::ReadAllText((Join-Path $skillRoot 'references/context-discipline.md')))
+} elseif ($Section -eq 'propagation') {
+    $parts.Add([IO.File]::ReadAllText((Join-Path $skillRoot 'references/skill-propagation.md')))
 } else {
     $source = if ($Section -in @('execution','routing','context','guardrails')) { $text } else { $resume }
     if ($Section -eq 'execution') { $parts.Add((Get-RuleSection $resume '## Carry on' '## Lean checkpoint')) }

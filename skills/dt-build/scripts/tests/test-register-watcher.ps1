@@ -2,6 +2,8 @@
 # B2 fix 10: the Linux watcher unit runs pwsh with a settings file that keeps its engine logging out of the
 # journal, opts out of telemetry and tags its output dt-build-watcher. Never writes units or runs systemctl.
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot '../../../../scripts/lib/runtime-test-admission.ps1')
+Enter-RuntimeTestSuite
 $ErrorActionPreference = 'Stop'
 $script:passed = 0
 function Assert-True([bool]$Value, [string]$Message) {
